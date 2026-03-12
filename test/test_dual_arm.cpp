@@ -31,7 +31,7 @@ static void apply_grav_comp(mj_kdl::State* s, KDL::ChainDynParam& dyn)
 
 int main(int argc, char* argv[])
 {
-    std::string urdf = "../urdf/GEN3_URDF_V12.urdf";
+    std::string urdf = "../assets/gen3_urdf/GEN3_URDF_V12.urdf";
     bool gui = false;
     for (int i = 1; i < argc; ++i) {
         std::string a(argv[i]);

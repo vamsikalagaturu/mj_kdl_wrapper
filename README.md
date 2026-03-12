@@ -188,16 +188,16 @@ mj_kdl::init_robot(&arm2, model, data, "arm2.urdf", "base_link", "ee_link", "r2_
 
 ```bash
 cd build
-./test_init          ../urdf/GEN3_URDF_V12.urdf
-./test_velocity      ../urdf/GEN3_URDF_V12.urdf
-./test_gravity_comp  ../urdf/GEN3_URDF_V12.urdf
-./test_dual_arm      ../urdf/GEN3_URDF_V12.urdf
-./test_table_scene   ../urdf/GEN3_URDF_V12.urdf
+./test_init        
+./test_velocity    
+./test_gravity_comp
+./test_dual_arm    
+./test_table_scene 
 
 # GUI mode — opens a GLFW window (robot holds pose, objects can be perturbed)
-./test_gravity_comp  ../urdf/GEN3_URDF_V12.urdf --gui
-./test_dual_arm      ../urdf/GEN3_URDF_V12.urdf --gui
-./test_table_scene   ../urdf/GEN3_URDF_V12.urdf --gui
+./test_gravity_comp --gui
+./test_dual_arm     --gui
+./test_table_scene  --gui
 ```
 
 ### GUI controls
@@ -211,22 +211,4 @@ cd build
 | **Ctrl + Left drag** | **Rotate body (torque)** |
 | `ESC` / `Q` | Quit |
 
-## Project Structure
 
-```
-mj-kdl-wrapper/
-├── include/mj_kdl_wrapper/
-│   └── mj_kdl_wrapper.hpp   # structs and function declarations
-├── src/
-│   └── mj_kdl_wrapper.cpp   # all implementation
-├── test/
-│   ├── test_init.cpp
-│   ├── test_velocity.cpp
-│   ├── test_gravity_comp.cpp
-│   ├── test_dual_arm.cpp
-│   └── test_table_scene.cpp
-├── third_party/
-│   └── kdl_parser/          # bundled ros/kdl_parser (jazzy, rcutils stripped)
-└── urdf/
-    └── GEN3_URDF_V12.urdf
-```
