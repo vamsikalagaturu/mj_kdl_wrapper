@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y \
+            liborocos-kdl-dev \
+            liburdfdom-dev \
+            libtinyxml2-dev \
+            libglfw3-dev \
+            libgl1-mesa-dev \
+            libglu1-mesa-dev \
+            xvfb
+
+      - name: Install MuJoCo 3.5.0
+        run: |
+          wget -q https://github.com/google-deepmind/mujoco/releases/download/3.5.0/mujoco-3.5.0-linux-x86_64.tar.gz
+          sudo tar xzf mujoco-3.5.0-linux-x86_64.tar.gz -C /opt
+          rm mujoco-3.5.0-linux-x86_64.tar.gz
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel $(nproc)
+
+      - name: Test init
+        run: ./build/test_init urdf/GEN3_URDF_V12.urdf
+
+      - name: Test velocity
+        run: ./build/test_velocity urdf/GEN3_URDF_V12.urdf
+
+      - name: Test gravity compensation
+        run: ./build/test_gravity_comp urdf/GEN3_URDF_V12.urdf
