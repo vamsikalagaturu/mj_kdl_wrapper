@@ -847,9 +847,15 @@ bool attach_gripper(const char* arm_mjcf, const GripperSpec* g, const char* out_
             mj_deleteModel(arm_model);
         }
 
-        // Incorporate GripperSpec::pos offset (already in attach_to frame)
-        // anchor_world = attach_pos + R_attach @ (gripper_local_anchor + g->pos)
+        // anchor_world = attach_pos + R_attach @ (R_gquat @ a + g->pos)
+        // where a is the anchor in gripper-native frame.
         double gpos[3] = {g->pos[0], g->pos[1], g->pos[2]};
+        double qw=g->quat[0], qx=g->quat[1], qy=g->quat[2], qz=g->quat[3];
+        double Rq[9] = {
+            1-2*(qy*qy+qz*qz), 2*(qx*qy-qw*qz),   2*(qx*qz+qw*qy),
+            2*(qx*qy+qw*qz),   1-2*(qx*qx+qz*qz), 2*(qy*qz-qw*qx),
+            2*(qx*qz-qw*qy),   2*(qy*qz+qw*qx),   1-2*(qx*qx+qy*qy)
+        };
 
         XMLElement* geq = grp_mj->FirstChildElement("equality");
         if (geq) {
@@ -858,15 +864,17 @@ bool attach_gripper(const char* arm_mjcf, const GripperSpec* g, const char* out_
             for (auto* c = geq->FirstChildElement(); c; c = c->NextSiblingElement()) {
                 XMLElement* cl = xml_deep_clone(c, &arm_doc);
                 xml_prefix_names(cl, pfx);
-                // Transform connect anchor positions
                 if (std::strcmp(cl->Name(), "connect") == 0) {
                     const char* anc = cl->Attribute("anchor");
                     if (anc) {
                         double a[3] = {0, 0, 0};
                         std::sscanf(anc, "%lf %lf %lf", &a[0], &a[1], &a[2]);
-                        // local = a (in gripper base frame) + gpos offset
-                        double loc[3] = {a[0]+gpos[0], a[1]+gpos[1], a[2]+gpos[2]};
-                        // world = attach_pos + R_attach @ loc (attach_mat is row-major)
+                        // rotate anchor by g->quat, then add g->pos (in attach_to frame)
+                        double ra[3] = {Rq[0]*a[0]+Rq[1]*a[1]+Rq[2]*a[2],
+                                        Rq[3]*a[0]+Rq[4]*a[1]+Rq[5]*a[2],
+                                        Rq[6]*a[0]+Rq[7]*a[1]+Rq[8]*a[2]};
+                        double loc[3] = {ra[0]+gpos[0], ra[1]+gpos[1], ra[2]+gpos[2]};
+                        // transform to world frame via attach_to body pose
                         double wx = attach_pos[0] + attach_mat[0]*loc[0]+attach_mat[1]*loc[1]+attach_mat[2]*loc[2];
                         double wy = attach_pos[1] + attach_mat[3]*loc[0]+attach_mat[4]*loc[1]+attach_mat[5]*loc[2];
                         double wz = attach_pos[2] + attach_mat[6]*loc[0]+attach_mat[7]*loc[1]+attach_mat[8]*loc[2];

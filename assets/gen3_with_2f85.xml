@@ -108,7 +108,7 @@
                                         <geom class="collision" mesh="bracelet_with_vision_link"/>
                                         <camera name="wrist" pos="0 -0.05639 -0.058475" quat="0 0 0 1" fovy="41.83792730009236" resolution="640 480"/>
                                         <site name="pinch_site" pos="0 0 -0.061525" quat="0 1 0 0"/>
-                                        <body name="g_base" childclass="g_2f85">
+                                        <body name="g_base" childclass="g_2f85" pos="0.000000 0.000000 -0.061525" quat="0.000000 1.000000 0.000000 0.000000">
                                             <inertial mass="0.777441" pos="0 -2.70394e-05 0.0354675" quat="1 -0.00152849 0 0" diaginertia="0.000260285 0.000225381 0.000152708"/>
                                             <geom class="g_visual" pos="0 0 0.0108" quat="0 0 0 1" mesh="g_base"/>
                                             <geom class="g_visual" pos="0 0 0.004" quat="1 -1 0 0" mesh="g_base_coupling"/>
@@ -211,8 +211,8 @@
         </fixed>
     </tendon>
     <equality>
-        <connect anchor="-0.0179014000 -0.0183354200 1.1214600000" body1="g_right_follower" body2="g_right_coupler" solimp="0.95 0.99 0.001" solref="0.005 1"/>
-        <connect anchor="-0.0179014000 -0.0183354200 1.1214600000" body1="g_left_follower" body2="g_left_coupler" solimp="0.95 0.99 0.001" solref="0.005 1"/>
+        <connect anchor="-0.0179014000 -0.0313647800 1.1917850000" body1="g_right_follower" body2="g_right_coupler" solimp="0.95 0.99 0.001" solref="0.005 1"/>
+        <connect anchor="-0.0179014000 -0.0313647800 1.1917850000" body1="g_left_follower" body2="g_left_coupler" solimp="0.95 0.99 0.001" solref="0.005 1"/>
         <joint joint1="g_right_driver_joint" joint2="g_left_driver_joint" polycoef="0 1 0 0 0" solimp="0.95 0.99 0.001" solref="0.005 1"/>
     </equality>
 </mujoco>

@@ -44,7 +44,8 @@ def main():
 
     joint_ids = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"joint_{i+1}")
                  for i in range(7)]
-    for jid, rad in zip(joint_ids, [0.0, -0.4, 0.0, 1.4, 0.0, -1.0, 0.0]):
+    # "home" pose from the menagerie keyframe
+    for jid, rad in zip(joint_ids, [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]):
         if jid >= 0:
             data.qpos[model.jnt_qposadr[jid]] = rad
     mujoco.mj_forward(model, data)
@@ -61,10 +62,10 @@ def main():
 
     cam           = mujoco.MjvCamera()
     cam.type      = mujoco.mjtCamera.mjCAMERA_FREE
-    cam.lookat[:] = [0.0, 0.0, 0.6]
-    cam.distance  = 1.4
-    cam.azimuth   = -125.0
-    cam.elevation = -15.0
+    cam.lookat[:] = [0.1, 0.0, 0.55]
+    cam.distance  = 1.5
+    cam.azimuth   = -120.0
+    cam.elevation = -20.0
 
     renderer.update_scene(data, camera=cam, scene_option=mujoco.MjvOption())
     pixels = renderer.render()

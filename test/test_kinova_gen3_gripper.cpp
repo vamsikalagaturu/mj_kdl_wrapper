@@ -42,10 +42,15 @@ int main(int argc, char* argv[])
     const std::string combined   = (root / "assets/gen3_with_2f85.xml").string();
 
     // Test 1: combine arm + gripper
+    // Attachment follows the MuJoCo menagerie gen3_with_2f85 reference:
+    //   pos  = (0, 0, -0.061525)  — flange face along bracelet_link -z
+    //   quat = (0, 1, 0, 0)       — 180° around x so gripper faces away from arm
     mj_kdl::GripperSpec gs;
     gs.mjcf_path = grp_mjcf.c_str();
     gs.attach_to = "bracelet_link";
-    gs.prefix    = "g_"; // avoids default class name conflicts with arm
+    gs.prefix    = "g_";
+    gs.pos[0] = 0.0; gs.pos[1] = 0.0; gs.pos[2] = -0.061525;
+    gs.quat[0] = 0.0; gs.quat[1] = 1.0; gs.quat[2] = 0.0; gs.quat[3] = 0.0;
 
     if (!mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined.c_str())) {
         std::cerr << "FAIL: attach_gripper\n"; return 1;
