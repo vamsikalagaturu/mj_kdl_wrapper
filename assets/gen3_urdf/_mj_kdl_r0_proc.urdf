@@ -1,6 +1,6 @@
 <robot name="GEN3_URDF_V12" version="1.0">
     <mujoco>
-        <compiler balanceinertia="true" meshdir="/home/batsy/work/mj-kdl-wrapper/build/../assets/gen3_urdf/meshes"/>
+        <compiler balanceinertia="true" meshdir="/home/user/mj-kdl-wrapper/build/../assets/gen3_urdf/meshes"/>
     </mujoco>
     <link name="base_link">
         <inertial>
