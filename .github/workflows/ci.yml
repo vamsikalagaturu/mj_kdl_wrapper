@@ -35,10 +35,16 @@ jobs:
         run: cmake --build build --parallel $(nproc)
 
       - name: Test init
-        run: ./build/test_init urdf/GEN3_URDF_V12.urdf
+        run: ./build/test_init assets/gen3_urdf/GEN3_URDF_V12.urdf
 
       - name: Test velocity
-        run: ./build/test_velocity urdf/GEN3_URDF_V12.urdf
+        run: ./build/test_velocity assets/gen3_urdf/GEN3_URDF_V12.urdf
 
       - name: Test gravity compensation
-        run: ./build/test_gravity_comp urdf/GEN3_URDF_V12.urdf
+        run: ./build/test_gravity_comp assets/gen3_urdf/GEN3_URDF_V12.urdf
+
+      - name: Test kinova gen3 menagerie
+        run: ./build/test_kinova_gen3_menagerie
+
+      - name: Test kinova gen3 gripper
+        run: ./build/test_kinova_gen3_gripper
