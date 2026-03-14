@@ -604,8 +604,10 @@ static void cb_scroll(GLFWwindow*, double, double);
 static State* g_state = nullptr;
 
 struct GLMouseState {
-    bool btn_left=false, btn_right=false, btn_middle=false;
+    bool   btn_left=false, btn_right=false, btn_middle=false;
     double mouse_x=0, mouse_y=0;
+    double last_click_time = -1.0;
+    int    last_click_btn  = -1;
 };
 
 // Public API
@@ -1016,7 +1018,7 @@ void cleanup(State* s)
 
 void step(State* s)
 {
-    if (!s->model || !s->data) return;
+    if (!s->model || !s->data || s->paused) return;
     if (s->pert.active) mjv_applyPerturbForce(s->model, s->data, &s->pert);
     mj_step(s->model, s->data);
 }
@@ -1043,13 +1045,35 @@ bool render(State* s)
     mjrRect vp = {0, 0, w, h};
     mjv_updateScene(s->model, s->data, &s->opt, &s->pert, &s->cam, mjCAT_ALL, &s->scn);
     mjr_render(vp, &s->scn, &s->con);
-    char top[128], bot[256];
-    std::snprintf(top, sizeof(top), "t = %.3f s", s->data->time);
-    std::snprintf(bot, sizeof(bot),
-        "Ctrl+RightDrag: push body\nCtrl+LeftDrag:  rotate body\n"
-        "RightDrag: pan  LeftDrag: orbit  Scroll: zoom");
-    mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT,    vp, top, nullptr, &s->con);
-    mjr_overlay(mjFONT_NORMAL, mjGRID_BOTTOMLEFT, vp, bot, nullptr, &s->con);
+
+    char top[256];
+    const char* selname = (s->pert.select > 0)
+        ? mj_id2name(s->model, mjOBJ_BODY, s->pert.select) : nullptr;
+    if (selname)
+        std::snprintf(top, sizeof(top), "t = %.3f s%s\nSelected: %s",
+                      s->data->time, s->paused ? "  [PAUSED]" : "", selname);
+    else
+        std::snprintf(top, sizeof(top), "t = %.3f s%s",
+                      s->data->time, s->paused ? "  [PAUSED]" : "");
+    mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, vp, top, nullptr, &s->con);
+
+    mjr_overlay(mjFONT_NORMAL, mjGRID_BOTTOMLEFT, vp,
+        "DblClick: select body   D: deselect\n"
+        "Left drag: push force   Right drag: apply torque\n"
+        "No selection — Left drag: orbit   Right drag: pan   Scroll: zoom\n"
+        "Space: pause/resume   R: reset   J: toggle joints   Q/Esc: quit",
+        nullptr, &s->con);
+
+    if (s->show_joints && s->n_joints > 0 && !s->kdl_to_mj_qpos.empty()) {
+        char jvals[1024];
+        int off = std::snprintf(jvals, sizeof(jvals), "Joints (rad)\n");
+        for (int i = 0; i < s->n_joints && i < 16 && off < (int)sizeof(jvals)-32; ++i)
+            off += std::snprintf(jvals+off, sizeof(jvals)-off, "  %-20s %.3f\n",
+                                 s->joint_names[i].c_str(),
+                                 s->data->qpos[s->kdl_to_mj_qpos[i]]);
+        mjr_overlay(mjFONT_NORMAL, mjGRID_TOPRIGHT, vp, jvals, nullptr, &s->con);
+    }
+
     glfwSwapBuffers(s->window);
     return true;
 }
@@ -1080,8 +1104,17 @@ void set_torques(State* s, const KDL::JntArray& tau)
 
 static void cb_keyboard(GLFWwindow* w, int key, int, int action, int)
 {
-    if (action == GLFW_PRESS && (key == GLFW_KEY_ESCAPE || key == GLFW_KEY_Q))
+    if (action != GLFW_PRESS) return;
+    if (key == GLFW_KEY_ESCAPE || key == GLFW_KEY_Q)
         glfwSetWindowShouldClose(w, GLFW_TRUE);
+    if (!g_state) return;
+    if (key == GLFW_KEY_SPACE) g_state->paused = !g_state->paused;
+    if (key == GLFW_KEY_R)     reset(g_state);
+    if (key == GLFW_KEY_J)     g_state->show_joints = !g_state->show_joints;
+    if (key == GLFW_KEY_D) {
+        g_state->pert.select = 0;
+        g_state->pert.active = 0;
+    }
 }
 
 static void cb_mouse_button(GLFWwindow* w, int btn, int act, int)
@@ -1092,26 +1125,38 @@ static void cb_mouse_button(GLFWwindow* w, int btn, int act, int)
     ms->btn_middle = (glfwGetMouseButton(w, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS);
     glfwGetCursorPos(w, &ms->mouse_x, &ms->mouse_y);
     if (!g_state) return;
-    bool ctrl = (glfwGetKey(w, GLFW_KEY_LEFT_CONTROL)  == GLFW_PRESS ||
-                 glfwGetKey(w, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS);
-    if (ctrl && act == GLFW_PRESS &&
-        (btn == GLFW_MOUSE_BUTTON_LEFT || btn == GLFW_MOUSE_BUTTON_RIGHT)) {
-        int ww, wh; glfwGetWindowSize(w, &ww, &wh);
-        mjtNum selpnt[3];
-        int geomid[1]={-1}, flexid[1]={-1}, skinid[1]={-1};
-        int body = mjv_select(g_state->model, g_state->data, &g_state->opt,
-                              (mjtNum)wh/ww, (mjtNum)ms->mouse_x/ww,
-                              (mjtNum)(wh-ms->mouse_y)/wh,
-                              &g_state->scn, selpnt, geomid, flexid, skinid);
-        if (body >= 0) {
-            g_state->pert.select=body; g_state->pert.skinselect=skinid[0];
-            mju_copy3(g_state->pert.localpos, selpnt);
-            g_state->pert.active = (btn == GLFW_MOUSE_BUTTON_RIGHT) ? mjPERT_TRANSLATE : mjPERT_ROTATE;
+
+    if (act == GLFW_PRESS) {
+        double now = glfwGetTime();
+        bool dbl = (now - ms->last_click_time < 0.3) && (btn == ms->last_click_btn);
+        ms->last_click_time = dbl ? -1.0 : now;
+        ms->last_click_btn  = btn;
+
+        if (dbl) {
+            int ww, wh; glfwGetWindowSize(w, &ww, &wh);
+            mjtNum selpnt[3];
+            int geomid[1]={-1}, flexid[1]={-1}, skinid[1]={-1};
+            int body = mjv_select(g_state->model, g_state->data, &g_state->opt,
+                                  (mjtNum)wh/ww, (mjtNum)ms->mouse_x/ww,
+                                  (mjtNum)(wh - ms->mouse_y)/wh,
+                                  &g_state->scn, selpnt, geomid, flexid, skinid);
+            if (body > 0) {
+                g_state->pert.select     = body;
+                g_state->pert.skinselect = skinid[0];
+                mju_copy3(g_state->pert.localpos, selpnt);
+                mjv_initPerturb(g_state->model, g_state->data, &g_state->scn, &g_state->pert);
+            } else {
+                g_state->pert.select = 0;
+                g_state->pert.active = 0;
+            }
+        }
+
+        if (g_state->pert.select > 0) {
+            g_state->pert.active = (btn == GLFW_MOUSE_BUTTON_LEFT) ? mjPERT_TRANSLATE : mjPERT_ROTATE;
             mjv_initPerturb(g_state->model, g_state->data, &g_state->scn, &g_state->pert);
         }
-    } else if (!ms->btn_left && !ms->btn_right && !ms->btn_middle) {
-        g_state->pert.active=0; g_state->pert.select=0;
-        mju_zero(g_state->data->xfrc_applied, 6*g_state->model->nbody);
+    } else {
+        g_state->pert.active = 0;
     }
 }
 
@@ -1119,21 +1164,19 @@ static void cb_mouse_move(GLFWwindow* w, double x, double y)
 {
     auto* ms = static_cast<GLMouseState*>(glfwGetWindowUserPointer(w));
     if (!g_state || (!ms->btn_left && !ms->btn_right && !ms->btn_middle)) return;
-    double dx = x-ms->mouse_x, dy = y-ms->mouse_y;
-    ms->mouse_x=x; ms->mouse_y=y;
+    double dx = x - ms->mouse_x, dy = y - ms->mouse_y;
+    ms->mouse_x = x; ms->mouse_y = y;
     int ww, wh; glfwGetWindowSize(w, &ww, &wh);
-    bool ctrl  = (glfwGetKey(w, GLFW_KEY_LEFT_CONTROL)  == GLFW_PRESS ||
-                  glfwGetKey(w, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS);
-    bool shift = (glfwGetKey(w, GLFW_KEY_LEFT_SHIFT)    == GLFW_PRESS ||
-                  glfwGetKey(w, GLFW_KEY_RIGHT_SHIFT)   == GLFW_PRESS);
-    if (ctrl && g_state->pert.select > 0) {
-        mjtMouse act = ms->btn_right ? (shift ? mjMOUSE_MOVE_H   : mjMOUSE_MOVE_V)
-                     : ms->btn_left  ? (shift ? mjMOUSE_ROTATE_H : mjMOUSE_ROTATE_V)
+    bool shift = (glfwGetKey(w, GLFW_KEY_LEFT_SHIFT)  == GLFW_PRESS ||
+                  glfwGetKey(w, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
+    if (g_state->pert.select > 0 && g_state->pert.active) {
+        mjtMouse act = ms->btn_left  ? (shift ? mjMOUSE_ROTATE_H : mjMOUSE_ROTATE_V)
+                     : ms->btn_right ? (shift ? mjMOUSE_MOVE_H   : mjMOUSE_MOVE_V)
                      : mjMOUSE_ZOOM;
         mjv_movePerturb(g_state->model, g_state->data, act, dx/wh, dy/wh, &g_state->scn, &g_state->pert);
     } else {
-        mjtMouse act = ms->btn_right ? (shift ? mjMOUSE_MOVE_H   : mjMOUSE_MOVE_V)
-                     : ms->btn_left  ? (shift ? mjMOUSE_ROTATE_H : mjMOUSE_ROTATE_V)
+        mjtMouse act = ms->btn_left  ? (shift ? mjMOUSE_ROTATE_H : mjMOUSE_ROTATE_V)
+                     : ms->btn_right ? (shift ? mjMOUSE_MOVE_H   : mjMOUSE_MOVE_V)
                      : mjMOUSE_ZOOM;
         mjv_moveCamera(g_state->model, act, dx/wh, dy/wh, &g_state->scn, &g_state->cam);
     }

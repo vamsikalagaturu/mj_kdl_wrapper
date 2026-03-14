@@ -107,7 +107,9 @@ struct State {
     mjvOption   opt    {};
     mjvPerturb  pert   {};
     mjrContext  con    {};
-    bool _owns_model = true; // if true, cleanup() frees model/data
+    bool _owns_model  = true;  // if true, cleanup() frees model/data
+    bool paused       = false; // set true to pause simulation (step() becomes a no-op)
+    bool show_joints  = true;  // show joint value overlay in the viewer
 };
 
 /*

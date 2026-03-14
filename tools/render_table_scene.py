@@ -23,7 +23,7 @@ OUT_PATH = ROOT / "docs" / "table_scene_screenshot.png"
 
 def export_model():
     binary = ROOT / "build" / "export_table_scene"
-    urdf   = ROOT / "urdf" / "GEN3_URDF_V12.urdf"
+    urdf   = ROOT / "assets" / "gen3_urdf" / "GEN3_URDF_V12.urdf"
     if not binary.exists():
         sys.exit(f"Export binary not found: {binary}\n"
                  f"Run: cd build && make export_table_scene")
