@@ -96,7 +96,8 @@ target_compile_options(mj_kdl_wrapper PRIVATE -Wall -Wextra -Wpedantic)
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
-foreach(test_name test_init test_velocity test_gravity_comp test_dual_arm test_table_scene)
+foreach(test_name test_init test_velocity test_gravity_comp test_dual_arm test_table_scene
+                  test_kinova_gen3_menagerie test_kinova_gen3_gripper)
   add_executable(${test_name} test/${test_name}.cpp)
   target_link_libraries(${test_name} PRIVATE mj_kdl_wrapper)
   target_compile_options(${test_name} PRIVATE -Wall -Wextra)
@@ -110,6 +111,7 @@ target_compile_options(export_table_scene PRIVATE -Wall -Wextra)
 # Install
 # ---------------------------------------------------------------------------
 install(TARGETS mj_kdl_wrapper test_init test_velocity test_gravity_comp test_dual_arm test_table_scene
+                test_kinova_gen3_menagerie test_kinova_gen3_gripper
   RUNTIME DESTINATION bin
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib

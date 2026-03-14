@@ -185,11 +185,21 @@ static void xml_prefix_names(tinyxml2::XMLElement* e, const std::string& pfx)
         if (v) e->SetAttribute(a, (pfx + v).c_str());
     };
     pfx_attr("name");
+    pfx_attr("class");
+    pfx_attr("childclass");
     const char* tag = e->Name();
     if (!std::strcmp(tag, "geom") || !std::strcmp(tag, "site")) {
         pfx_attr("mesh"); pfx_attr("material");
     } else if (!std::strcmp(tag, "material")) {
         pfx_attr("texture");
+    } else if (!std::strcmp(tag, "joint")) {
+        pfx_attr("joint"); pfx_attr("joint1"); pfx_attr("joint2"); // tendon and equality refs
+    } else if (!std::strcmp(tag, "general") || !std::strcmp(tag, "position")) {
+        pfx_attr("joint"); pfx_attr("tendon");
+    } else if (!std::strcmp(tag, "fixed")) {
+        pfx_attr("joint");
+    } else if (!std::strcmp(tag, "exclude") || !std::strcmp(tag, "connect")) {
+        pfx_attr("body1"); pfx_attr("body2");
     }
     for (auto* c = e->FirstChildElement(); c; c = c->NextSiblingElement())
         xml_prefix_names(c, pfx);
@@ -509,6 +519,82 @@ static void build_index_map(State* s, const std::string& pfx = "")
     }
 }
 
+// Build KDL chain from compiled mjModel (no URDF needed)
+
+static bool build_kdl_from_model(State* s, mjModel* model,
+                                  const char* base_body, const char* tip_body)
+{
+    int base_bid = mj_name2id(model, mjOBJ_BODY, base_body);
+    int tip_bid  = mj_name2id(model, mjOBJ_BODY, tip_body);
+    if (base_bid < 0) { std::cerr << "[mj_kdl] base body not found: " << base_body << "\n"; return false; }
+    if (tip_bid  < 0) { std::cerr << "[mj_kdl] tip body not found: "  << tip_body  << "\n"; return false; }
+
+    std::vector<int> bids;
+    for (int b = tip_bid; b != base_bid; b = model->body_parentid[b]) {
+        if (b == 0) { std::cerr << "[mj_kdl] tip not under base\n"; return false; }
+        bids.push_back(b);
+    }
+    std::reverse(bids.begin(), bids.end());
+
+    s->chain = KDL::Chain();
+    s->joint_names.clear();
+    s->joint_limits.clear();
+
+    auto quat_to_rot = [](const double* q) -> KDL::Rotation {
+        double w=q[0], x=q[1], y=q[2], z=q[3];
+        return KDL::Rotation(
+            1-2*(y*y+z*z), 2*(x*y-w*z),   2*(x*z+w*y),
+            2*(x*y+w*z),   1-2*(x*x+z*z), 2*(y*z-w*x),
+            2*(x*z-w*y),   2*(y*z+w*x),   1-2*(x*x+y*y));
+    };
+
+    for (int bid : bids) {
+        const char* bname = mj_id2name(model, mjOBJ_BODY, bid);
+        KDL::Rotation bR = quat_to_rot(&model->body_quat[4*bid]);
+        KDL::Vector   bv(model->body_pos[3*bid], model->body_pos[3*bid+1], model->body_pos[3*bid+2]);
+        KDL::Frame    F(bR, bv);
+
+        KDL::Joint jnt(KDL::Joint::None);
+        for (int jid = model->body_jntadr[bid];
+             jid < model->body_jntadr[bid] + model->body_jntnum[bid]; ++jid)
+        {
+            if (model->jnt_type[jid] != mjJNT_HINGE && model->jnt_type[jid] != mjJNT_SLIDE)
+                continue;
+            const char* jname = mj_id2name(model, mjOBJ_JOINT, jid);
+            KDL::Vector jp(model->jnt_pos[3*jid], model->jnt_pos[3*jid+1], model->jnt_pos[3*jid+2]);
+            KDL::Vector ja(model->jnt_axis[3*jid], model->jnt_axis[3*jid+1], model->jnt_axis[3*jid+2]);
+            KDL::Vector origin = bv + bR * jp;
+            KDL::Vector axis   = bR * ja;
+            KDL::Joint::JointType jtype = (model->jnt_type[jid] == mjJNT_HINGE)
+                ? KDL::Joint::RotAxis : KDL::Joint::TransAxis;
+            jnt = KDL::Joint(jname ? jname : "", origin, axis, jtype);
+            if (jname) {
+                s->joint_names.push_back(jname);
+                double lo = -M_PI, hi = M_PI;
+                if (model->jnt_limited[jid]) {
+                    lo = model->jnt_range[2*jid]; hi = model->jnt_range[2*jid+1];
+                }
+                s->joint_limits.emplace_back(lo, hi);
+            }
+            break;
+        }
+
+        double mass = model->body_mass[bid];
+        const double* ip = &model->body_ipos[3*bid];
+        KDL::Rotation iR = quat_to_rot(&model->body_iquat[4*bid]);
+        const double* id = &model->body_inertia[3*bid];
+        double I[3][3] = {};
+        for (int a=0;a<3;a++) for (int b2=0;b2<3;b2++) for (int c=0;c<3;c++)
+            I[a][b2] += iR(a,c)*id[c]*iR(b2,c);
+        KDL::RigidBodyInertia inertia(mass, KDL::Vector(ip[0],ip[1],ip[2]),
+            KDL::RotationalInertia(I[0][0],I[1][1],I[2][2],I[0][1],I[0][2],I[1][2]));
+
+        s->chain.addSegment(KDL::Segment(bname ? bname : "", jnt, F, inertia));
+    }
+    s->n_joints = (int)s->chain.getNrOfJoints();
+    return true;
+}
+
 // GLFW
 
 static void cb_keyboard(GLFWwindow*, int, int, int, int);
@@ -592,6 +678,211 @@ bool build_scene(mjModel** out_model, mjData** out_data, const SceneSpec* sc)
     return true;
 }
 
+bool load_mjcf(mjModel** out_model, mjData** out_data, const char* path)
+{
+    char err[2048] = {};
+    *out_model = mj_loadXML(path, nullptr, err, sizeof(err));
+    if (!*out_model) { std::cerr << "[mj_kdl] load_mjcf: " << err << "\n"; return false; }
+    *out_data = mj_makeData(*out_model);
+    if (!*out_data) { mj_deleteModel(*out_model); *out_model=nullptr; return false; }
+    return true;
+}
+
+bool attach_gripper(const char* arm_mjcf, const GripperSpec* g, const char* out_path)
+{
+    using namespace tinyxml2;
+
+    XMLDocument arm_doc, grp_doc;
+    if (arm_doc.LoadFile(arm_mjcf) != XML_SUCCESS) {
+        std::cerr << "[mj_kdl] cannot load arm: " << arm_mjcf << "\n"; return false;
+    }
+    if (grp_doc.LoadFile(g->mjcf_path) != XML_SUCCESS) {
+        std::cerr << "[mj_kdl] cannot load gripper: " << g->mjcf_path << "\n"; return false;
+    }
+
+    XMLElement* arm_mj = arm_doc.FirstChildElement("mujoco");
+    XMLElement* grp_mj = grp_doc.FirstChildElement("mujoco");
+    if (!arm_mj || !grp_mj) return false;
+
+    // Resolve arm's meshdir to absolute so the combined file can live anywhere
+    fs::path arm_dir = fs::absolute(fs::path(arm_mjcf).parent_path());
+    if (XMLElement* ac = arm_mj->FirstChildElement("compiler")) {
+        const char* mdir = ac->Attribute("meshdir");
+        if (mdir && !fs::path(mdir).is_absolute())
+            ac->SetAttribute("meshdir", (arm_dir / mdir).string().c_str());
+    }
+
+    // Resolve gripper asset paths to absolute (for meshdir)
+    fs::path grp_dir = fs::absolute(fs::path(g->mjcf_path).parent_path());
+
+    // Fix gripper mesh file paths to absolute, and add explicit names (stem of filename)
+    // so that xml_prefix_names can rename them consistently.
+    auto fix_meshdir = [&](XMLElement* root, const std::string& meshdir) {
+        if (XMLElement* asset = root->FirstChildElement("asset")) {
+            for (auto* m = asset->FirstChildElement("mesh"); m; m = m->NextSiblingElement("mesh")) {
+                const char* f = m->Attribute("file");
+                if (f) {
+                    if (!fs::path(f).is_absolute())
+                        m->SetAttribute("file", (fs::path(meshdir) / f).string().c_str());
+                    if (!m->Attribute("name"))
+                        m->SetAttribute("name", fs::path(f).stem().string().c_str());
+                }
+            }
+        }
+    };
+    std::string grp_meshdir = grp_dir.string() + "/assets";
+    if (XMLElement* gc = grp_mj->FirstChildElement("compiler")) {
+        const char* mdir = gc->Attribute("meshdir");
+        if (mdir) grp_meshdir = (grp_dir / mdir).string();
+    }
+    fix_meshdir(grp_mj, grp_meshdir);
+
+    std::string pfx(g->prefix ? g->prefix : "");
+
+    // Merge assets
+    XMLElement* arm_asset = arm_mj->FirstChildElement("asset");
+    if (!arm_asset) { arm_asset = arm_doc.NewElement("asset"); arm_mj->InsertEndChild(arm_asset); }
+    if (XMLElement* grp_asset = grp_mj->FirstChildElement("asset")) {
+        for (auto* c = grp_asset->FirstChildElement(); c; c = c->NextSiblingElement()) {
+            XMLElement* cl = xml_deep_clone(c, &arm_doc);
+            xml_prefix_names(cl, pfx);
+            arm_asset->InsertEndChild(cl);
+        }
+    }
+
+    // Merge defaults
+    if (XMLElement* gd = grp_mj->FirstChildElement("default")) {
+        XMLElement* ad = arm_mj->FirstChildElement("default");
+        if (!ad) { ad = arm_doc.NewElement("default"); arm_mj->InsertEndChild(ad); }
+        for (auto* c = gd->FirstChildElement(); c; c = c->NextSiblingElement()) {
+            XMLElement* cl = xml_deep_clone(c, &arm_doc);
+            xml_prefix_names(cl, pfx);
+            ad->InsertEndChild(cl);
+        }
+    }
+
+    // Find attach body in arm worldbody and insert gripper worldbody children
+    auto find_body = [](XMLElement* root, const char* name) -> XMLElement* {
+        if (!root || !name) return nullptr;
+        if (root->Attribute("name") && std::string(root->Attribute("name")) == name)
+            return root;
+        for (auto* c = root->FirstChildElement("body"); c; c = c->NextSiblingElement("body")) {
+            XMLElement* found = nullptr;
+            std::function<XMLElement*(XMLElement*)> search = [&](XMLElement* e) -> XMLElement* {
+                if (e->Attribute("name") && std::string(e->Attribute("name")) == name) return e;
+                for (auto* ch = e->FirstChildElement("body"); ch; ch = ch->NextSiblingElement("body")) {
+                    if (auto* r = search(ch)) return r;
+                }
+                return nullptr;
+            };
+            if ((found = search(c))) return found;
+        }
+        return nullptr;
+    };
+
+    XMLElement* arm_wb = arm_mj->FirstChildElement("worldbody");
+    if (!arm_wb) return false;
+    XMLElement* attach_el = find_body(arm_wb, g->attach_to);
+    if (!attach_el) {
+        std::cerr << "[mj_kdl] attach body not found: " << g->attach_to << "\n"; return false;
+    }
+
+    XMLElement* grp_wb = grp_mj->FirstChildElement("worldbody");
+    if (grp_wb) {
+        for (auto* c = grp_wb->FirstChildElement(); c; c = c->NextSiblingElement()) {
+            XMLElement* cl = xml_deep_clone(c, &arm_doc);
+            xml_prefix_names(cl, pfx);
+            // Apply offset
+            char pos_str[64];
+            std::snprintf(pos_str, sizeof(pos_str), "%.6f %.6f %.6f",
+                          g->pos[0], g->pos[1], g->pos[2]);
+            if (g->pos[0]||g->pos[1]||g->pos[2]) cl->SetAttribute("pos", pos_str);
+            bool non_identity = g->quat[0]!=1||g->quat[1]||g->quat[2]||g->quat[3];
+            if (non_identity) {
+                char q_str[64];
+                std::snprintf(q_str, sizeof(q_str), "%.6f %.6f %.6f %.6f",
+                              g->quat[0], g->quat[1], g->quat[2], g->quat[3]);
+                cl->SetAttribute("quat", q_str);
+            }
+            attach_el->InsertEndChild(cl);
+        }
+    }
+
+    // Merge contacts
+    auto merge_section = [&](const char* tag) {
+        XMLElement* gs = grp_mj->FirstChildElement(tag);
+        if (!gs) return;
+        XMLElement* as = arm_mj->FirstChildElement(tag);
+        if (!as) { as = arm_doc.NewElement(tag); arm_mj->InsertEndChild(as); }
+        for (auto* c = gs->FirstChildElement(); c; c = c->NextSiblingElement()) {
+            XMLElement* cl = xml_deep_clone(c, &arm_doc);
+            xml_prefix_names(cl, pfx);
+            as->InsertEndChild(cl);
+        }
+    };
+    merge_section("contact");
+    merge_section("tendon");
+
+    // Merge equality with anchor transformation for connect constraints.
+    // In the standalone gripper model, <connect anchor="..."> is in world frame
+    // (= gripper base frame, since base is at world origin). When attached to the
+    // arm, gripper base is at the attach_to body's world position, so we must
+    // offset the anchor by that position.
+    {
+        char err_buf[2048] = {};
+        mjModel* arm_model = mj_loadXML(arm_mjcf, nullptr, err_buf, sizeof(err_buf));
+        double attach_pos[3] = {0, 0, 0};
+        double attach_mat[9] = {1,0,0, 0,1,0, 0,0,1}; // row-major world rotation
+        if (arm_model) {
+            mjData* arm_data = mj_makeData(arm_model);
+            mj_forward(arm_model, arm_data);
+            int abid = mj_name2id(arm_model, mjOBJ_BODY, g->attach_to);
+            if (abid >= 0) {
+                for (int k = 0; k < 3; ++k) attach_pos[k] = arm_data->xpos[3*abid+k];
+                for (int k = 0; k < 9; ++k) attach_mat[k] = arm_data->xmat[9*abid+k];
+            }
+            mj_deleteData(arm_data);
+            mj_deleteModel(arm_model);
+        }
+
+        // Incorporate GripperSpec::pos offset (already in attach_to frame)
+        // anchor_world = attach_pos + R_attach @ (gripper_local_anchor + g->pos)
+        double gpos[3] = {g->pos[0], g->pos[1], g->pos[2]};
+
+        XMLElement* geq = grp_mj->FirstChildElement("equality");
+        if (geq) {
+            XMLElement* aeq = arm_mj->FirstChildElement("equality");
+            if (!aeq) { aeq = arm_doc.NewElement("equality"); arm_mj->InsertEndChild(aeq); }
+            for (auto* c = geq->FirstChildElement(); c; c = c->NextSiblingElement()) {
+                XMLElement* cl = xml_deep_clone(c, &arm_doc);
+                xml_prefix_names(cl, pfx);
+                // Transform connect anchor positions
+                if (std::strcmp(cl->Name(), "connect") == 0) {
+                    const char* anc = cl->Attribute("anchor");
+                    if (anc) {
+                        double a[3] = {0, 0, 0};
+                        std::sscanf(anc, "%lf %lf %lf", &a[0], &a[1], &a[2]);
+                        // local = a (in gripper base frame) + gpos offset
+                        double loc[3] = {a[0]+gpos[0], a[1]+gpos[1], a[2]+gpos[2]};
+                        // world = attach_pos + R_attach @ loc (attach_mat is row-major)
+                        double wx = attach_pos[0] + attach_mat[0]*loc[0]+attach_mat[1]*loc[1]+attach_mat[2]*loc[2];
+                        double wy = attach_pos[1] + attach_mat[3]*loc[0]+attach_mat[4]*loc[1]+attach_mat[5]*loc[2];
+                        double wz = attach_pos[2] + attach_mat[6]*loc[0]+attach_mat[7]*loc[1]+attach_mat[8]*loc[2];
+                        char new_anc[128];
+                        std::snprintf(new_anc, sizeof(new_anc), "%.10f %.10f %.10f", wx, wy, wz);
+                        cl->SetAttribute("anchor", new_anc);
+                    }
+                }
+                aeq->InsertEndChild(cl);
+            }
+        }
+    }
+
+    merge_section("actuator");
+
+    return arm_doc.SaveFile(out_path) == XML_SUCCESS;
+}
+
 void destroy_scene(mjModel* model, mjData* data)
 {
     if (data)  mj_deleteData(data);
@@ -638,6 +929,15 @@ bool init_robot(State* s, mjModel* model, mjData* data,
     std::string pfx = prefix ? prefix : "";
     sync_chain_inertias(s, pfx);
     build_index_map(s, pfx);
+    return true;
+}
+
+bool init_from_mjcf(State* s, mjModel* model, mjData* data,
+                    const char* base_body, const char* tip_body, const char* prefix)
+{
+    s->model = model; s->data = data; s->_owns_model = false;
+    if (!build_kdl_from_model(s, model, base_body, tip_body)) return false;
+    build_index_map(s, prefix ? prefix : "");
     return true;
 }
 
