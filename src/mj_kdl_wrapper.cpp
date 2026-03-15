@@ -674,7 +674,7 @@ bool build_scene(mjModel** out_model, mjData** out_data, const SceneSpec* sc)
 
         *out_model = mj_compile(spec, nullptr);
         if (!*out_model) {
-            std::cerr << "[mj_kdl] compile failed: " << mjs_getError(spec) << "\n";
+            std::cerr << "[mj_kdl] compile: " << mjs_getError(spec) << "\n";
             mj_deleteSpec(spec); return false;
         }
         mj_deleteSpec(spec);
