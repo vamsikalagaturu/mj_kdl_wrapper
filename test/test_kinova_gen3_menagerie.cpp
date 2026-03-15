@@ -38,6 +38,10 @@ int main(int argc, char* argv[])
         if (std::string(argv[i]) == "--gui") gui = true;
 
     const fs::path root = repo_root();
+    if (!fs::exists(root / "third_party/menagerie")) {
+        std::cerr << "SKIP: third_party/menagerie/ not found (gitignored). Run locally with the submodule.\n";
+        return 0;
+    }
     // scene.xml includes gen3.xml and already has floor, lights, and skybox —
     // no patching or temp file needed.
     const std::string mjcf = (root / "third_party/menagerie/kinova_gen3/scene.xml").string();

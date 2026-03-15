@@ -34,10 +34,7 @@ jobs:
       - name: Build
         run: cmake --build build --parallel $(nproc)
 
-      # Tests below use only assets/gen3_urdf/ (checked-in URDF).
-      # Tests that depend on third_party/menagerie/ are excluded from CI
-      # because that directory is gitignored (large binary assets).
-
+      # URDF-based tests — use assets/gen3_urdf/ which is checked in.
       - name: Test init
         run: ./build/test_init
 
@@ -52,3 +49,16 @@ jobs:
 
       - name: Test table scene
         run: ./build/test_table_scene
+
+      # Menagerie-based tests — self-skip when third_party/menagerie/ is absent (gitignored).
+      - name: Test kinova gen3 menagerie
+        run: ./build/test_kinova_gen3_menagerie
+
+      - name: Test kinova gen3 gripper
+        run: ./build/test_kinova_gen3_gripper
+
+      - name: Test kinova gen3 impedance
+        run: ./build/test_kinova_gen3_impedance
+
+      - name: Test kinova gen3 pick
+        run: ./build/test_kinova_gen3_pick

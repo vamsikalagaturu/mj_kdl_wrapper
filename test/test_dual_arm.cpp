@@ -19,6 +19,7 @@
 #include <iomanip>
 #include <cmath>
 #include <string>
+#include <filesystem>
 
 static constexpr double kHomePose[7] = {0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708};
 
@@ -32,9 +33,12 @@ static void apply_grav_comp(mj_kdl::State* s, KDL::ChainDynParam& dyn)
     mj_kdl::set_torques(s, g);
 }
 
+namespace fs = std::filesystem;
+static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
+
 int main(int argc, char* argv[])
 {
-    std::string urdf = "../assets/gen3_urdf/GEN3_URDF_V12.urdf";
+    std::string urdf = (repo_root() / "assets/gen3_urdf/GEN3_URDF_V12.urdf").string();
     bool gui = false;
     for (int i = 1; i < argc; ++i) {
         std::string a(argv[i]);

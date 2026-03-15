@@ -45,7 +45,7 @@ def main():
 
     # Home pose
     home_rad = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
-    joint_ids = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"joint_{i+1}")
+    joint_ids = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"Actuator{i+1}")
                  for i in range(7)]
     for jid, rad in zip(joint_ids, home_rad):
         if jid >= 0:
