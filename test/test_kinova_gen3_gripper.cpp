@@ -228,30 +228,15 @@ int main(int argc, char* argv[])
         }
         mj_forward(model, data);
 
-        // Prime position actuators to hold arm at home pose.
-        // ctrl[0..n-1] are arm position actuators; ctrl[fingers_act] is gripper.
-        for (unsigned i = 0; i < n; ++i) {
-            int jid = model->dof_jntid[s.kdl_to_mj_dof[i]];
-            data->ctrl[i] = data->qpos[model->jnt_qposadr[jid]];
-        }
+        // Set arm ctrl to home pose — position actuators actively hold it there.
+        for (unsigned i = 0; i < n; ++i)
+            data->ctrl[i] = kHomePose[i];
 
         std::cout << "GUI: close window to exit\n";
         mj_kdl::run_simulate_ui(model, data, combined.c_str(),
-            [&](mjModel* m, mjData* d) {
-                // Position actuators track current arm qpos (zero P-error, only D damping).
-                // This holds the arm against gravity via the actuator damping.
-                for (unsigned i = 0; i < n; ++i) {
-                    int jid = m->dof_jntid[s.kdl_to_mj_dof[i]];
-                    d->ctrl[i] = d->qpos[m->jnt_qposadr[jid]];
-                }
-
-                // KDL gravity compensation applied via qfrc_applied
-                KDL::JntArray q(n), g(n);
-                for (unsigned i = 0; i < n; ++i)
-                    q(i) = d->qpos[m->jnt_qposadr[m->dof_jntid[s.kdl_to_mj_dof[i]]]];
-                dyn.JntToGravity(q, g);
-                for (unsigned i = 0; i < n; ++i)
-                    d->qfrc_applied[s.kdl_to_mj_dof[i]] = g(i);
+            [&](mjModel* /*m*/, mjData* d) {
+                // Arm: position actuators hold home pose (constant target, P-term fights gravity).
+                // No need to update ctrl each step — it stays at kHomePose.
 
                 // Gripper: open/close every 3 s (ctrl range 0..255, 255=closed)
                 d->ctrl[fingers_act] = (std::fmod(d->time, 6.0) < 3.0) ? 255.0 : 0.0;
