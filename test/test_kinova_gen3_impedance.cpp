@@ -81,7 +81,7 @@ int main(int argc, char* argv[])
         if (std::string(argv[i]) == "--gui") gui = true;
 
     const fs::path root       = repo_root();
-    const std::string arm_mjcf = (root / "assets/kinova_gen3/gen3.xml").string();
+    const std::string arm_mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
     const std::string grp_mjcf = (root / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
     const std::string combined = "/tmp/gen3_with_2f85_impedance.xml";
 

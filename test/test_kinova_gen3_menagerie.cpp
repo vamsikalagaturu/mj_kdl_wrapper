@@ -1,5 +1,5 @@
 // test_kinova_gen3_menagerie.cpp
-// Load Kinova Gen3 from assets/kinova_gen3/gen3.xml (MuJoCo Menagerie MJCF)
+// Load Kinova Gen3 from third_party/menagerie/kinova_gen3/gen3.xml (MuJoCo Menagerie MJCF)
 // and validate the KDL chain built directly from the compiled model.
 //
 // Tests:
@@ -38,8 +38,10 @@ int main(int argc, char* argv[])
         if (std::string(argv[i]) == "--gui") gui = true;
 
     const fs::path root = repo_root();
-    const std::string mjcf_orig    = (root / "assets/kinova_gen3/gen3.xml").string();
-    const std::string mjcf_patched = (root / "assets/kinova_gen3/gen3_scene.xml").string();
+    const std::string mjcf_orig    = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+    // Keep patched copy next to the source so relative asset paths (assets/*.stl) resolve.
+    // third_party/menagerie/ is gitignored so this file is never tracked.
+    const std::string mjcf_patched = (root / "third_party/menagerie/kinova_gen3/_patched.xml").string();
 
     // Copy then patch — keeps the original unmodified.
     fs::copy_file(mjcf_orig, mjcf_patched, fs::copy_options::overwrite_existing);
