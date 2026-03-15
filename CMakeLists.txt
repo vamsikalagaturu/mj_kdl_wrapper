@@ -94,14 +94,49 @@ target_link_libraries(mj_kdl_wrapper PUBLIC
 target_compile_options(mj_kdl_wrapper PRIVATE -Wall -Wextra -Wpedantic)
 
 # ---------------------------------------------------------------------------
+# MuJoCo simulate UI  (simulate.cc + GLFW adapter from the MuJoCo source tree)
+# ---------------------------------------------------------------------------
+set(MJ_SIM_DIR "${MUJOCO_ROOT}/simulate")
+add_library(mujoco_simulate_ui STATIC
+  ${MJ_SIM_DIR}/simulate.cc
+  ${MJ_SIM_DIR}/glfw_adapter.cc
+  ${MJ_SIM_DIR}/glfw_dispatch.cc
+  ${MJ_SIM_DIR}/platform_ui_adapter.cc
+)
+target_include_directories(mujoco_simulate_ui PUBLIC
+  ${MJ_SIM_DIR}
+  ${MUJOCO_INCLUDE_DIR}
+)
+target_link_libraries(mujoco_simulate_ui PUBLIC
+  ${MUJOCO_LIBRARY}
+  glfw
+  OpenGL::GL
+)
+target_include_directories(mujoco_simulate_ui PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lodepng   # stub for screenshot saving
+)
+target_compile_options(mujoco_simulate_ui PRIVATE -w)
+set_target_properties(mujoco_simulate_ui PROPERTIES
+  CXX_STANDARD 17 POSITION_INDEPENDENT_CODE ON)
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 foreach(test_name test_init test_velocity test_gravity_comp test_dual_arm test_table_scene
-                  test_kinova_gen3_menagerie test_kinova_gen3_gripper)
+                  test_kinova_gen3_menagerie)
   add_executable(${test_name} test/${test_name}.cpp)
   target_link_libraries(${test_name} PRIVATE mj_kdl_wrapper)
   target_compile_options(${test_name} PRIVATE -Wall -Wextra)
 endforeach()
+
+# gripper test uses the full MuJoCo simulate UI for --gui
+add_executable(test_kinova_gen3_gripper test/test_kinova_gen3_gripper.cpp)
+target_link_libraries(test_kinova_gen3_gripper PRIVATE
+  mj_kdl_wrapper
+  mujoco_simulate_ui
+  tinyxml2::tinyxml2
+)
+target_compile_options(test_kinova_gen3_gripper PRIVATE -Wall -Wextra)
 
 add_executable(export_table_scene tools/export_table_scene.cpp)
 target_link_libraries(export_table_scene PRIVATE mj_kdl_wrapper)

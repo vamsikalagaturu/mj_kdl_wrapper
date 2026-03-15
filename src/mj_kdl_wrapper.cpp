@@ -1178,8 +1178,9 @@ static void cb_mouse_move(GLFWwindow* w, double x, double y)
     bool shift = (glfwGetKey(w, GLFW_KEY_LEFT_SHIFT)  == GLFW_PRESS ||
                   glfwGetKey(w, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
     if (g_state->pert.select > 0 && g_state->pert.active) {
-        mjtMouse act = ms->btn_left  ? (shift ? mjMOUSE_ROTATE_H : mjMOUSE_ROTATE_V)
-                     : ms->btn_right ? (shift ? mjMOUSE_MOVE_H   : mjMOUSE_MOVE_V)
+        // Left drag = MOVE (translate body), Right drag = ROTATE (torque body)
+        mjtMouse act = ms->btn_left  ? (shift ? mjMOUSE_MOVE_H   : mjMOUSE_MOVE_V)
+                     : ms->btn_right ? (shift ? mjMOUSE_ROTATE_H : mjMOUSE_ROTATE_V)
                      : mjMOUSE_ZOOM;
         mjv_movePerturb(g_state->model, g_state->data, act, dx/wh, dy/wh, &g_state->scn, &g_state->pert);
     } else {

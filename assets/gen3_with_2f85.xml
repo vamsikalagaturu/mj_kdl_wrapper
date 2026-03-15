@@ -46,6 +46,7 @@
         </default>
     </default>
     <asset>
+        <texture type="skybox" builtin="gradient" rgb1="0.3 0.45 0.65" rgb2="0.65 0.8 0.95" width="200" height="200"/>
         <mesh name="base_link" file="base_link.stl"/>
         <mesh name="shoulder_link" file="shoulder_link.stl"/>
         <mesh name="half_arm_1_link" file="half_arm_1_link.stl"/>
@@ -65,8 +66,12 @@
         <mesh file="/home/user/mj-kdl-wrapper/assets/robotiq_2f85_v4/assets/spring_link.stl" name="g_spring_link"/>
         <mesh file="/home/user/mj-kdl-wrapper/assets/robotiq_2f85_v4/assets/follower.stl" name="g_follower"/>
         <mesh file="/home/user/mj-kdl-wrapper/assets/robotiq_2f85_v4/assets/tongue.stl" name="g_tongue"/>
+        <texture type="2d" name="groundplane" builtin="checker" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" width="300" height="300"/>
+        <material name="groundplane" texture="groundplane" texrepeat="5 5" reflectance="0.2"/>
     </asset>
     <worldbody>
+        <light pos="0 0 4" directional="true"/>
+        <geom name="floor" type="plane" material="groundplane" size="5 5 0.05" condim="3"/>
         <body name="base_link">
             <inertial pos="-0.000648 -0.000166 0.084487" quat="0.999294 0.00139618 -0.0118387 0.035636" mass="1.697" diaginertia="0.00462407 0.00449437 0.00207755"/>
             <geom class="visual" mesh="base_link"/>
