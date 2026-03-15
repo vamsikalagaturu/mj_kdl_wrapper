@@ -29,20 +29,17 @@
 #include <kdl/chaindynparam.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
 
-#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <thread>
 
 namespace fs = std::filesystem;
 namespace mj = ::mujoco;
-using Seconds = std::chrono::duration<double>;
 
 static fs::path repo_root()
 {
@@ -50,7 +47,8 @@ static fs::path repo_root()
 }
 
 // ---------------------------------------------------------------------------
-// Patch the combined XML to add floor, sky texture and a directional light.
+// Patch the combined XML to add floor, sky texture, a directional light,
+// and contact exclusions between the arm's bracelet_link and gripper bodies.
 // Called once after attach_gripper() generates the file.
 // ---------------------------------------------------------------------------
 static bool patch_scene(const std::string& path)
@@ -60,7 +58,7 @@ static bool patch_scene(const std::string& path)
     auto* root = doc.FirstChildElement("mujoco");
     if (!root) return false;
 
-    // -- asset: skybox gradient -----------------------------------------------
+    // -- asset: skybox gradient + checker floor texture -----------------------
     auto* asset = root->FirstChildElement("asset");
     if (!asset) {
         asset = doc.NewElement("asset");
@@ -112,126 +110,29 @@ static bool patch_scene(const std::string& path)
         wb->InsertAfterChild(light, floor);
     }
 
-    return doc.SaveFile(path.c_str()) == tinyxml2::XML_SUCCESS;
-}
-
-// ---------------------------------------------------------------------------
-// Physics thread: gravity-comp + 2 Nm on joint_7 + gripper open/close.
-// Mirrors the pattern from MuJoCo's simulate/main.cc PhysicsLoop.
-// ---------------------------------------------------------------------------
-struct PhysicsCtx {
-    mj::Simulate*        sim;
-    mjModel*             m;
-    mjData*              d;
-    KDL::ChainDynParam*  dyn;
-    unsigned             n_joints;         // 7 arm joints
-    std::vector<int>     kdl_to_mj_dof;    // KDL joint i → mj DOF address
-    std::vector<int>     arm_qpos_addr;    // arm joint i → mj qpos address
-    int                  fingers_act_id;
-};
-
-static void PhysicsLoop(PhysicsCtx& ctx)
-{
-    constexpr double syncMisalign       = 0.1;
-    constexpr double simRefreshFraction = 0.7;
-
-    auto& sim = *ctx.sim;
-    mjModel* m = ctx.m;
-    mjData*  d = ctx.d;
-
-    std::chrono::time_point<mj::Simulate::Clock> syncCPU;
-    mjtNum syncSim = 0;
-
-    while (!sim.exitrequest.load()) {
-        if (sim.run && sim.busywait)
-            std::this_thread::yield();
-        else
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-
-        std::unique_lock<std::recursive_mutex> lock(sim.mtx);
-
-        if (!m) continue;
-
-        if (sim.run) {
-            const auto startCPU  = mj::Simulate::Clock::now();
-            const auto elapsedCPU = startCPU - syncCPU;
-            double elapsedSim     = d->time - syncSim;
-            double slowdown       = 100.0 / sim.percentRealTime[sim.real_time_index];
-            bool misaligned =
-                std::abs(Seconds(elapsedCPU).count() / slowdown - elapsedSim) > syncMisalign;
-
-            if (elapsedSim < 0 || elapsedCPU.count() < 0 ||
-                syncCPU.time_since_epoch().count() == 0 ||
-                misaligned || sim.speed_changed)
-            {
-                syncCPU = startCPU;
-                syncSim = d->time;
-                sim.speed_changed = false;
-
-                // --- custom control ------------------------------------------
-                // 1. Null arm position actuators so qfrc_applied drives joints
-                for (int i = 0; i < (int)ctx.n_joints; ++i)
-                    d->ctrl[i] = d->qpos[ctx.arm_qpos_addr[i]];
-
-                // 2. Gravity compensation for arm joints (KDL)
-                KDL::JntArray q(ctx.n_joints), g(ctx.n_joints);
-                for (unsigned i = 0; i < ctx.n_joints; ++i)
-                    q(i) = d->qpos[ctx.arm_qpos_addr[i]];
-                ctx.dyn->JntToGravity(q, g);
-
-                // 3. Additional constant 2 Nm on joint_7 (KDL index 6)
-                g(6) += 2.0;
-
-                // 4. Apply via qfrc_applied
-                for (unsigned i = 0; i < ctx.n_joints; ++i)
-                    d->qfrc_applied[ctx.kdl_to_mj_dof[i]] = g(i);
-
-                // 5. Gripper open/close: 3 s closed (200), 3 s open (0)
-                d->ctrl[ctx.fingers_act_id] =
-                    (std::fmod(d->time, 6.0) < 3.0) ? 200.0 : 0.0;
-
-                // 6. Apply perturbation force if a body is selected + dragged
-                if (sim.pert.active)
-                    mjv_applyPerturbForce(m, d, &sim.pert);
-
-                mj_step(m, d);
-                sim.AddToHistory();
-            } else {
-                // in-sync: step until ahead of cpu
-                double refreshTime = simRefreshFraction / sim.refresh_rate;
-                mjtNum prevSim = d->time;
-                while (Seconds((d->time - syncSim) * slowdown) <
-                           mj::Simulate::Clock::now() - syncCPU &&
-                       mj::Simulate::Clock::now() - startCPU < Seconds(refreshTime))
-                {
-                    // --- custom control (same as above) ----------------------
-                    for (int i = 0; i < (int)ctx.n_joints; ++i)
-                        d->ctrl[i] = d->qpos[ctx.arm_qpos_addr[i]];
-
-                    KDL::JntArray q2(ctx.n_joints), g2(ctx.n_joints);
-                    for (unsigned i = 0; i < ctx.n_joints; ++i)
-                        q2(i) = d->qpos[ctx.arm_qpos_addr[i]];
-                    ctx.dyn->JntToGravity(q2, g2);
-                    g2(6) += 2.0;
-                    for (unsigned i = 0; i < ctx.n_joints; ++i)
-                        d->qfrc_applied[ctx.kdl_to_mj_dof[i]] = g2(i);
-                    d->ctrl[ctx.fingers_act_id] =
-                        (std::fmod(d->time, 6.0) < 3.0) ? 200.0 : 0.0;
-                    if (sim.pert.active)
-                        mjv_applyPerturbForce(m, d, &sim.pert);
-                    // ---------------------------------------------------------
-
-                    mj_step(m, d);
-                    sim.AddToHistory();
-                    if (d->time < prevSim) break;
-                }
-            }
-        } else {
-            // paused
-            mj_forward(m, d);
-            sim.speed_changed = true;
+    // -- contact: exclude bracelet_link from colliding with gripper bodies ---
+    auto* contact = root->FirstChildElement("contact");
+    if (!contact) {
+        contact = doc.NewElement("contact");
+        root->InsertEndChild(contact);
+    }
+    {
+        const char* gripper_bodies[] = {
+            "g_base", "g_left_driver", "g_right_driver",
+            "g_left_spring_link", "g_right_spring_link",
+            "g_left_follower", "g_right_follower",
+            "g_left_coupler", "g_right_coupler",
+            "g_left_pad", "g_right_pad"
+        };
+        for (const char* gb : gripper_bodies) {
+            auto* exc = doc.NewElement("exclude");
+            exc->SetAttribute("body1", "bracelet_link");
+            exc->SetAttribute("body2", gb);
+            contact->InsertEndChild(exc);
         }
     }
+
+    return doc.SaveFile(path.c_str()) == tinyxml2::XML_SUCCESS;
 }
 
 // ---------------------------------------------------------------------------
@@ -263,7 +164,6 @@ int main(int argc, char* argv[])
         std::cerr << "FAIL: attach_gripper\n"; return 1;
     }
 
-    // Add floor, sky and light to the combined XML
     if (!patch_scene(combined)) {
         std::cerr << "FAIL: patch_scene\n"; return 1;
     }
@@ -378,22 +278,23 @@ int main(int argc, char* argv[])
     std::cout << "  OK\n\nOK\n";
 
     // -----------------------------------------------------------------------
-    // GUI: MuJoCo simulate UI with custom physics loop
+    // GUI: MuJoCo simulate UI with physics thread
     // -----------------------------------------------------------------------
     if (gui) {
-        // Reset to q=0 before opening GUI
         mj_resetData(model, data);
         mj_forward(model, data);
 
-        // Build per-joint qpos addresses for the 7 arm joints
-        std::vector<int> arm_qpos_addr(n);
+        // Per-joint addresses for the 7 arm joints
+        std::vector<int> arm_qpos(n), arm_dof(s.kdl_to_mj_dof.begin(), s.kdl_to_mj_dof.end());
         for (unsigned i = 0; i < n; ++i)
-            arm_qpos_addr[i] = model->jnt_qposadr[
-                model->dof_jntid[s.kdl_to_mj_dof[i]]];
+            arm_qpos[i] = model->jnt_qposadr[model->dof_jntid[arm_dof[i]]];
 
-        // Simulate UI
-        mjvCamera cam;   mjv_defaultCamera(&cam);
-        mjvOption opt;   mjv_defaultOption(&opt);
+        // Prime position actuators to current pose so arm doesn't snap at startup
+        for (unsigned i = 0; i < n; ++i)
+            data->ctrl[i] = data->qpos[arm_qpos[i]];
+
+        mjvCamera cam; mjv_defaultCamera(&cam);
+        mjvOption opt; mjv_defaultOption(&opt);
         mjvPerturb pert; mjv_defaultPerturb(&pert);
 
         auto sim = std::make_unique<mj::Simulate>(
@@ -401,33 +302,45 @@ int main(int argc, char* argv[])
             &cam, &opt, &pert, /*is_passive=*/false
         );
 
-        // Physics thread context
-        PhysicsCtx ctx;
-        ctx.sim           = sim.get();
-        ctx.m             = model;
-        ctx.d             = data;
-        ctx.dyn           = &dyn;
-        ctx.n_joints      = n;
-        ctx.kdl_to_mj_dof = std::vector<int>(s.kdl_to_mj_dof.begin(),
-                                              s.kdl_to_mj_dof.end());
-        ctx.arm_qpos_addr = arm_qpos_addr;
-        ctx.fingers_act_id = fingers_act;
-
-        // Load must be called from the physics thread AFTER RenderLoop() has
-        // started — Simulate::Load() blocks on cond_loadrequest.wait() until
-        // the render thread calls LoadOnRenderThread().
-        std::thread phys([&ctx, &combined]() {
-            ctx.sim->LoadMessage(combined.c_str());
-            ctx.sim->Load(ctx.m, ctx.d, combined.c_str());
+        // Load must happen from physics thread AFTER RenderLoop() starts —
+        // Simulate::Load() blocks on cond_loadrequest until the render thread
+        // calls LoadOnRenderThread().
+        std::thread phys([&]() {
+            sim->LoadMessage(combined.c_str());
+            sim->Load(model, data, combined.c_str());
             {
-                std::unique_lock<std::recursive_mutex> lock(ctx.sim->mtx);
-                mj_forward(ctx.m, ctx.d);
+                std::unique_lock<std::recursive_mutex> lock(sim->mtx);
+                mj_forward(model, data);
             }
-            PhysicsLoop(ctx);
+
+            while (!sim->exitrequest.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                std::unique_lock<std::recursive_mutex> lock(sim->mtx);
+
+                if (!sim->run) { mj_forward(model, data); continue; }
+
+                // Null arm position actuators so qfrc_applied drives the joints
+                for (unsigned i = 0; i < n; ++i)
+                    data->ctrl[i] = data->qpos[arm_qpos[i]];
+
+                // Gravity compensation for arm joints via KDL
+                KDL::JntArray q(n), g(n);
+                for (unsigned i = 0; i < n; ++i) q(i) = data->qpos[arm_qpos[i]];
+                dyn.JntToGravity(q, g);
+                g(6) += 2.0;  // constant 2 Nm on joint_7
+                for (unsigned i = 0; i < n; ++i)
+                    data->qfrc_applied[arm_dof[i]] = g(i);
+
+                // Gripper: open/close every 3 s (0 = open, 200 = close)
+                data->ctrl[fingers_act] = (std::fmod(data->time, 6.0) < 3.0) ? 200.0 : 0.0;
+
+                if (sim->pert.active) mjv_applyPerturbForce(model, data, &sim->pert);
+                mj_step(model, data);
+                sim->AddToHistory();
+            }
         });
 
-        // Blocks until window is closed (processes Load requests from phys thread)
-        sim->RenderLoop();
+        sim->RenderLoop();  // blocks until window closes
         phys.join();
     }
 

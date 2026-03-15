@@ -208,6 +208,17 @@
         <exclude body1="g_base" body2="g_right_spring_link"/>
         <exclude body1="g_right_coupler" body2="g_right_follower"/>
         <exclude body1="g_left_coupler" body2="g_left_follower"/>
+        <exclude body1="bracelet_link" body2="g_base"/>
+        <exclude body1="bracelet_link" body2="g_left_driver"/>
+        <exclude body1="bracelet_link" body2="g_right_driver"/>
+        <exclude body1="bracelet_link" body2="g_left_spring_link"/>
+        <exclude body1="bracelet_link" body2="g_right_spring_link"/>
+        <exclude body1="bracelet_link" body2="g_left_follower"/>
+        <exclude body1="bracelet_link" body2="g_right_follower"/>
+        <exclude body1="bracelet_link" body2="g_left_coupler"/>
+        <exclude body1="bracelet_link" body2="g_right_coupler"/>
+        <exclude body1="bracelet_link" body2="g_left_pad"/>
+        <exclude body1="bracelet_link" body2="g_right_pad"/>
     </contact>
     <tendon>
         <fixed name="g_split">
