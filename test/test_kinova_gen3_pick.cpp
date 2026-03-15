@@ -162,9 +162,11 @@ int main(int argc, char* argv[])
     if (!mj_kdl::patch_mjcf_visuals(combined.c_str()))                       { std::cerr << "FAIL: patch_mjcf_visuals\n"; return 1; }
     if (!patch_contact_exclusions(combined))                                  { std::cerr << "FAIL: patch_contact_exclusions\n"; return 1; }
 
-    // Cube at (0.4, 0, 0.04): 8 cm cube (half-size=0.04), clearly visible on floor.
-    constexpr double kCubeX = 0.4, kCubeY = 0.0, kCubeZ = 0.04;
-    if (!patch_add_cube(combined, "cube", kCubeX, kCubeY, kCubeZ, 0.04)) {
+    // Cube: 6 cm box (half-size=0.03), center at (0.4, 0, 0.03) — sits on the floor.
+    // 60 mm width is well within the 2F-85's 85 mm max opening.
+    constexpr double kCubeX = 0.4, kCubeY = 0.0, kCubeZ = 0.03;
+    constexpr double kCubeHS = 0.03;
+    if (!patch_add_cube(combined, "cube", kCubeX, kCubeY, kCubeZ, kCubeHS)) {
         std::cerr << "FAIL: patch_add_cube\n"; return 1;
     }
 
@@ -176,6 +178,11 @@ int main(int argc, char* argv[])
     int cube_bid = mj_name2id(model, mjOBJ_BODY, "cube");
     if (cube_bid < 0) {
         std::cerr << "FAIL: cube body not found\n";
+        mj_kdl::destroy_scene(model, data); return 1;
+    }
+    int cube_jnt = mj_name2id(model, mjOBJ_JOINT, "cube_joint");
+    if (cube_jnt < 0) {
+        std::cerr << "FAIL: cube_joint not found\n";
         mj_kdl::destroy_scene(model, data); return 1;
     }
     std::cout << "Model: nq=" << model->nq << " nbody=" << model->nbody
@@ -230,11 +237,16 @@ int main(int argc, char* argv[])
 
     const KDL::Rotation kDownRot = KDL::Rotation::Identity();
 
+    // Bracelet_link target Z = kCubeZ + gripper_mount(0.062) + finger_reach(0.13) ≈ kCubeZ + 0.19
+    const double kGraspZ    = kCubeZ + 0.19;   // fingers at cube center
+    const double kPreGraspZ = kGraspZ + 0.20;  // 20 cm above grasp
+    const double kLiftZ     = kGraspZ + 0.30;  // 30 cm above grasp
+
     struct Waypoint { const char* name; double x, y, z; };
     Waypoint waypoints[] = {
-        { "pre-grasp", kCubeX, kCubeY, 0.42 },  // bracelet_link above cube
-        { "grasp",     kCubeX, kCubeY, 0.23 },  // bracelet_link at grasp height
-        { "lift",      kCubeX, kCubeY, 0.55 },  // bracelet_link lifted
+        { "pre-grasp", kCubeX, kCubeY, kPreGraspZ },
+        { "grasp",     kCubeX, kCubeY, kGraspZ    },
+        { "lift",      kCubeX, kCubeY, kLiftZ     },
     };
 
     KDL::JntArray q_pregrasp(n), q_grasp(n), q_lift(n);
@@ -268,11 +280,26 @@ int main(int argc, char* argv[])
     // -----------------------------------------------------------------------
     // GUI: scripted pick demo
     // -----------------------------------------------------------------------
+    // Place cube at its spawn position via freejoint qpos.
+    // mj_resetDataKeyframe zeros the freejoint qpos (keyframe only has arm joints),
+    // so we must set the cube position explicitly after any reset.
+    auto reset_cube = [&](mjData* d) {
+        int qadr = model->jnt_qposadr[cube_jnt];
+        d->qpos[qadr + 0] = kCubeX;
+        d->qpos[qadr + 1] = kCubeY;
+        d->qpos[qadr + 2] = kCubeZ;
+        d->qpos[qadr + 3] = 1.0;  // quaternion w
+        d->qpos[qadr + 4] = 0.0;
+        d->qpos[qadr + 5] = 0.0;
+        d->qpos[qadr + 6] = 0.0;
+    };
+
     if (gui) {
         // Reset to home pose.
         int key_id = mj_name2id(model, mjOBJ_KEY, "home");
         if (key_id >= 0) mj_resetDataKeyframe(model, data, key_id);
         else             mj_kdl::sync_from_kdl(&s, q_home_kdl);
+        reset_cube(data);  // keyframe zeros freejoint; restore cube spawn position
         mj_forward(model, data);
 
         // Motion schedule: (start_time, duration, q_from, q_to, gripper_cmd)
