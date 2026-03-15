@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """Render gen3 arm + Robotiq 2F-85 gripper and save docs/gen3_with_gripper.png.
 
+Uses the pre-combined model from third_party/menagerie/gen3_with_2f85/.
+
 Usage:
   MUJOCO_GL=egl python3 tools/render_gripper_scene.py
 """
 
 import pathlib
-import numpy as np
 import mujoco
 from PIL import Image
 
 ROOT     = pathlib.Path(__file__).parent.parent
-XML_PATH = ROOT / "assets" / "gen3_with_2f85.xml"
+XML_PATH = ROOT / "third_party/menagerie/gen3_with_2f85/gen3_with_2f85.xml"
 OUT_PATH = ROOT / "docs" / "gen3_with_gripper.png"
-
 
 SCENE_XML = """\
 <mujoco model="gripper_scene">
@@ -35,19 +35,24 @@ SCENE_XML = """\
 
 
 def main():
-    tmp = ROOT / "docs" / "_tmp_gripper_scene.xml"
-    tmp.write_text(SCENE_XML.format(xml=str(XML_PATH)))
+    tmp = XML_PATH.parent / "_tmp_scene.xml"
+    tmp.write_text(SCENE_XML.format(xml="gen3_with_2f85.xml"))
     print(f"Loading {XML_PATH} ...")
     model = mujoco.MjModel.from_xml_path(str(tmp))
     tmp.unlink()
-    data  = mujoco.MjData(model)
+    data = mujoco.MjData(model)
 
-    joint_ids = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"joint_{i+1}")
-                 for i in range(7)]
-    # "home" pose from the menagerie keyframe
-    for jid, rad in zip(joint_ids, [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]):
-        if jid >= 0:
-            data.qpos[model.jnt_qposadr[jid]] = rad
+    # Home pose via keyframe
+    key = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
+    if key >= 0:
+        mujoco.mj_resetDataKeyframe(model, data, key)
+    else:
+        for jid, rad in zip(
+            [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"joint_{i+1}") for i in range(7)],
+            [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708],
+        ):
+            if jid >= 0:
+                data.qpos[model.jnt_qposadr[jid]] = rad
     mujoco.mj_forward(model, data)
 
     W, H = 1280, 720

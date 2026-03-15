@@ -38,18 +38,9 @@ int main(int argc, char* argv[])
         if (std::string(argv[i]) == "--gui") gui = true;
 
     const fs::path root = repo_root();
-    const std::string mjcf_orig    = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-    // Keep patched copy next to the source so relative asset paths (assets/*.stl) resolve.
-    // third_party/menagerie/ is gitignored so this file is never tracked.
-    const std::string mjcf_patched = (root / "third_party/menagerie/kinova_gen3/_patched.xml").string();
-
-    // Copy then patch — keeps the original unmodified.
-    fs::copy_file(mjcf_orig, mjcf_patched, fs::copy_options::overwrite_existing);
-    if (!mj_kdl::patch_mjcf_visuals(mjcf_patched.c_str())) {
-        std::cerr << "FAIL: patch_mjcf_visuals\n";
-        return 1;
-    }
-    const std::string mjcf = mjcf_patched;
+    // scene.xml includes gen3.xml and already has floor, lights, and skybox —
+    // no patching or temp file needed.
+    const std::string mjcf = (root / "third_party/menagerie/kinova_gen3/scene.xml").string();
 
     mjModel* model = nullptr;
     mjData*  data  = nullptr;

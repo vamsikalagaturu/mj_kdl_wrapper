@@ -23,3 +23,5 @@ third_party/menagerie/
 .idea/
 *.swp
 *~
+docs/_tmp*.xml
+third_party/menagerie/**/_tmp*.xml

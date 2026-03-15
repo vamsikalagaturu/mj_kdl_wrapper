@@ -34,17 +34,21 @@ jobs:
       - name: Build
         run: cmake --build build --parallel $(nproc)
 
+      # Tests below use only assets/gen3_urdf/ (checked-in URDF).
+      # Tests that depend on third_party/menagerie/ are excluded from CI
+      # because that directory is gitignored (large binary assets).
+
       - name: Test init
-        run: ./build/test_init assets/gen3_urdf/GEN3_URDF_V12.urdf
+        run: ./build/test_init
 
       - name: Test velocity
-        run: ./build/test_velocity assets/gen3_urdf/GEN3_URDF_V12.urdf
+        run: ./build/test_velocity
 
       - name: Test gravity compensation
-        run: ./build/test_gravity_comp assets/gen3_urdf/GEN3_URDF_V12.urdf
+        run: ./build/test_gravity_comp
 
-      - name: Test kinova gen3 menagerie
-        run: ./build/test_kinova_gen3_menagerie
+      - name: Test dual arm
+        run: ./build/test_dual_arm
 
-      - name: Test kinova gen3 gripper
-        run: ./build/test_kinova_gen3_gripper
+      - name: Test table scene
+        run: ./build/test_table_scene
