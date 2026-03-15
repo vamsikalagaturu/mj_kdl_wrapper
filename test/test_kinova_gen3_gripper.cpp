@@ -180,8 +180,10 @@ int main(int argc, char* argv[])
                 KDL::JntArray q(n), g(n);
                 mj_kdl::sync_to_kdl(&s, q);
                 dyn.JntToGravity(q, g);
+                g(6) += 2.0;  // additional constant 2 Nm on joint 7
                 mj_kdl::set_torques(&s, g);
                 t += model->opt.timestep;
+                // open/close gripper: 3 s closed (ctrl=200), 3 s open (ctrl=0)
                 data->ctrl[fingers_act] = (std::fmod(t, 6.0) < 3.0) ? 200.0 : 0.0;
                 mj_kdl::step(&s);
                 mj_kdl::render(&s);
