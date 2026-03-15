@@ -223,7 +223,9 @@ int main(int argc, char* argv[])
     }
 
     // Waypoint bracelet_link Z targets (using exact gripper reach geometry).
-    const double kGraspZ    = kCubeZ + kGripperReach;
+    // +0.02 m offset: keeps finger geometry clear of the floor when the gripper
+    // is open during approach (open fingers extend further down than closed).
+    const double kGraspZ    = kCubeZ + kGripperReach + 0.02;
     const double kPreGraspZ = kGraspZ + 0.20;
     const double kLiftZ     = kGraspZ + 0.30;
 
