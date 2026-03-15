@@ -1,5 +1,5 @@
 // test_kinova_gen3_gripper.cpp
-// Attach Robotiq 2F-85 gripper to Kinova Gen3 using attach_gripper(),
+// Attach Robotiq 2F-85 gripper (MuJoCo Menagerie) to Kinova Gen3 using attach_gripper(),
 // load the combined model, validate arm KDL and gripper simulation.
 //
 // Tests:
@@ -11,8 +11,7 @@
 //
 // GUI (--gui):
 //   Uses mj_kdl::run_simulate_ui for the real-time simulate window.
-//   Physics: gravity-compensation + constant 2 Nm on joint_7
-//            + continuous gripper open/close every 3 s.
+//   Physics: position actuators hold arm at home pose + continuous gripper open/close every 3 s.
 //
 // Usage: test_kinova_gen3_gripper [--gui]
 
@@ -55,11 +54,13 @@ static bool patch_contact_exclusions(const std::string& path)
     }
 
     const char* gripper_bodies[] = {
-        "g_base", "g_left_driver", "g_right_driver",
+        "g_base_mount", "g_base",
+        "g_left_driver", "g_right_driver",
         "g_left_spring_link", "g_right_spring_link",
         "g_left_follower", "g_right_follower",
         "g_left_coupler", "g_right_coupler",
-        "g_left_pad", "g_right_pad"
+        "g_left_pad", "g_right_pad",
+        "g_left_silicone_pad", "g_right_silicone_pad"
     };
     for (const char* gb : gripper_bodies) {
         auto* exc = doc.NewElement("exclude");
@@ -79,7 +80,7 @@ int main(int argc, char* argv[])
 
     const fs::path root        = repo_root();
     const std::string arm_mjcf  = (root / "assets/kinova_gen3/gen3.xml").string();
-    const std::string grp_mjcf  = (root / "assets/robotiq_2f85_v4/2f85.xml").string();
+    const std::string grp_mjcf  = (root / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
     const std::string combined  = (root / "assets/gen3_with_2f85.xml").string();
 
     // Test 1: combine arm + gripper
@@ -206,7 +207,7 @@ int main(int argc, char* argv[])
     std::cout << std::fixed << std::setprecision(4)
               << "Gripper right_driver_joint range: [" << jrange_lo << ", " << jrange_hi << "] rad\n";
 
-    if (std::abs(jrange_hi - 0.9) > 0.01 || jrange_lo < -0.01) {
+    if (std::abs(jrange_hi - 0.8) > 0.01 || jrange_lo < -0.01) {
         std::cerr << "FAIL: unexpected driver joint range\n";
         mj_kdl::cleanup(&s); mj_kdl::destroy_scene(model, data); return 1;
     }
@@ -216,7 +217,7 @@ int main(int argc, char* argv[])
     // GUI: simulate UI with real-time physics loop
     // -----------------------------------------------------------------------
     if (gui) {
-        // Reset to home pose, prime position actuators
+        // Reset to home pose via keyframe if available, else set manually.
         int key_id = mj_name2id(model, mjOBJ_KEY, "home");
         if (key_id >= 0) {
             mj_resetDataKeyframe(model, data, key_id);
@@ -227,31 +228,33 @@ int main(int argc, char* argv[])
         }
         mj_forward(model, data);
 
-        std::vector<int> arm_dof(s.kdl_to_mj_dof.begin(), s.kdl_to_mj_dof.end());
-        std::vector<int> arm_qpos(n);
-        for (unsigned i = 0; i < n; ++i)
-            arm_qpos[i] = model->jnt_qposadr[model->dof_jntid[arm_dof[i]]];
-
-        for (unsigned i = 0; i < n; ++i)
-            data->ctrl[i] = data->qpos[arm_qpos[i]];
+        // Prime position actuators to hold arm at home pose.
+        // ctrl[0..n-1] are arm position actuators; ctrl[fingers_act] is gripper.
+        for (unsigned i = 0; i < n; ++i) {
+            int jid = model->dof_jntid[s.kdl_to_mj_dof[i]];
+            data->ctrl[i] = data->qpos[model->jnt_qposadr[jid]];
+        }
 
         std::cout << "GUI: close window to exit\n";
         mj_kdl::run_simulate_ui(model, data, combined.c_str(),
-            [&](mjModel*, mjData* d) {
-                // Null arm position actuators
-                for (unsigned i = 0; i < n; ++i)
-                    d->ctrl[i] = d->qpos[arm_qpos[i]];
+            [&](mjModel* m, mjData* d) {
+                // Position actuators track current arm qpos (zero P-error, only D damping).
+                // This holds the arm against gravity via the actuator damping.
+                for (unsigned i = 0; i < n; ++i) {
+                    int jid = m->dof_jntid[s.kdl_to_mj_dof[i]];
+                    d->ctrl[i] = d->qpos[m->jnt_qposadr[jid]];
+                }
 
-                // KDL gravity compensation + constant 2 Nm on joint_7
+                // KDL gravity compensation applied via qfrc_applied
                 KDL::JntArray q(n), g(n);
-                for (unsigned i = 0; i < n; ++i) q(i) = d->qpos[arm_qpos[i]];
-                dyn.JntToGravity(q, g);
-                g(6) += 2.0;
                 for (unsigned i = 0; i < n; ++i)
-                    d->qfrc_applied[arm_dof[i]] = g(i);
+                    q(i) = d->qpos[m->jnt_qposadr[m->dof_jntid[s.kdl_to_mj_dof[i]]]];
+                dyn.JntToGravity(q, g);
+                for (unsigned i = 0; i < n; ++i)
+                    d->qfrc_applied[s.kdl_to_mj_dof[i]] = g(i);
 
-                // Gripper: open/close every 3 s
-                d->ctrl[fingers_act] = (std::fmod(d->time, 6.0) < 3.0) ? 200.0 : 0.0;
+                // Gripper: open/close every 3 s (ctrl range 0..255, 255=closed)
+                d->ctrl[fingers_act] = (std::fmod(d->time, 6.0) < 3.0) ? 255.0 : 0.0;
             });
     }
 

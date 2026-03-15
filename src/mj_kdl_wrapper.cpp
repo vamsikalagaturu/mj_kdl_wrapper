@@ -877,70 +877,10 @@ bool attach_gripper(const char* arm_mjcf, const GripperSpec* g, const char* out_
     };
     merge_section("contact");
     merge_section("tendon");
-
-    // Merge equality with anchor transformation for connect constraints.
-    // In the standalone gripper model, <connect anchor="..."> is in world frame
-    // (= gripper base frame, since base is at world origin). When attached to the
-    // arm, gripper base is at the attach_to body's world position, so we must
-    // offset the anchor by that position.
-    {
-        char err_buf[2048] = {};
-        mjModel* arm_model = mj_loadXML(arm_mjcf, nullptr, err_buf, sizeof(err_buf));
-        double attach_pos[3] = {0, 0, 0};
-        double attach_mat[9] = {1,0,0, 0,1,0, 0,0,1}; // row-major world rotation
-        if (arm_model) {
-            mjData* arm_data = mj_makeData(arm_model);
-            mj_forward(arm_model, arm_data);
-            int abid = mj_name2id(arm_model, mjOBJ_BODY, g->attach_to);
-            if (abid >= 0) {
-                for (int k = 0; k < 3; ++k) attach_pos[k] = arm_data->xpos[3*abid+k];
-                for (int k = 0; k < 9; ++k) attach_mat[k] = arm_data->xmat[9*abid+k];
-            }
-            mj_deleteData(arm_data);
-            mj_deleteModel(arm_model);
-        }
-
-        // anchor_world = attach_pos + R_attach @ (R_gquat @ a + g->pos)
-        // where a is the anchor in gripper-native frame.
-        double gpos[3] = {g->pos[0], g->pos[1], g->pos[2]};
-        double qw=g->quat[0], qx=g->quat[1], qy=g->quat[2], qz=g->quat[3];
-        double Rq[9] = {
-            1-2*(qy*qy+qz*qz), 2*(qx*qy-qw*qz),   2*(qx*qz+qw*qy),
-            2*(qx*qy+qw*qz),   1-2*(qx*qx+qz*qz), 2*(qy*qz-qw*qx),
-            2*(qx*qz-qw*qy),   2*(qy*qz+qw*qx),   1-2*(qx*qx+qy*qy)
-        };
-
-        XMLElement* geq = grp_mj->FirstChildElement("equality");
-        if (geq) {
-            XMLElement* aeq = arm_mj->FirstChildElement("equality");
-            if (!aeq) { aeq = arm_doc.NewElement("equality"); arm_mj->InsertEndChild(aeq); }
-            for (auto* c = geq->FirstChildElement(); c; c = c->NextSiblingElement()) {
-                XMLElement* cl = xml_deep_clone(c, &arm_doc);
-                xml_prefix_names(cl, pfx);
-                if (std::strcmp(cl->Name(), "connect") == 0) {
-                    const char* anc = cl->Attribute("anchor");
-                    if (anc) {
-                        double a[3] = {0, 0, 0};
-                        std::sscanf(anc, "%lf %lf %lf", &a[0], &a[1], &a[2]);
-                        // rotate anchor by g->quat, then add g->pos (in attach_to frame)
-                        double ra[3] = {Rq[0]*a[0]+Rq[1]*a[1]+Rq[2]*a[2],
-                                        Rq[3]*a[0]+Rq[4]*a[1]+Rq[5]*a[2],
-                                        Rq[6]*a[0]+Rq[7]*a[1]+Rq[8]*a[2]};
-                        double loc[3] = {ra[0]+gpos[0], ra[1]+gpos[1], ra[2]+gpos[2]};
-                        // transform to world frame via attach_to body pose
-                        double wx = attach_pos[0] + attach_mat[0]*loc[0]+attach_mat[1]*loc[1]+attach_mat[2]*loc[2];
-                        double wy = attach_pos[1] + attach_mat[3]*loc[0]+attach_mat[4]*loc[1]+attach_mat[5]*loc[2];
-                        double wz = attach_pos[2] + attach_mat[6]*loc[0]+attach_mat[7]*loc[1]+attach_mat[8]*loc[2];
-                        char new_anc[128];
-                        std::snprintf(new_anc, sizeof(new_anc), "%.10f %.10f %.10f", wx, wy, wz);
-                        cl->SetAttribute("anchor", new_anc);
-                    }
-                }
-                aeq->InsertEndChild(cl);
-            }
-        }
-    }
-
+    // Equality constraints are copied verbatim: MuJoCo computes local body
+    // offsets from the anchor at compile time, so anchor="0 0 0" is correct
+    // regardless of where the gripper is attached.
+    merge_section("equality");
     merge_section("actuator");
 
     return arm_doc.SaveFile(out_path) == XML_SUCCESS;
