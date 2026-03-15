@@ -26,6 +26,7 @@ void mj_kdl::run_simulate_ui(mjModel* m, mjData* d, const char* path,
         std::make_unique<mj::GlfwAdapter>(),
         &cam, &opt, &pert, /*is_passive=*/false
     );
+    sim->font = 1;  // 100% font scale (0=50%, 1=100%, 2=150%, ...)
 
     // Physics thread: real-time sync loop (mirrors PhysicsLoop from main.cc).
     // Load must happen from this thread so that LoadOnRenderThread() on the

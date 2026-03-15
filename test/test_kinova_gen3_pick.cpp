@@ -148,7 +148,7 @@ int main(int argc, char* argv[])
     const fs::path root       = repo_root();
     const std::string arm_mjcf = (root / "assets/kinova_gen3/gen3.xml").string();
     const std::string grp_mjcf = (root / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
-    const std::string combined = (root / "assets/gen3_with_2f85_pick.xml").string();
+    const std::string combined = "/tmp/gen3_with_2f85_pick.xml";
 
     // Build combined model and patch.
     mj_kdl::GripperSpec gs;
@@ -162,9 +162,9 @@ int main(int argc, char* argv[])
     if (!mj_kdl::patch_mjcf_visuals(combined.c_str()))                       { std::cerr << "FAIL: patch_mjcf_visuals\n"; return 1; }
     if (!patch_contact_exclusions(combined))                                  { std::cerr << "FAIL: patch_contact_exclusions\n"; return 1; }
 
-    // Cube at (0.4, 0, 0.025): 5 cm cube, half-size = 0.025 m.
-    constexpr double kCubeX = 0.4, kCubeY = 0.0, kCubeZ = 0.025;
-    if (!patch_add_cube(combined, "cube", kCubeX, kCubeY, kCubeZ, 0.025)) {
+    // Cube at (0.4, 0, 0.04): 8 cm cube (half-size=0.04), clearly visible on floor.
+    constexpr double kCubeX = 0.4, kCubeY = 0.0, kCubeZ = 0.04;
+    if (!patch_add_cube(combined, "cube", kCubeX, kCubeY, kCubeZ, 0.04)) {
         std::cerr << "FAIL: patch_add_cube\n"; return 1;
     }
 
@@ -218,20 +218,23 @@ int main(int argc, char* argv[])
     }
 
     // Compute IK waypoints.
-    // Use home EE frame rotation for all approach waypoints (vertical approach).
+    // Target rotation: bracelet_link Z aligned with world Z (Identity).
+    // With the gripper attached 180° around X below bracelet_link, Identity rotation
+    // means the gripper approach axis points straight down — correct for top-down grasp.
+    //
+    // Waypoint Z values are bracelet_link positions (EE of KDL chain):
+    //   bracelet_link Z = cube_center_Z + gripper_mount_offset + finger_reach
+    //                   ≈ 0.04 + 0.062 + 0.13 ≈ 0.23 m for the grasp height.
     KDL::JntArray q_home_kdl(n);
     for (unsigned i = 0; i < n; ++i) q_home_kdl(i) = kHomePose[i];
 
-    KDL::Frame home_frame;
-    fk.JntToCart(q_home_kdl, home_frame);
-    KDL::Rotation home_rot = home_frame.M;
+    const KDL::Rotation kDownRot = KDL::Rotation::Identity();
 
-    // Waypoint targets (position only; rotation = home orientation).
     struct Waypoint { const char* name; double x, y, z; };
     Waypoint waypoints[] = {
-        { "pre-grasp", kCubeX, kCubeY, 0.25 },
-        { "grasp",     kCubeX, kCubeY, 0.08 },
-        { "lift",      kCubeX, kCubeY, 0.40 },
+        { "pre-grasp", kCubeX, kCubeY, 0.42 },  // bracelet_link above cube
+        { "grasp",     kCubeX, kCubeY, 0.23 },  // bracelet_link at grasp height
+        { "lift",      kCubeX, kCubeY, 0.55 },  // bracelet_link lifted
     };
 
     KDL::JntArray q_pregrasp(n), q_grasp(n), q_lift(n);
@@ -240,7 +243,7 @@ int main(int argc, char* argv[])
     // Test 3: IK convergence for all waypoints.
     bool ik_ok = true;
     for (int wi = 0; wi < 3; ++wi) {
-        KDL::Frame target(home_rot, KDL::Vector(waypoints[wi].x, waypoints[wi].y, waypoints[wi].z));
+        KDL::Frame target(kDownRot, KDL::Vector(waypoints[wi].x, waypoints[wi].y, waypoints[wi].z));
         // Use previous waypoint solution as seed for better convergence.
         KDL::JntArray& seed = (wi == 0) ? q_home_kdl : *ik_targets[wi - 1];
         int ret = ik.CartToJnt(seed, target, *ik_targets[wi]);
