@@ -177,8 +177,10 @@ static void add_objects_to_spec(mjSpec* spec, const std::vector<SceneObject>& ob
         g->size[0] = obj.size[0];
         g->size[1] = obj.size[1];
         g->size[2] = obj.size[2];
+        g->mass    = obj.mass;
         for (int k = 0; k < 4; ++k) g->rgba[k] = obj.rgba[k];
-        g->contype = 1; g->conaffinity = 1; g->condim = 3;
+        for (int k = 0; k < 3; ++k) g->friction[k] = obj.friction[k];
+        g->contype = 1; g->conaffinity = 1; g->condim = obj.condim;
     }
 }
 
@@ -759,6 +761,57 @@ bool patch_mjcf_visuals(const char* mjcf_path)
     floor->SetAttribute("condim","3");
     wb->InsertAfterChild(light, floor);
 
+    return doc.SaveFile(mjcf_path) == XML_SUCCESS;
+}
+
+bool patch_mjcf_add_objects(const char* mjcf_path,
+                             const std::vector<SceneObject>& objects)
+{
+    using namespace tinyxml2;
+    XMLDocument doc;
+    if (doc.LoadFile(mjcf_path) != XML_SUCCESS) return false;
+    XMLElement* mj = doc.FirstChildElement("mujoco");
+    if (!mj) return false;
+    XMLElement* wb = mj->FirstChildElement("worldbody");
+    if (!wb) return false;
+
+    for (const auto& obj : objects) {
+        char pos_buf[64], sz_buf[64], fr_buf[64];
+        std::snprintf(pos_buf, sizeof(pos_buf), "%.6f %.6f %.6f",
+                      obj.pos[0], obj.pos[1], obj.pos[2]);
+        std::snprintf(sz_buf, sizeof(sz_buf), "%.6f %.6f %.6f",
+                      obj.size[0], obj.size[1], obj.size[2]);
+        std::snprintf(fr_buf, sizeof(fr_buf), "%.4f %.4f %.4f",
+                      obj.friction[0], obj.friction[1], obj.friction[2]);
+
+        char rgba_buf[64];
+        std::snprintf(rgba_buf, sizeof(rgba_buf), "%.3f %.3f %.3f %.3f",
+                      obj.rgba[0], obj.rgba[1], obj.rgba[2], obj.rgba[3]);
+
+        XMLElement* body = doc.NewElement("body");
+        body->SetAttribute("name", obj.name.c_str());
+        body->SetAttribute("pos", pos_buf);
+
+        if (!obj.fixed) {
+            XMLElement* fj = doc.NewElement("freejoint");
+            fj->SetAttribute("name", (obj.name + "_joint").c_str());
+            body->InsertEndChild(fj);
+        }
+
+        XMLElement* geom = doc.NewElement("geom");
+        const char* shape_str = "box";
+        if (obj.shape == ObjShape::SPHERE)   shape_str = "sphere";
+        if (obj.shape == ObjShape::CYLINDER) shape_str = "cylinder";
+        geom->SetAttribute("type", shape_str);
+        geom->SetAttribute("size", sz_buf);
+        geom->SetAttribute("mass", std::to_string(obj.mass).c_str());
+        geom->SetAttribute("rgba", rgba_buf);
+        geom->SetAttribute("condim", obj.condim);
+        geom->SetAttribute("friction", fr_buf);
+        body->InsertEndChild(geom);
+
+        wb->InsertEndChild(body);
+    }
     return doc.SaveFile(mjcf_path) == XML_SUCCESS;
 }
 

@@ -76,6 +76,9 @@ struct SceneObject {
     double      pos[3]   = {0.0,  0.0,  0.0};
     float       rgba[4]  = {1.0f, 0.0f, 0.0f, 1.0f};
     bool        fixed    = false;
+    double      mass     = 0.1;
+    int         condim   = 3;
+    double      friction[3] = {0.5, 0.005, 0.0001};  // MuJoCo defaults
 };
 
 /* Full scene description passed to build_scene(). */
@@ -129,6 +132,17 @@ bool load_mjcf(mjModel** out_model, mjData** out_data, const char* path);
  * @return true on success.
  */
 bool patch_mjcf_visuals(const char* mjcf_path);
+
+/*
+ * Append SceneObjects to an existing MJCF file in-place.
+ * Equivalent to add_objects_to_spec() for the load_mjcf() / attach_gripper() workflow.
+ * Each object becomes a body under worldbody with a freejoint (unless fixed=true).
+ * @param mjcf_path  Path to the MJCF file to patch.
+ * @param objects    Objects to add.
+ * @return true on success.
+ */
+bool patch_mjcf_add_objects(const char* mjcf_path,
+                             const std::vector<SceneObject>& objects);
 
 /*
  * Build KDL chain from a compiled MuJoCo model (no URDF required).
