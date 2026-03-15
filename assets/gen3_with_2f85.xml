@@ -71,7 +71,7 @@
     </asset>
     <worldbody>
         <light pos="0 0 4" directional="true"/>
-        <geom name="floor" type="plane" material="groundplane" size="5 5 0.05" condim="3"/>
+        <geom name="floor" type="plane" material="groundplane" size="10 10 0.05" condim="3"/>
         <body name="base_link">
             <inertial pos="-0.000648 -0.000166 0.084487" quat="0.999294 0.00139618 -0.0118387 0.035636" mass="1.697" diaginertia="0.00462407 0.00449437 0.00207755"/>
             <geom class="visual" mesh="base_link"/>

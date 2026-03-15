@@ -122,6 +122,15 @@ struct State {
 bool load_mjcf(mjModel** out_model, mjData** out_data, const char* path);
 
 /*
+ * Add floor, sky gradient, and directional light to an existing MJCF file in-place.
+ * Use this after load_mjcf() or attach_gripper() to add consistent visuals to
+ * MJCF-only workflows (models not built via build_scene() already have these).
+ * @param mjcf_path  Path to the MJCF file to patch.
+ * @return true on success.
+ */
+bool patch_mjcf_visuals(const char* mjcf_path);
+
+/*
  * Build KDL chain from a compiled MuJoCo model (no URDF required).
  * Traverses the body tree from base_body to tip_body.
  * @param[out] s          State populated with chain, joint_names, joint_limits, index maps.

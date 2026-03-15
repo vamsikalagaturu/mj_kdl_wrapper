@@ -8,6 +8,7 @@
 // Usage: test_table_scene [urdf_path] [--gui]
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "mj_kdl_wrapper/simulate_ui.hpp"
 
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chaindynparam.hpp>
@@ -15,6 +16,8 @@
 #include <iostream>
 #include <iomanip>
 #include <string>
+
+static constexpr double kHomePose[7] = {0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708};
 
 int main(int argc, char* argv[])
 {
@@ -38,7 +41,6 @@ int main(int argc, char* argv[])
     table.top_size[1] = 0.6;   // half-extent y
     table.thickness   = 0.04;
     table.leg_radius  = 0.03;
-    // default rgba: wood-ish brown
 
     double surface_z = table.pos[2];
 
@@ -115,61 +117,46 @@ int main(int argc, char* argv[])
     }
     std::cout << "Robot: " << s.n_joints << " joints\n";
 
-    if (gui && !mj_kdl::init_window(&s, "Table Scene", 1280, 720))
-        std::cerr << "WARN: GL unavailable — running headless\n";
+    unsigned n = static_cast<unsigned>(s.n_joints);
 
-    // ------------------------------------------------------------------
-    // Gravity compensation loop.
-    //   Headless: 500 steps then check EE drift.
-    //   GUI: run until window closed.
-    // ------------------------------------------------------------------
     KDL::ChainFkSolverPos_recursive fk(s.chain);
     KDL::ChainDynParam             dyn(s.chain, KDL::Vector(0, 0, spec.gravity_z));
 
-    // Set initial pose: alternating ±20° base, with j2=0.3 rad and j4=2.0 rad.
-    KDL::JntArray q0(s.n_joints);
-    for (int i = 0; i < s.n_joints; ++i)
-        q0(i) = (i % 2 == 0 ? 1.0 : -1.0) * 20.0 * M_PI / 180.0;
-    if (s.n_joints > 2) q0(2) = 0.3;   // j2 elbow
-    if (s.n_joints > 4) q0(4) = 2.0;   // j4 wrist pitch
-    mj_kdl::sync_from_kdl(&s, q0);
+    // Set home pose.
+    KDL::JntArray q_home(n);
+    for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
+    mj_kdl::sync_from_kdl(&s, q_home);
     mj_forward(model, data);
 
     KDL::Frame ee_init;
-    fk.JntToCart(q0, ee_init);
+    fk.JntToCart(q_home, ee_init);
 
-    const int headless_steps = 500;
-    int step_count = 0;
-
-    while (gui ? mj_kdl::is_running(&s) : step_count < headless_steps) {
-        KDL::JntArray q, g(s.n_joints);
+    // ------------------------------------------------------------------
+    // Headless: 500 steps then check EE drift.
+    // ------------------------------------------------------------------
+    for (int i = 0; i < 500; ++i) {
+        KDL::JntArray q, g(n);
         mj_kdl::sync_to_kdl(&s, q);
         dyn.JntToGravity(q, g);
         mj_kdl::set_torques(&s, g);
         mj_kdl::step(&s);
-        if (gui) mj_kdl::render(&s);
-        ++step_count;
     }
 
-    // Headless drift check.
-    if (!gui) {
-        KDL::JntArray q_end;
-        KDL::Frame    ee_end;
-        mj_kdl::sync_to_kdl(&s, q_end);
-        fk.JntToCart(q_end, ee_end);
-        double drift = (ee_init.p - ee_end.p).Norm();
+    KDL::JntArray q_end;
+    KDL::Frame    ee_end;
+    mj_kdl::sync_to_kdl(&s, q_end);
+    fk.JntToCart(q_end, ee_end);
+    double drift = (ee_init.p - ee_end.p).Norm();
 
-        std::cout << std::fixed << std::setprecision(3);
-        std::cout << "EE drift after " << headless_steps
-                  << " steps: " << drift * 1000.0 << " mm\n";
-        if (drift > 0.001) {
-            std::cerr << "FAIL: drift > 1 mm\n";
-            mj_kdl::cleanup(&s);
-            mj_kdl::destroy_scene(model, data);
-            return 1;
-        }
-        std::cout << "OK\n";
+    std::cout << std::fixed << std::setprecision(3);
+    std::cout << "EE drift after 500 steps: " << drift * 1000.0 << " mm\n";
+    if (drift > 0.001) {
+        std::cerr << "FAIL: drift > 1 mm\n";
+        mj_kdl::cleanup(&s);
+        mj_kdl::destroy_scene(model, data);
+        return 1;
     }
+    std::cout << "OK\n";
 
     // ------------------------------------------------------------------
     // Runtime add / remove demo (headless only).
@@ -178,7 +165,6 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Runtime object add/remove ---\n";
         std::cout << "Bodies before add: " << model->nbody << "\n";
 
-        // Detach state before rebuild (state will be stale).
         mj_kdl::cleanup(&s);
 
         mj_kdl::SceneObject extra = make_box(
@@ -201,6 +187,25 @@ int main(int argc, char* argv[])
         mj_kdl::destroy_scene(model, data);
         return 0;
     }
+
+    // ------------------------------------------------------------------
+    // GUI: run simulate UI with gravity comp.
+    // ------------------------------------------------------------------
+    mj_kdl::sync_from_kdl(&s, q_home);
+    mj_forward(model, data);
+    for (unsigned i = 0; i < n; ++i)
+        data->ctrl[i] = data->qpos[s.kdl_to_mj_qpos[i]];
+
+    std::cout << "\nGUI: close window to exit\n";
+    mj_kdl::run_simulate_ui(model, data, urdf.c_str(),
+        [&](mjModel*, mjData* d) {
+            for (unsigned i = 0; i < n; ++i)
+                d->ctrl[i] = d->qpos[s.kdl_to_mj_qpos[i]];
+            KDL::JntArray q, g(n);
+            mj_kdl::sync_to_kdl(&s, q);
+            dyn.JntToGravity(q, g);
+            mj_kdl::set_torques(&s, g);
+        });
 
     mj_kdl::cleanup(&s);
     mj_kdl::destroy_scene(model, data);

@@ -4,9 +4,12 @@
 // Usage: test_init [urdf_path] [--gui]
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "mj_kdl_wrapper/simulate_ui.hpp"
 
 #include <iostream>
 #include <string>
+
+static constexpr double kHomePose[7] = {0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708};
 
 int main(int argc, char* argv[])
 {
@@ -23,8 +26,7 @@ int main(int argc, char* argv[])
     cfg.base_link  = "base_link";
     cfg.tip_link   = "EndEffector_Link";
     cfg.robot_name = "kinova_gen3";
-    cfg.win_title  = "test_init";
-    cfg.headless   = !gui;
+    cfg.headless   = true;  // run_simulate_ui opens its own window
 
     mj_kdl::State s;
     if (!mj_kdl::init(&s, &cfg)) {
@@ -44,6 +46,13 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    // Set home pose
+    unsigned n = static_cast<unsigned>(s.n_joints);
+    KDL::JntArray q_home(n);
+    for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
+    mj_kdl::sync_from_kdl(&s, q_home);
+    mj_forward(s.model, s.data);
+
     const double t0 = s.data->time;
     mj_kdl::step_n(&s, 100);
     if (s.data->time <= t0) {
@@ -58,10 +67,12 @@ int main(int argc, char* argv[])
 
     if (gui) {
         std::cout << "GUI mode — close window to exit\n";
-        while (mj_kdl::is_running(&s)) {
-            mj_kdl::step(&s);
-            mj_kdl::render(&s);
-        }
+        // Reset to home pose before opening UI
+        mj_kdl::sync_from_kdl(&s, q_home);
+        mj_forward(s.model, s.data);
+        for (unsigned i = 0; i < n; ++i)
+            s.data->ctrl[i] = s.data->qpos[s.kdl_to_mj_qpos[i]];
+        mj_kdl::run_simulate_ui(s.model, s.data, urdf.c_str());
     }
 
     mj_kdl::cleanup(&s);

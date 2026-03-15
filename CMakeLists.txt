@@ -120,23 +120,33 @@ set_target_properties(mujoco_simulate_ui PROPERTIES
   CXX_STANDARD 17 POSITION_INDEPENDENT_CODE ON)
 
 # ---------------------------------------------------------------------------
-# Tests
+# Simulate UI helpers  (run_simulate_ui — real-time PhysicsLoop wrapper)
 # ---------------------------------------------------------------------------
-foreach(test_name test_init test_velocity test_gravity_comp test_dual_arm test_table_scene
-                  test_kinova_gen3_menagerie)
-  add_executable(${test_name} test/${test_name}.cpp)
-  target_link_libraries(${test_name} PRIVATE mj_kdl_wrapper)
-  target_compile_options(${test_name} PRIVATE -Wall -Wextra)
-endforeach()
-
-# gripper test uses the full MuJoCo simulate UI for --gui
-add_executable(test_kinova_gen3_gripper test/test_kinova_gen3_gripper.cpp)
-target_link_libraries(test_kinova_gen3_gripper PRIVATE
+add_library(mj_kdl_simulate STATIC
+  src/simulate_ui.cpp
+)
+target_include_directories(mj_kdl_simulate PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+  ${MJ_SIM_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lodepng
+)
+target_link_libraries(mj_kdl_simulate PUBLIC
   mj_kdl_wrapper
   mujoco_simulate_ui
-  tinyxml2::tinyxml2
 )
-target_compile_options(test_kinova_gen3_gripper PRIVATE -Wall -Wextra)
+target_compile_options(mj_kdl_simulate PRIVATE -w)
+set_target_properties(mj_kdl_simulate PROPERTIES CXX_STANDARD 17)
+
+# ---------------------------------------------------------------------------
+# Tests  (all link mj_kdl_simulate which transitively pulls mj_kdl_wrapper)
+# ---------------------------------------------------------------------------
+foreach(test_name test_init test_velocity test_gravity_comp test_dual_arm test_table_scene
+                  test_kinova_gen3_menagerie test_kinova_gen3_gripper)
+  add_executable(${test_name} test/${test_name}.cpp)
+  target_link_libraries(${test_name} PRIVATE mj_kdl_simulate)
+  target_compile_options(${test_name} PRIVATE -Wall -Wextra)
+endforeach()
 
 add_executable(export_table_scene tools/export_table_scene.cpp)
 target_link_libraries(export_table_scene PRIVATE mj_kdl_wrapper)

@@ -83,6 +83,11 @@ static void add_floor_to_spec(mjSpec* spec)
     floor->type=mjGEOM_PLANE;
     floor->size[0]=10; floor->size[1]=10; floor->size[2]=0.05;
     floor->contype=1; floor->conaffinity=1; floor->condim=3;
+
+    // Directional light overhead
+    mjsLight* sun = mjs_addLight(wb, nullptr);
+    sun->type = mjLIGHT_DIRECTIONAL;
+    sun->pos[0]=0; sun->pos[1]=0; sun->pos[2]=4;
 }
 
 static void add_table_to_spec(mjSpec* spec, const TableSpec& t)
@@ -256,11 +261,14 @@ static bool inject_scene(const std::string& in, const std::string& out,
         asset->InsertEndChild(m);
         XMLElement* wb = mj->FirstChildElement("worldbody");
         if (!wb) { wb = doc.NewElement("worldbody"); mj->InsertEndChild(wb); }
+        XMLElement* light = doc.NewElement("light");
+        light->SetAttribute("pos","0 0 4"); light->SetAttribute("directional","true");
+        wb->InsertFirstChild(light);
         XMLElement* f = doc.NewElement("geom");
         f->SetAttribute("name","floor"); f->SetAttribute("type","plane");
         f->SetAttribute("material","groundplane"); f->SetAttribute("size","10 10 0.05");
         f->SetAttribute("condim","3");
-        wb->InsertFirstChild(f);
+        wb->InsertAfterChild(light, f);
     }
     return doc.SaveFile(out.c_str()) == XML_SUCCESS;
 }
@@ -688,6 +696,51 @@ bool load_mjcf(mjModel** out_model, mjData** out_data, const char* path)
     *out_data = mj_makeData(*out_model);
     if (!*out_data) { mj_deleteModel(*out_model); *out_model=nullptr; return false; }
     return true;
+}
+
+bool patch_mjcf_visuals(const char* mjcf_path)
+{
+    using namespace tinyxml2;
+    XMLDocument doc;
+    if (doc.LoadFile(mjcf_path) != XML_SUCCESS) return false;
+    XMLElement* mj = doc.FirstChildElement("mujoco");
+    if (!mj) return false;
+
+    XMLElement* asset = mj->FirstChildElement("asset");
+    if (!asset) { asset = doc.NewElement("asset"); mj->InsertFirstChild(asset); }
+
+    XMLElement* sky = doc.NewElement("texture");
+    sky->SetAttribute("type","skybox"); sky->SetAttribute("builtin","gradient");
+    sky->SetAttribute("rgb1","0.3 0.45 0.65"); sky->SetAttribute("rgb2","0.65 0.8 0.95");
+    sky->SetAttribute("width","200"); sky->SetAttribute("height","200");
+    asset->InsertFirstChild(sky);
+
+    XMLElement* gp_tex = doc.NewElement("texture");
+    gp_tex->SetAttribute("type","2d"); gp_tex->SetAttribute("name","groundplane");
+    gp_tex->SetAttribute("builtin","checker");
+    gp_tex->SetAttribute("rgb1","0.2 0.3 0.4"); gp_tex->SetAttribute("rgb2","0.1 0.2 0.3");
+    gp_tex->SetAttribute("width","300"); gp_tex->SetAttribute("height","300");
+    asset->InsertEndChild(gp_tex);
+
+    XMLElement* gp_mat = doc.NewElement("material");
+    gp_mat->SetAttribute("name","groundplane"); gp_mat->SetAttribute("texture","groundplane");
+    gp_mat->SetAttribute("texrepeat","5 5"); gp_mat->SetAttribute("reflectance","0.2");
+    asset->InsertEndChild(gp_mat);
+
+    XMLElement* wb = mj->FirstChildElement("worldbody");
+    if (!wb) { wb = doc.NewElement("worldbody"); mj->InsertEndChild(wb); }
+
+    XMLElement* light = doc.NewElement("light");
+    light->SetAttribute("pos","0 0 4"); light->SetAttribute("directional","true");
+    wb->InsertFirstChild(light);
+
+    XMLElement* floor = doc.NewElement("geom");
+    floor->SetAttribute("name","floor"); floor->SetAttribute("type","plane");
+    floor->SetAttribute("material","groundplane"); floor->SetAttribute("size","10 10 0.05");
+    floor->SetAttribute("condim","3");
+    wb->InsertAfterChild(light, floor);
+
+    return doc.SaveFile(mjcf_path) == XML_SUCCESS;
 }
 
 bool attach_gripper(const char* arm_mjcf, const GripperSpec* g, const char* out_path)
