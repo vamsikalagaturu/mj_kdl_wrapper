@@ -142,7 +142,8 @@ set_target_properties(mj_kdl_simulate PROPERTIES CXX_STANDARD 17)
 # Tests  (all link mj_kdl_simulate which transitively pulls mj_kdl_wrapper)
 # ---------------------------------------------------------------------------
 foreach(test_name test_init test_velocity test_gravity_comp test_dual_arm test_table_scene
-                  test_kinova_gen3_menagerie test_kinova_gen3_gripper)
+                  test_kinova_gen3_menagerie test_kinova_gen3_gripper
+                  test_kinova_gen3_impedance test_kinova_gen3_pick)
   add_executable(${test_name} test/${test_name}.cpp)
   target_link_libraries(${test_name} PRIVATE mj_kdl_simulate)
   target_compile_options(${test_name} PRIVATE -Wall -Wextra)
@@ -157,6 +158,7 @@ target_compile_options(export_table_scene PRIVATE -Wall -Wextra)
 # ---------------------------------------------------------------------------
 install(TARGETS mj_kdl_wrapper test_init test_velocity test_gravity_comp test_dual_arm test_table_scene
                 test_kinova_gen3_menagerie test_kinova_gen3_gripper
+                test_kinova_gen3_impedance test_kinova_gen3_pick
   RUNTIME DESTINATION bin
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib

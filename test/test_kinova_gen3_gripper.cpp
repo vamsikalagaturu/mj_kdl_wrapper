@@ -228,16 +228,18 @@ int main(int argc, char* argv[])
         }
         mj_forward(model, data);
 
-        // Set arm ctrl to home pose — position actuators actively hold it there.
-        for (unsigned i = 0; i < n; ++i)
-            data->ctrl[i] = kHomePose[i];
-
         std::cout << "GUI: close window to exit\n";
         mj_kdl::run_simulate_ui(model, data, combined.c_str(),
-            [&](mjModel* /*m*/, mjData* d) {
-                // Arm: position actuators hold home pose (constant target, P-term fights gravity).
-                // No need to update ctrl each step — it stays at kHomePose.
-
+            [&](mjModel* m, mjData* d) {
+                // Pure gravity compensation:
+                // Zero P-term (track current qpos) + cancel gravity via qfrc_bias.
+                // qfrc_bias includes gripper mass — KDL alone would miss ~1.7 kg.
+                for (unsigned i = 0; i < n; ++i) {
+                    int dof = s.kdl_to_mj_dof[i];
+                    int jid = m->dof_jntid[dof];
+                    d->ctrl[i]           = d->qpos[m->jnt_qposadr[jid]];
+                    d->qfrc_applied[dof] = d->qfrc_bias[dof];
+                }
                 // Gripper: open/close every 3 s (ctrl range 0..255, 255=closed)
                 d->ctrl[fingers_act] = (std::fmod(d->time, 6.0) < 3.0) ? 255.0 : 0.0;
             });
