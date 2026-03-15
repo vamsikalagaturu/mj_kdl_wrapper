@@ -107,8 +107,65 @@ struct State {
     mjvOption   opt    {};
     mjvPerturb  pert   {};
     mjrContext  con    {};
-    bool _owns_model = true; // if true, cleanup() frees model/data
+    bool _owns_model  = true;  // if true, cleanup() frees model/data
+    bool paused       = false; // set true to pause simulation (step() becomes a no-op)
+    bool show_joints  = true;  // show joint value overlay in the viewer
 };
+
+/*
+ * Load a MuJoCo MJCF scene directly.
+ * @param[out] out_model  Newly allocated MuJoCo model; free via destroy_scene().
+ * @param[out] out_data   Newly allocated MuJoCo data; free via destroy_scene().
+ * @param[in]  path       Path to the MJCF XML file.
+ * @return true on success.
+ */
+bool load_mjcf(mjModel** out_model, mjData** out_data, const char* path);
+
+/*
+ * Add floor, sky gradient, and directional light to an existing MJCF file in-place.
+ * Use this after load_mjcf() or attach_gripper() to add consistent visuals to
+ * MJCF-only workflows (models not built via build_scene() already have these).
+ * @param mjcf_path  Path to the MJCF file to patch.
+ * @return true on success.
+ */
+bool patch_mjcf_visuals(const char* mjcf_path);
+
+/*
+ * Build KDL chain from a compiled MuJoCo model (no URDF required).
+ * Traverses the body tree from base_body to tip_body.
+ * @param[out] s          State populated with chain, joint_names, joint_limits, index maps.
+ * @param[in]  model      Compiled MuJoCo model.
+ * @param[in]  data       MuJoCo data pointer.
+ * @param[in]  base_body  Name of the chain root body (not included as a segment).
+ * @param[in]  tip_body   Name of the chain end body.
+ * @param[in]  prefix     Optional body/joint name prefix for multi-robot disambiguation.
+ * @return true on success.
+ */
+bool init_from_mjcf(State* s, mjModel* model, mjData* data,
+                    const char* base_body, const char* tip_body,
+                    const char* prefix = "");
+
+/*
+ * Gripper attachment spec.
+ */
+struct GripperSpec {
+    const char* mjcf_path  = nullptr; // gripper MJCF file path
+    const char* attach_to  = nullptr; // body name in arm MJCF to attach gripper base to
+    double      pos[3]     = {0, 0, 0};       // position offset from attach_to body
+    double      quat[4]    = {1, 0, 0, 0};    // orientation offset (wxyz)
+    const char* prefix     = "";              // prefix for gripper names (avoids conflicts)
+};
+
+/*
+ * Combine an arm MJCF and a gripper MJCF into a single MJCF file.
+ * The gripper's root body is placed as a child of the specified attach_to body.
+ * Merges assets, defaults, contacts, tendons, equalities, and actuators.
+ * @param[in]  arm_mjcf   Path to the arm MJCF.
+ * @param[in]  g          Gripper specification.
+ * @param[in]  out_path   Output path for the combined MJCF.
+ * @return true on success.
+ */
+bool attach_gripper(const char* arm_mjcf, const GripperSpec* g, const char* out_path);
 
 /*
  * Build a MuJoCo world from one or more URDF robots into a single mjModel/mjData.

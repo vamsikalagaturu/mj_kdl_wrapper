@@ -1,22 +1,30 @@
 // test_velocity.cpp
 // Tests velocity-level kinematics: FK, IK, and Jacobian on the Kinova GEN3.
 // Usage: test_velocity [urdf_path] [--gui]
-// With --gui: displays the robot at the IK solution after checks.
+// With --gui: displays the robot at the home pose / IK solution.
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "mj_kdl_wrapper/simulate_ui.hpp"
 
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chainiksolvervel_pinv.hpp>
 #include <kdl/chainiksolverpos_nr_jl.hpp>
 #include <kdl/chainjnttojacsolver.hpp>
+#include <kdl/chaindynparam.hpp>
 
 #include <iostream>
 #include <iomanip>
 #include <string>
+#include <filesystem>
+
+static constexpr double kHomePose[7] = {0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708};
+
+namespace fs = std::filesystem;
+static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
 
 int main(int argc, char* argv[])
 {
-    std::string urdf = "../assets/gen3_urdf/GEN3_URDF_V12.urdf";
+    std::string urdf = (repo_root() / "assets/gen3_urdf/GEN3_URDF_V12.urdf").string();
     bool gui = false;
     for (int i = 1; i < argc; ++i) {
         std::string a(argv[i]);
@@ -28,8 +36,7 @@ int main(int argc, char* argv[])
     cfg.urdf_path = urdf.c_str();
     cfg.base_link = "base_link";
     cfg.tip_link  = "EndEffector_Link";
-    cfg.win_title = "test_velocity";
-    cfg.headless  = !gui;
+    cfg.headless  = true;
 
     mj_kdl::State s;
     if (!mj_kdl::init(&s, &cfg)) {
@@ -49,17 +56,18 @@ int main(int argc, char* argv[])
     KDL::ChainIkSolverPos_NR_JL     ik(s.chain, q_min, q_max, fk, ik_vel, 500, 1e-5);
     KDL::ChainJntToJacSolver         jac_solver(s.chain);
 
-    // FK at zero config
-    KDL::JntArray q_zero(n);
-    KDL::Frame fk_zero;
-    if (fk.JntToCart(q_zero, fk_zero) < 0) {
-        std::cerr << "FAIL: FK at zero\n";
+    // FK at home pose
+    KDL::JntArray q_home(n);
+    for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
+    KDL::Frame fk_home;
+    if (fk.JntToCart(q_home, fk_home) < 0) {
+        std::cerr << "FAIL: FK at home pose\n";
         mj_kdl::cleanup(&s);
         return 1;
     }
-    std::cout << "FK(zero) pos: ["
+    std::cout << "FK(home) pos: ["
               << std::fixed << std::setprecision(4)
-              << fk_zero.p.x() << ", " << fk_zero.p.y() << ", " << fk_zero.p.z() << "]\n";
+              << fk_home.p.x() << ", " << fk_home.p.y() << ", " << fk_home.p.z() << "]\n";
 
     // FK at test config (alternate ±30 deg)
     KDL::JntArray q_test(n);
@@ -75,9 +83,9 @@ int main(int argc, char* argv[])
     std::cout << "FK(test) pos: ["
               << fk_test.p.x() << ", " << fk_test.p.y() << ", " << fk_test.p.z() << "]\n";
 
-    // IK: recover q_test from fk_test
+    // IK: recover q_test from fk_test, seeded from home pose
     KDL::JntArray q_ik(n);
-    int ik_ret = ik.CartToJnt(q_zero, fk_test, q_ik);
+    int ik_ret = ik.CartToJnt(q_home, fk_test, q_ik);
     if (ik_ret < 0) {
         std::cout << "WARN: IK did not converge (ret=" << ik_ret << "), skipping IK check\n";
     } else {
@@ -92,9 +100,9 @@ int main(int argc, char* argv[])
         }
     }
 
-    // Jacobian at zero config
+    // Jacobian at home pose
     KDL::Jacobian jac(n);
-    if (jac_solver.JntToJac(q_zero, jac) < 0) {
+    if (jac_solver.JntToJac(q_home, jac) < 0) {
         std::cerr << "FAIL: Jacobian\n";
         mj_kdl::cleanup(&s);
         return 1;
@@ -109,11 +117,24 @@ int main(int argc, char* argv[])
     std::cout << "OK\n";
 
     if (gui) {
-        mj_kdl::sync_from_kdl(&s, ik_ret >= 0 ? q_ik : q_test);
+        // Show IK solution (or home pose if IK failed) statically with gravity comp.
+        KDL::JntArray q_display = (ik_ret >= 0) ? q_ik : q_home;
+        mj_kdl::sync_from_kdl(&s, q_display);
         mj_forward(s.model, s.data);
+        for (unsigned i = 0; i < n; ++i)
+            s.data->ctrl[i] = s.data->qpos[s.kdl_to_mj_qpos[i]];
+
+        KDL::ChainDynParam dyn(s.chain, KDL::Vector(0, 0, -9.81));
         std::cout << "GUI mode — close window to exit\n";
-        while (mj_kdl::is_running(&s))
-            mj_kdl::render(&s);
+        mj_kdl::run_simulate_ui(s.model, s.data, urdf.c_str(),
+            [&](mjModel*, mjData* d) {
+                for (unsigned i = 0; i < n; ++i)
+                    d->ctrl[i] = d->qpos[s.kdl_to_mj_qpos[i]];
+                KDL::JntArray q(n), g(n);
+                mj_kdl::sync_to_kdl(&s, q);
+                dyn.JntToGravity(q, g);
+                mj_kdl::set_torques(&s, g);
+            });
     }
 
     mj_kdl::cleanup(&s);

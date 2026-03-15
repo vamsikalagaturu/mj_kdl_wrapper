@@ -13,11 +13,15 @@ Makefile
 .cache/
 
 # Generated temp files from mj_kdl_wrapper
-urdf/_*.urdf
-urdf/_*.xml
+urdf/
+assets/gen3_urdf/_mj_*.urdf
+assets/gen3_urdf/_mj_*.xml
+third_party/menagerie/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *~
+docs/_tmp*.xml
+third_party/menagerie/**/_tmp*.xml

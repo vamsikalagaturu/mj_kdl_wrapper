@@ -3,13 +3,14 @@
 // Each arm is its own mj_kdl::State (sharing model/data).
 // Gravity compensation uses KDL::ChainDynParam::JntToGravity — not qfrc_bias.
 //
-// Part 1 — KDL vs MuJoCo gravity comparison at initial configs (zero velocity,
+// Part 1 — KDL vs MuJoCo gravity comparison at home pose (zero velocity,
 //           so qfrc_bias == gravity torques; tolerance 0.1 Nm).
 // Part 2 — 500-step closed-loop gravity comp; EE drift must be < 1 mm.
 //
 // Usage: test_dual_arm [urdf_path] [--gui]
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "mj_kdl_wrapper/simulate_ui.hpp"
 
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chaindynparam.hpp>
@@ -18,6 +19,9 @@
 #include <iomanip>
 #include <cmath>
 #include <string>
+#include <filesystem>
+
+static constexpr double kHomePose[7] = {0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708};
 
 // Apply KDL gravity compensation torques to one arm.
 static void apply_grav_comp(mj_kdl::State* s, KDL::ChainDynParam& dyn)
@@ -29,9 +33,12 @@ static void apply_grav_comp(mj_kdl::State* s, KDL::ChainDynParam& dyn)
     mj_kdl::set_torques(s, g);
 }
 
+namespace fs = std::filesystem;
+static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
+
 int main(int argc, char* argv[])
 {
-    std::string urdf = "../assets/gen3_urdf/GEN3_URDF_V12.urdf";
+    std::string urdf = (repo_root() / "assets/gen3_urdf/GEN3_URDF_V12.urdf").string();
     bool gui = false;
     for (int i = 1; i < argc; ++i) {
         std::string a(argv[i]);
@@ -45,7 +52,6 @@ int main(int argc, char* argv[])
     //   arm2: at x = +0.5 m, facing -X (rotated 180° around Z)
     // arm2 joints are prefixed "r2_" in MuJoCo to avoid name collisions.
     // ------------------------------------------------------------------
-
     mj_kdl::SceneSpec scene;
     scene.timestep  = 0.002;
     scene.gravity_z = -9.81;
@@ -55,7 +61,6 @@ int main(int argc, char* argv[])
     r1.urdf_path = urdf.c_str();
     r1.prefix    = "";
     r1.pos[0]    = -0.5; r1.pos[1] = 0.0; r1.pos[2] = 0.0;
-    // default euler = {0,0,0} → faces +X
 
     r2.urdf_path = urdf.c_str();
     r2.prefix    = "r2_";
@@ -74,7 +79,6 @@ int main(int argc, char* argv[])
     // ------------------------------------------------------------------
     // Attach one State per arm (shared model/data, separate KDL chains).
     // ------------------------------------------------------------------
-
     mj_kdl::State arm1, arm2;
 
     if (!mj_kdl::init_robot(&arm1, model, data,
@@ -90,13 +94,6 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    if (gui) {
-        if (!mj_kdl::init_window(&arm1, "Dual Arm (arm1 = window owner)", 1280, 720)) {
-            std::cerr << "WARN: GL init failed — running headless\n";
-            gui = false;
-        }
-    }
-
     int n = arm1.n_joints;
 
     KDL::ChainFkSolverPos_recursive fk1(arm1.chain);
@@ -104,22 +101,17 @@ int main(int argc, char* argv[])
     KDL::ChainDynParam             dyn1(arm1.chain, KDL::Vector(0, 0, -9.81));
     KDL::ChainDynParam             dyn2(arm2.chain, KDL::Vector(0, 0, -9.81));
 
-    // Different initial configs:
-    //   arm1: all joints at +30°
-    //   arm2: alternating ±45°
-    KDL::JntArray q1(n), q2(n);
-    for (int j = 0; j < n; ++j) {
-        q1(j) =  30.0 * M_PI / 180.0;
-        q2(j) = (j % 2 == 0 ? 1.0 : -1.0) * 45.0 * M_PI / 180.0;
-    }
+    // Both arms start at home pose.
+    KDL::JntArray q_home(n);
+    for (int j = 0; j < n; ++j) q_home(j) = kHomePose[j];
 
-    mj_kdl::sync_from_kdl(&arm1, q1);
-    mj_kdl::sync_from_kdl(&arm2, q2);
+    mj_kdl::sync_from_kdl(&arm1, q_home);
+    mj_kdl::sync_from_kdl(&arm2, q_home);
     mj_forward(model, data);
 
     KDL::Frame ee1_init, ee2_init;
-    fk1.JntToCart(q1, ee1_init);
-    fk2.JntToCart(q2, ee2_init);
+    fk1.JntToCart(q_home, ee1_init);
+    fk2.JntToCart(q_home, ee2_init);
 
     std::cout << std::fixed << std::setprecision(4);
     std::cout << "Arm 1 initial EE: ["
@@ -129,13 +121,11 @@ int main(int argc, char* argv[])
 
     // ------------------------------------------------------------------
     // Part 1: compare KDL gravity torques to MuJoCo qfrc_bias.
-    // At zero velocity, qfrc_bias == gravity torques (no Coriolis).
-    // Tolerance: 0.1 Nm (KDL inertia params may differ slightly from URDF).
     // ------------------------------------------------------------------
     {
         KDL::JntArray g1(n), g2(n);
-        dyn1.JntToGravity(q1, g1);
-        dyn2.JntToGravity(q2, g2);
+        dyn1.JntToGravity(q_home, g1);
+        dyn2.JntToGravity(q_home, g2);
 
         double err1 = 0.0, err2 = 0.0;
         for (int j = 0; j < n; ++j) {
@@ -143,12 +133,9 @@ int main(int argc, char* argv[])
             err2 = std::max(err2, std::abs(g2(j) - data->qfrc_bias[arm2.kdl_to_mj_dof[j]]));
         }
 
-        std::cout << "Part 1 — KDL vs MuJoCo gravity at initial configs (informational):\n";
+        std::cout << "Part 1 — KDL vs MuJoCo gravity at home pose (informational):\n";
         std::cout << "  Arm 1 max |KDL - qfrc_bias| = " << err1 << " Nm\n";
         std::cout << "  Arm 2 max |KDL - qfrc_bias| = " << err2 << " Nm\n";
-        // Note: MuJoCo applies balanceinertia which adjusts inertia tensors;
-        // KDL uses the raw URDF values.  A difference of O(1 Nm) is expected.
-        // The real pass/fail criterion is Part 2 (EE drift under KDL comp).
         std::cout << "  (difference due to balanceinertia; see Part 2 for actual test)\n\n";
     }
 
@@ -190,19 +177,32 @@ int main(int argc, char* argv[])
     // GUI loop — one window shows both arms; user can perturb either.
     // ------------------------------------------------------------------
     if (gui) {
-        mj_kdl::sync_from_kdl(&arm1, q1);
-        mj_kdl::sync_from_kdl(&arm2, q2);
+        mj_kdl::sync_from_kdl(&arm1, q_home);
+        mj_kdl::sync_from_kdl(&arm2, q_home);
         mj_forward(model, data);
+        // Prime position actuators for both arms
+        for (int i = 0; i < n; ++i) {
+            data->ctrl[arm1.kdl_to_mj_dof[i]] =
+                data->qpos[model->jnt_qposadr[model->dof_jntid[arm1.kdl_to_mj_dof[i]]]];
+            data->ctrl[arm2.kdl_to_mj_dof[i]] =
+                data->qpos[model->jnt_qposadr[model->dof_jntid[arm2.kdl_to_mj_dof[i]]]];
+        }
 
         std::cout << "\nGUI: both arms in one scene.\n"
                   << "Ctrl+RightDrag to push a body.  Q/Esc to quit.\n";
 
-        while (mj_kdl::is_running(&arm1)) {
-            apply_grav_comp(&arm1, dyn1);
-            apply_grav_comp(&arm2, dyn2);
-            mj_kdl::step(&arm1);
-            mj_kdl::render(&arm1);
-        }
+        mj_kdl::run_simulate_ui(model, data, urdf.c_str(),
+            [&](mjModel* m, mjData* d) {
+                // Null position actuators for both arms
+                for (int i = 0; i < n; ++i) {
+                    d->ctrl[arm1.kdl_to_mj_dof[i]] =
+                        d->qpos[m->jnt_qposadr[m->dof_jntid[arm1.kdl_to_mj_dof[i]]]];
+                    d->ctrl[arm2.kdl_to_mj_dof[i]] =
+                        d->qpos[m->jnt_qposadr[m->dof_jntid[arm2.kdl_to_mj_dof[i]]]];
+                }
+                apply_grav_comp(&arm1, dyn1);
+                apply_grav_comp(&arm2, dyn2);
+            });
     }
 
     mj_kdl::cleanup(&arm1);   // frees window; does NOT free model/data

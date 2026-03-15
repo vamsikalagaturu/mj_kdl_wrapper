@@ -3,7 +3,7 @@
 
 Build and export with:
   cd build && make export_table_scene
-  ./build/export_table_scene urdf/GEN3_URDF_V12.urdf /tmp/table_scene.mjb
+  ./build/export_table_scene assets/gen3_urdf/GEN3_URDF_V12.urdf /tmp/table_scene.mjb
 Run with:
   MUJOCO_GL=egl python3 tools/render_table_scene.py
 """
@@ -23,7 +23,7 @@ OUT_PATH = ROOT / "docs" / "table_scene_screenshot.png"
 
 def export_model():
     binary = ROOT / "build" / "export_table_scene"
-    urdf   = ROOT / "urdf" / "GEN3_URDF_V12.urdf"
+    urdf   = ROOT / "assets" / "gen3_urdf" / "GEN3_URDF_V12.urdf"
     if not binary.exists():
         sys.exit(f"Export binary not found: {binary}\n"
                  f"Run: cd build && make export_table_scene")
@@ -43,21 +43,15 @@ def main():
     model = mujoco.MjModel.from_binary_path(str(MJB_PATH))
     data  = mujoco.MjData(model)
 
-    # Set a photogenic GEN3 pose: arm angled forward over the objects.
-    # GEN3 joints in order (all revolute):
-    #   j0 base rotation, j1 shoulder, j2 elbow, j3 forearm roll,
-    #   j4 wrist pitch, j5 wrist roll, j6 end roll
-    target_rad = [20.0 * np.pi / 180.0, -30.0 * np.pi / 180.0,
-                  0.3, 0.0, 2.0, 0.0, 0.0]
-    joint_ids = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"joint_{i+1}")
+    # Home pose
+    home_rad = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
+    joint_ids = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"Actuator{i+1}")
                  for i in range(7)]
-    for jid, rad in zip(joint_ids, target_rad):
+    for jid, rad in zip(joint_ids, home_rad):
         if jid >= 0:
-            qadr = model.jnt_qposadr[jid]
-            data.qpos[qadr] = rad
+            data.qpos[model.jnt_qposadr[jid]] = rad
     mujoco.mj_forward(model, data)
 
-    # Better headlight.
     model.vis.headlight.ambient[:]  = [0.45, 0.45, 0.45]
     model.vis.headlight.diffuse[:]  = [0.9,  0.9,  0.9 ]
     model.vis.headlight.specular[:] = [0.15, 0.15, 0.15]
@@ -76,10 +70,8 @@ def main():
     cam.elevation = -24.0
 
     opt = mujoco.MjvOption()
-
     renderer.update_scene(data, camera=cam, scene_option=opt)
 
-    # Inject two extra directional lights into the rendered scene.
     scn = renderer.scene
     max_light = len(scn.lights)
     for spec_light in [

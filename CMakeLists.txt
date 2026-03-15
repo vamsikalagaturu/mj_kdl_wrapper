@@ -13,8 +13,8 @@ endif()
 # Dependencies
 # ---------------------------------------------------------------------------
 
-# MuJoCo — prefer /opt/mujoco-3.5.0, override with -DMUJOCO_ROOT=...
-set(MUJOCO_ROOT "/opt/mujoco-3.5.0" CACHE PATH "MuJoCo install root")
+# MuJoCo — prefer /opt/mujoco-3.6.0, override with -DMUJOCO_ROOT=...
+set(MUJOCO_ROOT "/opt/mujoco-3.6.0" CACHE PATH "MuJoCo install root")
 find_path(MUJOCO_INCLUDE_DIR mujoco/mujoco.h
           PATHS "${MUJOCO_ROOT}/include" /usr/local/include /usr/include
           NO_DEFAULT_PATH REQUIRED)
@@ -92,13 +92,62 @@ target_link_libraries(mj_kdl_wrapper PUBLIC
 )
 
 target_compile_options(mj_kdl_wrapper PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(mj_kdl_wrapper PRIVATE
+  MUJOCO_PLUGIN_DIR="${MUJOCO_ROOT}/bin/mujoco_plugin")
 
 # ---------------------------------------------------------------------------
-# Tests
+# MuJoCo simulate UI  (simulate.cc + GLFW adapter from the MuJoCo source tree)
 # ---------------------------------------------------------------------------
-foreach(test_name test_init test_velocity test_gravity_comp test_dual_arm test_table_scene)
+set(MJ_SIM_DIR "${MUJOCO_ROOT}/simulate")
+add_library(mujoco_simulate_ui STATIC
+  ${MJ_SIM_DIR}/simulate.cc
+  ${MJ_SIM_DIR}/glfw_adapter.cc
+  ${MJ_SIM_DIR}/glfw_dispatch.cc
+  ${MJ_SIM_DIR}/platform_ui_adapter.cc
+)
+target_include_directories(mujoco_simulate_ui PUBLIC
+  ${MJ_SIM_DIR}
+  ${MUJOCO_INCLUDE_DIR}
+)
+target_link_libraries(mujoco_simulate_ui PUBLIC
+  ${MUJOCO_LIBRARY}
+  glfw
+  OpenGL::GL
+)
+target_include_directories(mujoco_simulate_ui PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lodepng   # stub for screenshot saving
+)
+target_compile_options(mujoco_simulate_ui PRIVATE -w)
+set_target_properties(mujoco_simulate_ui PROPERTIES
+  CXX_STANDARD 17 POSITION_INDEPENDENT_CODE ON)
+
+# ---------------------------------------------------------------------------
+# Simulate UI helpers  (run_simulate_ui — real-time PhysicsLoop wrapper)
+# ---------------------------------------------------------------------------
+add_library(mj_kdl_simulate STATIC
+  src/simulate_ui.cpp
+)
+target_include_directories(mj_kdl_simulate PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+  ${MJ_SIM_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lodepng
+)
+target_link_libraries(mj_kdl_simulate PUBLIC
+  mj_kdl_wrapper
+  mujoco_simulate_ui
+)
+target_compile_options(mj_kdl_simulate PRIVATE -w)
+set_target_properties(mj_kdl_simulate PROPERTIES CXX_STANDARD 17)
+
+# ---------------------------------------------------------------------------
+# Tests  (all link mj_kdl_simulate which transitively pulls mj_kdl_wrapper)
+# ---------------------------------------------------------------------------
+foreach(test_name test_init test_velocity test_gravity_comp test_dual_arm test_table_scene
+                  test_kinova_gen3_menagerie test_kinova_gen3_gripper
+                  test_kinova_gen3_impedance test_kinova_gen3_pick)
   add_executable(${test_name} test/${test_name}.cpp)
-  target_link_libraries(${test_name} PRIVATE mj_kdl_wrapper)
+  target_link_libraries(${test_name} PRIVATE mj_kdl_simulate)
   target_compile_options(${test_name} PRIVATE -Wall -Wextra)
 endforeach()
 
@@ -110,6 +159,8 @@ target_compile_options(export_table_scene PRIVATE -Wall -Wextra)
 # Install
 # ---------------------------------------------------------------------------
 install(TARGETS mj_kdl_wrapper test_init test_velocity test_gravity_comp test_dual_arm test_table_scene
+                test_kinova_gen3_menagerie test_kinova_gen3_gripper
+                test_kinova_gen3_impedance test_kinova_gen3_pick
   RUNTIME DESTINATION bin
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib

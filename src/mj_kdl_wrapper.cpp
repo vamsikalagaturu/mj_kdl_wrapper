@@ -10,8 +10,22 @@
 #include <cmath>
 #include <iostream>
 #include <filesystem>
+#include <mutex>
 
 namespace fs = std::filesystem;
+
+// Load MuJoCo decoder plugins (STL, OBJ, …) once at first use.
+// Required since MuJoCo 3.6.0 moved mesh decoders to plugin libraries.
+static void ensure_plugins_loaded()
+{
+    static std::once_flag flag;
+    std::call_once(flag, []() {
+        const char* env = std::getenv("MUJOCO_PLUGIN_DIR");
+        const char* dir = env ? env : MUJOCO_PLUGIN_DIR;
+        mj_loadAllPluginLibraries(dir, nullptr);
+    });
+}
+
 namespace mj_kdl {
 
 // URDF preprocessing
@@ -83,6 +97,11 @@ static void add_floor_to_spec(mjSpec* spec)
     floor->type=mjGEOM_PLANE;
     floor->size[0]=10; floor->size[1]=10; floor->size[2]=0.05;
     floor->contype=1; floor->conaffinity=1; floor->condim=3;
+
+    // Directional light overhead
+    mjsLight* sun = mjs_addLight(wb, nullptr);
+    sun->type = mjLIGHT_DIRECTIONAL;
+    sun->pos[0]=0; sun->pos[1]=0; sun->pos[2]=4;
 }
 
 static void add_table_to_spec(mjSpec* spec, const TableSpec& t)
@@ -185,11 +204,21 @@ static void xml_prefix_names(tinyxml2::XMLElement* e, const std::string& pfx)
         if (v) e->SetAttribute(a, (pfx + v).c_str());
     };
     pfx_attr("name");
+    pfx_attr("class");
+    pfx_attr("childclass");
     const char* tag = e->Name();
     if (!std::strcmp(tag, "geom") || !std::strcmp(tag, "site")) {
         pfx_attr("mesh"); pfx_attr("material");
     } else if (!std::strcmp(tag, "material")) {
         pfx_attr("texture");
+    } else if (!std::strcmp(tag, "joint")) {
+        pfx_attr("joint"); pfx_attr("joint1"); pfx_attr("joint2"); // tendon and equality refs
+    } else if (!std::strcmp(tag, "general") || !std::strcmp(tag, "position")) {
+        pfx_attr("joint"); pfx_attr("tendon");
+    } else if (!std::strcmp(tag, "fixed")) {
+        pfx_attr("joint");
+    } else if (!std::strcmp(tag, "exclude") || !std::strcmp(tag, "connect")) {
+        pfx_attr("body1"); pfx_attr("body2");
     }
     for (auto* c = e->FirstChildElement(); c; c = c->NextSiblingElement())
         xml_prefix_names(c, pfx);
@@ -246,11 +275,14 @@ static bool inject_scene(const std::string& in, const std::string& out,
         asset->InsertEndChild(m);
         XMLElement* wb = mj->FirstChildElement("worldbody");
         if (!wb) { wb = doc.NewElement("worldbody"); mj->InsertEndChild(wb); }
+        XMLElement* light = doc.NewElement("light");
+        light->SetAttribute("pos","0 0 4"); light->SetAttribute("directional","true");
+        wb->InsertFirstChild(light);
         XMLElement* f = doc.NewElement("geom");
         f->SetAttribute("name","floor"); f->SetAttribute("type","plane");
         f->SetAttribute("material","groundplane"); f->SetAttribute("size","10 10 0.05");
         f->SetAttribute("condim","3");
-        wb->InsertFirstChild(f);
+        wb->InsertAfterChild(light, f);
     }
     return doc.SaveFile(out.c_str()) == XML_SUCCESS;
 }
@@ -509,6 +541,82 @@ static void build_index_map(State* s, const std::string& pfx = "")
     }
 }
 
+// Build KDL chain from compiled mjModel (no URDF needed)
+
+static bool build_kdl_from_model(State* s, mjModel* model,
+                                  const char* base_body, const char* tip_body)
+{
+    int base_bid = mj_name2id(model, mjOBJ_BODY, base_body);
+    int tip_bid  = mj_name2id(model, mjOBJ_BODY, tip_body);
+    if (base_bid < 0) { std::cerr << "[mj_kdl] base body not found: " << base_body << "\n"; return false; }
+    if (tip_bid  < 0) { std::cerr << "[mj_kdl] tip body not found: "  << tip_body  << "\n"; return false; }
+
+    std::vector<int> bids;
+    for (int b = tip_bid; b != base_bid; b = model->body_parentid[b]) {
+        if (b == 0) { std::cerr << "[mj_kdl] tip not under base\n"; return false; }
+        bids.push_back(b);
+    }
+    std::reverse(bids.begin(), bids.end());
+
+    s->chain = KDL::Chain();
+    s->joint_names.clear();
+    s->joint_limits.clear();
+
+    auto quat_to_rot = [](const double* q) -> KDL::Rotation {
+        double w=q[0], x=q[1], y=q[2], z=q[3];
+        return KDL::Rotation(
+            1-2*(y*y+z*z), 2*(x*y-w*z),   2*(x*z+w*y),
+            2*(x*y+w*z),   1-2*(x*x+z*z), 2*(y*z-w*x),
+            2*(x*z-w*y),   2*(y*z+w*x),   1-2*(x*x+y*y));
+    };
+
+    for (int bid : bids) {
+        const char* bname = mj_id2name(model, mjOBJ_BODY, bid);
+        KDL::Rotation bR = quat_to_rot(&model->body_quat[4*bid]);
+        KDL::Vector   bv(model->body_pos[3*bid], model->body_pos[3*bid+1], model->body_pos[3*bid+2]);
+        KDL::Frame    F(bR, bv);
+
+        KDL::Joint jnt(KDL::Joint::None);
+        for (int jid = model->body_jntadr[bid];
+             jid < model->body_jntadr[bid] + model->body_jntnum[bid]; ++jid)
+        {
+            if (model->jnt_type[jid] != mjJNT_HINGE && model->jnt_type[jid] != mjJNT_SLIDE)
+                continue;
+            const char* jname = mj_id2name(model, mjOBJ_JOINT, jid);
+            KDL::Vector jp(model->jnt_pos[3*jid], model->jnt_pos[3*jid+1], model->jnt_pos[3*jid+2]);
+            KDL::Vector ja(model->jnt_axis[3*jid], model->jnt_axis[3*jid+1], model->jnt_axis[3*jid+2]);
+            KDL::Vector origin = bv + bR * jp;
+            KDL::Vector axis   = bR * ja;
+            KDL::Joint::JointType jtype = (model->jnt_type[jid] == mjJNT_HINGE)
+                ? KDL::Joint::RotAxis : KDL::Joint::TransAxis;
+            jnt = KDL::Joint(jname ? jname : "", origin, axis, jtype);
+            if (jname) {
+                s->joint_names.push_back(jname);
+                double lo = -M_PI, hi = M_PI;
+                if (model->jnt_limited[jid]) {
+                    lo = model->jnt_range[2*jid]; hi = model->jnt_range[2*jid+1];
+                }
+                s->joint_limits.emplace_back(lo, hi);
+            }
+            break;
+        }
+
+        double mass = model->body_mass[bid];
+        const double* ip = &model->body_ipos[3*bid];
+        KDL::Rotation iR = quat_to_rot(&model->body_iquat[4*bid]);
+        const double* id = &model->body_inertia[3*bid];
+        double I[3][3] = {};
+        for (int a=0;a<3;a++) for (int b2=0;b2<3;b2++) for (int c=0;c<3;c++)
+            I[a][b2] += iR(a,c)*id[c]*iR(b2,c);
+        KDL::RigidBodyInertia inertia(mass, KDL::Vector(ip[0],ip[1],ip[2]),
+            KDL::RotationalInertia(I[0][0],I[1][1],I[2][2],I[0][1],I[0][2],I[1][2]));
+
+        s->chain.addSegment(KDL::Segment(bname ? bname : "", jnt, F, inertia));
+    }
+    s->n_joints = (int)s->chain.getNrOfJoints();
+    return true;
+}
+
 // GLFW
 
 static void cb_keyboard(GLFWwindow*, int, int, int, int);
@@ -518,14 +626,17 @@ static void cb_scroll(GLFWwindow*, double, double);
 static State* g_state = nullptr;
 
 struct GLMouseState {
-    bool btn_left=false, btn_right=false, btn_middle=false;
+    bool   btn_left=false, btn_right=false, btn_middle=false;
     double mouse_x=0, mouse_y=0;
+    double last_click_time = -1.0;
+    int    last_click_btn  = -1;
 };
 
 // Public API
 
 bool build_scene(mjModel** out_model, mjData** out_data, const SceneSpec* sc)
 {
+    ensure_plugins_loaded();
     if (!sc || sc->robots.empty()) return false;
 
     fs::path tmp = fs::absolute(fs::path(sc->robots[0].urdf_path).parent_path());
@@ -562,8 +673,11 @@ bool build_scene(mjModel** out_model, mjData** out_data, const SceneSpec* sc)
         if (!sc->objects.empty())   add_objects_to_spec(spec, sc->objects);
 
         *out_model = mj_compile(spec, nullptr);
+        if (!*out_model) {
+            std::cerr << "[mj_kdl] compile: " << mjs_getError(spec) << "\n";
+            mj_deleteSpec(spec); return false;
+        }
         mj_deleteSpec(spec);
-        if (!*out_model) { std::cerr << "[mj_kdl] compile failed\n"; return false; }
         *out_data = mj_makeData(*out_model);
         if (!*out_data) { mj_deleteModel(*out_model); *out_model=nullptr; return false; }
         return true;
@@ -590,6 +704,205 @@ bool build_scene(mjModel** out_model, mjData** out_data, const SceneSpec* sc)
     *out_data = mj_makeData(*out_model);
     if (!*out_data) { mj_deleteModel(*out_model); *out_model=nullptr; return false; }
     return true;
+}
+
+bool load_mjcf(mjModel** out_model, mjData** out_data, const char* path)
+{
+    ensure_plugins_loaded();
+    char err[2048] = {};
+    *out_model = mj_loadXML(path, nullptr, err, sizeof(err));
+    if (!*out_model) { std::cerr << "[mj_kdl] load_mjcf: " << err << "\n"; return false; }
+    *out_data = mj_makeData(*out_model);
+    if (!*out_data) { mj_deleteModel(*out_model); *out_model=nullptr; return false; }
+    return true;
+}
+
+bool patch_mjcf_visuals(const char* mjcf_path)
+{
+    using namespace tinyxml2;
+    XMLDocument doc;
+    if (doc.LoadFile(mjcf_path) != XML_SUCCESS) return false;
+    XMLElement* mj = doc.FirstChildElement("mujoco");
+    if (!mj) return false;
+
+    XMLElement* asset = mj->FirstChildElement("asset");
+    if (!asset) { asset = doc.NewElement("asset"); mj->InsertFirstChild(asset); }
+
+    XMLElement* sky = doc.NewElement("texture");
+    sky->SetAttribute("type","skybox"); sky->SetAttribute("builtin","gradient");
+    sky->SetAttribute("rgb1","0.3 0.45 0.65"); sky->SetAttribute("rgb2","0.65 0.8 0.95");
+    sky->SetAttribute("width","200"); sky->SetAttribute("height","200");
+    asset->InsertFirstChild(sky);
+
+    XMLElement* gp_tex = doc.NewElement("texture");
+    gp_tex->SetAttribute("type","2d"); gp_tex->SetAttribute("name","groundplane");
+    gp_tex->SetAttribute("builtin","checker");
+    gp_tex->SetAttribute("rgb1","0.2 0.3 0.4"); gp_tex->SetAttribute("rgb2","0.1 0.2 0.3");
+    gp_tex->SetAttribute("width","300"); gp_tex->SetAttribute("height","300");
+    asset->InsertEndChild(gp_tex);
+
+    XMLElement* gp_mat = doc.NewElement("material");
+    gp_mat->SetAttribute("name","groundplane"); gp_mat->SetAttribute("texture","groundplane");
+    gp_mat->SetAttribute("texrepeat","5 5"); gp_mat->SetAttribute("reflectance","0.2");
+    asset->InsertEndChild(gp_mat);
+
+    XMLElement* wb = mj->FirstChildElement("worldbody");
+    if (!wb) { wb = doc.NewElement("worldbody"); mj->InsertEndChild(wb); }
+
+    XMLElement* light = doc.NewElement("light");
+    light->SetAttribute("pos","0 0 4"); light->SetAttribute("directional","true");
+    wb->InsertFirstChild(light);
+
+    XMLElement* floor = doc.NewElement("geom");
+    floor->SetAttribute("name","floor"); floor->SetAttribute("type","plane");
+    floor->SetAttribute("material","groundplane"); floor->SetAttribute("size","10 10 0.05");
+    floor->SetAttribute("condim","3");
+    wb->InsertAfterChild(light, floor);
+
+    return doc.SaveFile(mjcf_path) == XML_SUCCESS;
+}
+
+bool attach_gripper(const char* arm_mjcf, const GripperSpec* g, const char* out_path)
+{
+    using namespace tinyxml2;
+
+    XMLDocument arm_doc, grp_doc;
+    if (arm_doc.LoadFile(arm_mjcf) != XML_SUCCESS) {
+        std::cerr << "[mj_kdl] cannot load arm: " << arm_mjcf << "\n"; return false;
+    }
+    if (grp_doc.LoadFile(g->mjcf_path) != XML_SUCCESS) {
+        std::cerr << "[mj_kdl] cannot load gripper: " << g->mjcf_path << "\n"; return false;
+    }
+
+    XMLElement* arm_mj = arm_doc.FirstChildElement("mujoco");
+    XMLElement* grp_mj = grp_doc.FirstChildElement("mujoco");
+    if (!arm_mj || !grp_mj) return false;
+
+    // Resolve arm's meshdir to absolute so the combined file can live anywhere
+    fs::path arm_dir = fs::absolute(fs::path(arm_mjcf).parent_path());
+    if (XMLElement* ac = arm_mj->FirstChildElement("compiler")) {
+        const char* mdir = ac->Attribute("meshdir");
+        if (mdir && !fs::path(mdir).is_absolute())
+            ac->SetAttribute("meshdir", (arm_dir / mdir).string().c_str());
+    }
+
+    // Resolve gripper asset paths to absolute (for meshdir)
+    fs::path grp_dir = fs::absolute(fs::path(g->mjcf_path).parent_path());
+
+    // Fix gripper mesh file paths to absolute, and add explicit names (stem of filename)
+    // so that xml_prefix_names can rename them consistently.
+    auto fix_meshdir = [&](XMLElement* root, const std::string& meshdir) {
+        if (XMLElement* asset = root->FirstChildElement("asset")) {
+            for (auto* m = asset->FirstChildElement("mesh"); m; m = m->NextSiblingElement("mesh")) {
+                const char* f = m->Attribute("file");
+                if (f) {
+                    if (!fs::path(f).is_absolute())
+                        m->SetAttribute("file", (fs::path(meshdir) / f).string().c_str());
+                    if (!m->Attribute("name"))
+                        m->SetAttribute("name", fs::path(f).stem().string().c_str());
+                }
+            }
+        }
+    };
+    std::string grp_meshdir = grp_dir.string() + "/assets";
+    if (XMLElement* gc = grp_mj->FirstChildElement("compiler")) {
+        const char* mdir = gc->Attribute("meshdir");
+        if (mdir) grp_meshdir = (grp_dir / mdir).string();
+    }
+    fix_meshdir(grp_mj, grp_meshdir);
+
+    std::string pfx(g->prefix ? g->prefix : "");
+
+    // Merge assets
+    XMLElement* arm_asset = arm_mj->FirstChildElement("asset");
+    if (!arm_asset) { arm_asset = arm_doc.NewElement("asset"); arm_mj->InsertEndChild(arm_asset); }
+    if (XMLElement* grp_asset = grp_mj->FirstChildElement("asset")) {
+        for (auto* c = grp_asset->FirstChildElement(); c; c = c->NextSiblingElement()) {
+            XMLElement* cl = xml_deep_clone(c, &arm_doc);
+            xml_prefix_names(cl, pfx);
+            arm_asset->InsertEndChild(cl);
+        }
+    }
+
+    // Merge defaults
+    if (XMLElement* gd = grp_mj->FirstChildElement("default")) {
+        XMLElement* ad = arm_mj->FirstChildElement("default");
+        if (!ad) { ad = arm_doc.NewElement("default"); arm_mj->InsertEndChild(ad); }
+        for (auto* c = gd->FirstChildElement(); c; c = c->NextSiblingElement()) {
+            XMLElement* cl = xml_deep_clone(c, &arm_doc);
+            xml_prefix_names(cl, pfx);
+            ad->InsertEndChild(cl);
+        }
+    }
+
+    // Find attach body in arm worldbody and insert gripper worldbody children
+    auto find_body = [](XMLElement* root, const char* name) -> XMLElement* {
+        if (!root || !name) return nullptr;
+        if (root->Attribute("name") && std::string(root->Attribute("name")) == name)
+            return root;
+        for (auto* c = root->FirstChildElement("body"); c; c = c->NextSiblingElement("body")) {
+            XMLElement* found = nullptr;
+            std::function<XMLElement*(XMLElement*)> search = [&](XMLElement* e) -> XMLElement* {
+                if (e->Attribute("name") && std::string(e->Attribute("name")) == name) return e;
+                for (auto* ch = e->FirstChildElement("body"); ch; ch = ch->NextSiblingElement("body")) {
+                    if (auto* r = search(ch)) return r;
+                }
+                return nullptr;
+            };
+            if ((found = search(c))) return found;
+        }
+        return nullptr;
+    };
+
+    XMLElement* arm_wb = arm_mj->FirstChildElement("worldbody");
+    if (!arm_wb) return false;
+    XMLElement* attach_el = find_body(arm_wb, g->attach_to);
+    if (!attach_el) {
+        std::cerr << "[mj_kdl] attach body not found: " << g->attach_to << "\n"; return false;
+    }
+
+    XMLElement* grp_wb = grp_mj->FirstChildElement("worldbody");
+    if (grp_wb) {
+        for (auto* c = grp_wb->FirstChildElement(); c; c = c->NextSiblingElement()) {
+            XMLElement* cl = xml_deep_clone(c, &arm_doc);
+            xml_prefix_names(cl, pfx);
+            // Apply offset
+            char pos_str[64];
+            std::snprintf(pos_str, sizeof(pos_str), "%.6f %.6f %.6f",
+                          g->pos[0], g->pos[1], g->pos[2]);
+            if (g->pos[0]||g->pos[1]||g->pos[2]) cl->SetAttribute("pos", pos_str);
+            bool non_identity = g->quat[0]!=1||g->quat[1]||g->quat[2]||g->quat[3];
+            if (non_identity) {
+                char q_str[64];
+                std::snprintf(q_str, sizeof(q_str), "%.6f %.6f %.6f %.6f",
+                              g->quat[0], g->quat[1], g->quat[2], g->quat[3]);
+                cl->SetAttribute("quat", q_str);
+            }
+            attach_el->InsertEndChild(cl);
+        }
+    }
+
+    // Merge contacts
+    auto merge_section = [&](const char* tag) {
+        XMLElement* gs = grp_mj->FirstChildElement(tag);
+        if (!gs) return;
+        XMLElement* as = arm_mj->FirstChildElement(tag);
+        if (!as) { as = arm_doc.NewElement(tag); arm_mj->InsertEndChild(as); }
+        for (auto* c = gs->FirstChildElement(); c; c = c->NextSiblingElement()) {
+            XMLElement* cl = xml_deep_clone(c, &arm_doc);
+            xml_prefix_names(cl, pfx);
+            as->InsertEndChild(cl);
+        }
+    };
+    merge_section("contact");
+    merge_section("tendon");
+    // Equality constraints are copied verbatim: MuJoCo computes local body
+    // offsets from the anchor at compile time, so anchor="0 0 0" is correct
+    // regardless of where the gripper is attached.
+    merge_section("equality");
+    merge_section("actuator");
+
+    return arm_doc.SaveFile(out_path) == XML_SUCCESS;
 }
 
 void destroy_scene(mjModel* model, mjData* data)
@@ -638,6 +951,15 @@ bool init_robot(State* s, mjModel* model, mjData* data,
     std::string pfx = prefix ? prefix : "";
     sync_chain_inertias(s, pfx);
     build_index_map(s, pfx);
+    return true;
+}
+
+bool init_from_mjcf(State* s, mjModel* model, mjData* data,
+                    const char* base_body, const char* tip_body, const char* prefix)
+{
+    s->model = model; s->data = data; s->_owns_model = false;
+    if (!build_kdl_from_model(s, model, base_body, tip_body)) return false;
+    build_index_map(s, prefix ? prefix : "");
     return true;
 }
 
@@ -716,7 +1038,7 @@ void cleanup(State* s)
 
 void step(State* s)
 {
-    if (!s->model || !s->data) return;
+    if (!s->model || !s->data || s->paused) return;
     if (s->pert.active) mjv_applyPerturbForce(s->model, s->data, &s->pert);
     mj_step(s->model, s->data);
 }
@@ -743,13 +1065,35 @@ bool render(State* s)
     mjrRect vp = {0, 0, w, h};
     mjv_updateScene(s->model, s->data, &s->opt, &s->pert, &s->cam, mjCAT_ALL, &s->scn);
     mjr_render(vp, &s->scn, &s->con);
-    char top[128], bot[256];
-    std::snprintf(top, sizeof(top), "t = %.3f s", s->data->time);
-    std::snprintf(bot, sizeof(bot),
-        "Ctrl+RightDrag: push body\nCtrl+LeftDrag:  rotate body\n"
-        "RightDrag: pan  LeftDrag: orbit  Scroll: zoom");
-    mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT,    vp, top, nullptr, &s->con);
-    mjr_overlay(mjFONT_NORMAL, mjGRID_BOTTOMLEFT, vp, bot, nullptr, &s->con);
+
+    char top[256];
+    const char* selname = (s->pert.select > 0)
+        ? mj_id2name(s->model, mjOBJ_BODY, s->pert.select) : nullptr;
+    if (selname)
+        std::snprintf(top, sizeof(top), "t = %.3f s%s\nSelected: %s",
+                      s->data->time, s->paused ? "  [PAUSED]" : "", selname);
+    else
+        std::snprintf(top, sizeof(top), "t = %.3f s%s",
+                      s->data->time, s->paused ? "  [PAUSED]" : "");
+    mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, vp, top, nullptr, &s->con);
+
+    mjr_overlay(mjFONT_NORMAL, mjGRID_BOTTOMLEFT, vp,
+        "DblClick: select body   D: deselect\n"
+        "Left drag: push force   Right drag: apply torque\n"
+        "No selection — Left drag: orbit   Right drag: pan   Scroll: zoom\n"
+        "Space: pause/resume   R: reset   J: toggle joints   Q/Esc: quit",
+        nullptr, &s->con);
+
+    if (s->show_joints && s->n_joints > 0 && !s->kdl_to_mj_qpos.empty()) {
+        char jvals[1024];
+        int off = std::snprintf(jvals, sizeof(jvals), "Joints (rad)\n");
+        for (int i = 0; i < s->n_joints && i < 16 && off < (int)sizeof(jvals)-32; ++i)
+            off += std::snprintf(jvals+off, sizeof(jvals)-off, "  %-20s %.3f\n",
+                                 s->joint_names[i].c_str(),
+                                 s->data->qpos[s->kdl_to_mj_qpos[i]]);
+        mjr_overlay(mjFONT_NORMAL, mjGRID_TOPRIGHT, vp, jvals, nullptr, &s->con);
+    }
+
     glfwSwapBuffers(s->window);
     return true;
 }
@@ -780,8 +1124,17 @@ void set_torques(State* s, const KDL::JntArray& tau)
 
 static void cb_keyboard(GLFWwindow* w, int key, int, int action, int)
 {
-    if (action == GLFW_PRESS && (key == GLFW_KEY_ESCAPE || key == GLFW_KEY_Q))
+    if (action != GLFW_PRESS) return;
+    if (key == GLFW_KEY_ESCAPE || key == GLFW_KEY_Q)
         glfwSetWindowShouldClose(w, GLFW_TRUE);
+    if (!g_state) return;
+    if (key == GLFW_KEY_SPACE) g_state->paused = !g_state->paused;
+    if (key == GLFW_KEY_R)     reset(g_state);
+    if (key == GLFW_KEY_J)     g_state->show_joints = !g_state->show_joints;
+    if (key == GLFW_KEY_D) {
+        g_state->pert.select = 0;
+        g_state->pert.active = 0;
+    }
 }
 
 static void cb_mouse_button(GLFWwindow* w, int btn, int act, int)
@@ -792,26 +1145,38 @@ static void cb_mouse_button(GLFWwindow* w, int btn, int act, int)
     ms->btn_middle = (glfwGetMouseButton(w, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS);
     glfwGetCursorPos(w, &ms->mouse_x, &ms->mouse_y);
     if (!g_state) return;
-    bool ctrl = (glfwGetKey(w, GLFW_KEY_LEFT_CONTROL)  == GLFW_PRESS ||
-                 glfwGetKey(w, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS);
-    if (ctrl && act == GLFW_PRESS &&
-        (btn == GLFW_MOUSE_BUTTON_LEFT || btn == GLFW_MOUSE_BUTTON_RIGHT)) {
-        int ww, wh; glfwGetWindowSize(w, &ww, &wh);
-        mjtNum selpnt[3];
-        int geomid[1]={-1}, flexid[1]={-1}, skinid[1]={-1};
-        int body = mjv_select(g_state->model, g_state->data, &g_state->opt,
-                              (mjtNum)wh/ww, (mjtNum)ms->mouse_x/ww,
-                              (mjtNum)(wh-ms->mouse_y)/wh,
-                              &g_state->scn, selpnt, geomid, flexid, skinid);
-        if (body >= 0) {
-            g_state->pert.select=body; g_state->pert.skinselect=skinid[0];
-            mju_copy3(g_state->pert.localpos, selpnt);
-            g_state->pert.active = (btn == GLFW_MOUSE_BUTTON_RIGHT) ? mjPERT_TRANSLATE : mjPERT_ROTATE;
+
+    if (act == GLFW_PRESS) {
+        double now = glfwGetTime();
+        bool dbl = (now - ms->last_click_time < 0.3) && (btn == ms->last_click_btn);
+        ms->last_click_time = dbl ? -1.0 : now;
+        ms->last_click_btn  = btn;
+
+        if (dbl) {
+            int ww, wh; glfwGetWindowSize(w, &ww, &wh);
+            mjtNum selpnt[3];
+            int geomid[1]={-1}, flexid[1]={-1}, skinid[1]={-1};
+            int body = mjv_select(g_state->model, g_state->data, &g_state->opt,
+                                  (mjtNum)wh/ww, (mjtNum)ms->mouse_x/ww,
+                                  (mjtNum)(wh - ms->mouse_y)/wh,
+                                  &g_state->scn, selpnt, geomid, flexid, skinid);
+            if (body > 0) {
+                g_state->pert.select     = body;
+                g_state->pert.skinselect = skinid[0];
+                mju_copy3(g_state->pert.localpos, selpnt);
+                mjv_initPerturb(g_state->model, g_state->data, &g_state->scn, &g_state->pert);
+            } else {
+                g_state->pert.select = 0;
+                g_state->pert.active = 0;
+            }
+        }
+
+        if (g_state->pert.select > 0) {
+            g_state->pert.active = (btn == GLFW_MOUSE_BUTTON_LEFT) ? mjPERT_TRANSLATE : mjPERT_ROTATE;
             mjv_initPerturb(g_state->model, g_state->data, &g_state->scn, &g_state->pert);
         }
-    } else if (!ms->btn_left && !ms->btn_right && !ms->btn_middle) {
-        g_state->pert.active=0; g_state->pert.select=0;
-        mju_zero(g_state->data->xfrc_applied, 6*g_state->model->nbody);
+    } else {
+        g_state->pert.active = 0;
     }
 }
 
@@ -819,21 +1184,20 @@ static void cb_mouse_move(GLFWwindow* w, double x, double y)
 {
     auto* ms = static_cast<GLMouseState*>(glfwGetWindowUserPointer(w));
     if (!g_state || (!ms->btn_left && !ms->btn_right && !ms->btn_middle)) return;
-    double dx = x-ms->mouse_x, dy = y-ms->mouse_y;
-    ms->mouse_x=x; ms->mouse_y=y;
+    double dx = x - ms->mouse_x, dy = y - ms->mouse_y;
+    ms->mouse_x = x; ms->mouse_y = y;
     int ww, wh; glfwGetWindowSize(w, &ww, &wh);
-    bool ctrl  = (glfwGetKey(w, GLFW_KEY_LEFT_CONTROL)  == GLFW_PRESS ||
-                  glfwGetKey(w, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS);
-    bool shift = (glfwGetKey(w, GLFW_KEY_LEFT_SHIFT)    == GLFW_PRESS ||
-                  glfwGetKey(w, GLFW_KEY_RIGHT_SHIFT)   == GLFW_PRESS);
-    if (ctrl && g_state->pert.select > 0) {
-        mjtMouse act = ms->btn_right ? (shift ? mjMOUSE_MOVE_H   : mjMOUSE_MOVE_V)
-                     : ms->btn_left  ? (shift ? mjMOUSE_ROTATE_H : mjMOUSE_ROTATE_V)
+    bool shift = (glfwGetKey(w, GLFW_KEY_LEFT_SHIFT)  == GLFW_PRESS ||
+                  glfwGetKey(w, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
+    if (g_state->pert.select > 0 && g_state->pert.active) {
+        // Left drag = MOVE (translate body), Right drag = ROTATE (torque body)
+        mjtMouse act = ms->btn_left  ? (shift ? mjMOUSE_MOVE_H   : mjMOUSE_MOVE_V)
+                     : ms->btn_right ? (shift ? mjMOUSE_ROTATE_H : mjMOUSE_ROTATE_V)
                      : mjMOUSE_ZOOM;
         mjv_movePerturb(g_state->model, g_state->data, act, dx/wh, dy/wh, &g_state->scn, &g_state->pert);
     } else {
-        mjtMouse act = ms->btn_right ? (shift ? mjMOUSE_MOVE_H   : mjMOUSE_MOVE_V)
-                     : ms->btn_left  ? (shift ? mjMOUSE_ROTATE_H : mjMOUSE_ROTATE_V)
+        mjtMouse act = ms->btn_left  ? (shift ? mjMOUSE_ROTATE_H : mjMOUSE_ROTATE_V)
+                     : ms->btn_right ? (shift ? mjMOUSE_MOVE_H   : mjMOUSE_MOVE_V)
                      : mjMOUSE_ZOOM;
         mjv_moveCamera(g_state->model, act, dx/wh, dy/wh, &g_state->scn, &g_state->cam);
     }
