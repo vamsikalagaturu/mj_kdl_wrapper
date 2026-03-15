@@ -143,9 +143,22 @@ int main(int argc, char* argv[])
             mj_kdl::sync_from_kdl(&s, q_test);
             mj_forward(model, data);
             std::cout << "GUI: close window to exit\n";
+            // Prime ctrl so position actuators start with zero error
+            for (int i = 0; i < (int)n; ++i)
+                data->ctrl[i] = data->qpos[model->jnt_qposadr[
+                    model->dof_jntid[s.kdl_to_mj_dof[i]]]];
+
             while (mj_kdl::is_running(&s)) {
                 KDL::JntArray q(n), g(n);
                 mj_kdl::sync_to_kdl(&s, q);
+
+                // Null position actuators each step: ctrl = current qpos so
+                // the PD actuator produces zero spring torque (only damping
+                // remains), letting qfrc_applied carry the gravity comp.
+                for (int i = 0; i < (int)n; ++i)
+                    data->ctrl[i] = data->qpos[model->jnt_qposadr[
+                        model->dof_jntid[s.kdl_to_mj_dof[i]]]];
+
                 dyn.JntToGravity(q, g);
                 mj_kdl::set_torques(&s, g);
                 mj_kdl::step(&s);

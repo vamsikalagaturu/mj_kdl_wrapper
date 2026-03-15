@@ -401,8 +401,6 @@ int main(int argc, char* argv[])
             &cam, &opt, &pert, /*is_passive=*/false
         );
 
-        sim->Load(model, data, combined.c_str());
-
         // Physics thread context
         PhysicsCtx ctx;
         ctx.sim           = sim.get();
@@ -415,9 +413,20 @@ int main(int argc, char* argv[])
         ctx.arm_qpos_addr = arm_qpos_addr;
         ctx.fingers_act_id = fingers_act;
 
-        std::thread phys([&ctx]{ PhysicsLoop(ctx); });
+        // Load must be called from the physics thread AFTER RenderLoop() has
+        // started — Simulate::Load() blocks on cond_loadrequest.wait() until
+        // the render thread calls LoadOnRenderThread().
+        std::thread phys([&ctx, &combined]() {
+            ctx.sim->LoadMessage(combined.c_str());
+            ctx.sim->Load(ctx.m, ctx.d, combined.c_str());
+            {
+                std::unique_lock<std::recursive_mutex> lock(ctx.sim->mtx);
+                mj_forward(ctx.m, ctx.d);
+            }
+            PhysicsLoop(ctx);
+        });
 
-        // Blocks until window is closed
+        // Blocks until window is closed (processes Load requests from phys thread)
         sim->RenderLoop();
         phys.join();
     }
