@@ -1,6 +1,6 @@
 # mj-kdl-wrapper
 
-A C++ library bridging [MuJoCo 3.5](https://github.com/google-deepmind/mujoco) physics simulation with [KDL](https://github.com/orocos/orocos_kinematics_dynamics) for robot kinematics and dynamics.
+A C++ library bridging [MuJoCo 3.6](https://github.com/google-deepmind/mujoco) physics simulation with [KDL](https://github.com/orocos/orocos_kinematics_dynamics) for robot kinematics and dynamics.
 
 ## Preview
 
@@ -26,7 +26,7 @@ A C++ library bridging [MuJoCo 3.5](https://github.com/google-deepmind/mujoco) p
 
 | Dependency | Version | Install |
 |------------|---------|---------|
-| MuJoCo | 3.5.0 | download to `/opt/mujoco-3.5.0` |
+| MuJoCo | 3.6.0 | download to `/opt/mujoco-3.6.0` |
 | GLFW | 3.x | `sudo apt install libglfw3-dev` |
 | OpenGL | — | `sudo apt install libgl-dev` |
 | orocos-kdl | — | `sudo apt install liborocos-kdl-dev` |
@@ -38,8 +38,8 @@ A C++ library bridging [MuJoCo 3.5](https://github.com/google-deepmind/mujoco) p
 ## Building
 
 ```bash
-wget https://github.com/google-deepmind/mujoco/releases/download/3.5.0/mujoco-3.5.0-linux-x86_64.tar.gz
-tar -xzf mujoco-3.5.0-linux-x86_64.tar.gz -C /opt/
+wget https://github.com/google-deepmind/mujoco/releases/download/3.6.0/mujoco-3.6.0-linux-x86_64.tar.gz
+tar -xzf mujoco-3.6.0-linux-x86_64.tar.gz -C /opt/
 
 sudo apt install libglfw3-dev libgl-dev liborocos-kdl-dev liburdfdom-dev libtinyxml2-dev
 

@@ -10,8 +10,22 @@
 #include <cmath>
 #include <iostream>
 #include <filesystem>
+#include <mutex>
 
 namespace fs = std::filesystem;
+
+// Load MuJoCo decoder plugins (STL, OBJ, …) once at first use.
+// Required since MuJoCo 3.6.0 moved mesh decoders to plugin libraries.
+static void ensure_plugins_loaded()
+{
+    static std::once_flag flag;
+    std::call_once(flag, []() {
+        const char* env = std::getenv("MUJOCO_PLUGIN_DIR");
+        const char* dir = env ? env : MUJOCO_PLUGIN_DIR;
+        mj_loadAllPluginLibraries(dir, nullptr);
+    });
+}
+
 namespace mj_kdl {
 
 // URDF preprocessing
@@ -622,6 +636,7 @@ struct GLMouseState {
 
 bool build_scene(mjModel** out_model, mjData** out_data, const SceneSpec* sc)
 {
+    ensure_plugins_loaded();
     if (!sc || sc->robots.empty()) return false;
 
     fs::path tmp = fs::absolute(fs::path(sc->robots[0].urdf_path).parent_path());
@@ -658,8 +673,11 @@ bool build_scene(mjModel** out_model, mjData** out_data, const SceneSpec* sc)
         if (!sc->objects.empty())   add_objects_to_spec(spec, sc->objects);
 
         *out_model = mj_compile(spec, nullptr);
+        if (!*out_model) {
+            std::cerr << "[mj_kdl] compile failed: " << mjs_getError(spec) << "\n";
+            mj_deleteSpec(spec); return false;
+        }
         mj_deleteSpec(spec);
-        if (!*out_model) { std::cerr << "[mj_kdl] compile failed\n"; return false; }
         *out_data = mj_makeData(*out_model);
         if (!*out_data) { mj_deleteModel(*out_model); *out_model=nullptr; return false; }
         return true;
@@ -690,6 +708,7 @@ bool build_scene(mjModel** out_model, mjData** out_data, const SceneSpec* sc)
 
 bool load_mjcf(mjModel** out_model, mjData** out_data, const char* path)
 {
+    ensure_plugins_loaded();
     char err[2048] = {};
     *out_model = mj_loadXML(path, nullptr, err, sizeof(err));
     if (!*out_model) { std::cerr << "[mj_kdl] load_mjcf: " << err << "\n"; return false; }

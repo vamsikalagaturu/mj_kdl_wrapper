@@ -13,8 +13,8 @@ endif()
 # Dependencies
 # ---------------------------------------------------------------------------
 
-# MuJoCo — prefer /opt/mujoco-3.5.0, override with -DMUJOCO_ROOT=...
-set(MUJOCO_ROOT "/opt/mujoco-3.5.0" CACHE PATH "MuJoCo install root")
+# MuJoCo — prefer /opt/mujoco-3.6.0, override with -DMUJOCO_ROOT=...
+set(MUJOCO_ROOT "/opt/mujoco-3.6.0" CACHE PATH "MuJoCo install root")
 find_path(MUJOCO_INCLUDE_DIR mujoco/mujoco.h
           PATHS "${MUJOCO_ROOT}/include" /usr/local/include /usr/include
           NO_DEFAULT_PATH REQUIRED)
@@ -92,6 +92,8 @@ target_link_libraries(mj_kdl_wrapper PUBLIC
 )
 
 target_compile_options(mj_kdl_wrapper PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(mj_kdl_wrapper PRIVATE
+  MUJOCO_PLUGIN_DIR="${MUJOCO_ROOT}/bin/mujoco_plugin")
 
 # ---------------------------------------------------------------------------
 # MuJoCo simulate UI  (simulate.cc + GLFW adapter from the MuJoCo source tree)
