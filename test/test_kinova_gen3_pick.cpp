@@ -92,40 +92,6 @@ static bool patch_contact_exclusions(const std::string& path)
     return doc.SaveFile(path.c_str()) == tinyxml2::XML_SUCCESS;
 }
 
-static bool patch_add_cube(const std::string& path)
-{
-    tinyxml2::XMLDocument doc;
-    if (doc.LoadFile(path.c_str()) != tinyxml2::XML_SUCCESS) return false;
-    auto* root = doc.FirstChildElement("mujoco");
-    if (!root) return false;
-    auto* wb = root->FirstChildElement("worldbody");
-    if (!wb) return false;
-
-    char pos_buf[64], sz_buf[64];
-    std::snprintf(pos_buf, sizeof(pos_buf), "%.4f %.4f %.4f", kCubeX, kCubeY, kCubeZ);
-    std::snprintf(sz_buf,  sizeof(sz_buf),  "%.4f %.4f %.4f", kCubeHS, kCubeHS, kCubeHS);
-
-    auto* body = doc.NewElement("body");
-    body->SetAttribute("name", "cube");
-    body->SetAttribute("pos", pos_buf);
-
-    auto* fj = doc.NewElement("freejoint");
-    fj->SetAttribute("name", "cube_joint");
-    body->InsertEndChild(fj);
-
-    auto* geom = doc.NewElement("geom");
-    geom->SetAttribute("type", "box");
-    geom->SetAttribute("size", sz_buf);
-    geom->SetAttribute("mass", "0.1");
-    geom->SetAttribute("rgba", "1 0.5 0 1");
-    geom->SetAttribute("condim", "4");
-    geom->SetAttribute("friction", "0.8 0.02 0.001");
-    body->InsertEndChild(geom);
-
-    wb->InsertEndChild(body);
-    return doc.SaveFile(path.c_str()) == tinyxml2::XML_SUCCESS;
-}
-
 // ---------------------------------------------------------------------------
 // Trajectory helpers
 // ---------------------------------------------------------------------------
@@ -174,8 +140,19 @@ int main(int argc, char* argv[])
         { std::cerr << "FAIL: patch_mjcf_visuals\n"; return 1; }
     if (!patch_contact_exclusions(combined))
         { std::cerr << "FAIL: patch_contact_exclusions\n"; return 1; }
-    if (!patch_add_cube(combined))
-        { std::cerr << "FAIL: patch_add_cube\n"; return 1; }
+
+    mj_kdl::SceneObject cube_obj;
+    cube_obj.name       = "cube";
+    cube_obj.shape      = mj_kdl::ObjShape::BOX;
+    cube_obj.size[0]    = kCubeHS; cube_obj.size[1] = kCubeHS; cube_obj.size[2] = kCubeHS;
+    cube_obj.pos[0]     = kCubeX;  cube_obj.pos[1]  = kCubeY;  cube_obj.pos[2]  = kCubeZ;
+    cube_obj.rgba[0]    = 1.0f; cube_obj.rgba[1] = 0.5f; cube_obj.rgba[2] = 0.0f; cube_obj.rgba[3] = 1.0f;
+    cube_obj.mass       = 0.1;
+    cube_obj.condim     = 4;
+    cube_obj.friction[0] = 0.8; cube_obj.friction[1] = 0.02; cube_obj.friction[2] = 0.001;
+
+    if (!mj_kdl::patch_mjcf_add_objects(combined.c_str(), {cube_obj}))
+        { std::cerr << "FAIL: patch_mjcf_add_objects\n"; return 1; }
 
     // Test 1: model loads; cube body found.
     mjModel* model = nullptr;
