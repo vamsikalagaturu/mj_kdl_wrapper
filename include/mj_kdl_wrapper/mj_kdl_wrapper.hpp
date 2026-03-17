@@ -47,10 +47,10 @@ struct SceneRobot
 struct TableSpec
 {
     bool   enabled     = false;
-    double pos[3]      = { 0.0, 0.0, 0.7 }; // (x, y, surface_z)
-    double top_size[2] = { 0.6, 0.4 }; // tabletop half-extents in x, y
-    double thickness   = 0.04; // full thickness of tabletop panel
-    double leg_radius  = 0.025; // leg cylinder radius
+    double pos[3]      = { 0.0, 0.0, 0.7 };             // (x, y, surface_z)
+    double top_size[2] = { 0.6, 0.4 };                  // tabletop half-extents in x, y
+    double thickness   = 0.04;                          // full thickness of tabletop panel
+    double leg_radius  = 0.025;                         // leg cylinder radius
     float  rgba[4]     = { 0.55f, 0.37f, 0.18f, 1.0f }; // wood-ish brown
 };
 
@@ -110,16 +110,16 @@ struct State
     std::vector<std::string>               joint_names;
     std::vector<std::pair<double, double>> joint_limits;
     std::vector<int>                       kdl_to_mj_qpos; // KDL index → MuJoCo qpos address
-    std::vector<int>                       kdl_to_mj_dof; // KDL index → MuJoCo dof address
+    std::vector<int>                       kdl_to_mj_dof;  // KDL index → MuJoCo dof address
     GLFWwindow                            *window = nullptr;
     mjvScene                               scn{};
     mjvCamera                              cam{};
     mjvOption                              opt{};
     mjvPerturb                             pert{};
     mjrContext                             con{};
-    bool _owns_model = true; // if true, cleanup() frees model/data
+    bool _owns_model = true;  // if true, cleanup() frees model/data
     bool paused      = false; // set true to pause simulation (step() becomes a no-op)
-    bool show_joints = true; // show joint value overlay in the viewer
+    bool show_joints = true;  // show joint value overlay in the viewer
 };
 
 /*
@@ -173,11 +173,11 @@ bool init_from_mjcf(State *s,
  */
 struct GripperSpec
 {
-    const char *mjcf_path = nullptr; // gripper MJCF file path
-    const char *attach_to = nullptr; // body name in arm MJCF to attach gripper base to
-    double      pos[3]    = { 0, 0, 0 }; // position offset from attach_to body
+    const char *mjcf_path = nullptr;        // gripper MJCF file path
+    const char *attach_to = nullptr;        // body name in arm MJCF to attach gripper base to
+    double      pos[3]    = { 0, 0, 0 };    // position offset from attach_to body
     double      quat[4]   = { 1, 0, 0, 0 }; // orientation offset (wxyz)
-    const char *prefix    = ""; // prefix for gripper names (avoids conflicts)
+    const char *prefix    = "";             // prefix for gripper names (avoids conflicts)
 };
 
 /*

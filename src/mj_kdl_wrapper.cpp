@@ -141,7 +141,7 @@ static void add_table_to_spec(mjSpec *spec, const TableSpec &t)
     mjsBody *wb         = mjs_findBody(spec, "world");
     double   sz         = t.pos[2]; // surface z
     double   half_thick = t.thickness * 0.5;
-    double   top_cz     = sz - half_thick; // tabletop centre in world
+    double   top_cz     = sz - half_thick;  // tabletop centre in world
     double   leg_h      = sz - t.thickness; // leg height (floor→bottom of top)
 
     mjsBody *tb = mjs_addBody(wb, nullptr);
