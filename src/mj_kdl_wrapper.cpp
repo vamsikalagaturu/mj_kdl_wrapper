@@ -692,6 +692,14 @@ bool load_mjcf(mjModel **out_model, mjData **out_data, const char *path)
     return true;
 }
 
+bool save_model_xml(const mjModel *model, const char *path)
+{
+    char err[2048] = {};
+    int  ok        = mj_saveLastXML(path, model, err, sizeof(err));
+    if (!ok) std::cerr << "[mj_kdl] save_model_xml: " << err << "\n";
+    return ok != 0;
+}
+
 bool patch_mjcf_visuals(const char *mjcf_path)
 {
     ensure_plugins_loaded();

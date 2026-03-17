@@ -151,6 +151,18 @@ bool patch_mjcf_visuals(const char *mjcf_path);
 bool patch_mjcf_add_objects(const char *mjcf_path, const std::vector<SceneObject> &objects);
 
 /*
+ * Save the compiled model to an MJCF XML file for later reloading with load_mjcf().
+ * Must be called with the model returned by the most recent build_scene() or
+ * load_mjcf() call — MuJoCo only retains the last compiled model's XML internally.
+ * Typical use: build a combined scene (dual-arm, arm+gripper, …) once, save it,
+ * then reload with load_mjcf() in subsequent runs to skip all build/patch steps.
+ * @param model  Model to save; must be the most recently compiled model.
+ * @param path   Output path for the MJCF XML file.
+ * @return true on success.
+ */
+bool save_model_xml(const mjModel *model, const char *path);
+
+/*
  * Build KDL chain from a compiled MuJoCo model (no URDF required).
  * Traverses the body tree from base_body to tip_body.
  * @param[out] s          State populated with chain, joint_names, joint_limits, index maps.
