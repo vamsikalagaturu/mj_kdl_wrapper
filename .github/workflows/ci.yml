@@ -29,36 +29,10 @@ jobs:
           rm mujoco-3.6.0-linux-x86_64.tar.gz
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
 
       - name: Build
         run: cmake --build build --parallel $(nproc)
 
-      # URDF-based tests — use assets/gen3_urdf/ which is checked in.
-      - name: Test init
-        run: ./build/test_init
-
-      - name: Test velocity
-        run: ./build/test_velocity
-
-      - name: Test gravity compensation
-        run: ./build/test_gravity_comp
-
-      - name: Test dual arm
-        run: ./build/test_dual_arm
-
-      - name: Test table scene
-        run: ./build/test_table_scene
-
-      # Menagerie-based tests — self-skip when third_party/menagerie/ is absent (gitignored).
-      - name: Test kinova gen3 menagerie
-        run: ./build/test_kinova_gen3_menagerie
-
-      - name: Test kinova gen3 gripper
-        run: ./build/test_kinova_gen3_gripper
-
-      - name: Test kinova gen3 impedance
-        run: ./build/test_kinova_gen3_impedance
-
-      - name: Test kinova gen3 pick
-        run: ./build/test_kinova_gen3_pick
+      - name: Test
+        run: ctest --test-dir build --output-on-failure

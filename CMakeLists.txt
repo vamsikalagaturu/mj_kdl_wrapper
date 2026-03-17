@@ -120,17 +120,47 @@ target_compile_options(mj_kdl_wrapper PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(mj_kdl_wrapper PRIVATE
   MUJOCO_PLUGIN_DIR="${MUJOCO_ROOT}/bin/mujoco_plugin")
 
-# Tests  (all link mj_kdl_wrapper)
-enable_testing()
+# Tests
+option(BUILD_TESTS "Build and register tests with CTest" ON)
 
-foreach(test_name test_init test_velocity test_gravity_comp test_dual_arm test_table_scene
-                  test_kinova_gen3_menagerie test_kinova_gen3_gripper
-                  test_kinova_gen3_impedance test_kinova_gen3_pick)
-  add_executable(${test_name} test/${test_name}.cpp)
-  target_link_libraries(${test_name} PRIVATE mj_kdl_wrapper)
-  target_compile_options(${test_name} PRIVATE -Wall -Wextra)
-  add_test(NAME ${test_name} COMMAND ${test_name})
-endforeach()
+if(BUILD_TESTS)
+  enable_testing()
+
+  set(CORE_TESTS
+    test_init
+    test_velocity
+    test_gravity_comp
+    test_dual_arm
+    test_table_scene
+  )
+
+  # Tests that require third_party/menagerie (MuJoCo Menagerie submodule).
+  set(MENAGERIE_TESTS
+    test_kinova_gen3_menagerie
+    test_kinova_gen3_gripper
+    test_kinova_gen3_impedance
+    test_kinova_gen3_pick
+  )
+
+  foreach(test_name ${CORE_TESTS})
+    add_executable(${test_name} test/${test_name}.cpp)
+    target_link_libraries(${test_name} PRIVATE mj_kdl_wrapper)
+    target_compile_options(${test_name} PRIVATE -Wall -Wextra)
+    add_test(NAME ${test_name} COMMAND ${test_name})
+  endforeach()
+
+  if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/menagerie")
+    message(STATUS "Menagerie found — building menagerie-dependent tests")
+    foreach(test_name ${MENAGERIE_TESTS})
+      add_executable(${test_name} test/${test_name}.cpp)
+      target_link_libraries(${test_name} PRIVATE mj_kdl_wrapper)
+      target_compile_options(${test_name} PRIVATE -Wall -Wextra)
+      add_test(NAME ${test_name} COMMAND ${test_name})
+    endforeach()
+  else()
+    message(STATUS "Menagerie not found — skipping menagerie-dependent tests")
+  endif()
+endif()
 
 add_executable(export_table_scene tools/export_table_scene.cpp)
 target_link_libraries(export_table_scene PRIVATE mj_kdl_wrapper)
@@ -146,11 +176,12 @@ install(TARGETS mj_kdl_wrapper
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
-install(TARGETS test_init test_velocity test_gravity_comp test_dual_arm test_table_scene
-                test_kinova_gen3_menagerie test_kinova_gen3_gripper
-                test_kinova_gen3_impedance test_kinova_gen3_pick
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
+if(BUILD_TESTS)
+  install(TARGETS ${CORE_TESTS} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/menagerie")
+    install(TARGETS ${MENAGERIE_TESTS} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  endif()
+endif()
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 install(EXPORT mj_kdl_wrapperTargets
