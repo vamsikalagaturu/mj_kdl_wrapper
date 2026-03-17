@@ -59,8 +59,7 @@ int main(int argc, char *argv[])
     KDL::JntArray q_home(n);
     for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
 
-    // Part 1: KDL gravity accuracy at home pose
-    {
+    BEGIN_TEST("KDL gravity vs MuJoCo bias at home pose")
         mj_kdl::sync_from_kdl(&s, q_home);
         mj_forward(s.model, s.data);
 
@@ -75,47 +74,45 @@ int main(int argc, char *argv[])
         for (unsigned i = 0; i < n; ++i)
             max_err = std::max(max_err, std::abs(g(i) - s.data->qfrc_bias[s.kdl_to_mj_dof[i]]));
 
-        std::cout << std::fixed << std::setprecision(6);
-        TEST_INFO("Part 1 — KDL gravity vs MuJoCo bias at home pose: max|error| = " << max_err << " Nm");
-
+        TEST_INFO("max|KDL - qfrc_bias| = " << std::fixed << std::setprecision(6)
+                  << max_err << " Nm");
         if (max_err > 1e-3) {
             TEST_FAIL("gravity error " << max_err << " Nm exceeds 0.001 Nm threshold");
             mj_kdl::cleanup(&s);
             return 1;
         }
-        TEST_PASS("Part 1: KDL gravity vs MuJoCo bias");
-    }
+    END_TEST
 
-    // Part 2: KDL gravity comp drift test at home pose
+    /* Reset to home pose for drift test. */
     mj_kdl::sync_from_kdl(&s, q_home);
     mj_forward(s.model, s.data);
 
     KDL::Frame fk_initial;
     fk.JntToCart(q_home, fk_initial);
 
-    for (int i = 0; i < 500; ++i) {
-        KDL::JntArray q, g(n);
-        mj_kdl::sync_to_kdl(&s, q);
-        dyn.JntToGravity(q, g);
-        mj_kdl::set_torques(&s, g);
-        mj_kdl::step(&s);
-    }
+    BEGIN_TEST("gravity compensation drift")
+        for (int i = 0; i < 500; ++i) {
+            KDL::JntArray q, g(n);
+            mj_kdl::sync_to_kdl(&s, q);
+            dyn.JntToGravity(q, g);
+            mj_kdl::set_torques(&s, g);
+            mj_kdl::step(&s);
+        }
 
-    KDL::JntArray q_end;
-    mj_kdl::sync_to_kdl(&s, q_end);
-    KDL::Frame fk_end;
-    fk.JntToCart(q_end, fk_end);
-    double drift = (fk_initial.p - fk_end.p).Norm();
+        KDL::JntArray q_end;
+        mj_kdl::sync_to_kdl(&s, q_end);
+        KDL::Frame fk_end;
+        fk.JntToCart(q_end, fk_end);
+        double drift = (fk_initial.p - fk_end.p).Norm();
 
-    TEST_INFO("Part 2 — KDL gravity comp drift after 500 steps: "
-              << std::setprecision(3) << drift * 1000.0 << " mm");
-
-    if (drift > 0.001) {
-        TEST_FAIL("EE drift " << drift * 1000.0 << " mm exceeds 1 mm threshold");
-        mj_kdl::cleanup(&s);
-        return 1;
-    }
-    TEST_PASS("Part 2: gravity comp drift < 1 mm");
+        TEST_INFO("EE drift after 500 steps: " << std::setprecision(3)
+                  << drift * 1000.0 << " mm");
+        if (drift > 0.001) {
+            TEST_FAIL("EE drift " << drift * 1000.0 << " mm exceeds 1 mm threshold");
+            mj_kdl::cleanup(&s);
+            return 1;
+        }
+    END_TEST
 
     if (gui) {
         mj_kdl::sync_from_kdl(&s, q_home);

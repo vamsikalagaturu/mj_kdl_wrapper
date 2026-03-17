@@ -75,26 +75,35 @@ int main(int argc, char *argv[])
 
     mjModel *model = nullptr;
     mjData  *data  = nullptr;
-    if (!mj_kdl::build_scene(&model, &data, &scene)) {
-        TEST_FAIL("build_scene() returned false");
-        return 1;
-    }
+
+    BEGIN_TEST("build dual-arm scene")
+        if (!mj_kdl::build_scene(&model, &data, &scene)) {
+            TEST_FAIL("build_scene() returned false");
+            return 1;
+        }
+        TEST_INFO(model->nbody << " bodies, " << model->nq << " DOFs");
+    END_TEST
 
     // Attach one State per arm (shared model/data, separate KDL chains).
     mj_kdl::State arm1, arm2;
 
-    if (!mj_kdl::init_robot(
-          &arm1, model, data, urdf.c_str(), "base_link", "EndEffector_Link", "")) {
-        TEST_FAIL("arm1 init_robot() returned false");
-        mj_kdl::destroy_scene(model, data);
-        return 1;
-    }
-    if (!mj_kdl::init_robot(
-          &arm2, model, data, urdf.c_str(), "base_link", "EndEffector_Link", "r2_")) {
-        TEST_FAIL("arm2 init_robot() returned false");
-        mj_kdl::destroy_scene(model, data);
-        return 1;
-    }
+    BEGIN_TEST("init arm1")
+        if (!mj_kdl::init_robot(
+              &arm1, model, data, urdf.c_str(), "base_link", "EndEffector_Link", "")) {
+            TEST_FAIL("arm1 init_robot() returned false");
+            mj_kdl::destroy_scene(model, data);
+            return 1;
+        }
+    END_TEST
+
+    BEGIN_TEST("init arm2")
+        if (!mj_kdl::init_robot(
+              &arm2, model, data, urdf.c_str(), "base_link", "EndEffector_Link", "r2_")) {
+            TEST_FAIL("arm2 init_robot() returned false");
+            mj_kdl::destroy_scene(model, data);
+            return 1;
+        }
+    END_TEST
 
     int n = arm1.n_joints;
 
@@ -103,7 +112,6 @@ int main(int argc, char *argv[])
     KDL::ChainDynParam              dyn1(arm1.chain, KDL::Vector(0, 0, -9.81));
     KDL::ChainDynParam              dyn2(arm2.chain, KDL::Vector(0, 0, -9.81));
 
-    // Both arms start at home pose.
     KDL::JntArray q_home(n);
     for (int j = 0; j < n; ++j) q_home(j) = kHomePose[j];
 
@@ -115,14 +123,12 @@ int main(int argc, char *argv[])
     fk1.JntToCart(q_home, ee1_init);
     fk2.JntToCart(q_home, ee2_init);
 
-    std::cout << std::fixed << std::setprecision(4);
-    std::cout << "Arm 1 initial EE: [" << ee1_init.p.x() << ", " << ee1_init.p.y() << ", "
-              << ee1_init.p.z() << "]\n";
-    std::cout << "Arm 2 initial EE: [" << ee2_init.p.x() << ", " << ee2_init.p.y() << ", "
-              << ee2_init.p.z() << "]\n\n";
+    TEST_INFO("Arm 1 initial EE: [" << std::fixed << std::setprecision(4)
+              << ee1_init.p.x() << ", " << ee1_init.p.y() << ", " << ee1_init.p.z() << "]");
+    TEST_INFO("Arm 2 initial EE: [" << ee2_init.p.x() << ", " << ee2_init.p.y() << ", "
+              << ee2_init.p.z() << "]");
 
-    // Part 1: compare KDL gravity torques to MuJoCo qfrc_bias.
-    {
+    BEGIN_TEST("KDL vs MuJoCo gravity at home pose (informational)")
         KDL::JntArray g1(n), g2(n);
         dyn1.JntToGravity(q_home, g1);
         dyn2.JntToGravity(q_home, g2);
@@ -132,51 +138,48 @@ int main(int argc, char *argv[])
             err1 = std::max(err1, std::abs(g1(j) - data->qfrc_bias[arm1.kdl_to_mj_dof[j]]));
             err2 = std::max(err2, std::abs(g2(j) - data->qfrc_bias[arm2.kdl_to_mj_dof[j]]));
         }
-
-        TEST_INFO("Part 1 — KDL vs MuJoCo gravity at home pose (informational)");
-        TEST_INFO("  Arm 1 max |KDL - qfrc_bias| = " << err1 << " Nm");
-        TEST_INFO("  Arm 2 max |KDL - qfrc_bias| = " << err2 << " Nm");
-    }
+        TEST_INFO("arm1 max |KDL - qfrc_bias| = " << err1 << " Nm");
+        TEST_INFO("arm2 max |KDL - qfrc_bias| = " << err2 << " Nm");
+    END_TEST
 
     /* Part 2: 500-step closed-loop gravity compensation; check EE drift.
      * Both arms share the same model/data — step() is called once per
      * timestep (on arm1), which advances the whole world. */
-    for (int i = 0; i < 500; ++i) {
-        apply_grav_comp(&arm1, dyn1);
-        apply_grav_comp(&arm2, dyn2);
-        mj_kdl::step(&arm1); // advances the entire shared world
-    }
+    BEGIN_TEST("dual-arm gravity comp drift")
+        for (int i = 0; i < 500; ++i) {
+            apply_grav_comp(&arm1, dyn1);
+            apply_grav_comp(&arm2, dyn2);
+            mj_kdl::step(&arm1); // advances the entire shared world
+        }
 
-    KDL::JntArray q1_end, q2_end;
-    mj_kdl::sync_to_kdl(&arm1, q1_end);
-    mj_kdl::sync_to_kdl(&arm2, q2_end);
-    KDL::Frame ee1_end, ee2_end;
-    fk1.JntToCart(q1_end, ee1_end);
-    fk2.JntToCart(q2_end, ee2_end);
+        KDL::JntArray q1_end, q2_end;
+        mj_kdl::sync_to_kdl(&arm1, q1_end);
+        mj_kdl::sync_to_kdl(&arm2, q2_end);
+        KDL::Frame ee1_end, ee2_end;
+        fk1.JntToCart(q1_end, ee1_end);
+        fk2.JntToCart(q2_end, ee2_end);
 
-    double drift1 = (ee1_init.p - ee1_end.p).Norm();
-    double drift2 = (ee2_init.p - ee2_end.p).Norm();
+        double drift1 = (ee1_init.p - ee1_end.p).Norm();
+        double drift2 = (ee2_init.p - ee2_end.p).Norm();
 
-    TEST_INFO("Part 2 — EE drift after 500 steps:"
-              << " arm1=" << std::setprecision(3) << drift1 * 1000.0
-              << " mm  arm2=" << drift2 * 1000.0 << " mm");
-
-    if (drift1 > 0.001 || drift2 > 0.001) {
-        TEST_FAIL("drift exceeds 1 mm threshold (arm1=" << drift1 * 1000.0
-                  << " mm, arm2=" << drift2 * 1000.0 << " mm)");
-        mj_kdl::cleanup(&arm1);
-        mj_kdl::cleanup(&arm2);
-        mj_kdl::destroy_scene(model, data);
-        return 1;
-    }
-    TEST_PASS("dual-arm gravity comp drift < 1 mm");
+        TEST_INFO("EE drift after 500 steps: arm1=" << std::setprecision(3)
+                  << drift1 * 1000.0 << " mm  arm2=" << drift2 * 1000.0 << " mm");
+        if (drift1 > 0.001 || drift2 > 0.001) {
+            TEST_FAIL("drift exceeds 1 mm threshold (arm1=" << drift1 * 1000.0
+                      << " mm, arm2=" << drift2 * 1000.0 << " mm)");
+            mj_kdl::cleanup(&arm1);
+            mj_kdl::cleanup(&arm2);
+            mj_kdl::destroy_scene(model, data);
+            return 1;
+        }
+    END_TEST
 
     // GUI loop — one window shows both arms; user can perturb either.
     if (gui) {
         mj_kdl::sync_from_kdl(&arm1, q_home);
         mj_kdl::sync_from_kdl(&arm2, q_home);
         mj_forward(model, data);
-        // Prime position actuators for both arms
+        // Prime position actuators for both arms.
         for (int i = 0; i < n; ++i) {
             data->ctrl[arm1.kdl_to_mj_dof[i]] =
               data->qpos[model->jnt_qposadr[model->dof_jntid[arm1.kdl_to_mj_dof[i]]]];
@@ -188,7 +191,7 @@ int main(int argc, char *argv[])
                   << "Ctrl+RightDrag to push a body.  Q/Esc to quit.\n";
 
         mj_kdl::run_simulate_ui(model, data, urdf.c_str(), [&](mjModel *m, mjData *d) {
-            // Null position actuators for both arms
+            // Null position actuators for both arms.
             for (int i = 0; i < n; ++i) {
                 d->ctrl[arm1.kdl_to_mj_dof[i]] =
                   d->qpos[m->jnt_qposadr[m->dof_jntid[arm1.kdl_to_mj_dof[i]]]];

@@ -32,46 +32,53 @@ int main(int argc, char *argv[])
     cfg.base_link  = "base_link";
     cfg.tip_link   = "EndEffector_Link";
     cfg.robot_name = "kinova_gen3";
-    cfg.headless   = true; // run_simulate_ui opens its own window
+    cfg.headless   = true;
 
     mj_kdl::State s;
-    if (!mj_kdl::init(&s, &cfg)) {
-        TEST_FAIL("init() returned false");
-        return 1;
-    }
 
-    if (s.model->nq != 7 || s.model->nv != 7) {
-        TEST_FAIL("expected 7 DOF, got nq=" << s.model->nq << " nv=" << s.model->nv);
-        mj_kdl::cleanup(&s);
-        return 1;
-    }
-    if (s.n_joints != 7) {
-        TEST_FAIL("expected 7 KDL joints, got " << s.n_joints);
-        mj_kdl::cleanup(&s);
-        return 1;
-    }
+    BEGIN_TEST("model init")
+        if (!mj_kdl::init(&s, &cfg)) {
+            TEST_FAIL("init() returned false");
+            return 1;
+        }
+    END_TEST
 
-    // Set home pose
+    BEGIN_TEST("basic model properties")
+        if (s.model->nq != 7 || s.model->nv != 7) {
+            TEST_FAIL("expected 7 DOF, got nq=" << s.model->nq << " nv=" << s.model->nv);
+            mj_kdl::cleanup(&s);
+            return 1;
+        }
+        if (s.n_joints != 7) {
+            TEST_FAIL("expected 7 KDL joints, got " << s.n_joints);
+            mj_kdl::cleanup(&s);
+            return 1;
+        }
+        TEST_INFO("nq=" << s.model->nq << " nv=" << s.model->nv
+                  << " kdl_joints=" << s.n_joints);
+    END_TEST
+
+    // Set home pose before the simulation test.
     unsigned      n = static_cast<unsigned>(s.n_joints);
     KDL::JntArray q_home(n);
     for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
     mj_kdl::sync_from_kdl(&s, q_home);
     mj_forward(s.model, s.data);
 
-    const double t0 = s.data->time;
-    mj_kdl::step_n(&s, 100);
-    if (s.data->time <= t0) {
-        TEST_FAIL("simulation time did not advance after 100 steps");
-        mj_kdl::cleanup(&s);
-        return 1;
-    }
-
-    TEST_PASS("nq=" << s.model->nq << " nv=" << s.model->nv
-              << " kdl_joints=" << s.n_joints << " sim_time=" << s.data->time);
+    BEGIN_TEST("simulation advance")
+        const double t0 = s.data->time;
+        mj_kdl::step_n(&s, 100);
+        if (s.data->time <= t0) {
+            TEST_FAIL("simulation time did not advance after 100 steps");
+            mj_kdl::cleanup(&s);
+            return 1;
+        }
+        TEST_INFO("sim_time=" << s.data->time);
+    END_TEST
 
     if (gui) {
         std::cout << "GUI mode — close window to exit\n";
-        // Reset to home pose before opening UI
+        // Reset to home pose before opening UI.
         mj_kdl::sync_from_kdl(&s, q_home);
         mj_forward(s.model, s.data);
         for (unsigned i = 0; i < n; ++i) s.data->ctrl[i] = s.data->qpos[s.kdl_to_mj_qpos[i]];

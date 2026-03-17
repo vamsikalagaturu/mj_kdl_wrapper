@@ -58,64 +58,70 @@ int main(int argc, char *argv[])
     KDL::ChainIkSolverPos_NR_JL     ik(s.chain, q_min, q_max, fk, ik_vel, 500, 1e-5);
     KDL::ChainJntToJacSolver        jac_solver(s.chain);
 
-    // FK at home pose
     KDL::JntArray q_home(n);
     for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
-    KDL::Frame fk_home;
-    if (fk.JntToCart(q_home, fk_home) < 0) {
-        TEST_FAIL("FK failed at home pose");
-        mj_kdl::cleanup(&s);
-        return 1;
-    }
-    std::cout << "FK(home) pos: [" << std::fixed << std::setprecision(4) << fk_home.p.x() << ", "
-              << fk_home.p.y() << ", " << fk_home.p.z() << "]\n";
 
-    // FK at test config (alternate ±30 deg)
     KDL::JntArray q_test(n);
     for (unsigned i = 0; i < n; ++i) q_test(i) = (i % 2 == 0 ? 1.0 : -1.0) * 30.0 * M_PI / 180.0;
 
-    KDL::Frame fk_test;
-    if (fk.JntToCart(q_test, fk_test) < 0) {
-        TEST_FAIL("FK failed at test config");
-        mj_kdl::cleanup(&s);
-        return 1;
-    }
-    std::cout << "FK(test) pos: [" << fk_test.p.x() << ", " << fk_test.p.y() << ", "
-              << fk_test.p.z() << "]\n";
-
-    // IK: recover q_test from fk_test, seeded from home pose
+    /* fk_test and q_ik / ik_ret are used across test blocks and in the GUI section. */
+    KDL::Frame    fk_test;
     KDL::JntArray q_ik(n);
-    int           ik_ret = ik.CartToJnt(q_home, fk_test, q_ik);
-    if (ik_ret < 0) {
-        TEST_WARN("IK did not converge (ret=" << ik_ret << "), skipping IK check");
-    } else {
-        KDL::Frame fk_ik;
-        fk.JntToCart(q_ik, fk_ik);
-        double pos_err = (fk_test.p - fk_ik.p).Norm();
-        TEST_INFO("IK pos error: " << pos_err * 1000.0 << " mm");
-        if (pos_err > 1e-3) {
-            TEST_FAIL("IK position error " << pos_err * 1000.0 << " mm exceeds 1 mm threshold");
+    int           ik_ret = -1;
+
+    BEGIN_TEST("FK at home pose")
+        KDL::Frame fk_home;
+        if (fk.JntToCart(q_home, fk_home) < 0) {
+            TEST_FAIL("FK failed at home pose");
             mj_kdl::cleanup(&s);
             return 1;
         }
-    }
+        TEST_INFO("pos: [" << std::fixed << std::setprecision(4)
+                  << fk_home.p.x() << ", " << fk_home.p.y() << ", " << fk_home.p.z() << "]");
+    END_TEST
 
-    // Jacobian at home pose
-    KDL::Jacobian jac(n);
-    if (jac_solver.JntToJac(q_home, jac) < 0) {
-        TEST_FAIL("Jacobian solver returned error");
-        mj_kdl::cleanup(&s);
-        return 1;
-    }
-    TEST_INFO("Jacobian: " << jac.rows() << " rows x " << jac.columns() << " cols");
-    if (jac.rows() != 6 || jac.columns() != n) {
-        TEST_FAIL("unexpected Jacobian dimensions: " << jac.rows() << "x" << jac.columns()
-                  << " (expected 6x" << n << ")");
-        mj_kdl::cleanup(&s);
-        return 1;
-    }
+    BEGIN_TEST("FK at test config")
+        if (fk.JntToCart(q_test, fk_test) < 0) {
+            TEST_FAIL("FK failed at test config");
+            mj_kdl::cleanup(&s);
+            return 1;
+        }
+        TEST_INFO("pos: [" << fk_test.p.x() << ", " << fk_test.p.y() << ", "
+                  << fk_test.p.z() << "]");
+    END_TEST
 
-    TEST_PASS("velocity kinematics (FK, IK, Jacobian)");
+    BEGIN_TEST("IK round-trip")
+        ik_ret = ik.CartToJnt(q_home, fk_test, q_ik);
+        if (ik_ret < 0) {
+            TEST_WARN("IK did not converge (ret=" << ik_ret << "), skipping position check");
+        } else {
+            KDL::Frame fk_ik;
+            fk.JntToCart(q_ik, fk_ik);
+            double pos_err = (fk_test.p - fk_ik.p).Norm();
+            TEST_INFO("pos error: " << pos_err * 1000.0 << " mm");
+            if (pos_err > 1e-3) {
+                TEST_FAIL("IK position error " << pos_err * 1000.0 << " mm exceeds 1 mm threshold");
+                mj_kdl::cleanup(&s);
+                return 1;
+            }
+        }
+    END_TEST
+
+    BEGIN_TEST("Jacobian dimensions")
+        KDL::Jacobian jac(n);
+        if (jac_solver.JntToJac(q_home, jac) < 0) {
+            TEST_FAIL("Jacobian solver returned error");
+            mj_kdl::cleanup(&s);
+            return 1;
+        }
+        TEST_INFO(jac.rows() << " rows x " << jac.columns() << " cols");
+        if (jac.rows() != 6 || jac.columns() != n) {
+            TEST_FAIL("unexpected Jacobian dimensions: " << jac.rows() << "x" << jac.columns()
+                      << " (expected 6x" << n << ")");
+            mj_kdl::cleanup(&s);
+            return 1;
+        }
+    END_TEST
 
     if (gui) {
         // Show IK solution (or home pose if IK failed) statically with gravity comp.

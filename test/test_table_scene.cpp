@@ -48,7 +48,6 @@ int main(int argc, char *argv[])
 
     double surface_z = table.pos[2];
 
-    // Objects: 3 coloured boxes and 2 spheres resting on the table.
     std::vector<mj_kdl::SceneObject> objects;
 
     auto make_box = [&](const char *name,
@@ -98,7 +97,6 @@ int main(int argc, char *argv[])
     objects.push_back(make_sphere("orange_sphere", -0.20, 0.20, 0.035, 1.0f, 0.55f, 0.0f));
     objects.push_back(make_sphere("purple_sphere", -0.20, -0.20, 0.025, 0.7f, 0.0f, 0.9f));
 
-    // Build scene: robot at table surface (pos[2] = surface_z).
     mj_kdl::SceneSpec spec;
     spec.table     = table;
     spec.objects   = objects;
@@ -110,32 +108,36 @@ int main(int argc, char *argv[])
     robot.prefix    = "";
     robot.pos[0]    = 0.0;
     robot.pos[1]    = 0.0;
-    robot.pos[2]    = surface_z; // mount base on table surface
+    robot.pos[2]    = surface_z;
     spec.robots.push_back(robot);
 
     mjModel *model = nullptr;
     mjData  *data  = nullptr;
-    if (!mj_kdl::build_scene(&model, &data, &spec)) {
-        TEST_FAIL("build_scene() returned false");
-        return 1;
-    }
-    TEST_INFO("scene built: " << model->nbody << " bodies, " << model->nq << " DOFs");
 
-    // Attach KDL state for the robot.
+    BEGIN_TEST("build table scene")
+        if (!mj_kdl::build_scene(&model, &data, &spec)) {
+            TEST_FAIL("build_scene() returned false");
+            return 1;
+        }
+        TEST_INFO(model->nbody << " bodies, " << model->nq << " DOFs");
+    END_TEST
+
     mj_kdl::State s;
-    if (!mj_kdl::init_robot(&s, model, data, urdf.c_str(), "base_link", "EndEffector_Link")) {
-        TEST_FAIL("init_robot() returned false");
-        mj_kdl::destroy_scene(model, data);
-        return 1;
-    }
-    TEST_INFO("robot: " << s.n_joints << " joints");
+
+    BEGIN_TEST("init robot")
+        if (!mj_kdl::init_robot(&s, model, data, urdf.c_str(), "base_link", "EndEffector_Link")) {
+            TEST_FAIL("init_robot() returned false");
+            mj_kdl::destroy_scene(model, data);
+            return 1;
+        }
+        TEST_INFO(s.n_joints << " joints");
+    END_TEST
 
     unsigned n = static_cast<unsigned>(s.n_joints);
 
     KDL::ChainFkSolverPos_recursive fk(s.chain);
     KDL::ChainDynParam              dyn(s.chain, KDL::Vector(0, 0, spec.gravity_z));
 
-    // Set home pose.
     KDL::JntArray q_home(n);
     for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
     mj_kdl::sync_from_kdl(&s, q_home);
@@ -144,54 +146,53 @@ int main(int argc, char *argv[])
     KDL::Frame ee_init;
     fk.JntToCart(q_home, ee_init);
 
-    // Headless: 500 steps then check EE drift.
-    for (int i = 0; i < 500; ++i) {
-        KDL::JntArray q, g(n);
-        mj_kdl::sync_to_kdl(&s, q);
-        dyn.JntToGravity(q, g);
-        mj_kdl::set_torques(&s, g);
-        mj_kdl::step(&s);
-    }
+    BEGIN_TEST("gravity comp drift")
+        for (int i = 0; i < 500; ++i) {
+            KDL::JntArray q, g(n);
+            mj_kdl::sync_to_kdl(&s, q);
+            dyn.JntToGravity(q, g);
+            mj_kdl::set_torques(&s, g);
+            mj_kdl::step(&s);
+        }
 
-    KDL::JntArray q_end;
-    KDL::Frame    ee_end;
-    mj_kdl::sync_to_kdl(&s, q_end);
-    fk.JntToCart(q_end, ee_end);
-    double drift = (ee_init.p - ee_end.p).Norm();
+        KDL::JntArray q_end;
+        KDL::Frame    ee_end;
+        mj_kdl::sync_to_kdl(&s, q_end);
+        fk.JntToCart(q_end, ee_end);
+        double drift = (ee_init.p - ee_end.p).Norm();
 
-    TEST_INFO("EE drift after 500 steps: " << std::fixed << std::setprecision(3)
-              << drift * 1000.0 << " mm");
-    if (drift > 0.001) {
-        TEST_FAIL("drift " << drift * 1000.0 << " mm exceeds 1 mm threshold");
-        mj_kdl::cleanup(&s);
-        mj_kdl::destroy_scene(model, data);
-        return 1;
-    }
-    TEST_PASS("gravity comp drift < 1 mm");
+        TEST_INFO("EE drift after 500 steps: " << std::fixed << std::setprecision(3)
+                  << drift * 1000.0 << " mm");
+        if (drift > 0.001) {
+            TEST_FAIL("drift " << drift * 1000.0 << " mm exceeds 1 mm threshold");
+            mj_kdl::cleanup(&s);
+            mj_kdl::destroy_scene(model, data);
+            return 1;
+        }
+    END_TEST
 
-    // Runtime add / remove demo (headless only).
     if (!gui) {
-        TEST_INFO("runtime object add/remove test");
         int nbody_before = model->nbody;
-
         mj_kdl::cleanup(&s);
 
         mj_kdl::SceneObject extra =
           make_box("yellow_cube", 0.0, 0.4, 0.03, 0.03, 0.03, 1.0f, 1.0f, 0.0f);
-        if (!mj_kdl::scene_add_object(&model, &data, &spec, extra)) {
-            TEST_FAIL("scene_add_object() returned false");
-            mj_kdl::destroy_scene(model, data);
-            return 1;
-        }
-        TEST_INFO("bodies: " << nbody_before << " -> " << model->nbody << " (after add)");
 
-        if (!mj_kdl::scene_remove_object(&model, &data, &spec, "yellow_cube")) {
-            TEST_FAIL("scene_remove_object() returned false");
-            mj_kdl::destroy_scene(model, data);
-            return 1;
-        }
-        TEST_INFO("bodies: " << model->nbody << " (after remove)");
-        TEST_PASS("runtime scene_add_object / scene_remove_object");
+        BEGIN_TEST("runtime add/remove object")
+            if (!mj_kdl::scene_add_object(&model, &data, &spec, extra)) {
+                TEST_FAIL("scene_add_object() returned false");
+                mj_kdl::destroy_scene(model, data);
+                return 1;
+            }
+            TEST_INFO("bodies: " << nbody_before << " -> " << model->nbody << " (after add)");
+
+            if (!mj_kdl::scene_remove_object(&model, &data, &spec, "yellow_cube")) {
+                TEST_FAIL("scene_remove_object() returned false");
+                mj_kdl::destroy_scene(model, data);
+                return 1;
+            }
+            TEST_INFO("bodies: " << model->nbody << " (after remove)");
+        END_TEST
 
         mj_kdl::destroy_scene(model, data);
         return 0;
