@@ -47,8 +47,8 @@ static constexpr double kGripperReach = 0.18422;
 // Cube spawn
 static constexpr double kCubeX  = 0.4;
 static constexpr double kCubeY  = 0.0;
-static constexpr double kCubeZ  = 0.02;// centre (bottom at z=0)
-static constexpr double kCubeHS = 0.02;// half-size: 4 cm cube
+static constexpr double kCubeZ  = 0.02; // centre (bottom at z=0)
+static constexpr double kCubeHS = 0.02; // half-size: 4 cm cube
 
 static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
 
@@ -296,12 +296,12 @@ int main(int argc, char *argv[])
         double               gripper;
     };
     Phase phases[] = {
-        { 0.0, 1.0, &q_home_kdl, &q_home_kdl, 0.0 },// hold home
-        { 1.0, 2.0, &q_home_kdl, &q_pregrasp, 0.0 },// → pre-grasp
-        { 3.0, 2.0, &q_pregrasp, &q_grasp, 0.0 },// descend
-        { 5.0, 1.5, &q_grasp, &q_grasp, 255.0 },// close gripper
-        { 6.5, 3.0, &q_grasp, &q_lift, 255.0 },// lift
-        { 9.5, 1e9, &q_lift, &q_lift, 255.0 },// hold
+        { 0.0, 1.0, &q_home_kdl, &q_home_kdl, 0.0 }, // hold home
+        { 1.0, 2.0, &q_home_kdl, &q_pregrasp, 0.0 }, // → pre-grasp
+        { 3.0, 2.0, &q_pregrasp, &q_grasp, 0.0 }, // descend
+        { 5.0, 1.5, &q_grasp, &q_grasp, 255.0 }, // close gripper
+        { 6.5, 3.0, &q_grasp, &q_lift, 255.0 }, // lift
+        { 9.5, 1e9, &q_lift, &q_lift, 255.0 }, // hold
     };
     constexpr int kNPhases = sizeof(phases) / sizeof(phases[0]);
 

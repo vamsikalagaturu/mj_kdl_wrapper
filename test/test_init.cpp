@@ -31,7 +31,7 @@ int main(int argc, char *argv[])
     cfg.base_link  = "base_link";
     cfg.tip_link   = "EndEffector_Link";
     cfg.robot_name = "kinova_gen3";
-    cfg.headless   = true;// run_simulate_ui opens its own window
+    cfg.headless   = true; // run_simulate_ui opens its own window
 
     mj_kdl::State s;
     if (!mj_kdl::init(&s, &cfg)) {

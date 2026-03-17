@@ -164,7 +164,7 @@ int main(int argc, char *argv[])
             int    jid           = m->dof_jntid[dof];
             double q             = d->qpos[m->jnt_qposadr[jid]];
             double qdot          = d->qvel[dof];
-            d->ctrl[i]           = q;// zero P-error
+            d->ctrl[i]           = q; // zero P-error
             d->qfrc_applied[dof] = kKp[i] * (q_target[i] - q) - kKd[i] * qdot + d->qfrc_bias[dof];
         }
         mj_step(m, d);

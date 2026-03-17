@@ -68,7 +68,7 @@ int main(int argc, char *argv[])
     r2.pos[0]    = 0.5;
     r2.pos[1]    = 0.0;
     r2.pos[2]    = 0.0;
-    r2.euler[2]  = 180.0;// 180° around Z → faces -X (toward arm1)
+    r2.euler[2]  = 180.0; // 180° around Z → faces -X (toward arm1)
 
     scene.robots = { r1, r2 };
 
@@ -144,7 +144,7 @@ int main(int argc, char *argv[])
     for (int i = 0; i < 500; ++i) {
         apply_grav_comp(&arm1, dyn1);
         apply_grav_comp(&arm2, dyn2);
-        mj_kdl::step(&arm1);// advances the entire shared world
+        mj_kdl::step(&arm1); // advances the entire shared world
     }
 
     KDL::JntArray q1_end, q2_end;
@@ -199,8 +199,8 @@ int main(int argc, char *argv[])
         });
     }
 
-    mj_kdl::cleanup(&arm1);// frees window; does NOT free model/data
-    mj_kdl::cleanup(&arm2);// headless; does NOT free model/data
+    mj_kdl::cleanup(&arm1); // frees window; does NOT free model/data
+    mj_kdl::cleanup(&arm2); // headless; does NOT free model/data
     mj_kdl::destroy_scene(model, data);
     return 0;
 }

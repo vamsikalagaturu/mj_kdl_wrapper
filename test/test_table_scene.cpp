@@ -39,9 +39,9 @@ int main(int argc, char *argv[])
     table.enabled     = true;
     table.pos[0]      = 0.0;
     table.pos[1]      = 0.0;
-    table.pos[2]      = 0.7;// surface height
-    table.top_size[0] = 0.8;// half-extent x
-    table.top_size[1] = 0.6;// half-extent y
+    table.pos[2]      = 0.7; // surface height
+    table.top_size[0] = 0.8; // half-extent x
+    table.top_size[1] = 0.6; // half-extent y
     table.thickness   = 0.04;
     table.leg_radius  = 0.03;
 
@@ -109,7 +109,7 @@ int main(int argc, char *argv[])
     robot.prefix    = "";
     robot.pos[0]    = 0.0;
     robot.pos[1]    = 0.0;
-    robot.pos[2]    = surface_z;// mount base on table surface
+    robot.pos[2]    = surface_z; // mount base on table surface
     spec.robots.push_back(robot);
 
     mjModel *model = nullptr;

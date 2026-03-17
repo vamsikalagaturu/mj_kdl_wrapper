@@ -89,10 +89,10 @@ static void add_floor_to_spec(mjSpec *spec)
     sky->builtin = mjBUILTIN_GRADIENT;
     sky->rgb1[0] = 0.3f;
     sky->rgb1[1] = 0.45f;
-    sky->rgb1[2] = 0.65f;// top: mid blue
+    sky->rgb1[2] = 0.65f; // top: mid blue
     sky->rgb2[0] = 0.65f;
     sky->rgb2[1] = 0.80f;
-    sky->rgb2[2] = 0.95f;// bottom: pale blue
+    sky->rgb2[2] = 0.95f; // bottom: pale blue
     sky->width   = 200;
     sky->height  = 200;
 
@@ -139,10 +139,10 @@ static void add_floor_to_spec(mjSpec *spec)
 static void add_table_to_spec(mjSpec *spec, const TableSpec &t)
 {
     mjsBody *wb         = mjs_findBody(spec, "world");
-    double   sz         = t.pos[2];// surface z
+    double   sz         = t.pos[2]; // surface z
     double   half_thick = t.thickness * 0.5;
-    double   top_cz     = sz - half_thick;// tabletop centre in world
-    double   leg_h      = sz - t.thickness;// leg height (floor→bottom of top)
+    double   top_cz     = sz - half_thick; // tabletop centre in world
+    double   leg_h      = sz - t.thickness; // leg height (floor→bottom of top)
 
     mjsBody *tb = mjs_addBody(wb, nullptr);
     mjs_setString(mjs_getName(tb->element), "table");
@@ -165,7 +165,7 @@ static void add_table_to_spec(mjSpec *spec, const TableSpec &t)
     // 4 legs (only if there's room)
     if (leg_h > 0.0) {
         double       half_leg      = leg_h * 0.5;
-        double       leg_rel_z     = -(sz * 0.5);// relative to body = -half_thick - half_leg
+        double       leg_rel_z     = -(sz * 0.5); // relative to body = -half_thick - half_leg
         double       lx            = t.top_size[0] - t.leg_radius;
         double       ly            = t.top_size[1] - t.leg_radius;
         const double corners[4][2] = { { lx, ly }, { -lx, ly }, { lx, -ly }, { -lx, -ly } };
@@ -262,7 +262,7 @@ static void xml_prefix_names(tinyxml2::XMLElement *e, const std::string &pfx)
     } else if (!std::strcmp(tag, "joint")) {
         pfx_attr("joint");
         pfx_attr("joint1");
-        pfx_attr("joint2");// tendon and equality refs
+        pfx_attr("joint2"); // tendon and equality refs
     } else if (!std::strcmp(tag, "general") || !std::strcmp(tag, "position")) {
         pfx_attr("joint");
         pfx_attr("tendon");
@@ -1553,8 +1553,8 @@ namespace mj = ::mujoco;
 
 using Seconds = std::chrono::duration<double>;
 
-static constexpr double kSyncMisalign       = 0.1;// max misalign before re-sync (sim seconds)
-static constexpr double kSimRefreshFraction = 0.7;// fraction of refresh budget for physics
+static constexpr double kSyncMisalign       = 0.1; // max misalign before re-sync (sim seconds)
+static constexpr double kSimRefreshFraction = 0.7; // fraction of refresh budget for physics
 
 void run_simulate_ui(mjModel *m, mjData *d, const char *path, ControlCb physics_cb)
 {
@@ -1567,7 +1567,7 @@ void run_simulate_ui(mjModel *m, mjData *d, const char *path, ControlCb physics_
 
     auto sim = std::make_unique<mj::Simulate>(
       std::make_unique<mj::GlfwAdapter>(), &cam, &opt, &pert, /*is_passive=*/false);
-    sim->font = 1;// 100% font scale (0=50%, 1=100%, 2=150%, ...)
+    sim->font = 1; // 100% font scale (0=50%, 1=100%, 2=150%, ...)
 
     /* Physics thread: real-time sync loop (mirrors PhysicsLoop from main.cc).
      * Load must happen from this thread so that LoadOnRenderThread() on the
@@ -1621,7 +1621,7 @@ void run_simulate_ui(mjModel *m, mjData *d, const char *path, ControlCb physics_
                         if (sim->pert.active) mjv_applyPerturbForce(m, d, &sim->pert);
                         mj_step(m, d);
                         sim->AddToHistory();
-                        if (d->time < prevSim) break;// guard against time reset
+                        if (d->time < prevSim) break; // guard against time reset
                         prevSim = d->time;
                     }
                 }
@@ -1633,8 +1633,8 @@ void run_simulate_ui(mjModel *m, mjData *d, const char *path, ControlCb physics_
         }
     });
 
-    sim->RenderLoop();// blocks on main thread until window closes
+    sim->RenderLoop(); // blocks on main thread until window closes
     phys.join();
 }
 
-}// namespace mj_kdl
+} // namespace mj_kdl
