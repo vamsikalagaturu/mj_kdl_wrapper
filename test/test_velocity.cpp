@@ -24,7 +24,7 @@ static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_pat
 int main(int argc, char *argv[])
 {
     std::string urdf = (repo_root() / "assets/gen3_urdf/GEN3_URDF_V12.urdf").string();
-    bool gui = false;
+    bool        gui  = false;
     for (int i = 1; i < argc; ++i) {
         std::string a(argv[i]);
         if (a == "--gui")
@@ -36,8 +36,8 @@ int main(int argc, char *argv[])
     mj_kdl::Config cfg;
     cfg.urdf_path = urdf.c_str();
     cfg.base_link = "base_link";
-    cfg.tip_link = "EndEffector_Link";
-    cfg.headless = true;
+    cfg.tip_link  = "EndEffector_Link";
+    cfg.headless  = true;
 
     mj_kdl::State s;
     if (!mj_kdl::init(&s, &cfg)) {
@@ -45,7 +45,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    unsigned n = s.chain.getNrOfJoints();
+    unsigned      n = s.chain.getNrOfJoints();
     KDL::JntArray q_min(n), q_max(n);
     for (unsigned i = 0; i < n; ++i) {
         q_min(i) = s.joint_limits[i].first;
@@ -53,9 +53,9 @@ int main(int argc, char *argv[])
     }
 
     KDL::ChainFkSolverPos_recursive fk(s.chain);
-    KDL::ChainIkSolverVel_pinv ik_vel(s.chain);
-    KDL::ChainIkSolverPos_NR_JL ik(s.chain, q_min, q_max, fk, ik_vel, 500, 1e-5);
-    KDL::ChainJntToJacSolver jac_solver(s.chain);
+    KDL::ChainIkSolverVel_pinv      ik_vel(s.chain);
+    KDL::ChainIkSolverPos_NR_JL     ik(s.chain, q_min, q_max, fk, ik_vel, 500, 1e-5);
+    KDL::ChainJntToJacSolver        jac_solver(s.chain);
 
     // FK at home pose
     KDL::JntArray q_home(n);
@@ -84,7 +84,7 @@ int main(int argc, char *argv[])
 
     // IK: recover q_test from fk_test, seeded from home pose
     KDL::JntArray q_ik(n);
-    int ik_ret = ik.CartToJnt(q_home, fk_test, q_ik);
+    int           ik_ret = ik.CartToJnt(q_home, fk_test, q_ik);
     if (ik_ret < 0) {
         std::cout << "WARN: IK did not converge (ret=" << ik_ret << "), skipping IK check\n";
     } else {

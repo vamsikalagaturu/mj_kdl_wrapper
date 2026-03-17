@@ -93,14 +93,14 @@ int main(int argc, char *argv[])
     mj_kdl::GripperSpec gs;
     gs.mjcf_path = grp_mjcf.c_str();
     gs.attach_to = "bracelet_link";
-    gs.prefix = "g_";
-    gs.pos[0] = 0.0;
-    gs.pos[1] = 0.0;
-    gs.pos[2] = -0.061525;
-    gs.quat[0] = 0.0;
-    gs.quat[1] = 1.0;
-    gs.quat[2] = 0.0;
-    gs.quat[3] = 0.0;
+    gs.prefix    = "g_";
+    gs.pos[0]    = 0.0;
+    gs.pos[1]    = 0.0;
+    gs.pos[2]    = -0.061525;
+    gs.quat[0]   = 0.0;
+    gs.quat[1]   = 1.0;
+    gs.quat[2]   = 0.0;
+    gs.quat[3]   = 0.0;
 
     if (!mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined.c_str())) {
         std::cerr << "FAIL: attach_gripper\n";
@@ -120,7 +120,7 @@ int main(int argc, char *argv[])
     }
 
     mjModel *model = nullptr;
-    mjData *data = nullptr;
+    mjData  *data  = nullptr;
     if (!mj_kdl::load_mjcf(&model, &data, combined.c_str())) {
         std::cerr << "FAIL: load_mjcf\n";
         return 1;
@@ -159,7 +159,7 @@ int main(int argc, char *argv[])
     std::cout << "KDL chain (arm): " << n << " joints\n";
 
     KDL::ChainFkSolverPos_recursive fk(s.chain);
-    KDL::ChainDynParam dyn(s.chain, KDL::Vector(0, 0, -9.81));
+    KDL::ChainDynParam              dyn(s.chain, KDL::Vector(0, 0, -9.81));
 
     /* Test 3: gravity torques vs MuJoCo qfrc_bias at q=0.
      * (At q=0 the arm is upright and gripper weight contributes minimally,
@@ -263,9 +263,9 @@ int main(int argc, char *argv[])
              * Zero P-term (track current qpos) + cancel gravity via qfrc_bias.
              * qfrc_bias includes gripper mass — KDL alone would miss ~1.7 kg. */
             for (unsigned i = 0; i < n; ++i) {
-                int dof = s.kdl_to_mj_dof[i];
-                int jid = m->dof_jntid[dof];
-                d->ctrl[i] = d->qpos[m->jnt_qposadr[jid]];
+                int dof              = s.kdl_to_mj_dof[i];
+                int jid              = m->dof_jntid[dof];
+                d->ctrl[i]           = d->qpos[m->jnt_qposadr[jid]];
                 d->qfrc_applied[dof] = d->qfrc_bias[dof];
             }
             // Gripper: open/close every 3 s (ctrl range 0..255, 255=closed)

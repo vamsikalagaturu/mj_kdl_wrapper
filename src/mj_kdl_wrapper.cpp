@@ -59,10 +59,10 @@ static bool preprocess_urdf(const std::string &in, const std::string &out)
       "meshdir", fs::absolute(fs::path(in).parent_path() / "meshes").string().c_str());
 
     for (XMLElement *link = robot->FirstChildElement("link"); link;
-         link = link->NextSiblingElement("link")) {
+         link             = link->NextSiblingElement("link")) {
         for (const char *vis_tag : { "visual", "collision" }) {
             for (XMLElement *vis = link->FirstChildElement(vis_tag); vis;
-                 vis = vis->NextSiblingElement(vis_tag)) {
+                 vis             = vis->NextSiblingElement(vis_tag)) {
                 XMLElement *geom = vis->FirstChildElement("geometry");
                 if (!geom) continue;
                 XMLElement *mesh = geom->FirstChildElement("mesh");
@@ -85,7 +85,7 @@ static void add_floor_to_spec(mjSpec *spec)
     // Skybox gradient texture
     mjsTexture *sky = mjs_addTexture(spec);
     mjs_setString(mjs_getName(sky->element), "skybox");
-    sky->type = mjTEXTURE_SKYBOX;
+    sky->type    = mjTEXTURE_SKYBOX;
     sky->builtin = mjBUILTIN_GRADIENT;
     sky->rgb1[0] = 0.3f;
     sky->rgb1[1] = 0.45f;
@@ -93,12 +93,12 @@ static void add_floor_to_spec(mjSpec *spec)
     sky->rgb2[0] = 0.65f;
     sky->rgb2[1] = 0.80f;
     sky->rgb2[2] = 0.95f;// bottom: pale blue
-    sky->width = 200;
-    sky->height = 200;
+    sky->width   = 200;
+    sky->height  = 200;
 
     mjsTexture *tex = mjs_addTexture(spec);
     mjs_setString(mjs_getName(tex->element), "groundplane");
-    tex->type = mjTEXTURE_2D;
+    tex->type    = mjTEXTURE_2D;
     tex->builtin = mjBUILTIN_CHECKER;
     tex->rgb1[0] = 0.2;
     tex->rgb1[1] = 0.3;
@@ -106,8 +106,8 @@ static void add_floor_to_spec(mjSpec *spec)
     tex->rgb2[0] = 0.1;
     tex->rgb2[1] = 0.2;
     tex->rgb2[2] = 0.3;
-    tex->width = 300;
-    tex->height = 300;
+    tex->width   = 300;
+    tex->height  = 300;
 
     mjsMaterial *mat = mjs_addMaterial(spec, nullptr);
     mjs_setString(mjs_getName(mat->element), "groundplane");
@@ -115,34 +115,34 @@ static void add_floor_to_spec(mjSpec *spec)
     mjs_setInStringVec(mat->textures, mjTEXROLE_RGB, "groundplane");
     mat->texrepeat[0] = 5;
     mat->texrepeat[1] = 5;
-    mat->reflectance = 0.2f;
+    mat->reflectance  = 0.2f;
 
     mjsGeom *floor = mjs_addGeom(wb, nullptr);
     mjs_setString(mjs_getName(floor->element), "floor");
     mjs_setString(floor->material, "groundplane");
-    floor->type = mjGEOM_PLANE;
-    floor->size[0] = 10;
-    floor->size[1] = 10;
-    floor->size[2] = 0.05;
-    floor->contype = 1;
+    floor->type        = mjGEOM_PLANE;
+    floor->size[0]     = 10;
+    floor->size[1]     = 10;
+    floor->size[2]     = 0.05;
+    floor->contype     = 1;
     floor->conaffinity = 1;
-    floor->condim = 3;
+    floor->condim      = 3;
 
     // Directional light overhead
     mjsLight *sun = mjs_addLight(wb, nullptr);
-    sun->type = mjLIGHT_DIRECTIONAL;
-    sun->pos[0] = 0;
-    sun->pos[1] = 0;
-    sun->pos[2] = 4;
+    sun->type     = mjLIGHT_DIRECTIONAL;
+    sun->pos[0]   = 0;
+    sun->pos[1]   = 0;
+    sun->pos[2]   = 4;
 }
 
 static void add_table_to_spec(mjSpec *spec, const TableSpec &t)
 {
-    mjsBody *wb = mjs_findBody(spec, "world");
-    double sz = t.pos[2];// surface z
-    double half_thick = t.thickness * 0.5;
-    double top_cz = sz - half_thick;// tabletop centre in world
-    double leg_h = sz - t.thickness;// leg height (floor→bottom of top)
+    mjsBody *wb         = mjs_findBody(spec, "world");
+    double   sz         = t.pos[2];// surface z
+    double   half_thick = t.thickness * 0.5;
+    double   top_cz     = sz - half_thick;// tabletop centre in world
+    double   leg_h      = sz - t.thickness;// leg height (floor→bottom of top)
 
     mjsBody *tb = mjs_addBody(wb, nullptr);
     mjs_setString(mjs_getName(tb->element), "table");
@@ -153,37 +153,37 @@ static void add_table_to_spec(mjSpec *spec, const TableSpec &t)
     // tabletop
     mjsGeom *top = mjs_addGeom(tb, nullptr);
     mjs_setString(mjs_getName(top->element), "table_top");
-    top->type = mjGEOM_BOX;
+    top->type    = mjGEOM_BOX;
     top->size[0] = t.top_size[0];
     top->size[1] = t.top_size[1];
     top->size[2] = half_thick;
     for (int k = 0; k < 4; ++k) top->rgba[k] = t.rgba[k];
-    top->contype = 1;
+    top->contype     = 1;
     top->conaffinity = 1;
-    top->condim = 3;
+    top->condim      = 3;
 
     // 4 legs (only if there's room)
     if (leg_h > 0.0) {
-        double half_leg = leg_h * 0.5;
-        double leg_rel_z = -(sz * 0.5);// relative to body = -half_thick - half_leg
-        double lx = t.top_size[0] - t.leg_radius;
-        double ly = t.top_size[1] - t.leg_radius;
+        double       half_leg      = leg_h * 0.5;
+        double       leg_rel_z     = -(sz * 0.5);// relative to body = -half_thick - half_leg
+        double       lx            = t.top_size[0] - t.leg_radius;
+        double       ly            = t.top_size[1] - t.leg_radius;
         const double corners[4][2] = { { lx, ly }, { -lx, ly }, { lx, -ly }, { -lx, -ly } };
         for (int i = 0; i < 4; ++i) {
             mjsGeom *leg = mjs_addGeom(tb, nullptr);
-            char nm[32];
+            char     nm[32];
             std::snprintf(nm, sizeof(nm), "table_leg%d", i);
             mjs_setString(mjs_getName(leg->element), nm);
-            leg->type = mjGEOM_CYLINDER;
+            leg->type    = mjGEOM_CYLINDER;
             leg->size[0] = t.leg_radius;
             leg->size[1] = half_leg;
-            leg->pos[0] = corners[i][0];
-            leg->pos[1] = corners[i][1];
-            leg->pos[2] = leg_rel_z;
+            leg->pos[0]  = corners[i][0];
+            leg->pos[1]  = corners[i][1];
+            leg->pos[2]  = leg_rel_z;
             for (int k = 0; k < 4; ++k) leg->rgba[k] = t.rgba[k];
-            leg->contype = 1;
+            leg->contype     = 1;
             leg->conaffinity = 1;
-            leg->condim = 3;
+            leg->condim      = 3;
         }
     }
 }
@@ -220,19 +220,19 @@ static void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &ob
         g->size[0] = obj.size[0];
         g->size[1] = obj.size[1];
         g->size[2] = obj.size[2];
-        g->mass = obj.mass;
+        g->mass    = obj.mass;
         for (int k = 0; k < 4; ++k) g->rgba[k] = obj.rgba[k];
         for (int k = 0; k < 3; ++k) g->friction[k] = obj.friction[k];
-        g->contype = 1;
+        g->contype     = 1;
         g->conaffinity = 1;
-        g->condim = obj.condim;
+        g->condim      = obj.condim;
     }
 }
 
 /* Multi-robot XML helpers (N > 1 path) */
 
 static tinyxml2::XMLElement *xml_deep_clone(const tinyxml2::XMLElement *src,
-  tinyxml2::XMLDocument *dst)
+  tinyxml2::XMLDocument                                                *dst)
 {
     tinyxml2::XMLElement *e = dst->NewElement(src->Name());
     for (const tinyxml2::XMLAttribute *a = src->FirstAttribute(); a; a = a->Next())
@@ -277,8 +277,8 @@ static void xml_prefix_names(tinyxml2::XMLElement *e, const std::string &pfx)
 
 static bool urdf_to_raw_mjcf(const std::string &proc, const std::string &raw)
 {
-    char err[2048] = {};
-    mjModel *tmp = mj_loadXML(proc.c_str(), nullptr, err, sizeof(err));
+    char     err[2048] = {};
+    mjModel *tmp       = mj_loadXML(proc.c_str(), nullptr, err, sizeof(err));
     if (!tmp) {
         std::cerr << "[mj_kdl] mj_loadXML: " << err << "\n";
         return false;
@@ -293,10 +293,10 @@ static bool urdf_to_raw_mjcf(const std::string &proc, const std::string &raw)
 }
 
 static bool inject_scene(const std::string &in,
-  const std::string &out,
-  double timestep,
-  double gravity_z,
-  bool floor)
+  const std::string                        &out,
+  double                                    timestep,
+  double                                    gravity_z,
+  bool                                      floor)
 {
     using namespace tinyxml2;
     XMLDocument doc;
@@ -486,11 +486,11 @@ static bool inject_extras_xml(const std::string &path, const SceneSpec *sc)
 
     // Table
     if (sc->table.enabled) {
-        const TableSpec &t = sc->table;
-        double sz = t.pos[2];
-        double half_thick = t.thickness * 0.5;
-        double top_cz = sz - half_thick;
-        double leg_h = sz - t.thickness;
+        const TableSpec &t          = sc->table;
+        double           sz         = t.pos[2];
+        double           half_thick = t.thickness * 0.5;
+        double           top_cz     = sz - half_thick;
+        double           leg_h      = sz - t.thickness;
 
         XMLElement *tb = doc.NewElement("body");
         tb->SetAttribute("name", "table");
@@ -512,14 +512,14 @@ static bool inject_extras_xml(const std::string &path, const SceneSpec *sc)
 
         // legs
         if (leg_h > 0.0) {
-            double half_leg = leg_h * 0.5;
-            double leg_rel_z = -(sz * 0.5);
-            double lx = t.top_size[0] - t.leg_radius;
-            double ly = t.top_size[1] - t.leg_radius;
+            double       half_leg      = leg_h * 0.5;
+            double       leg_rel_z     = -(sz * 0.5);
+            double       lx            = t.top_size[0] - t.leg_radius;
+            double       ly            = t.top_size[1] - t.leg_radius;
             const double corners[4][2] = { { lx, ly }, { -lx, ly }, { lx, -ly }, { -lx, -ly } };
             for (int i = 0; i < 4; ++i) {
                 XMLElement *leg = doc.NewElement("geom");
-                char nm[32];
+                char        nm[32];
                 std::snprintf(nm, sizeof(nm), "table_leg%d", i);
                 leg->SetAttribute("name", nm);
                 leg->SetAttribute("type", "cylinder");
@@ -549,7 +549,7 @@ static bool inject_extras_xml(const std::string &path, const SceneSpec *sc)
             ob->InsertEndChild(fj);
         }
 
-        XMLElement *g = doc.NewElement("geom");
+        XMLElement *g     = doc.NewElement("geom");
         const char *stype = (obj.shape == ObjShape::SPHERE)     ? "sphere"
                             : (obj.shape == ObjShape::CYLINDER) ? "cylinder"
                                                                 : "box";
@@ -615,16 +615,16 @@ static void sync_chain_inertias(State *s, const std::string &pfx)
     if (!s->model) return;
     KDL::Chain chain;
     for (unsigned si = 0; si < s->chain.getNrOfSegments(); ++si) {
-        const KDL::Segment &seg = s->chain.getSegment(si);
-        int bid = mj_name2id(s->model, mjOBJ_BODY, (pfx + seg.getName()).c_str());
+        const KDL::Segment   &seg = s->chain.getSegment(si);
+        int                   bid = mj_name2id(s->model, mjOBJ_BODY, (pfx + seg.getName()).c_str());
         KDL::RigidBodyInertia inertia;
         if (bid >= 0) {
-            double mass = s->model->body_mass[bid];
-            const double *ip = &s->model->body_ipos[3 * bid];
-            const double *iq = &s->model->body_iquat[4 * bid];
-            const double *id = &s->model->body_inertia[3 * bid];
-            double w = iq[0], x = iq[1], y = iq[2], z = iq[3];
-            double R[3][3] = {
+            double        mass = s->model->body_mass[bid];
+            const double *ip   = &s->model->body_ipos[3 * bid];
+            const double *iq   = &s->model->body_iquat[4 * bid];
+            const double *id   = &s->model->body_inertia[3 * bid];
+            double        w = iq[0], x = iq[1], y = iq[2], z = iq[3];
+            double        R[3][3] = {
                 { 1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y) },
                 { 2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x) },
                 { 2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y) }
@@ -667,7 +667,7 @@ static bool
   build_kdl_from_model(State *s, mjModel *model, const char *base_body, const char *tip_body)
 {
     int base_bid = mj_name2id(model, mjOBJ_BODY, base_body);
-    int tip_bid = mj_name2id(model, mjOBJ_BODY, tip_body);
+    int tip_bid  = mj_name2id(model, mjOBJ_BODY, tip_body);
     if (base_bid < 0) {
         std::cerr << "[mj_kdl] base body not found: " << base_body << "\n";
         return false;
@@ -705,9 +705,9 @@ static bool
     };
 
     for (int bid : bids) {
-        const char *bname = mj_id2name(model, mjOBJ_BODY, bid);
-        KDL::Rotation bR = quat_to_rot(&model->body_quat[4 * bid]);
-        KDL::Vector bv(
+        const char   *bname = mj_id2name(model, mjOBJ_BODY, bid);
+        KDL::Rotation bR    = quat_to_rot(&model->body_quat[4 * bid]);
+        KDL::Vector   bv(
           model->body_pos[3 * bid], model->body_pos[3 * bid + 1], model->body_pos[3 * bid + 2]);
         KDL::Frame F(bR, bv);
 
@@ -722,8 +722,8 @@ static bool
               model->jnt_pos[3 * jid], model->jnt_pos[3 * jid + 1], model->jnt_pos[3 * jid + 2]);
             KDL::Vector ja(
               model->jnt_axis[3 * jid], model->jnt_axis[3 * jid + 1], model->jnt_axis[3 * jid + 2]);
-            KDL::Vector origin = bv + bR * jp;
-            KDL::Vector axis = bR * ja;
+            KDL::Vector           origin = bv + bR * jp;
+            KDL::Vector           axis   = bR * ja;
             KDL::Joint::JointType jtype =
               (model->jnt_type[jid] == mjJNT_HINGE) ? KDL::Joint::RotAxis : KDL::Joint::TransAxis;
             jnt = KDL::Joint(jname ? jname : "", origin, axis, jtype);
@@ -739,11 +739,11 @@ static bool
             break;
         }
 
-        double mass = model->body_mass[bid];
-        const double *ip = &model->body_ipos[3 * bid];
-        KDL::Rotation iR = quat_to_rot(&model->body_iquat[4 * bid]);
-        const double *id = &model->body_inertia[3 * bid];
-        double I[3][3] = {};
+        double        mass    = model->body_mass[bid];
+        const double *ip      = &model->body_ipos[3 * bid];
+        KDL::Rotation iR      = quat_to_rot(&model->body_iquat[4 * bid]);
+        const double *id      = &model->body_inertia[3 * bid];
+        double        I[3][3] = {};
         for (int a = 0; a < 3; a++)
             for (int b2 = 0; b2 < 3; b2++)
                 for (int c = 0; c < 3; c++) I[a][b2] += iR(a, c) * id[c] * iR(b2, c);
@@ -759,18 +759,18 @@ static bool
 
 /* GLFW */
 
-static void cb_keyboard(GLFWwindow *, int, int, int, int);
-static void cb_mouse_button(GLFWwindow *, int, int, int);
-static void cb_mouse_move(GLFWwindow *, double, double);
-static void cb_scroll(GLFWwindow *, double, double);
+static void   cb_keyboard(GLFWwindow *, int, int, int, int);
+static void   cb_mouse_button(GLFWwindow *, int, int, int);
+static void   cb_mouse_move(GLFWwindow *, double, double);
+static void   cb_scroll(GLFWwindow *, double, double);
 static State *g_state = nullptr;
 
 struct GLMouseState
 {
-    bool btn_left = false, btn_right = false, btn_middle = false;
+    bool   btn_left = false, btn_right = false, btn_middle = false;
     double mouse_x = 0, mouse_y = 0;
     double last_click_time = -1.0;
-    int last_click_btn = -1;
+    int    last_click_btn  = -1;
 };
 
 /* Public API */
@@ -785,31 +785,31 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     /* Single robot: use spec API (avoids mj_saveLastXML which is unstable for
      * URDF-sourced models on some MuJoCo versions). */
     if (sc->robots.size() == 1) {
-        const SceneRobot &r = sc->robots[0];
-        fs::path proc = tmp / "_mj_kdl_r0_proc.urdf";
+        const SceneRobot &r    = sc->robots[0];
+        fs::path          proc = tmp / "_mj_kdl_r0_proc.urdf";
         if (!preprocess_urdf(r.urdf_path, proc.string())) return false;
 
-        char err[2048] = {};
-        mjSpec *spec = mj_parseXML(proc.c_str(), nullptr, err, sizeof(err));
+        char    err[2048] = {};
+        mjSpec *spec      = mj_parseXML(proc.c_str(), nullptr, err, sizeof(err));
         if (!spec) {
             std::cerr << "[mj_kdl] parseXML: " << err << "\n";
             return false;
         }
 
-        spec->option.timestep = sc->timestep;
-        spec->option.gravity[2] = sc->gravity_z;
+        spec->option.timestep         = sc->timestep;
+        spec->option.gravity[2]       = sc->gravity_z;
         spec->compiler.balanceinertia = 1;
-        spec->compiler.discardvisual = 0;
+        spec->compiler.discardvisual  = 0;
 
         if (r.pos[0] || r.pos[1] || r.pos[2] || r.euler[0] || r.euler[1] || r.euler[2]) {
-            mjsBody *wb = mjs_findBody(spec, "world");
+            mjsBody *wb   = mjs_findBody(spec, "world");
             mjsBody *root = wb ? mjs_asBody(mjs_firstChild(wb, mjOBJ_BODY, 0)) : nullptr;
             if (root) {
                 root->pos[0] = r.pos[0];
                 root->pos[1] = r.pos[1];
                 root->pos[2] = r.pos[2];
                 if (r.euler[0] || r.euler[1] || r.euler[2]) {
-                    root->alt.type = mjORIENTATION_EULER;
+                    root->alt.type     = mjORIENTATION_EULER;
                     root->alt.euler[0] = r.euler[0];
                     root->alt.euler[1] = r.euler[1];
                     root->alt.euler[2] = r.euler[2];
@@ -840,20 +840,20 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     std::vector<std::string> raws;
     for (int i = 0; i < (int)sc->robots.size(); ++i) {
         fs::path proc = tmp / ("_mj_kdl_r" + std::to_string(i) + "_proc.urdf");
-        fs::path raw = tmp / ("_mj_kdl_r" + std::to_string(i) + "_raw.xml");
+        fs::path raw  = tmp / ("_mj_kdl_r" + std::to_string(i) + "_raw.xml");
         if (!preprocess_urdf(sc->robots[i].urdf_path, proc.string())) return false;
         if (!urdf_to_raw_mjcf(proc.string(), raw.string())) return false;
         raws.push_back(raw.string());
     }
     fs::path combined = tmp / "_mj_kdl_combined_raw.xml";
-    fs::path scene = tmp / "_mj_kdl_scene.xml";
+    fs::path scene    = tmp / "_mj_kdl_scene.xml";
     if (!combine_mjcf(raws, sc, combined.string())) return false;
     if (!inject_scene(
           combined.string(), scene.string(), sc->timestep, sc->gravity_z, sc->add_floor))
         return false;
     if (!inject_extras_xml(scene.string(), sc)) return false;
     char err[2048] = {};
-    *out_model = mj_loadXML(scene.c_str(), nullptr, err, sizeof(err));
+    *out_model     = mj_loadXML(scene.c_str(), nullptr, err, sizeof(err));
     if (!*out_model) {
         std::cerr << "[mj_kdl] loadXML: " << err << "\n";
         return false;
@@ -871,7 +871,7 @@ bool load_mjcf(mjModel **out_model, mjData **out_data, const char *path)
 {
     ensure_plugins_loaded();
     char err[2048] = {};
-    *out_model = mj_loadXML(path, nullptr, err, sizeof(err));
+    *out_model     = mj_loadXML(path, nullptr, err, sizeof(err));
     if (!*out_model) {
         std::cerr << "[mj_kdl] load_mjcf: " << err << "\n";
         return false;
@@ -989,7 +989,7 @@ bool patch_mjcf_add_objects(const char *mjcf_path, const std::vector<SceneObject
             body->InsertEndChild(fj);
         }
 
-        XMLElement *geom = doc.NewElement("geom");
+        XMLElement *geom      = doc.NewElement("geom");
         const char *shape_str = "box";
         if (obj.shape == ObjShape::SPHERE) shape_str = "sphere";
         if (obj.shape == ObjShape::CYLINDER) shape_str = "cylinder";
@@ -1092,11 +1092,11 @@ bool attach_gripper(const char *arm_mjcf, const GripperSpec *g, const char *out_
         if (!root || !name) return nullptr;
         if (root->Attribute("name") && std::string(root->Attribute("name")) == name) return root;
         for (auto *c = root->FirstChildElement("body"); c; c = c->NextSiblingElement("body")) {
-            XMLElement *found = nullptr;
+            XMLElement                               *found  = nullptr;
             std::function<XMLElement *(XMLElement *)> search = [&](XMLElement *e) -> XMLElement * {
                 if (e->Attribute("name") && std::string(e->Attribute("name")) == name) return e;
                 for (auto *ch = e->FirstChildElement("body"); ch;
-                     ch = ch->NextSiblingElement("body")) {
+                     ch       = ch->NextSiblingElement("body")) {
                     if (auto *r = search(ch)) return r;
                 }
                 return nullptr;
@@ -1177,14 +1177,14 @@ bool scene_add_object(mjModel **model, mjData **data, SceneSpec *spec, const Sce
 {
     spec->objects.push_back(obj);
     mjModel *nm = nullptr;
-    mjData *nd = nullptr;
+    mjData  *nd = nullptr;
     if (!build_scene(&nm, &nd, spec)) {
         spec->objects.pop_back();
         return false;
     }
     destroy_scene(*model, *data);
     *model = nm;
-    *data = nd;
+    *data  = nd;
     return true;
 }
 
@@ -1197,27 +1197,27 @@ bool scene_remove_object(mjModel **model, mjData **data, SceneSpec *spec, const 
     SceneObject removed = *it;
     spec->objects.erase(it);
     mjModel *nm = nullptr;
-    mjData *nd = nullptr;
+    mjData  *nd = nullptr;
     if (!build_scene(&nm, &nd, spec)) {
         spec->objects.push_back(removed);
         return false;
     }
     destroy_scene(*model, *data);
     *model = nm;
-    *data = nd;
+    *data  = nd;
     return true;
 }
 
 bool init_robot(State *s,
-  mjModel *model,
-  mjData *data,
-  const char *urdf,
-  const char *base_link,
-  const char *tip_link,
-  const char *prefix)
+  mjModel             *model,
+  mjData              *data,
+  const char          *urdf,
+  const char          *base_link,
+  const char          *tip_link,
+  const char          *prefix)
 {
-    s->model = model;
-    s->data = data;
+    s->model       = model;
+    s->data        = data;
     s->_owns_model = false;
     if (!load_kdl_chain(s, urdf, base_link, tip_link)) return false;
     std::string pfx = prefix ? prefix : "";
@@ -1227,14 +1227,14 @@ bool init_robot(State *s,
 }
 
 bool init_from_mjcf(State *s,
-  mjModel *model,
-  mjData *data,
-  const char *base_body,
-  const char *tip_body,
-  const char *prefix)
+  mjModel                 *model,
+  mjData                  *data,
+  const char              *base_body,
+  const char              *tip_body,
+  const char              *prefix)
 {
-    s->model = model;
-    s->data = data;
+    s->model       = model;
+    s->data        = data;
     s->_owns_model = false;
     if (!build_kdl_from_model(s, model, base_body, tip_body)) return false;
     build_index_map(s, prefix ? prefix : "");
@@ -1283,36 +1283,36 @@ bool init_window(State *s, const char *title, int width, int height)
     mjv_defaultPerturb(&s->pert);
     mjv_makeScene(s->model, &s->scn, 2000);
     mjr_makeContext(s->model, &s->con, mjFONTSCALE_150);
-    s->cam.type = mjCAMERA_FREE;
-    s->cam.distance = 2.5;
-    s->cam.azimuth = 135.0;
+    s->cam.type      = mjCAMERA_FREE;
+    s->cam.distance  = 2.5;
+    s->cam.azimuth   = 135.0;
     s->cam.elevation = -20.0;
-    g_state = s;
+    g_state          = s;
     return true;
 }
 
 bool init(State *s, const Config *cfg)
 {
-    SceneSpec sc;
+    SceneSpec  sc;
     SceneRobot r;
     r.urdf_path = cfg->urdf_path;
-    r.prefix = "";
+    r.prefix    = "";
     sc.robots.push_back(r);
-    sc.timestep = cfg->timestep;
+    sc.timestep  = cfg->timestep;
     sc.gravity_z = cfg->gravity_z;
     sc.add_floor = cfg->add_floor;
 
     mjModel *model = nullptr;
-    mjData *data = nullptr;
+    mjData  *data  = nullptr;
     if (!build_scene(&model, &data, &sc)) return false;
-    s->model = model;
-    s->data = data;
+    s->model       = model;
+    s->data        = data;
     s->_owns_model = true;
 
     if (!load_kdl_chain(s, cfg->urdf_path, cfg->base_link, cfg->tip_link)) {
         destroy_scene(model, data);
         s->model = nullptr;
-        s->data = nullptr;
+        s->data  = nullptr;
         return false;
     }
     sync_chain_inertias(s, "");
@@ -1344,7 +1344,7 @@ void cleanup(State *s)
             s->model = nullptr;
         }
     } else {
-        s->data = nullptr;
+        s->data  = nullptr;
         s->model = nullptr;
     }
 }
@@ -1386,7 +1386,7 @@ bool render(State *s)
     mjv_updateScene(s->model, s->data, &s->opt, &s->pert, &s->cam, mjCAT_ALL, &s->scn);
     mjr_render(vp, &s->scn, &s->con);
 
-    char top[256];
+    char        top[256];
     const char *selname =
       (s->pert.select > 0) ? mj_id2name(s->model, mjOBJ_BODY, s->pert.select) : nullptr;
     if (selname)
@@ -1413,7 +1413,7 @@ bool render(State *s)
 
     if (s->show_joints && s->n_joints > 0 && !s->kdl_to_mj_qpos.empty()) {
         char jvals[1024];
-        int off = std::snprintf(jvals, sizeof(jvals), "Joints (rad)\n");
+        int  off = std::snprintf(jvals, sizeof(jvals), "Joints (rad)\n");
         for (int i = 0; i < s->n_joints && i < 16 && off < (int)sizeof(jvals) - 32; ++i)
             off += std::snprintf(jvals + off,
               sizeof(jvals) - off,
@@ -1467,25 +1467,25 @@ static void cb_keyboard(GLFWwindow *w, int key, int, int action, int)
 
 static void cb_mouse_button(GLFWwindow *w, int btn, int act, int)
 {
-    auto *ms = static_cast<GLMouseState *>(glfwGetWindowUserPointer(w));
-    ms->btn_left = (glfwGetMouseButton(w, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS);
-    ms->btn_right = (glfwGetMouseButton(w, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS);
+    auto *ms       = static_cast<GLMouseState *>(glfwGetWindowUserPointer(w));
+    ms->btn_left   = (glfwGetMouseButton(w, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS);
+    ms->btn_right  = (glfwGetMouseButton(w, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS);
     ms->btn_middle = (glfwGetMouseButton(w, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS);
     glfwGetCursorPos(w, &ms->mouse_x, &ms->mouse_y);
     if (!g_state) return;
 
     if (act == GLFW_PRESS) {
-        double now = glfwGetTime();
-        bool dbl = (now - ms->last_click_time < 0.3) && (btn == ms->last_click_btn);
+        double now          = glfwGetTime();
+        bool   dbl          = (now - ms->last_click_time < 0.3) && (btn == ms->last_click_btn);
         ms->last_click_time = dbl ? -1.0 : now;
-        ms->last_click_btn = btn;
+        ms->last_click_btn  = btn;
 
         if (dbl) {
             int ww, wh;
             glfwGetWindowSize(w, &ww, &wh);
             mjtNum selpnt[3];
-            int geomid[1] = { -1 }, flexid[1] = { -1 }, skinid[1] = { -1 };
-            int body = mjv_select(g_state->model,
+            int    geomid[1] = { -1 }, flexid[1] = { -1 }, skinid[1] = { -1 };
+            int    body = mjv_select(g_state->model,
               g_state->data,
               &g_state->opt,
               (mjtNum)wh / ww,
@@ -1497,7 +1497,7 @@ static void cb_mouse_button(GLFWwindow *w, int btn, int act, int)
               flexid,
               skinid);
             if (body > 0) {
-                g_state->pert.select = body;
+                g_state->pert.select     = body;
                 g_state->pert.skinselect = skinid[0];
                 mju_copy3(g_state->pert.localpos, selpnt);
                 mjv_initPerturb(g_state->model, g_state->data, &g_state->scn, &g_state->pert);
@@ -1553,7 +1553,7 @@ namespace mj = ::mujoco;
 
 using Seconds = std::chrono::duration<double>;
 
-static constexpr double kSyncMisalign = 0.1;// max misalign before re-sync (sim seconds)
+static constexpr double kSyncMisalign       = 0.1;// max misalign before re-sync (sim seconds)
 static constexpr double kSimRefreshFraction = 0.7;// fraction of refresh budget for physics
 
 void run_simulate_ui(mjModel *m, mjData *d, const char *path, ControlCb physics_cb)
@@ -1581,7 +1581,7 @@ void run_simulate_ui(mjModel *m, mjData *d, const char *path, ControlCb physics_
         }
 
         std::chrono::time_point<mj::Simulate::Clock> syncCPU;
-        mjtNum syncSim = 0;
+        mjtNum                                       syncSim = 0;
 
         while (!sim->exitrequest.load()) {
             if (sim->run && sim->busywait)
@@ -1592,19 +1592,19 @@ void run_simulate_ui(mjModel *m, mjData *d, const char *path, ControlCb physics_
             std::unique_lock<std::recursive_mutex> lock(sim->mtx);
 
             if (sim->run) {
-                const auto startCPU = mj::Simulate::Clock::now();
+                const auto startCPU   = mj::Simulate::Clock::now();
                 const auto elapsedCPU = startCPU - syncCPU;
-                double elapsedSim = d->time - syncSim;
-                double slowdown = 100.0 / sim->percentRealTime[sim->real_time_index];
-                bool misaligned =
+                double     elapsedSim = d->time - syncSim;
+                double     slowdown   = 100.0 / sim->percentRealTime[sim->real_time_index];
+                bool       misaligned =
                   std::abs(Seconds(elapsedCPU).count() / slowdown - elapsedSim) > kSyncMisalign;
 
                 if (elapsedSim < 0 || elapsedCPU.count() < 0
                     || syncCPU.time_since_epoch().count() == 0 || misaligned
                     || sim->speed_changed) {
                     // Out-of-sync: resync clocks, take one step.
-                    syncCPU = startCPU;
-                    syncSim = d->time;
+                    syncCPU            = startCPU;
+                    syncSim            = d->time;
                     sim->speed_changed = false;
                     if (physics_cb) physics_cb(m, d);
                     if (sim->pert.active) mjv_applyPerturbForce(m, d, &sim->pert);
@@ -1613,7 +1613,7 @@ void run_simulate_ui(mjModel *m, mjData *d, const char *path, ControlCb physics_
                 } else {
                     // In-sync: step until simulation is ahead of CPU or budget exhausted.
                     double refreshTime = kSimRefreshFraction / sim->refresh_rate;
-                    mjtNum prevSim = d->time;
+                    mjtNum prevSim     = d->time;
                     while (
                       Seconds((d->time - syncSim) * slowdown) < mj::Simulate::Clock::now() - syncCPU
                       && mj::Simulate::Clock::now() - startCPU < Seconds(refreshTime)) {

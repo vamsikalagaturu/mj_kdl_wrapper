@@ -38,7 +38,7 @@ static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_pat
 int main(int argc, char *argv[])
 {
     std::string urdf = (repo_root() / "assets/gen3_urdf/GEN3_URDF_V12.urdf").string();
-    bool gui = false;
+    bool        gui  = false;
     for (int i = 1; i < argc; ++i) {
         std::string a(argv[i]);
         if (a == "--gui")
@@ -52,28 +52,28 @@ int main(int argc, char *argv[])
      *   arm2: at x = +0.5 m, facing -X (rotated 180° around Z)
      * arm2 joints are prefixed "r2_" in MuJoCo to avoid name collisions. */
     mj_kdl::SceneSpec scene;
-    scene.timestep = 0.002;
+    scene.timestep  = 0.002;
     scene.gravity_z = -9.81;
     scene.add_floor = true;
 
     mj_kdl::SceneRobot r1, r2;
     r1.urdf_path = urdf.c_str();
-    r1.prefix = "";
-    r1.pos[0] = -0.5;
-    r1.pos[1] = 0.0;
-    r1.pos[2] = 0.0;
+    r1.prefix    = "";
+    r1.pos[0]    = -0.5;
+    r1.pos[1]    = 0.0;
+    r1.pos[2]    = 0.0;
 
     r2.urdf_path = urdf.c_str();
-    r2.prefix = "r2_";
-    r2.pos[0] = 0.5;
-    r2.pos[1] = 0.0;
-    r2.pos[2] = 0.0;
-    r2.euler[2] = 180.0;// 180° around Z → faces -X (toward arm1)
+    r2.prefix    = "r2_";
+    r2.pos[0]    = 0.5;
+    r2.pos[1]    = 0.0;
+    r2.pos[2]    = 0.0;
+    r2.euler[2]  = 180.0;// 180° around Z → faces -X (toward arm1)
 
     scene.robots = { r1, r2 };
 
     mjModel *model = nullptr;
-    mjData *data = nullptr;
+    mjData  *data  = nullptr;
     if (!mj_kdl::build_scene(&model, &data, &scene)) {
         std::cerr << "FAIL: build_scene\n";
         return 1;
@@ -99,8 +99,8 @@ int main(int argc, char *argv[])
 
     KDL::ChainFkSolverPos_recursive fk1(arm1.chain);
     KDL::ChainFkSolverPos_recursive fk2(arm2.chain);
-    KDL::ChainDynParam dyn1(arm1.chain, KDL::Vector(0, 0, -9.81));
-    KDL::ChainDynParam dyn2(arm2.chain, KDL::Vector(0, 0, -9.81));
+    KDL::ChainDynParam              dyn1(arm1.chain, KDL::Vector(0, 0, -9.81));
+    KDL::ChainDynParam              dyn2(arm2.chain, KDL::Vector(0, 0, -9.81));
 
     // Both arms start at home pose.
     KDL::JntArray q_home(n);

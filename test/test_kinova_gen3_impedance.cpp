@@ -95,14 +95,14 @@ int main(int argc, char *argv[])
     mj_kdl::GripperSpec gs;
     gs.mjcf_path = grp_mjcf.c_str();
     gs.attach_to = "bracelet_link";
-    gs.prefix = "g_";
-    gs.pos[0] = 0.0;
-    gs.pos[1] = 0.0;
-    gs.pos[2] = -0.061525;
-    gs.quat[0] = 0.0;
-    gs.quat[1] = 1.0;
-    gs.quat[2] = 0.0;
-    gs.quat[3] = 0.0;
+    gs.prefix    = "g_";
+    gs.pos[0]    = 0.0;
+    gs.pos[1]    = 0.0;
+    gs.pos[2]    = -0.061525;
+    gs.quat[0]   = 0.0;
+    gs.quat[1]   = 1.0;
+    gs.quat[2]   = 0.0;
+    gs.quat[3]   = 0.0;
 
     if (!mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined.c_str())) {
         std::cerr << "FAIL: attach_gripper\n";
@@ -119,7 +119,7 @@ int main(int argc, char *argv[])
 
     // Test 1: model loads.
     mjModel *model = nullptr;
-    mjData *data = nullptr;
+    mjData  *data  = nullptr;
     if (!mj_kdl::load_mjcf(&model, &data, combined.c_str())) {
         std::cerr << "FAIL: load_mjcf\n";
         return 1;
@@ -160,11 +160,11 @@ int main(int argc, char *argv[])
     // Helper: apply one impedance step and advance simulation.
     auto step_impedance = [&](mjModel *m, mjData *d, const double q_target[7]) {
         for (unsigned i = 0; i < n; ++i) {
-            int dof = s.kdl_to_mj_dof[i];
-            int jid = m->dof_jntid[dof];
-            double q = d->qpos[m->jnt_qposadr[jid]];
-            double qdot = d->qvel[dof];
-            d->ctrl[i] = q;// zero P-error
+            int    dof           = s.kdl_to_mj_dof[i];
+            int    jid           = m->dof_jntid[dof];
+            double q             = d->qpos[m->jnt_qposadr[jid]];
+            double qdot          = d->qvel[dof];
+            d->ctrl[i]           = q;// zero P-error
             d->qfrc_applied[dof] = kKp[i] * (q_target[i] - q) - kKd[i] * qdot + d->qfrc_bias[dof];
         }
         mj_step(m, d);
@@ -215,11 +215,11 @@ int main(int argc, char *argv[])
         std::cout << "GUI: close window to exit\n";
         mj_kdl::run_simulate_ui(model, data, combined.c_str(), [&](mjModel *m, mjData *d) {
             for (unsigned i = 0; i < n; ++i) {
-                int dof = s.kdl_to_mj_dof[i];
-                int jid = m->dof_jntid[dof];
-                double q = d->qpos[m->jnt_qposadr[jid]];
+                int    dof  = s.kdl_to_mj_dof[i];
+                int    jid  = m->dof_jntid[dof];
+                double q    = d->qpos[m->jnt_qposadr[jid]];
                 double qdot = d->qvel[dof];
-                d->ctrl[i] = q;
+                d->ctrl[i]  = q;
                 d->qfrc_applied[dof] =
                   kKp[i] * (kHomePose[i] - q) - kKd[i] * qdot + d->qfrc_bias[dof];
             }

@@ -17,7 +17,7 @@ static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_pat
 int main(int argc, char *argv[])
 {
     std::string urdf = (repo_root() / "assets/gen3_urdf/GEN3_URDF_V12.urdf").string();
-    bool gui = false;
+    bool        gui  = false;
     for (int i = 1; i < argc; ++i) {
         std::string a(argv[i]);
         if (a == "--gui")
@@ -27,11 +27,11 @@ int main(int argc, char *argv[])
     }
 
     mj_kdl::Config cfg;
-    cfg.urdf_path = urdf.c_str();
-    cfg.base_link = "base_link";
-    cfg.tip_link = "EndEffector_Link";
+    cfg.urdf_path  = urdf.c_str();
+    cfg.base_link  = "base_link";
+    cfg.tip_link   = "EndEffector_Link";
     cfg.robot_name = "kinova_gen3";
-    cfg.headless = true;// run_simulate_ui opens its own window
+    cfg.headless   = true;// run_simulate_ui opens its own window
 
     mj_kdl::State s;
     if (!mj_kdl::init(&s, &cfg)) {
@@ -52,7 +52,7 @@ int main(int argc, char *argv[])
     }
 
     // Set home pose
-    unsigned n = static_cast<unsigned>(s.n_joints);
+    unsigned      n = static_cast<unsigned>(s.n_joints);
     KDL::JntArray q_home(n);
     for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
     mj_kdl::sync_from_kdl(&s, q_home);

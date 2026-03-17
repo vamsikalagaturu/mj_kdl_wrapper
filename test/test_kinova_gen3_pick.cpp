@@ -45,9 +45,9 @@ static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.95
 static constexpr double kGripperReach = 0.18422;
 
 // Cube spawn
-static constexpr double kCubeX = 0.4;
-static constexpr double kCubeY = 0.0;
-static constexpr double kCubeZ = 0.02;// centre (bottom at z=0)
+static constexpr double kCubeX  = 0.4;
+static constexpr double kCubeY  = 0.0;
+static constexpr double kCubeZ  = 0.02;// centre (bottom at z=0)
 static constexpr double kCubeHS = 0.02;// half-size: 4 cm cube
 
 static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
@@ -124,14 +124,14 @@ int main(int argc, char *argv[])
     mj_kdl::GripperSpec gs;
     gs.mjcf_path = grp_mjcf.c_str();
     gs.attach_to = "bracelet_link";
-    gs.prefix = "g_";
-    gs.pos[0] = 0.0;
-    gs.pos[1] = 0.0;
-    gs.pos[2] = -0.061525;
-    gs.quat[0] = 0.0;
-    gs.quat[1] = 1.0;
-    gs.quat[2] = 0.0;
-    gs.quat[3] = 0.0;
+    gs.prefix    = "g_";
+    gs.pos[0]    = 0.0;
+    gs.pos[1]    = 0.0;
+    gs.pos[2]    = -0.061525;
+    gs.quat[0]   = 0.0;
+    gs.quat[1]   = 1.0;
+    gs.quat[2]   = 0.0;
+    gs.quat[3]   = 0.0;
 
     if (!mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined.c_str())) {
         std::cerr << "FAIL: attach_gripper\n";
@@ -147,20 +147,20 @@ int main(int argc, char *argv[])
     }
 
     mj_kdl::SceneObject cube_obj;
-    cube_obj.name = "cube";
-    cube_obj.shape = mj_kdl::ObjShape::BOX;
-    cube_obj.size[0] = kCubeHS;
-    cube_obj.size[1] = kCubeHS;
-    cube_obj.size[2] = kCubeHS;
-    cube_obj.pos[0] = kCubeX;
-    cube_obj.pos[1] = kCubeY;
-    cube_obj.pos[2] = kCubeZ;
-    cube_obj.rgba[0] = 1.0f;
-    cube_obj.rgba[1] = 0.5f;
-    cube_obj.rgba[2] = 0.0f;
-    cube_obj.rgba[3] = 1.0f;
-    cube_obj.mass = 0.1;
-    cube_obj.condim = 4;
+    cube_obj.name        = "cube";
+    cube_obj.shape       = mj_kdl::ObjShape::BOX;
+    cube_obj.size[0]     = kCubeHS;
+    cube_obj.size[1]     = kCubeHS;
+    cube_obj.size[2]     = kCubeHS;
+    cube_obj.pos[0]      = kCubeX;
+    cube_obj.pos[1]      = kCubeY;
+    cube_obj.pos[2]      = kCubeZ;
+    cube_obj.rgba[0]     = 1.0f;
+    cube_obj.rgba[1]     = 0.5f;
+    cube_obj.rgba[2]     = 0.0f;
+    cube_obj.rgba[3]     = 1.0f;
+    cube_obj.mass        = 0.1;
+    cube_obj.condim      = 4;
     cube_obj.friction[0] = 0.8;
     cube_obj.friction[1] = 0.02;
     cube_obj.friction[2] = 0.001;
@@ -172,7 +172,7 @@ int main(int argc, char *argv[])
 
     // Test 1: model loads; cube body found.
     mjModel *model = nullptr;
-    mjData *data = nullptr;
+    mjData  *data  = nullptr;
     if (!mj_kdl::load_mjcf(&model, &data, combined.c_str())) {
         std::cerr << "FAIL: load_mjcf\n";
         return 1;
@@ -217,7 +217,7 @@ int main(int argc, char *argv[])
             q_max(i) = 2 * M_PI;
         }
     }
-    KDL::ChainIkSolverVel_pinv ik_vel(s.chain);
+    KDL::ChainIkSolverVel_pinv  ik_vel(s.chain);
     KDL::ChainIkSolverPos_NR_JL ik(s.chain, q_min, q_max, fk, ik_vel, 500, 1e-5);
 
     int fingers_act = mj_name2id(model, mjOBJ_ACTUATOR, "g_fingers_actuator");
@@ -231,9 +231,9 @@ int main(int argc, char *argv[])
     /* Waypoint bracelet_link Z targets (using exact gripper reach geometry).
      * +0.02 m offset: keeps finger geometry clear of the floor when the gripper
      * is open during approach (open fingers extend further down than closed). */
-    const double kGraspZ = kCubeZ + kGripperReach + 0.02;
+    const double kGraspZ    = kCubeZ + kGripperReach + 0.02;
     const double kPreGraspZ = kGraspZ + 0.20;
-    const double kLiftZ = kGraspZ + 0.30;
+    const double kLiftZ     = kGraspZ + 0.30;
 
     // Target rotation: Identity — bracelet_link Z = world Z → gripper points straight down.
     const KDL::Rotation kDownRot = KDL::Rotation::Identity();
@@ -244,19 +244,19 @@ int main(int argc, char *argv[])
     struct WP
     {
         const char *name;
-        double z;
+        double      z;
     };
     WP wps[] = { { "pre-grasp", kPreGraspZ }, { "grasp", kGraspZ }, { "lift", kLiftZ } };
 
-    KDL::JntArray q_pregrasp(n), q_grasp(n), q_lift(n);
+    KDL::JntArray  q_pregrasp(n), q_grasp(n), q_lift(n);
     KDL::JntArray *ik_out[] = { &q_pregrasp, &q_grasp, &q_lift };
 
     // Test 3: IK convergence.
     bool ik_ok = true;
     for (int wi = 0; wi < 3; ++wi) {
-        KDL::Frame target(kDownRot, KDL::Vector(kCubeX, kCubeY, wps[wi].z));
+        KDL::Frame     target(kDownRot, KDL::Vector(kCubeX, kCubeY, wps[wi].z));
         KDL::JntArray &seed = (wi == 0) ? q_home_kdl : *ik_out[wi - 1];
-        int ret = ik.CartToJnt(seed, target, *ik_out[wi]);
+        int            ret  = ik.CartToJnt(seed, target, *ik_out[wi]);
 
         KDL::Frame ik_frame;
         fk.JntToCart(*ik_out[wi], ik_frame);
@@ -280,7 +280,7 @@ int main(int argc, char *argv[])
 
     // Place cube at spawn position (freejoint qpos zeroed by keyframe reset).
     auto reset_cube = [&](mjData *d) {
-        int qadr = model->jnt_qposadr[cube_jnt];
+        int qadr          = model->jnt_qposadr[cube_jnt];
         d->qpos[qadr + 0] = kCubeX;
         d->qpos[qadr + 1] = kCubeY;
         d->qpos[qadr + 2] = kCubeZ;
@@ -290,10 +290,10 @@ int main(int argc, char *argv[])
 
     struct Phase
     {
-        double t_start, duration;
+        double               t_start, duration;
         const KDL::JntArray *q_from;
         const KDL::JntArray *q_to;
-        double gripper;
+        double               gripper;
     };
     Phase phases[] = {
         { 0.0, 1.0, &q_home_kdl, &q_home_kdl, 0.0 },// hold home
@@ -306,7 +306,7 @@ int main(int argc, char *argv[])
     constexpr int kNPhases = sizeof(phases) / sizeof(phases[0]);
 
     auto apply_control = [&](mjModel * /*m*/, mjData *d) {
-        double t = d->time;
+        double       t  = d->time;
         const Phase *ph = &phases[kNPhases - 1];
         for (int pi = 0; pi < kNPhases - 1; ++pi)
             if (t < phases[pi + 1].t_start) {
@@ -314,7 +314,7 @@ int main(int argc, char *argv[])
                 break;
             }
 
-        double alpha = clamp01((t - ph->t_start) / ph->duration);
+        double        alpha = clamp01((t - ph->t_start) / ph->duration);
         KDL::JntArray q_target(n);
         lerp_q(*ph->q_from, *ph->q_to, alpha, q_target);
 
@@ -323,7 +323,7 @@ int main(int argc, char *argv[])
             /* Position actuators track q_target (stable: force clamped to forcerange).
              * qfrc_applied adds gravity compensation so the actuator P-term
              * only needs to handle tracking error, not fight gravity. */
-            d->ctrl[i] = q_target(i);
+            d->ctrl[i]           = q_target(i);
             d->qfrc_applied[dof] = d->qfrc_bias[dof];
         }
         d->ctrl[fingers_act] = ph->gripper;
@@ -340,7 +340,7 @@ int main(int argc, char *argv[])
         mj_forward(model, data);
 
         const double kSimEnd = 10.5;
-        const int kSteps = static_cast<int>(kSimEnd / model->opt.timestep);
+        const int    kSteps  = static_cast<int>(kSimEnd / model->opt.timestep);
 
         for (int step = 0; step < kSteps; ++step) {
             apply_control(model, data);
@@ -348,7 +348,7 @@ int main(int argc, char *argv[])
         }
 
         // Cube centre Z after lift hold.
-        int qadr = model->jnt_qposadr[cube_jnt];
+        int    qadr         = model->jnt_qposadr[cube_jnt];
         double cube_final_z = data->qpos[qadr + 2];
 
         std::cout << std::fixed << std::setprecision(3)

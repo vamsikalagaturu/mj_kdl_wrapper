@@ -44,7 +44,7 @@ int main(int argc, char *argv[])
     const std::string mjcf = (root / "third_party/menagerie/kinova_gen3/scene.xml").string();
 
     mjModel *model = nullptr;
-    mjData *data = nullptr;
+    mjData  *data  = nullptr;
     if (!mj_kdl::load_mjcf(&model, &data, mjcf.c_str())) {
         std::cerr << "FAIL: load_mjcf\n";
         return 1;
@@ -80,7 +80,7 @@ int main(int argc, char *argv[])
     std::cout << "KDL chain: " << n << " joints\n";
 
     KDL::ChainFkSolverPos_recursive fk(s.chain);
-    KDL::ChainDynParam dyn(s.chain, KDL::Vector(0, 0, -9.81));
+    KDL::ChainDynParam              dyn(s.chain, KDL::Vector(0, 0, -9.81));
 
     // Set home pose via keyframe if available, else set manually.
     int key_id = mj_name2id(model, mjOBJ_KEY, "home");

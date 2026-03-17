@@ -25,7 +25,7 @@ static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_pat
 int main(int argc, char *argv[])
 {
     std::string urdf = (repo_root() / "assets/gen3_urdf/GEN3_URDF_V12.urdf").string();
-    bool gui = false;
+    bool        gui  = false;
     for (int i = 1; i < argc; ++i) {
         std::string a(argv[i]);
         if (a == "--gui")
@@ -36,14 +36,14 @@ int main(int argc, char *argv[])
 
     // Table setup: surface at z = 0.7 m, robot mounted at table centre.
     mj_kdl::TableSpec table;
-    table.enabled = true;
-    table.pos[0] = 0.0;
-    table.pos[1] = 0.0;
-    table.pos[2] = 0.7;// surface height
+    table.enabled     = true;
+    table.pos[0]      = 0.0;
+    table.pos[1]      = 0.0;
+    table.pos[2]      = 0.7;// surface height
     table.top_size[0] = 0.8;// half-extent x
     table.top_size[1] = 0.6;// half-extent y
-    table.thickness = 0.04;
-    table.leg_radius = 0.03;
+    table.thickness   = 0.04;
+    table.leg_radius  = 0.03;
 
     double surface_z = table.pos[2];
 
@@ -51,23 +51,23 @@ int main(int argc, char *argv[])
     std::vector<mj_kdl::SceneObject> objects;
 
     auto make_box = [&](const char *name,
-                      double x,
-                      double y,
-                      double hx,
-                      double hy,
-                      double hz,
-                      float r,
-                      float g,
-                      float b) {
+                      double        x,
+                      double        y,
+                      double        hx,
+                      double        hy,
+                      double        hz,
+                      float         r,
+                      float         g,
+                      float         b) {
         mj_kdl::SceneObject o;
-        o.name = name;
-        o.shape = mj_kdl::ObjShape::BOX;
+        o.name    = name;
+        o.shape   = mj_kdl::ObjShape::BOX;
         o.size[0] = hx;
         o.size[1] = hy;
         o.size[2] = hz;
-        o.pos[0] = x;
-        o.pos[1] = y;
-        o.pos[2] = surface_z + hz;
+        o.pos[0]  = x;
+        o.pos[1]  = y;
+        o.pos[2]  = surface_z + hz;
         o.rgba[0] = r;
         o.rgba[1] = g;
         o.rgba[2] = b;
@@ -78,12 +78,12 @@ int main(int argc, char *argv[])
     auto make_sphere =
       [&](const char *name, double x, double y, double radius, float r, float g, float b) {
           mj_kdl::SceneObject o;
-          o.name = name;
-          o.shape = mj_kdl::ObjShape::SPHERE;
+          o.name    = name;
+          o.shape   = mj_kdl::ObjShape::SPHERE;
           o.size[0] = radius;
-          o.pos[0] = x;
-          o.pos[1] = y;
-          o.pos[2] = surface_z + radius;
+          o.pos[0]  = x;
+          o.pos[1]  = y;
+          o.pos[2]  = surface_z + radius;
           o.rgba[0] = r;
           o.rgba[1] = g;
           o.rgba[2] = b;
@@ -99,21 +99,21 @@ int main(int argc, char *argv[])
 
     // Build scene: robot at table surface (pos[2] = surface_z).
     mj_kdl::SceneSpec spec;
-    spec.table = table;
-    spec.objects = objects;
+    spec.table     = table;
+    spec.objects   = objects;
     spec.add_floor = true;
     spec.gravity_z = -9.81;
 
     mj_kdl::SceneRobot robot;
     robot.urdf_path = urdf.c_str();
-    robot.prefix = "";
-    robot.pos[0] = 0.0;
-    robot.pos[1] = 0.0;
-    robot.pos[2] = surface_z;// mount base on table surface
+    robot.prefix    = "";
+    robot.pos[0]    = 0.0;
+    robot.pos[1]    = 0.0;
+    robot.pos[2]    = surface_z;// mount base on table surface
     spec.robots.push_back(robot);
 
     mjModel *model = nullptr;
-    mjData *data = nullptr;
+    mjData  *data  = nullptr;
     if (!mj_kdl::build_scene(&model, &data, &spec)) {
         std::cerr << "FAIL: build_scene\n";
         return 1;
@@ -132,7 +132,7 @@ int main(int argc, char *argv[])
     unsigned n = static_cast<unsigned>(s.n_joints);
 
     KDL::ChainFkSolverPos_recursive fk(s.chain);
-    KDL::ChainDynParam dyn(s.chain, KDL::Vector(0, 0, spec.gravity_z));
+    KDL::ChainDynParam              dyn(s.chain, KDL::Vector(0, 0, spec.gravity_z));
 
     // Set home pose.
     KDL::JntArray q_home(n);
@@ -153,7 +153,7 @@ int main(int argc, char *argv[])
     }
 
     KDL::JntArray q_end;
-    KDL::Frame ee_end;
+    KDL::Frame    ee_end;
     mj_kdl::sync_to_kdl(&s, q_end);
     fk.JntToCart(q_end, ee_end);
     double drift = (ee_init.p - ee_end.p).Norm();
