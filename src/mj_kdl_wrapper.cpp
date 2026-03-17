@@ -275,6 +275,198 @@ static void xml_prefix_names(tinyxml2::XMLElement *e, const std::string &pfx)
     for (auto *c = e->FirstChildElement(); c; c = c->NextSiblingElement()) xml_prefix_names(c, pfx);
 }
 
+/* Returns the first child element named tag; creates and appends one if absent. */
+static tinyxml2::XMLElement *xml_get_or_create(tinyxml2::XMLElement *parent,
+  const char                                                         *tag,
+  tinyxml2::XMLDocument                                              &doc)
+{
+    tinyxml2::XMLElement *el = parent->FirstChildElement(tag);
+    if (!el) { el = doc.NewElement(tag); parent->InsertEndChild(el); }
+    return el;
+}
+
+/* Deep-clone src into dst's document, then prefix all name/ref attributes. */
+static tinyxml2::XMLElement *xml_clone_prefixed(const tinyxml2::XMLElement *src,
+  tinyxml2::XMLDocument                                                     *dst,
+  const std::string                                                         &pfx)
+{
+    tinyxml2::XMLElement *cl = xml_deep_clone(src, dst);
+    xml_prefix_names(cl, pfx);
+    return cl;
+}
+
+/* Append skybox + groundplane assets and a floor geom + directional light to
+ * already-existing asset and worldbody elements. */
+static void xml_add_floor_visuals(tinyxml2::XMLDocument &doc,
+  tinyxml2::XMLElement                                  *asset,
+  tinyxml2::XMLElement                                  *wb)
+{
+    tinyxml2::XMLElement *sky = doc.NewElement("texture");
+    sky->SetAttribute("type", "skybox");
+    sky->SetAttribute("builtin", "gradient");
+    sky->SetAttribute("rgb1", "0.3 0.45 0.65");
+    sky->SetAttribute("rgb2", "0.65 0.8 0.95");
+    sky->SetAttribute("width", "200");
+    sky->SetAttribute("height", "200");
+    asset->InsertEndChild(sky);
+
+    tinyxml2::XMLElement *t = doc.NewElement("texture");
+    t->SetAttribute("type", "2d");
+    t->SetAttribute("name", "groundplane");
+    t->SetAttribute("builtin", "checker");
+    t->SetAttribute("rgb1", "0.2 0.3 0.4");
+    t->SetAttribute("rgb2", "0.1 0.2 0.3");
+    t->SetAttribute("width", "300");
+    t->SetAttribute("height", "300");
+    asset->InsertEndChild(t);
+
+    tinyxml2::XMLElement *m = doc.NewElement("material");
+    m->SetAttribute("name", "groundplane");
+    m->SetAttribute("texture", "groundplane");
+    m->SetAttribute("texrepeat", "5 5");
+    m->SetAttribute("reflectance", "0.2");
+    asset->InsertEndChild(m);
+
+    tinyxml2::XMLElement *light = doc.NewElement("light");
+    light->SetAttribute("pos", "0 0 4");
+    light->SetAttribute("directional", "true");
+    wb->InsertFirstChild(light);
+
+    tinyxml2::XMLElement *f = doc.NewElement("geom");
+    f->SetAttribute("name", "floor");
+    f->SetAttribute("type", "plane");
+    f->SetAttribute("material", "groundplane");
+    f->SetAttribute("size", "10 10 0.05");
+    f->SetAttribute("condim", "3");
+    wb->InsertAfterChild(light, f);
+}
+
+/* Build and append a table body (top geom + 4 optional legs) to wb. */
+static void xml_add_table(tinyxml2::XMLDocument &doc,
+  tinyxml2::XMLElement                          *wb,
+  const TableSpec                               &t)
+{
+    auto set_rgba4 = [](tinyxml2::XMLElement *e, const float rgba[4]) {
+        char buf[64];
+        std::snprintf(buf,
+          sizeof(buf),
+          "%.3f %.3f %.3f %.3f",
+          (double)rgba[0],
+          (double)rgba[1],
+          (double)rgba[2],
+          (double)rgba[3]);
+        e->SetAttribute("rgba", buf);
+    };
+    auto set_pos3 = [](tinyxml2::XMLElement *e, double x, double y, double z) {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "%.5f %.5f %.5f", x, y, z);
+        e->SetAttribute("pos", buf);
+    };
+
+    double sz         = t.pos[2];
+    double half_thick = t.thickness * 0.5;
+    double top_cz     = sz - half_thick;
+    double leg_h      = sz - t.thickness;
+
+    tinyxml2::XMLElement *tb = doc.NewElement("body");
+    tb->SetAttribute("name", "table");
+    set_pos3(tb, t.pos[0], t.pos[1], top_cz);
+
+    tinyxml2::XMLElement *top = doc.NewElement("geom");
+    top->SetAttribute("name", "table_top");
+    top->SetAttribute("type", "box");
+    {
+        char s[64];
+        std::snprintf(s, sizeof(s), "%.5f %.5f %.5f", t.top_size[0], t.top_size[1], half_thick);
+        top->SetAttribute("size", s);
+    }
+    set_rgba4(top, t.rgba);
+    top->SetAttribute("condim", "3");
+    tb->InsertEndChild(top);
+
+    if (leg_h > 0.0) {
+        double       half_leg      = leg_h * 0.5;
+        double       leg_rel_z     = -(sz * 0.5);
+        double       lx            = t.top_size[0] - t.leg_radius;
+        double       ly            = t.top_size[1] - t.leg_radius;
+        const double corners[4][2] = { { lx, ly }, { -lx, ly }, { lx, -ly }, { -lx, -ly } };
+        for (int i = 0; i < 4; ++i) {
+            tinyxml2::XMLElement *leg = doc.NewElement("geom");
+            char                  nm[32];
+            std::snprintf(nm, sizeof(nm), "table_leg%d", i);
+            leg->SetAttribute("name", nm);
+            leg->SetAttribute("type", "cylinder");
+            {
+                char s[32];
+                std::snprintf(s, sizeof(s), "%.5f %.5f", t.leg_radius, half_leg);
+                leg->SetAttribute("size", s);
+            }
+            set_pos3(leg, corners[i][0], corners[i][1], leg_rel_z);
+            set_rgba4(leg, t.rgba);
+            leg->SetAttribute("condim", "3");
+            tb->InsertEndChild(leg);
+        }
+    }
+    wb->InsertEndChild(tb);
+}
+
+/* Build and append one physics object (body + optional freejoint + geom) to wb.
+ * Sets mass, friction, and condim from the SceneObject; uses shape-correct size format. */
+static void xml_add_object(tinyxml2::XMLDocument &doc,
+  tinyxml2::XMLElement                           *wb,
+  const SceneObject                              &obj)
+{
+    tinyxml2::XMLElement *body = doc.NewElement("body");
+    body->SetAttribute("name", obj.name.c_str());
+    {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "%.5f %.5f %.5f", obj.pos[0], obj.pos[1], obj.pos[2]);
+        body->SetAttribute("pos", buf);
+    }
+    if (!obj.fixed) {
+        tinyxml2::XMLElement *fj = doc.NewElement("freejoint");
+        fj->SetAttribute("name", (obj.name + "_joint").c_str());
+        body->InsertEndChild(fj);
+    }
+
+    tinyxml2::XMLElement *geom      = doc.NewElement("geom");
+    const char           *shape_str = (obj.shape == ObjShape::SPHERE)     ? "sphere"
+                                      : (obj.shape == ObjShape::CYLINDER) ? "cylinder"
+                                                                           : "box";
+    geom->SetAttribute("type", shape_str);
+    {
+        char s[64];
+        if (obj.shape == ObjShape::SPHERE)
+            std::snprintf(s, sizeof(s), "%.5f", obj.size[0]);
+        else if (obj.shape == ObjShape::CYLINDER)
+            std::snprintf(s, sizeof(s), "%.5f %.5f", obj.size[0], obj.size[1]);
+        else
+            std::snprintf(s, sizeof(s), "%.5f %.5f %.5f", obj.size[0], obj.size[1], obj.size[2]);
+        geom->SetAttribute("size", s);
+    }
+    geom->SetAttribute("mass", std::to_string(obj.mass).c_str());
+    {
+        char buf[64];
+        std::snprintf(buf,
+          sizeof(buf),
+          "%.3f %.3f %.3f %.3f",
+          (double)obj.rgba[0],
+          (double)obj.rgba[1],
+          (double)obj.rgba[2],
+          (double)obj.rgba[3]);
+        geom->SetAttribute("rgba", buf);
+    }
+    geom->SetAttribute("condim", obj.condim);
+    {
+        char buf[64];
+        std::snprintf(
+          buf, sizeof(buf), "%.4f %.4f %.4f", obj.friction[0], obj.friction[1], obj.friction[2]);
+        geom->SetAttribute("friction", buf);
+    }
+    body->InsertEndChild(geom);
+    wb->InsertEndChild(body);
+}
+
 static bool urdf_to_raw_mjcf(const std::string &proc, const std::string &raw)
 {
     char     err[2048] = {};
@@ -330,45 +522,8 @@ static bool inject_scene(const std::string &in,
             asset = doc.NewElement("asset");
             mj->InsertAfterChild(opt, asset);
         }
-        XMLElement *sky = doc.NewElement("texture");
-        sky->SetAttribute("type", "skybox");
-        sky->SetAttribute("builtin", "gradient");
-        sky->SetAttribute("rgb1", "0.3 0.45 0.65");
-        sky->SetAttribute("rgb2", "0.65 0.8 0.95");
-        sky->SetAttribute("width", "200");
-        sky->SetAttribute("height", "200");
-        asset->InsertEndChild(sky);
-        XMLElement *t = doc.NewElement("texture");
-        t->SetAttribute("type", "2d");
-        t->SetAttribute("name", "groundplane");
-        t->SetAttribute("builtin", "checker");
-        t->SetAttribute("rgb1", "0.2 0.3 0.4");
-        t->SetAttribute("rgb2", "0.1 0.2 0.3");
-        t->SetAttribute("width", "300");
-        t->SetAttribute("height", "300");
-        asset->InsertEndChild(t);
-        XMLElement *m = doc.NewElement("material");
-        m->SetAttribute("name", "groundplane");
-        m->SetAttribute("texture", "groundplane");
-        m->SetAttribute("texrepeat", "5 5");
-        m->SetAttribute("reflectance", "0.2");
-        asset->InsertEndChild(m);
-        XMLElement *wb = mj->FirstChildElement("worldbody");
-        if (!wb) {
-            wb = doc.NewElement("worldbody");
-            mj->InsertEndChild(wb);
-        }
-        XMLElement *light = doc.NewElement("light");
-        light->SetAttribute("pos", "0 0 4");
-        light->SetAttribute("directional", "true");
-        wb->InsertFirstChild(light);
-        XMLElement *f = doc.NewElement("geom");
-        f->SetAttribute("name", "floor");
-        f->SetAttribute("type", "plane");
-        f->SetAttribute("material", "groundplane");
-        f->SetAttribute("size", "10 10 0.05");
-        f->SetAttribute("condim", "3");
-        wb->InsertAfterChild(light, f);
+        XMLElement *wb = xml_get_or_create(mj, "worldbody", doc);
+        xml_add_floor_visuals(doc, asset, wb);
     }
     return doc.SaveFile(out.c_str()) == XML_SUCCESS;
 }
@@ -384,16 +539,8 @@ static bool
     }
     XMLElement *bmj = base.FirstChildElement("mujoco");
     if (!bmj) return false;
-    XMLElement *bwb = bmj->FirstChildElement("worldbody");
-    if (!bwb) {
-        bwb = base.NewElement("worldbody");
-        bmj->InsertEndChild(bwb);
-    }
-    XMLElement *bas = bmj->FirstChildElement("asset");
-    if (!bas) {
-        bas = base.NewElement("asset");
-        bmj->InsertEndChild(bas);
-    }
+    XMLElement *bwb = xml_get_or_create(bmj, "worldbody", base);
+    XMLElement *bas = xml_get_or_create(bmj, "asset", base);
 
     auto wrap_robot =
       [&](XMLElement *parent, const std::vector<XMLElement *> &kids, const SceneRobot &r, int idx) {
@@ -438,11 +585,8 @@ static bool
         if (!mi) return false;
         const std::string pfx(sc->robots[i].prefix);
         if (XMLElement *ai = mi->FirstChildElement("asset"))
-            for (auto *a = ai->FirstChildElement(); a; a = a->NextSiblingElement()) {
-                XMLElement *cl = xml_deep_clone(a, &base);
-                xml_prefix_names(cl, pfx);
-                bas->InsertEndChild(cl);
-            }
+            for (auto *a = ai->FirstChildElement(); a; a = a->NextSiblingElement())
+                bas->InsertEndChild(xml_clone_prefixed(a, &base, pfx));
         XMLElement *wi = mi->FirstChildElement("worldbody");
         if (!wi) continue;
         std::vector<XMLElement *> kids;
@@ -466,115 +610,43 @@ static bool inject_extras_xml(const std::string &path, const SceneSpec *sc)
     XMLElement *wb = mj->FirstChildElement("worldbody");
     if (!wb) return false;
 
-    // Helpers
-    auto set_rgba = [](XMLElement *e, const float rgba[4]) {
-        char buf[64];
-        std::snprintf(buf,
-          sizeof(buf),
-          "%.3f %.3f %.3f %.3f",
-          (double)rgba[0],
-          (double)rgba[1],
-          (double)rgba[2],
-          (double)rgba[3]);
-        e->SetAttribute("rgba", buf);
-    };
-    auto set_pos3 = [](XMLElement *e, double x, double y, double z) {
-        char buf[64];
-        std::snprintf(buf, sizeof(buf), "%.5f %.5f %.5f", x, y, z);
-        e->SetAttribute("pos", buf);
-    };
-
-    // Table
-    if (sc->table.enabled) {
-        const TableSpec &t          = sc->table;
-        double           sz         = t.pos[2];
-        double           half_thick = t.thickness * 0.5;
-        double           top_cz     = sz - half_thick;
-        double           leg_h      = sz - t.thickness;
-
-        XMLElement *tb = doc.NewElement("body");
-        tb->SetAttribute("name", "table");
-        set_pos3(tb, t.pos[0], t.pos[1], top_cz);
-
-        // tabletop geom
-        XMLElement *top = doc.NewElement("geom");
-        top->SetAttribute("name", "table_top");
-        top->SetAttribute("type", "box");
-        {
-            char sz3[64];
-            std::snprintf(
-              sz3, sizeof(sz3), "%.5f %.5f %.5f", t.top_size[0], t.top_size[1], half_thick);
-            top->SetAttribute("size", sz3);
-        }
-        set_rgba(top, t.rgba);
-        top->SetAttribute("condim", "3");
-        tb->InsertEndChild(top);
-
-        // legs
-        if (leg_h > 0.0) {
-            double       half_leg      = leg_h * 0.5;
-            double       leg_rel_z     = -(sz * 0.5);
-            double       lx            = t.top_size[0] - t.leg_radius;
-            double       ly            = t.top_size[1] - t.leg_radius;
-            const double corners[4][2] = { { lx, ly }, { -lx, ly }, { lx, -ly }, { -lx, -ly } };
-            for (int i = 0; i < 4; ++i) {
-                XMLElement *leg = doc.NewElement("geom");
-                char        nm[32];
-                std::snprintf(nm, sizeof(nm), "table_leg%d", i);
-                leg->SetAttribute("name", nm);
-                leg->SetAttribute("type", "cylinder");
-                {
-                    char s2[32];
-                    std::snprintf(s2, sizeof(s2), "%.5f %.5f", t.leg_radius, half_leg);
-                    leg->SetAttribute("size", s2);
-                }
-                set_pos3(leg, corners[i][0], corners[i][1], leg_rel_z);
-                set_rgba(leg, t.rgba);
-                leg->SetAttribute("condim", "3");
-                tb->InsertEndChild(leg);
-            }
-        }
-        wb->InsertEndChild(tb);
-    }
-
-    // Objects
-    for (const auto &obj : sc->objects) {
-        XMLElement *ob = doc.NewElement("body");
-        ob->SetAttribute("name", obj.name.c_str());
-        set_pos3(ob, obj.pos[0], obj.pos[1], obj.pos[2]);
-
-        if (!obj.fixed) {
-            XMLElement *fj = doc.NewElement("freejoint");
-            fj->SetAttribute("name", (obj.name + "_joint").c_str());
-            ob->InsertEndChild(fj);
-        }
-
-        XMLElement *g     = doc.NewElement("geom");
-        const char *stype = (obj.shape == ObjShape::SPHERE)     ? "sphere"
-                            : (obj.shape == ObjShape::CYLINDER) ? "cylinder"
-                                                                : "box";
-        g->SetAttribute("type", stype);
-        {
-            char s[64];
-            if (obj.shape == ObjShape::SPHERE)
-                std::snprintf(s, sizeof(s), "%.5f", obj.size[0]);
-            else if (obj.shape == ObjShape::CYLINDER)
-                std::snprintf(s, sizeof(s), "%.5f %.5f", obj.size[0], obj.size[1]);
-            else
-                std::snprintf(
-                  s, sizeof(s), "%.5f %.5f %.5f", obj.size[0], obj.size[1], obj.size[2]);
-            g->SetAttribute("size", s);
-        }
-        set_rgba(g, obj.rgba);
-        g->SetAttribute("condim", "3");
-        ob->InsertEndChild(g);
-        wb->InsertEndChild(ob);
-    }
-
+    if (sc->table.enabled) xml_add_table(doc, wb, sc->table);
+    for (const auto &obj : sc->objects) xml_add_object(doc, wb, obj);
     return doc.SaveFile(path.c_str()) == XML_SUCCESS;
 }
 
 /* KDL helpers */
+
+/* Convert a MuJoCo quaternion [w x y z] to a KDL::Rotation. */
+static KDL::Rotation mj_quat_to_kdl_rot(const double *q)
+{
+    double w = q[0], x = q[1], y = q[2], z = q[3];
+    return KDL::Rotation(1 - 2 * (y * y + z * z),
+      2 * (x * y - w * z),
+      2 * (x * z + w * y),
+      2 * (x * y + w * z),
+      1 - 2 * (x * x + z * z),
+      2 * (y * z - w * x),
+      2 * (x * z - w * y),
+      2 * (y * z + w * x),
+      1 - 2 * (x * x + y * y));
+}
+
+/* Extract the full rigid-body inertia for body bid from a compiled mjModel. */
+static KDL::RigidBodyInertia mj_body_inertia(const mjModel *model, int bid)
+{
+    double        mass = model->body_mass[bid];
+    const double *ip   = &model->body_ipos[3 * bid];
+    KDL::Rotation iR   = mj_quat_to_kdl_rot(&model->body_iquat[4 * bid]);
+    const double *id   = &model->body_inertia[3 * bid];
+    double        I[3][3] = {};
+    for (int a = 0; a < 3; a++)
+        for (int b = 0; b < 3; b++)
+            for (int c = 0; c < 3; c++) I[a][b] += iR(a, c) * id[c] * iR(b, c);
+    return KDL::RigidBodyInertia(mass,
+      KDL::Vector(ip[0], ip[1], ip[2]),
+      KDL::RotationalInertia(I[0][0], I[1][1], I[2][2], I[0][1], I[0][2], I[1][2]));
+}
 
 static bool
   load_kdl_chain(State *s, const std::string &urdf, const char *base_link, const char *tip_link)
@@ -618,25 +690,8 @@ static void sync_chain_inertias(State *s, const std::string &pfx)
         const KDL::Segment   &seg = s->chain.getSegment(si);
         int                   bid = mj_name2id(s->model, mjOBJ_BODY, (pfx + seg.getName()).c_str());
         KDL::RigidBodyInertia inertia;
-        if (bid >= 0) {
-            double        mass = s->model->body_mass[bid];
-            const double *ip   = &s->model->body_ipos[3 * bid];
-            const double *iq   = &s->model->body_iquat[4 * bid];
-            const double *id   = &s->model->body_inertia[3 * bid];
-            double        w = iq[0], x = iq[1], y = iq[2], z = iq[3];
-            double        R[3][3] = {
-                { 1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y) },
-                { 2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x) },
-                { 2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y) }
-            };
-            double I[3][3] = {};
-            for (int a = 0; a < 3; a++)
-                for (int b = 0; b < 3; b++)
-                    for (int c = 0; c < 3; c++) I[a][b] += R[a][c] * id[c] * R[b][c];
-            inertia = KDL::RigidBodyInertia(mass,
-              KDL::Vector(ip[0], ip[1], ip[2]),
-              KDL::RotationalInertia(I[0][0], I[1][1], I[2][2], I[0][1], I[0][2], I[1][2]));
-        }
+        if (bid >= 0)
+            inertia = mj_body_inertia(s->model, bid);
         chain.addSegment(KDL::Segment(seg.getName(), seg.getJoint(), seg.getFrameToTip(), inertia));
     }
     s->chain = chain;
@@ -691,22 +746,9 @@ static bool
     s->joint_names.clear();
     s->joint_limits.clear();
 
-    auto quat_to_rot = [](const double *q) -> KDL::Rotation {
-        double w = q[0], x = q[1], y = q[2], z = q[3];
-        return KDL::Rotation(1 - 2 * (y * y + z * z),
-          2 * (x * y - w * z),
-          2 * (x * z + w * y),
-          2 * (x * y + w * z),
-          1 - 2 * (x * x + z * z),
-          2 * (y * z - w * x),
-          2 * (x * z - w * y),
-          2 * (y * z + w * x),
-          1 - 2 * (x * x + y * y));
-    };
-
     for (int bid : bids) {
         const char   *bname = mj_id2name(model, mjOBJ_BODY, bid);
-        KDL::Rotation bR    = quat_to_rot(&model->body_quat[4 * bid]);
+        KDL::Rotation bR    = mj_quat_to_kdl_rot(&model->body_quat[4 * bid]);
         KDL::Vector   bv(
           model->body_pos[3 * bid], model->body_pos[3 * bid + 1], model->body_pos[3 * bid + 2]);
         KDL::Frame F(bR, bv);
@@ -739,17 +781,7 @@ static bool
             break;
         }
 
-        double        mass    = model->body_mass[bid];
-        const double *ip      = &model->body_ipos[3 * bid];
-        KDL::Rotation iR      = quat_to_rot(&model->body_iquat[4 * bid]);
-        const double *id      = &model->body_inertia[3 * bid];
-        double        I[3][3] = {};
-        for (int a = 0; a < 3; a++)
-            for (int b2 = 0; b2 < 3; b2++)
-                for (int c = 0; c < 3; c++) I[a][b2] += iR(a, c) * id[c] * iR(b2, c);
-        KDL::RigidBodyInertia inertia(mass,
-          KDL::Vector(ip[0], ip[1], ip[2]),
-          KDL::RotationalInertia(I[0][0], I[1][1], I[2][2], I[0][1], I[0][2], I[1][2]));
+        KDL::RigidBodyInertia inertia = mj_body_inertia(model, bid);
 
         s->chain.addSegment(KDL::Segment(bname ? bname : "", jnt, F, inertia));
     }
@@ -892,58 +924,9 @@ bool patch_mjcf_visuals(const char *mjcf_path)
     if (doc.LoadFile(mjcf_path) != XML_SUCCESS) return false;
     XMLElement *mj = doc.FirstChildElement("mujoco");
     if (!mj) return false;
-
-    XMLElement *asset = mj->FirstChildElement("asset");
-    if (!asset) {
-        asset = doc.NewElement("asset");
-        mj->InsertFirstChild(asset);
-    }
-
-    XMLElement *sky = doc.NewElement("texture");
-    sky->SetAttribute("type", "skybox");
-    sky->SetAttribute("builtin", "gradient");
-    sky->SetAttribute("rgb1", "0.3 0.45 0.65");
-    sky->SetAttribute("rgb2", "0.65 0.8 0.95");
-    sky->SetAttribute("width", "200");
-    sky->SetAttribute("height", "200");
-    asset->InsertFirstChild(sky);
-
-    XMLElement *gp_tex = doc.NewElement("texture");
-    gp_tex->SetAttribute("type", "2d");
-    gp_tex->SetAttribute("name", "groundplane");
-    gp_tex->SetAttribute("builtin", "checker");
-    gp_tex->SetAttribute("rgb1", "0.2 0.3 0.4");
-    gp_tex->SetAttribute("rgb2", "0.1 0.2 0.3");
-    gp_tex->SetAttribute("width", "300");
-    gp_tex->SetAttribute("height", "300");
-    asset->InsertEndChild(gp_tex);
-
-    XMLElement *gp_mat = doc.NewElement("material");
-    gp_mat->SetAttribute("name", "groundplane");
-    gp_mat->SetAttribute("texture", "groundplane");
-    gp_mat->SetAttribute("texrepeat", "5 5");
-    gp_mat->SetAttribute("reflectance", "0.2");
-    asset->InsertEndChild(gp_mat);
-
-    XMLElement *wb = mj->FirstChildElement("worldbody");
-    if (!wb) {
-        wb = doc.NewElement("worldbody");
-        mj->InsertEndChild(wb);
-    }
-
-    XMLElement *light = doc.NewElement("light");
-    light->SetAttribute("pos", "0 0 4");
-    light->SetAttribute("directional", "true");
-    wb->InsertFirstChild(light);
-
-    XMLElement *floor = doc.NewElement("geom");
-    floor->SetAttribute("name", "floor");
-    floor->SetAttribute("type", "plane");
-    floor->SetAttribute("material", "groundplane");
-    floor->SetAttribute("size", "10 10 0.05");
-    floor->SetAttribute("condim", "3");
-    wb->InsertAfterChild(light, floor);
-
+    XMLElement *asset = xml_get_or_create(mj, "asset", doc);
+    XMLElement *wb    = xml_get_or_create(mj, "worldbody", doc);
+    xml_add_floor_visuals(doc, asset, wb);
     return doc.SaveFile(mjcf_path) == XML_SUCCESS;
 }
 
@@ -956,53 +939,7 @@ bool patch_mjcf_add_objects(const char *mjcf_path, const std::vector<SceneObject
     if (!mj) return false;
     XMLElement *wb = mj->FirstChildElement("worldbody");
     if (!wb) return false;
-
-    for (const auto &obj : objects) {
-        char pos_buf[64], sz_buf[64], fr_buf[64];
-        std::snprintf(
-          pos_buf, sizeof(pos_buf), "%.6f %.6f %.6f", obj.pos[0], obj.pos[1], obj.pos[2]);
-        std::snprintf(
-          sz_buf, sizeof(sz_buf), "%.6f %.6f %.6f", obj.size[0], obj.size[1], obj.size[2]);
-        std::snprintf(fr_buf,
-          sizeof(fr_buf),
-          "%.4f %.4f %.4f",
-          obj.friction[0],
-          obj.friction[1],
-          obj.friction[2]);
-
-        char rgba_buf[64];
-        std::snprintf(rgba_buf,
-          sizeof(rgba_buf),
-          "%.3f %.3f %.3f %.3f",
-          obj.rgba[0],
-          obj.rgba[1],
-          obj.rgba[2],
-          obj.rgba[3]);
-
-        XMLElement *body = doc.NewElement("body");
-        body->SetAttribute("name", obj.name.c_str());
-        body->SetAttribute("pos", pos_buf);
-
-        if (!obj.fixed) {
-            XMLElement *fj = doc.NewElement("freejoint");
-            fj->SetAttribute("name", (obj.name + "_joint").c_str());
-            body->InsertEndChild(fj);
-        }
-
-        XMLElement *geom      = doc.NewElement("geom");
-        const char *shape_str = "box";
-        if (obj.shape == ObjShape::SPHERE) shape_str = "sphere";
-        if (obj.shape == ObjShape::CYLINDER) shape_str = "cylinder";
-        geom->SetAttribute("type", shape_str);
-        geom->SetAttribute("size", sz_buf);
-        geom->SetAttribute("mass", std::to_string(obj.mass).c_str());
-        geom->SetAttribute("rgba", rgba_buf);
-        geom->SetAttribute("condim", obj.condim);
-        geom->SetAttribute("friction", fr_buf);
-        body->InsertEndChild(geom);
-
-        wb->InsertEndChild(body);
-    }
+    for (const auto &obj : objects) xml_add_object(doc, wb, obj);
     return doc.SaveFile(mjcf_path) == XML_SUCCESS;
 }
 
@@ -1060,31 +997,16 @@ bool attach_gripper(const char *arm_mjcf, const GripperSpec *g, const char *out_
     std::string pfx(g->prefix ? g->prefix : "");
 
     // Merge assets
-    XMLElement *arm_asset = arm_mj->FirstChildElement("asset");
-    if (!arm_asset) {
-        arm_asset = arm_doc.NewElement("asset");
-        arm_mj->InsertEndChild(arm_asset);
-    }
-    if (XMLElement *grp_asset = grp_mj->FirstChildElement("asset")) {
-        for (auto *c = grp_asset->FirstChildElement(); c; c = c->NextSiblingElement()) {
-            XMLElement *cl = xml_deep_clone(c, &arm_doc);
-            xml_prefix_names(cl, pfx);
-            arm_asset->InsertEndChild(cl);
-        }
-    }
+    XMLElement *arm_asset = xml_get_or_create(arm_mj, "asset", arm_doc);
+    if (XMLElement *grp_asset = grp_mj->FirstChildElement("asset"))
+        for (auto *c = grp_asset->FirstChildElement(); c; c = c->NextSiblingElement())
+            arm_asset->InsertEndChild(xml_clone_prefixed(c, &arm_doc, pfx));
 
     // Merge defaults
     if (XMLElement *gd = grp_mj->FirstChildElement("default")) {
-        XMLElement *ad = arm_mj->FirstChildElement("default");
-        if (!ad) {
-            ad = arm_doc.NewElement("default");
-            arm_mj->InsertEndChild(ad);
-        }
-        for (auto *c = gd->FirstChildElement(); c; c = c->NextSiblingElement()) {
-            XMLElement *cl = xml_deep_clone(c, &arm_doc);
-            xml_prefix_names(cl, pfx);
-            ad->InsertEndChild(cl);
-        }
+        XMLElement *ad = xml_get_or_create(arm_mj, "default", arm_doc);
+        for (auto *c = gd->FirstChildElement(); c; c = c->NextSiblingElement())
+            ad->InsertEndChild(xml_clone_prefixed(c, &arm_doc, pfx));
     }
 
     // Find attach body in arm worldbody and insert gripper worldbody children
@@ -1118,8 +1040,7 @@ bool attach_gripper(const char *arm_mjcf, const GripperSpec *g, const char *out_
     XMLElement *grp_wb = grp_mj->FirstChildElement("worldbody");
     if (grp_wb) {
         for (auto *c = grp_wb->FirstChildElement(); c; c = c->NextSiblingElement()) {
-            XMLElement *cl = xml_deep_clone(c, &arm_doc);
-            xml_prefix_names(cl, pfx);
+            XMLElement *cl = xml_clone_prefixed(c, &arm_doc, pfx);
             // Apply offset
             char pos_str[64];
             std::snprintf(
@@ -1145,16 +1066,9 @@ bool attach_gripper(const char *arm_mjcf, const GripperSpec *g, const char *out_
     auto merge_section = [&](const char *tag) {
         XMLElement *gs = grp_mj->FirstChildElement(tag);
         if (!gs) return;
-        XMLElement *as = arm_mj->FirstChildElement(tag);
-        if (!as) {
-            as = arm_doc.NewElement(tag);
-            arm_mj->InsertEndChild(as);
-        }
-        for (auto *c = gs->FirstChildElement(); c; c = c->NextSiblingElement()) {
-            XMLElement *cl = xml_deep_clone(c, &arm_doc);
-            xml_prefix_names(cl, pfx);
-            as->InsertEndChild(cl);
-        }
+        XMLElement *as = xml_get_or_create(arm_mj, tag, arm_doc);
+        for (auto *c = gs->FirstChildElement(); c; c = c->NextSiblingElement())
+            as->InsertEndChild(xml_clone_prefixed(c, &arm_doc, pfx));
     };
     merge_section("contact");
     merge_section("tendon");
