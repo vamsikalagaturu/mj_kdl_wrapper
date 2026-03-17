@@ -4,7 +4,6 @@
 // Usage: test_init [urdf_path] [--gui]
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
-#include "mj_kdl_wrapper/simulate_ui.hpp"
 
 #include <iostream>
 #include <string>

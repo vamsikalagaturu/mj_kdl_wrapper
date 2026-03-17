@@ -10,7 +10,6 @@
 // Usage: test_dual_arm [urdf_path] [--gui]
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
-#include "mj_kdl_wrapper/simulate_ui.hpp"
 
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chaindynparam.hpp>
@@ -46,12 +45,10 @@ int main(int argc, char* argv[])
         else if (a[0] != '-') urdf = a;
     }
 
-    // ------------------------------------------------------------------
     // Build a single MuJoCo scene with two arms facing each other.
     //   arm1: at x = -0.5 m, facing +X (default orientation)
     //   arm2: at x = +0.5 m, facing -X (rotated 180° around Z)
     // arm2 joints are prefixed "r2_" in MuJoCo to avoid name collisions.
-    // ------------------------------------------------------------------
     mj_kdl::SceneSpec scene;
     scene.timestep  = 0.002;
     scene.gravity_z = -9.81;
@@ -76,9 +73,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // ------------------------------------------------------------------
     // Attach one State per arm (shared model/data, separate KDL chains).
-    // ------------------------------------------------------------------
     mj_kdl::State arm1, arm2;
 
     if (!mj_kdl::init_robot(&arm1, model, data,
@@ -119,9 +114,7 @@ int main(int argc, char* argv[])
     std::cout << "Arm 2 initial EE: ["
               << ee2_init.p.x() << ", " << ee2_init.p.y() << ", " << ee2_init.p.z() << "]\n\n";
 
-    // ------------------------------------------------------------------
     // Part 1: compare KDL gravity torques to MuJoCo qfrc_bias.
-    // ------------------------------------------------------------------
     {
         KDL::JntArray g1(n), g2(n);
         dyn1.JntToGravity(q_home, g1);
@@ -139,11 +132,9 @@ int main(int argc, char* argv[])
         std::cout << "  (difference due to balanceinertia; see Part 2 for actual test)\n\n";
     }
 
-    // ------------------------------------------------------------------
     // Part 2: 500-step closed-loop gravity compensation; check EE drift.
     // Both arms share the same model/data — step() is called once per
     // timestep (on arm1), which advances the whole world.
-    // ------------------------------------------------------------------
     for (int i = 0; i < 500; ++i) {
         apply_grav_comp(&arm1, dyn1);
         apply_grav_comp(&arm2, dyn2);
@@ -173,9 +164,7 @@ int main(int argc, char* argv[])
     }
     std::cout << "  OK\n\nOK\n";
 
-    // ------------------------------------------------------------------
     // GUI loop — one window shows both arms; user can perturb either.
-    // ------------------------------------------------------------------
     if (gui) {
         mj_kdl::sync_from_kdl(&arm1, q_home);
         mj_kdl::sync_from_kdl(&arm2, q_home);

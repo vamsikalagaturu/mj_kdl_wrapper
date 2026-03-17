@@ -3,19 +3,25 @@
 #include "urdf_model/joint.h"
 #include "urdfdom/urdf_parser/urdf_parser.h"
 
+#include "simulate.h"
+#include "glfw_adapter.h"
+
 #include <tinyxml2.h>
 
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <cmath>
 #include <iostream>
 #include <filesystem>
+#include <memory>
 #include <mutex>
+#include <thread>
 
 namespace fs = std::filesystem;
 
-// Load MuJoCo decoder plugins (STL, OBJ, …) once at first use.
-// Required since MuJoCo 3.6.0 moved mesh decoders to plugin libraries.
+/* Load MuJoCo decoder plugins (STL, OBJ, …) once at first use.
+ * Required since MuJoCo 3.6.0 moved mesh decoders to plugin libraries. */
 static void ensure_plugins_loaded()
 {
     static std::once_flag flag;
@@ -28,7 +34,7 @@ static void ensure_plugins_loaded()
 
 namespace mj_kdl {
 
-// URDF preprocessing
+/* URDF preprocessing */
 
 static bool preprocess_urdf(const std::string& in, const std::string& out)
 {
@@ -64,7 +70,7 @@ static bool preprocess_urdf(const std::string& in, const std::string& out)
     return doc.SaveFile(out.c_str()) == XML_SUCCESS;
 }
 
-// Spec-API helpers (single-robot path)
+/* Spec-API helpers (single-robot path) */
 
 static void add_floor_to_spec(mjSpec* spec)
 {
@@ -184,7 +190,7 @@ static void add_objects_to_spec(mjSpec* spec, const std::vector<SceneObject>& ob
     }
 }
 
-// Multi-robot XML helpers (N > 1 path)
+/* Multi-robot XML helpers (N > 1 path) */
 
 static tinyxml2::XMLElement* xml_deep_clone(const tinyxml2::XMLElement* src,
                                              tinyxml2::XMLDocument* dst)
@@ -358,7 +364,7 @@ static bool combine_mjcf(const std::vector<std::string>& raws,
     return base.SaveFile(out.c_str()) == XML_SUCCESS;
 }
 
-// Injects table and objects into an existing MJCF file (multi-robot XML path).
+/* Injects table and objects into an existing MJCF file (multi-robot XML path). */
 static bool inject_extras_xml(const std::string& path, const SceneSpec* sc)
 {
     if (!sc->table.enabled && sc->objects.empty()) return true;
@@ -463,7 +469,7 @@ static bool inject_extras_xml(const std::string& path, const SceneSpec* sc)
     return doc.SaveFile(path.c_str()) == XML_SUCCESS;
 }
 
-// KDL helpers
+/* KDL helpers */
 
 static bool load_kdl_chain(State* s, const std::string& urdf,
                             const char* base_link, const char* tip_link)
@@ -543,7 +549,7 @@ static void build_index_map(State* s, const std::string& pfx = "")
     }
 }
 
-// Build KDL chain from compiled mjModel (no URDF needed)
+/* Build KDL chain from compiled mjModel (no URDF needed) */
 
 static bool build_kdl_from_model(State* s, mjModel* model,
                                   const char* base_body, const char* tip_body)
@@ -619,7 +625,7 @@ static bool build_kdl_from_model(State* s, mjModel* model,
     return true;
 }
 
-// GLFW
+/* GLFW */
 
 static void cb_keyboard(GLFWwindow*, int, int, int, int);
 static void cb_mouse_button(GLFWwindow*, int, int, int);
@@ -634,7 +640,7 @@ struct GLMouseState {
     int    last_click_btn  = -1;
 };
 
-// Public API
+/* Public API */
 
 bool build_scene(mjModel** out_model, mjData** out_data, const SceneSpec* sc)
 {
@@ -1173,7 +1179,7 @@ void set_torques(State* s, const KDL::JntArray& tau)
     for (int i=0; i<n; ++i) s->data->qfrc_applied[s->kdl_to_mj_dof[i]] = tau(i);
 }
 
-// GLFW callbacks
+/* GLFW callbacks */
 
 static void cb_keyboard(GLFWwindow* w, int key, int, int action, int)
 {
@@ -1259,6 +1265,97 @@ static void cb_mouse_move(GLFWwindow* w, double x, double y)
 static void cb_scroll(GLFWwindow*, double, double yoff)
 {
     if (g_state) mjv_moveCamera(g_state->model, mjMOUSE_ZOOM, 0, -0.05*yoff, &g_state->scn, &g_state->cam);
+}
+
+namespace mj = ::mujoco;
+
+using Seconds = std::chrono::duration<double>;
+
+static constexpr double kSyncMisalign       = 0.1;  // max misalign before re-sync (sim seconds)
+static constexpr double kSimRefreshFraction = 0.7;  // fraction of refresh budget for physics
+
+void run_simulate_ui(mjModel* m, mjData* d, const char* path,
+                     ControlCb physics_cb)
+{
+    mjvCamera cam; mjv_defaultCamera(&cam);
+    mjvOption opt; mjv_defaultOption(&opt);
+    mjvPerturb pert; mjv_defaultPerturb(&pert);
+
+    auto sim = std::make_unique<mj::Simulate>(
+        std::make_unique<mj::GlfwAdapter>(),
+        &cam, &opt, &pert, /*is_passive=*/false
+    );
+    sim->font = 1;  // 100% font scale (0=50%, 1=100%, 2=150%, ...)
+
+    // Physics thread: real-time sync loop (mirrors PhysicsLoop from main.cc).
+    // Load must happen from this thread so that LoadOnRenderThread() on the
+    // render thread can acknowledge via cond_loadrequest.
+    std::thread phys([&]() {
+        sim->LoadMessage(path);
+        sim->Load(m, d, path);
+        {
+            std::unique_lock<std::recursive_mutex> lock(sim->mtx);
+            mj_forward(m, d);
+        }
+
+        std::chrono::time_point<mj::Simulate::Clock> syncCPU;
+        mjtNum syncSim = 0;
+
+        while (!sim->exitrequest.load()) {
+            if (sim->run && sim->busywait)
+                std::this_thread::yield();
+            else
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+            std::unique_lock<std::recursive_mutex> lock(sim->mtx);
+
+            if (sim->run) {
+                const auto startCPU   = mj::Simulate::Clock::now();
+                const auto elapsedCPU = startCPU - syncCPU;
+                double elapsedSim     = d->time - syncSim;
+                double slowdown       = 100.0 / sim->percentRealTime[sim->real_time_index];
+                bool misaligned =
+                    std::abs(Seconds(elapsedCPU).count() / slowdown - elapsedSim)
+                    > kSyncMisalign;
+
+                if (elapsedSim < 0 || elapsedCPU.count() < 0 ||
+                    syncCPU.time_since_epoch().count() == 0 ||
+                    misaligned || sim->speed_changed)
+                {
+                    // Out-of-sync: resync clocks, take one step.
+                    syncCPU            = startCPU;
+                    syncSim            = d->time;
+                    sim->speed_changed = false;
+                    if (physics_cb) physics_cb(m, d);
+                    if (sim->pert.active) mjv_applyPerturbForce(m, d, &sim->pert);
+                    mj_step(m, d);
+                    sim->AddToHistory();
+                } else {
+                    // In-sync: step until simulation is ahead of CPU or budget exhausted.
+                    double refreshTime = kSimRefreshFraction / sim->refresh_rate;
+                    mjtNum prevSim     = d->time;
+                    while (Seconds((d->time - syncSim) * slowdown) <
+                               mj::Simulate::Clock::now() - syncCPU &&
+                           mj::Simulate::Clock::now() - startCPU < Seconds(refreshTime))
+                    {
+                        if (physics_cb) physics_cb(m, d);
+                        if (sim->pert.active) mjv_applyPerturbForce(m, d, &sim->pert);
+                        mj_step(m, d);
+                        sim->AddToHistory();
+                        if (d->time < prevSim) break;  // guard against time reset
+                        prevSim = d->time;
+                    }
+                }
+            } else {
+                // Paused: keep rendering up to date.
+                mj_forward(m, d);
+                sim->speed_changed = true;
+            }
+        }
+    });
+
+    sim->RenderLoop();  // blocks on main thread until window closes
+    phys.join();
 }
 
 } // namespace mj_kdl

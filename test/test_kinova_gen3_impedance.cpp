@@ -16,7 +16,6 @@
 // Usage: test_kinova_gen3_impedance [--gui]
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
-#include "mj_kdl_wrapper/simulate_ui.hpp"
 
 #include <tinyxml2.h>
 
@@ -183,9 +182,7 @@ int main(int argc, char* argv[])
         std::cout << "  OK\n\nOK\n";
     }
 
-    // -----------------------------------------------------------------------
     // GUI
-    // -----------------------------------------------------------------------
     if (gui) {
         // Reset to home pose.
         int key_id = mj_name2id(model, mjOBJ_KEY, "home");

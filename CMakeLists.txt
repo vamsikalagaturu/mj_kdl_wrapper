@@ -9,10 +9,6 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
-# ---------------------------------------------------------------------------
-# Dependencies
-# ---------------------------------------------------------------------------
-
 # MuJoCo — prefer /opt/mujoco-3.6.0, override with -DMUJOCO_ROOT=...
 set(MUJOCO_ROOT "/opt/mujoco-3.6.0" CACHE PATH "MuJoCo install root")
 find_path(MUJOCO_INCLUDE_DIR mujoco/mujoco.h
@@ -50,9 +46,7 @@ if(NOT tinyxml2_FOUND)
     INTERFACE_INCLUDE_DIRECTORIES "${TINYXML2_INCLUDE_DIR}")
 endif()
 
-# ---------------------------------------------------------------------------
 # Bundled kdl_parser (ros/kdl_parser jazzy, rcutils stripped)
-# ---------------------------------------------------------------------------
 add_library(kdl_parser STATIC
   third_party/kdl_parser/src/kdl_parser.cpp
 )
@@ -68,36 +62,7 @@ target_link_libraries(kdl_parser PUBLIC
 )
 target_compile_options(kdl_parser PRIVATE -w)  # suppress warnings in vendored code
 
-# ---------------------------------------------------------------------------
-# Library
-# ---------------------------------------------------------------------------
-add_library(mj_kdl_wrapper SHARED
-  src/mj_kdl_wrapper.cpp
-)
-
-target_include_directories(mj_kdl_wrapper PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-  ${MUJOCO_INCLUDE_DIR}
-  ${orocos_kdl_INCLUDE_DIRS}
-  ${urdfdom_INCLUDE_DIRS}
-)
-
-target_link_libraries(mj_kdl_wrapper PUBLIC
-  ${MUJOCO_LIBRARY}
-  glfw
-  OpenGL::GL
-  kdl_parser
-  tinyxml2::tinyxml2
-)
-
-target_compile_options(mj_kdl_wrapper PRIVATE -Wall -Wextra -Wpedantic)
-target_compile_definitions(mj_kdl_wrapper PRIVATE
-  MUJOCO_PLUGIN_DIR="${MUJOCO_ROOT}/bin/mujoco_plugin")
-
-# ---------------------------------------------------------------------------
 # MuJoCo simulate UI  (simulate.cc + GLFW adapter from the MuJoCo source tree)
-# ---------------------------------------------------------------------------
 set(MJ_SIM_DIR "${MUJOCO_ROOT}/simulate")
 add_library(mujoco_simulate_ui STATIC
   ${MJ_SIM_DIR}/simulate.cc
@@ -121,33 +86,46 @@ target_compile_options(mujoco_simulate_ui PRIVATE -w)
 set_target_properties(mujoco_simulate_ui PROPERTIES
   CXX_STANDARD 17 POSITION_INDEPENDENT_CODE ON)
 
-# ---------------------------------------------------------------------------
-# Simulate UI helpers  (run_simulate_ui — real-time PhysicsLoop wrapper)
-# ---------------------------------------------------------------------------
-add_library(mj_kdl_simulate STATIC
-  src/simulate_ui.cpp
+# Library
+add_library(mj_kdl_wrapper SHARED
+  src/mj_kdl_wrapper.cpp
 )
-target_include_directories(mj_kdl_simulate PUBLIC
+
+target_include_directories(mj_kdl_wrapper PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
+  ${MUJOCO_INCLUDE_DIR}
+  ${orocos_kdl_INCLUDE_DIRS}
+  ${urdfdom_INCLUDE_DIRS}
+)
+target_include_directories(mj_kdl_wrapper PRIVATE
   ${MJ_SIM_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lodepng
 )
-target_link_libraries(mj_kdl_simulate PUBLIC
-  mj_kdl_wrapper
+
+target_link_libraries(mj_kdl_wrapper PUBLIC
+  ${MUJOCO_LIBRARY}
+  glfw
+  OpenGL::GL
+  ${orocos_kdl_LIBRARIES}
+  ${urdfdom_LIBRARIES}
+  tinyxml2::tinyxml2
+)
+target_link_libraries(mj_kdl_wrapper PRIVATE
+  kdl_parser
   mujoco_simulate_ui
 )
-target_compile_options(mj_kdl_simulate PRIVATE -w)
-set_target_properties(mj_kdl_simulate PROPERTIES CXX_STANDARD 17)
 
-# ---------------------------------------------------------------------------
-# Tests  (all link mj_kdl_simulate which transitively pulls mj_kdl_wrapper)
-# ---------------------------------------------------------------------------
+target_compile_options(mj_kdl_wrapper PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(mj_kdl_wrapper PRIVATE
+  MUJOCO_PLUGIN_DIR="${MUJOCO_ROOT}/bin/mujoco_plugin")
+
+# Tests  (all link mj_kdl_wrapper)
 foreach(test_name test_init test_velocity test_gravity_comp test_dual_arm test_table_scene
                   test_kinova_gen3_menagerie test_kinova_gen3_gripper
                   test_kinova_gen3_impedance test_kinova_gen3_pick)
   add_executable(${test_name} test/${test_name}.cpp)
-  target_link_libraries(${test_name} PRIVATE mj_kdl_simulate)
+  target_link_libraries(${test_name} PRIVATE mj_kdl_wrapper)
   target_compile_options(${test_name} PRIVATE -Wall -Wextra)
 endforeach()
 
@@ -155,14 +133,43 @@ add_executable(export_table_scene tools/export_table_scene.cpp)
 target_link_libraries(export_table_scene PRIVATE mj_kdl_wrapper)
 target_compile_options(export_table_scene PRIVATE -Wall -Wextra)
 
-# ---------------------------------------------------------------------------
 # Install
-# ---------------------------------------------------------------------------
-install(TARGETS mj_kdl_wrapper test_init test_velocity test_gravity_comp test_dual_arm test_table_scene
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
+install(TARGETS mj_kdl_wrapper
+  EXPORT mj_kdl_wrapperTargets
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
+install(TARGETS test_init test_velocity test_gravity_comp test_dual_arm test_table_scene
                 test_kinova_gen3_menagerie test_kinova_gen3_gripper
                 test_kinova_gen3_impedance test_kinova_gen3_pick
-  RUNTIME DESTINATION bin
-  LIBRARY DESTINATION lib
-  ARCHIVE DESTINATION lib
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
-install(DIRECTORY include/ DESTINATION include)
+install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+install(EXPORT mj_kdl_wrapperTargets
+  FILE mj_kdl_wrapperTargets.cmake
+  NAMESPACE mj_kdl_wrapper::
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/mj_kdl_wrapper
+)
+
+configure_package_config_file(
+  cmake/mj_kdl_wrapperConfig.cmake.in
+  ${CMAKE_CURRENT_BINARY_DIR}/mj_kdl_wrapperConfig.cmake
+  INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/mj_kdl_wrapper
+)
+
+write_basic_package_version_file(
+  ${CMAKE_CURRENT_BINARY_DIR}/mj_kdl_wrapperConfigVersion.cmake
+  VERSION ${PROJECT_VERSION}
+  COMPATIBILITY SameMajorVersion
+)
+
+install(FILES
+  ${CMAKE_CURRENT_BINARY_DIR}/mj_kdl_wrapperConfig.cmake
+  ${CMAKE_CURRENT_BINARY_DIR}/mj_kdl_wrapperConfigVersion.cmake
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/mj_kdl_wrapper
+)

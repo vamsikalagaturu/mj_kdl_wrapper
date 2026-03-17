@@ -4,7 +4,6 @@
 // With --gui: displays the robot at the home pose / IK solution.
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
-#include "mj_kdl_wrapper/simulate_ui.hpp"
 
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chainiksolvervel_pinv.hpp>

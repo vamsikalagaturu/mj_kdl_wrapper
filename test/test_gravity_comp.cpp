@@ -12,7 +12,6 @@
 // Usage: test_gravity_comp [urdf_path] [--gui]
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
-#include "mj_kdl_wrapper/simulate_ui.hpp"
 
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chaindynparam.hpp>
@@ -57,9 +56,7 @@ int main(int argc, char* argv[])
     KDL::JntArray q_home(n);
     for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
 
-    // -----------------------------------------------------------------------
     // Part 1: KDL gravity accuracy at home pose
-    // -----------------------------------------------------------------------
     {
         mj_kdl::sync_from_kdl(&s, q_home);
         mj_forward(s.model, s.data);
@@ -88,9 +85,7 @@ int main(int argc, char* argv[])
         std::cout << "  OK\n";
     }
 
-    // -----------------------------------------------------------------------
     // Part 2: KDL gravity comp drift test at home pose
-    // -----------------------------------------------------------------------
     mj_kdl::sync_from_kdl(&s, q_home);
     mj_forward(s.model, s.data);
 

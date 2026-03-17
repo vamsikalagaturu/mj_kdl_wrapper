@@ -20,7 +20,6 @@
 // Usage: test_kinova_gen3_pick [--gui]
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
-#include "mj_kdl_wrapper/simulate_ui.hpp"
 
 #include <tinyxml2.h>
 
@@ -60,9 +59,7 @@ static fs::path repo_root()
     return fs::path(__FILE__).parent_path().parent_path();
 }
 
-// ---------------------------------------------------------------------------
-// MJCF patching helpers
-// ---------------------------------------------------------------------------
+/* MJCF patching helpers */
 
 static bool patch_contact_exclusions(const std::string& path)
 {
@@ -92,9 +89,7 @@ static bool patch_contact_exclusions(const std::string& path)
     return doc.SaveFile(path.c_str()) == tinyxml2::XML_SUCCESS;
 }
 
-// ---------------------------------------------------------------------------
-// Trajectory helpers
-// ---------------------------------------------------------------------------
+/* Trajectory helpers */
 
 static double clamp01(double t) { return t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t); }
 
@@ -107,9 +102,7 @@ static void lerp_q(const KDL::JntArray& from, const KDL::JntArray& to,
         out(i) = from(i) + alpha * (to(i) - from(i));
 }
 
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
+/* Main */
 
 int main(int argc, char* argv[])
 {
@@ -244,9 +237,7 @@ int main(int argc, char* argv[])
     }
     if (!ik_ok) { mj_kdl::cleanup(&s); mj_kdl::destroy_scene(model, data); return 1; }
 
-    // -----------------------------------------------------------------------
     // Shared control logic (used by headless test and GUI).
-    // -----------------------------------------------------------------------
 
     // Place cube at spawn position (freejoint qpos zeroed by keyframe reset).
     auto reset_cube = [&](mjData* d) {
@@ -295,9 +286,7 @@ int main(int argc, char* argv[])
         d->ctrl[fingers_act] = ph->gripper;
     };
 
-    // -----------------------------------------------------------------------
     // Test 4: headless pick simulation — verify cube is lifted.
-    // -----------------------------------------------------------------------
     {
         int key_id = mj_name2id(model, mjOBJ_KEY, "home");
         if (key_id >= 0) mj_resetDataKeyframe(model, data, key_id);
@@ -329,9 +318,7 @@ int main(int argc, char* argv[])
         std::cout << "  OK\n\nOK\n";
     }
 
-    // -----------------------------------------------------------------------
     // GUI
-    // -----------------------------------------------------------------------
     if (gui) {
         int key_id = mj_name2id(model, mjOBJ_KEY, "home");
         if (key_id >= 0) mj_resetDataKeyframe(model, data, key_id);

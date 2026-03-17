@@ -8,7 +8,6 @@
 // Usage: test_table_scene [urdf_path] [--gui]
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
-#include "mj_kdl_wrapper/simulate_ui.hpp"
 
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chaindynparam.hpp>
@@ -33,9 +32,7 @@ int main(int argc, char* argv[])
         else if (a[0] != '-') urdf = a;
     }
 
-    // ------------------------------------------------------------------
     // Table setup: surface at z = 0.7 m, robot mounted at table centre.
-    // ------------------------------------------------------------------
     mj_kdl::TableSpec table;
     table.enabled     = true;
     table.pos[0]      = 0.0;
@@ -48,9 +45,7 @@ int main(int argc, char* argv[])
 
     double surface_z = table.pos[2];
 
-    // ------------------------------------------------------------------
     // Objects: 3 coloured boxes and 2 spheres resting on the table.
-    // ------------------------------------------------------------------
     std::vector<mj_kdl::SceneObject> objects;
 
     auto make_box = [&](const char* name,
@@ -83,9 +78,7 @@ int main(int argc, char* argv[])
     objects.push_back(make_sphere("orange_sphere", -0.20,  0.20, 0.035, 1.0f, 0.55f, 0.0f));
     objects.push_back(make_sphere("purple_sphere", -0.20, -0.20, 0.025, 0.7f, 0.0f,  0.9f));
 
-    // ------------------------------------------------------------------
     // Build scene: robot at table surface (pos[2] = surface_z).
-    // ------------------------------------------------------------------
     mj_kdl::SceneSpec spec;
     spec.table   = table;
     spec.objects = objects;
@@ -109,9 +102,7 @@ int main(int argc, char* argv[])
     std::cout << "Scene built — " << model->nbody << " bodies, "
               << model->nq << " DOFs\n";
 
-    // ------------------------------------------------------------------
     // Attach KDL state for the robot.
-    // ------------------------------------------------------------------
     mj_kdl::State s;
     if (!mj_kdl::init_robot(&s, model, data,
                              urdf.c_str(), "base_link", "EndEffector_Link")) {
@@ -135,9 +126,7 @@ int main(int argc, char* argv[])
     KDL::Frame ee_init;
     fk.JntToCart(q_home, ee_init);
 
-    // ------------------------------------------------------------------
     // Headless: 500 steps then check EE drift.
-    // ------------------------------------------------------------------
     for (int i = 0; i < 500; ++i) {
         KDL::JntArray q, g(n);
         mj_kdl::sync_to_kdl(&s, q);
@@ -162,9 +151,7 @@ int main(int argc, char* argv[])
     }
     std::cout << "OK\n";
 
-    // ------------------------------------------------------------------
     // Runtime add / remove demo (headless only).
-    // ------------------------------------------------------------------
     if (!gui) {
         std::cout << "\n--- Runtime object add/remove ---\n";
         std::cout << "Bodies before add: " << model->nbody << "\n";
@@ -192,9 +179,7 @@ int main(int argc, char* argv[])
         return 0;
     }
 
-    // ------------------------------------------------------------------
     // GUI: run simulate UI with gravity comp.
-    // ------------------------------------------------------------------
     mj_kdl::sync_from_kdl(&s, q_home);
     mj_forward(model, data);
     for (unsigned i = 0; i < n; ++i)
