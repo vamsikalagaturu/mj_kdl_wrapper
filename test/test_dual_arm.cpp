@@ -20,10 +20,10 @@
 #include <string>
 #include <filesystem>
 
-static constexpr double kHomePose[7] = {0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708};
+static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
 
 // Apply KDL gravity compensation torques to one arm.
-static void apply_grav_comp(mj_kdl::State* s, KDL::ChainDynParam& dyn)
+static void apply_grav_comp(mj_kdl::State *s, KDL::ChainDynParam &dyn)
 {
     KDL::JntArray q;
     mj_kdl::sync_to_kdl(s, q);
@@ -35,14 +35,16 @@ static void apply_grav_comp(mj_kdl::State* s, KDL::ChainDynParam& dyn)
 namespace fs = std::filesystem;
 static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
 
-int main(int argc, char* argv[])
+int main(int argc, char *argv[])
 {
     std::string urdf = (repo_root() / "assets/gen3_urdf/GEN3_URDF_V12.urdf").string();
     bool gui = false;
     for (int i = 1; i < argc; ++i) {
         std::string a(argv[i]);
-        if (a == "--gui") gui = true;
-        else if (a[0] != '-') urdf = a;
+        if (a == "--gui")
+            gui = true;
+        else if (a[0] != '-')
+            urdf = a;
     }
 
     /* Build a single MuJoCo scene with two arms facing each other.
@@ -50,24 +52,28 @@ int main(int argc, char* argv[])
      *   arm2: at x = +0.5 m, facing -X (rotated 180° around Z)
      * arm2 joints are prefixed "r2_" in MuJoCo to avoid name collisions. */
     mj_kdl::SceneSpec scene;
-    scene.timestep  = 0.002;
+    scene.timestep = 0.002;
     scene.gravity_z = -9.81;
     scene.add_floor = true;
 
     mj_kdl::SceneRobot r1, r2;
     r1.urdf_path = urdf.c_str();
-    r1.prefix    = "";
-    r1.pos[0]    = -0.5; r1.pos[1] = 0.0; r1.pos[2] = 0.0;
+    r1.prefix = "";
+    r1.pos[0] = -0.5;
+    r1.pos[1] = 0.0;
+    r1.pos[2] = 0.0;
 
     r2.urdf_path = urdf.c_str();
-    r2.prefix    = "r2_";
-    r2.pos[0]    =  0.5; r2.pos[1] = 0.0; r2.pos[2] = 0.0;
-    r2.euler[2]  = 180.0; // 180° around Z → faces -X (toward arm1)
+    r2.prefix = "r2_";
+    r2.pos[0] = 0.5;
+    r2.pos[1] = 0.0;
+    r2.pos[2] = 0.0;
+    r2.euler[2] = 180.0;// 180° around Z → faces -X (toward arm1)
 
-    scene.robots = {r1, r2};
+    scene.robots = { r1, r2 };
 
-    mjModel* model = nullptr;
-    mjData*  data  = nullptr;
+    mjModel *model = nullptr;
+    mjData *data = nullptr;
     if (!mj_kdl::build_scene(&model, &data, &scene)) {
         std::cerr << "FAIL: build_scene\n";
         return 1;
@@ -76,14 +82,14 @@ int main(int argc, char* argv[])
     // Attach one State per arm (shared model/data, separate KDL chains).
     mj_kdl::State arm1, arm2;
 
-    if (!mj_kdl::init_robot(&arm1, model, data,
-                             urdf.c_str(), "base_link", "EndEffector_Link", "")) {
+    if (!mj_kdl::init_robot(
+          &arm1, model, data, urdf.c_str(), "base_link", "EndEffector_Link", "")) {
         std::cerr << "FAIL: arm1 init_robot\n";
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
-    if (!mj_kdl::init_robot(&arm2, model, data,
-                             urdf.c_str(), "base_link", "EndEffector_Link", "r2_")) {
+    if (!mj_kdl::init_robot(
+          &arm2, model, data, urdf.c_str(), "base_link", "EndEffector_Link", "r2_")) {
         std::cerr << "FAIL: arm2 init_robot\n";
         mj_kdl::destroy_scene(model, data);
         return 1;
@@ -93,8 +99,8 @@ int main(int argc, char* argv[])
 
     KDL::ChainFkSolverPos_recursive fk1(arm1.chain);
     KDL::ChainFkSolverPos_recursive fk2(arm2.chain);
-    KDL::ChainDynParam             dyn1(arm1.chain, KDL::Vector(0, 0, -9.81));
-    KDL::ChainDynParam             dyn2(arm2.chain, KDL::Vector(0, 0, -9.81));
+    KDL::ChainDynParam dyn1(arm1.chain, KDL::Vector(0, 0, -9.81));
+    KDL::ChainDynParam dyn2(arm2.chain, KDL::Vector(0, 0, -9.81));
 
     // Both arms start at home pose.
     KDL::JntArray q_home(n);
@@ -109,10 +115,10 @@ int main(int argc, char* argv[])
     fk2.JntToCart(q_home, ee2_init);
 
     std::cout << std::fixed << std::setprecision(4);
-    std::cout << "Arm 1 initial EE: ["
-              << ee1_init.p.x() << ", " << ee1_init.p.y() << ", " << ee1_init.p.z() << "]\n";
-    std::cout << "Arm 2 initial EE: ["
-              << ee2_init.p.x() << ", " << ee2_init.p.y() << ", " << ee2_init.p.z() << "]\n\n";
+    std::cout << "Arm 1 initial EE: [" << ee1_init.p.x() << ", " << ee1_init.p.y() << ", "
+              << ee1_init.p.z() << "]\n";
+    std::cout << "Arm 2 initial EE: [" << ee2_init.p.x() << ", " << ee2_init.p.y() << ", "
+              << ee2_init.p.z() << "]\n\n";
 
     // Part 1: compare KDL gravity torques to MuJoCo qfrc_bias.
     {
@@ -138,7 +144,7 @@ int main(int argc, char* argv[])
     for (int i = 0; i < 500; ++i) {
         apply_grav_comp(&arm1, dyn1);
         apply_grav_comp(&arm2, dyn2);
-        mj_kdl::step(&arm1);   // advances the entire shared world
+        mj_kdl::step(&arm1);// advances the entire shared world
     }
 
     KDL::JntArray q1_end, q2_end;
@@ -172,30 +178,29 @@ int main(int argc, char* argv[])
         // Prime position actuators for both arms
         for (int i = 0; i < n; ++i) {
             data->ctrl[arm1.kdl_to_mj_dof[i]] =
-                data->qpos[model->jnt_qposadr[model->dof_jntid[arm1.kdl_to_mj_dof[i]]]];
+              data->qpos[model->jnt_qposadr[model->dof_jntid[arm1.kdl_to_mj_dof[i]]]];
             data->ctrl[arm2.kdl_to_mj_dof[i]] =
-                data->qpos[model->jnt_qposadr[model->dof_jntid[arm2.kdl_to_mj_dof[i]]]];
+              data->qpos[model->jnt_qposadr[model->dof_jntid[arm2.kdl_to_mj_dof[i]]]];
         }
 
         std::cout << "\nGUI: both arms in one scene.\n"
                   << "Ctrl+RightDrag to push a body.  Q/Esc to quit.\n";
 
-        mj_kdl::run_simulate_ui(model, data, urdf.c_str(),
-            [&](mjModel* m, mjData* d) {
-                // Null position actuators for both arms
-                for (int i = 0; i < n; ++i) {
-                    d->ctrl[arm1.kdl_to_mj_dof[i]] =
-                        d->qpos[m->jnt_qposadr[m->dof_jntid[arm1.kdl_to_mj_dof[i]]]];
-                    d->ctrl[arm2.kdl_to_mj_dof[i]] =
-                        d->qpos[m->jnt_qposadr[m->dof_jntid[arm2.kdl_to_mj_dof[i]]]];
-                }
-                apply_grav_comp(&arm1, dyn1);
-                apply_grav_comp(&arm2, dyn2);
-            });
+        mj_kdl::run_simulate_ui(model, data, urdf.c_str(), [&](mjModel *m, mjData *d) {
+            // Null position actuators for both arms
+            for (int i = 0; i < n; ++i) {
+                d->ctrl[arm1.kdl_to_mj_dof[i]] =
+                  d->qpos[m->jnt_qposadr[m->dof_jntid[arm1.kdl_to_mj_dof[i]]]];
+                d->ctrl[arm2.kdl_to_mj_dof[i]] =
+                  d->qpos[m->jnt_qposadr[m->dof_jntid[arm2.kdl_to_mj_dof[i]]]];
+            }
+            apply_grav_comp(&arm1, dyn1);
+            apply_grav_comp(&arm2, dyn2);
+        });
     }
 
-    mj_kdl::cleanup(&arm1);   // frees window; does NOT free model/data
-    mj_kdl::cleanup(&arm2);   // headless; does NOT free model/data
+    mj_kdl::cleanup(&arm1);// frees window; does NOT free model/data
+    mj_kdl::cleanup(&arm2);// headless; does NOT free model/data
     mj_kdl::destroy_scene(model, data);
     return 0;
 }

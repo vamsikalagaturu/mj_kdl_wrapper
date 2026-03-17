@@ -9,27 +9,29 @@
 #include <string>
 #include <filesystem>
 
-static constexpr double kHomePose[7] = {0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708};
+static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
 
 namespace fs = std::filesystem;
 static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
 
-int main(int argc, char* argv[])
+int main(int argc, char *argv[])
 {
     std::string urdf = (repo_root() / "assets/gen3_urdf/GEN3_URDF_V12.urdf").string();
     bool gui = false;
     for (int i = 1; i < argc; ++i) {
         std::string a(argv[i]);
-        if (a == "--gui") gui = true;
-        else if (a[0] != '-') urdf = a;
+        if (a == "--gui")
+            gui = true;
+        else if (a[0] != '-')
+            urdf = a;
     }
 
     mj_kdl::Config cfg;
-    cfg.urdf_path  = urdf.c_str();
-    cfg.base_link  = "base_link";
-    cfg.tip_link   = "EndEffector_Link";
+    cfg.urdf_path = urdf.c_str();
+    cfg.base_link = "base_link";
+    cfg.tip_link = "EndEffector_Link";
     cfg.robot_name = "kinova_gen3";
-    cfg.headless   = true;  // run_simulate_ui opens its own window
+    cfg.headless = true;// run_simulate_ui opens its own window
 
     mj_kdl::State s;
     if (!mj_kdl::init(&s, &cfg)) {
@@ -38,8 +40,8 @@ int main(int argc, char* argv[])
     }
 
     if (s.model->nq != 7 || s.model->nv != 7) {
-        std::cerr << "FAIL: expected 7 DOF, got nq=" << s.model->nq
-                  << " nv=" << s.model->nv << "\n";
+        std::cerr << "FAIL: expected 7 DOF, got nq=" << s.model->nq << " nv=" << s.model->nv
+                  << "\n";
         mj_kdl::cleanup(&s);
         return 1;
     }
@@ -64,8 +66,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    std::cout << "OK  nq=" << s.model->nq << " nv=" << s.model->nv
-              << " kdl_joints=" << s.n_joints
+    std::cout << "OK  nq=" << s.model->nq << " nv=" << s.model->nv << " kdl_joints=" << s.n_joints
               << " sim_time=" << s.data->time << "\n";
 
     if (gui) {
@@ -73,8 +74,7 @@ int main(int argc, char* argv[])
         // Reset to home pose before opening UI
         mj_kdl::sync_from_kdl(&s, q_home);
         mj_forward(s.model, s.data);
-        for (unsigned i = 0; i < n; ++i)
-            s.data->ctrl[i] = s.data->qpos[s.kdl_to_mj_qpos[i]];
+        for (unsigned i = 0; i < n; ++i) s.data->ctrl[i] = s.data->qpos[s.kdl_to_mj_qpos[i]];
         mj_kdl::run_simulate_ui(s.model, s.data, urdf.c_str());
     }
 

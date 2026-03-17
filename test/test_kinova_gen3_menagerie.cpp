@@ -23,14 +23,11 @@
 
 namespace fs = std::filesystem;
 
-static constexpr double kHomePose[7] = {0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708};
+static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
 
-static fs::path repo_root()
-{
-    return fs::path(__FILE__).parent_path().parent_path();
-}
+static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
 
-int main(int argc, char* argv[])
+int main(int argc, char *argv[])
 {
     bool gui = false;
     for (int i = 1; i < argc; ++i)
@@ -38,15 +35,16 @@ int main(int argc, char* argv[])
 
     const fs::path root = repo_root();
     if (!fs::exists(root / "third_party/menagerie")) {
-        std::cerr << "SKIP: third_party/menagerie/ not found (gitignored). Run locally with the submodule.\n";
+        std::cerr << "SKIP: third_party/menagerie/ not found (gitignored). Run locally with the "
+                     "submodule.\n";
         return 0;
     }
     /* scene.xml includes gen3.xml and already has floor, lights, and skybox —
      * no patching or temp file needed. */
     const std::string mjcf = (root / "third_party/menagerie/kinova_gen3/scene.xml").string();
 
-    mjModel* model = nullptr;
-    mjData*  data  = nullptr;
+    mjModel *model = nullptr;
+    mjData *data = nullptr;
     if (!mj_kdl::load_mjcf(&model, &data, mjcf.c_str())) {
         std::cerr << "FAIL: load_mjcf\n";
         return 1;
@@ -54,30 +52,35 @@ int main(int argc, char* argv[])
 
     if (model->nv != 7) {
         std::cerr << "FAIL: expected nv=7, got " << model->nv << "\n";
-        mj_kdl::destroy_scene(model, data); return 1;
+        mj_kdl::destroy_scene(model, data);
+        return 1;
     }
     if (model->nbody < 9) {
         std::cerr << "FAIL: expected nbody>=9, got " << model->nbody << "\n";
-        mj_kdl::destroy_scene(model, data); return 1;
+        mj_kdl::destroy_scene(model, data);
+        return 1;
     }
-    std::cout << "Model: nq=" << model->nq << " nv=" << model->nv
-              << " nbody=" << model->nbody << " nu=" << model->nu << "\n";
+    std::cout << "Model: nq=" << model->nq << " nv=" << model->nv << " nbody=" << model->nbody
+              << " nu=" << model->nu << "\n";
 
     mj_kdl::State s;
     if (!mj_kdl::init_from_mjcf(&s, model, data, "base_link", "bracelet_link")) {
         std::cerr << "FAIL: init_from_mjcf\n";
-        mj_kdl::destroy_scene(model, data); return 1;
+        mj_kdl::destroy_scene(model, data);
+        return 1;
     }
 
     unsigned n = s.chain.getNrOfJoints();
     if (n != 7u) {
         std::cerr << "FAIL: expected 7 KDL joints, got " << n << "\n";
-        mj_kdl::cleanup(&s); mj_kdl::destroy_scene(model, data); return 1;
+        mj_kdl::cleanup(&s);
+        mj_kdl::destroy_scene(model, data);
+        return 1;
     }
     std::cout << "KDL chain: " << n << " joints\n";
 
     KDL::ChainFkSolverPos_recursive fk(s.chain);
-    KDL::ChainDynParam              dyn(s.chain, KDL::Vector(0, 0, -9.81));
+    KDL::ChainDynParam dyn(s.chain, KDL::Vector(0, 0, -9.81));
 
     // Set home pose via keyframe if available, else set manually.
     int key_id = mj_name2id(model, mjOBJ_KEY, "home");
@@ -98,7 +101,9 @@ int main(int argc, char* argv[])
         KDL::JntArray g(n);
         if (dyn.JntToGravity(q_home_kdl, g) < 0) {
             std::cerr << "FAIL: JntToGravity\n";
-            mj_kdl::cleanup(&s); mj_kdl::destroy_scene(model, data); return 1;
+            mj_kdl::cleanup(&s);
+            mj_kdl::destroy_scene(model, data);
+            return 1;
         }
 
         double max_err = 0.0;
@@ -110,7 +115,9 @@ int main(int argc, char* argv[])
 
         if (max_err > 1e-3) {
             std::cerr << "FAIL: gravity error " << max_err << " Nm > 1e-3\n";
-            mj_kdl::cleanup(&s); mj_kdl::destroy_scene(model, data); return 1;
+            mj_kdl::cleanup(&s);
+            mj_kdl::destroy_scene(model, data);
+            return 1;
         }
         std::cout << "  OK\n";
     }
@@ -138,12 +145,14 @@ int main(int argc, char* argv[])
     fk.JntToCart(q_end, fk_end);
     double drift = (fk_initial.p - fk_end.p).Norm();
 
-    std::cout << std::setprecision(3)
-              << "Gravity-comp drift after 500 steps: " << drift * 1000.0 << " mm\n";
+    std::cout << std::setprecision(3) << "Gravity-comp drift after 500 steps: " << drift * 1000.0
+              << " mm\n";
 
     if (drift > 0.001) {
         std::cerr << "FAIL: drift " << drift * 1000.0 << " mm > 1 mm\n";
-        mj_kdl::cleanup(&s); mj_kdl::destroy_scene(model, data); return 1;
+        mj_kdl::cleanup(&s);
+        mj_kdl::destroy_scene(model, data);
+        return 1;
     }
     std::cout << "  OK\n\nOK\n";
 
@@ -157,20 +166,17 @@ int main(int argc, char* argv[])
         mj_forward(model, data);
         // Prime position actuators
         for (unsigned i = 0; i < n; ++i)
-            data->ctrl[i] = data->qpos[model->jnt_qposadr[
-                model->dof_jntid[s.kdl_to_mj_dof[i]]]];
+            data->ctrl[i] = data->qpos[model->jnt_qposadr[model->dof_jntid[s.kdl_to_mj_dof[i]]]];
 
         std::cout << "GUI: close window to exit\n";
-        mj_kdl::run_simulate_ui(model, data, mjcf.c_str(),
-            [&](mjModel* m, mjData* d) {
-                for (unsigned i = 0; i < n; ++i)
-                    d->ctrl[i] = d->qpos[m->jnt_qposadr[
-                        m->dof_jntid[s.kdl_to_mj_dof[i]]]];
-                KDL::JntArray q(n), g(n);
-                mj_kdl::sync_to_kdl(&s, q);
-                dyn.JntToGravity(q, g);
-                mj_kdl::set_torques(&s, g);
-            });
+        mj_kdl::run_simulate_ui(model, data, mjcf.c_str(), [&](mjModel *m, mjData *d) {
+            for (unsigned i = 0; i < n; ++i)
+                d->ctrl[i] = d->qpos[m->jnt_qposadr[m->dof_jntid[s.kdl_to_mj_dof[i]]]];
+            KDL::JntArray q(n), g(n);
+            mj_kdl::sync_to_kdl(&s, q);
+            dyn.JntToGravity(q, g);
+            mj_kdl::set_torques(&s, g);
+        });
     }
 
     mj_kdl::cleanup(&s);

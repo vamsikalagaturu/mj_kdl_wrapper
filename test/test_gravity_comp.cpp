@@ -22,26 +22,28 @@
 #include <string>
 #include <filesystem>
 
-static constexpr double kHomePose[7] = {0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708};
+static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
 
 namespace fs = std::filesystem;
 static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
 
-int main(int argc, char* argv[])
+int main(int argc, char *argv[])
 {
     std::string urdf = (repo_root() / "assets/gen3_urdf/GEN3_URDF_V12.urdf").string();
     bool gui = false;
     for (int i = 1; i < argc; ++i) {
         std::string a(argv[i]);
-        if (a == "--gui") gui = true;
-        else if (a[0] != '-') urdf = a;
+        if (a == "--gui")
+            gui = true;
+        else if (a[0] != '-')
+            urdf = a;
     }
 
     mj_kdl::Config cfg;
     cfg.urdf_path = urdf.c_str();
     cfg.base_link = "base_link";
-    cfg.tip_link  = "EndEffector_Link";
-    cfg.headless  = true;
+    cfg.tip_link = "EndEffector_Link";
+    cfg.headless = true;
 
     mj_kdl::State s;
     if (!mj_kdl::init(&s, &cfg)) {
@@ -51,7 +53,7 @@ int main(int argc, char* argv[])
 
     unsigned n = s.chain.getNrOfJoints();
     KDL::ChainFkSolverPos_recursive fk(s.chain);
-    KDL::ChainDynParam              dyn(s.chain, KDL::Vector(0.0, 0.0, -9.81));
+    KDL::ChainDynParam dyn(s.chain, KDL::Vector(0.0, 0.0, -9.81));
 
     KDL::JntArray q_home(n);
     for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
@@ -70,8 +72,7 @@ int main(int argc, char* argv[])
 
         double max_err = 0.0;
         for (unsigned i = 0; i < n; ++i)
-            max_err = std::max(max_err,
-                               std::abs(g(i) - s.data->qfrc_bias[s.kdl_to_mj_dof[i]]));
+            max_err = std::max(max_err, std::abs(g(i) - s.data->qfrc_bias[s.kdl_to_mj_dof[i]]));
 
         std::cout << std::fixed << std::setprecision(6);
         std::cout << "Part 1 — KDL gravity vs MuJoCo bias at home pose:\n";
@@ -119,18 +120,15 @@ int main(int argc, char* argv[])
     if (gui) {
         mj_kdl::sync_from_kdl(&s, q_home);
         mj_forward(s.model, s.data);
-        for (unsigned i = 0; i < n; ++i)
-            s.data->ctrl[i] = s.data->qpos[s.kdl_to_mj_qpos[i]];
+        for (unsigned i = 0; i < n; ++i) s.data->ctrl[i] = s.data->qpos[s.kdl_to_mj_qpos[i]];
         std::cout << "GUI mode — close window to exit\n";
-        mj_kdl::run_simulate_ui(s.model, s.data, urdf.c_str(),
-            [&](mjModel*, mjData* d) {
-                for (unsigned i = 0; i < n; ++i)
-                    d->ctrl[i] = d->qpos[s.kdl_to_mj_qpos[i]];
-                KDL::JntArray q, g(n);
-                mj_kdl::sync_to_kdl(&s, q);
-                dyn.JntToGravity(q, g);
-                mj_kdl::set_torques(&s, g);
-            });
+        mj_kdl::run_simulate_ui(s.model, s.data, urdf.c_str(), [&](mjModel *, mjData *d) {
+            for (unsigned i = 0; i < n; ++i) d->ctrl[i] = d->qpos[s.kdl_to_mj_qpos[i]];
+            KDL::JntArray q, g(n);
+            mj_kdl::sync_to_kdl(&s, q);
+            dyn.JntToGravity(q, g);
+            mj_kdl::set_torques(&s, g);
+        });
     }
 
     mj_kdl::cleanup(&s);

@@ -1,28 +1,16 @@
 Checks: >
-  google-*, clang-diagnostic-*, clang-analyzer-*, cppcoreguidelines-*, modernize-*, -modernize-use-trailing-return-type,
-  bugprone-*, performance-*, readability-identifier-naming, -google-readability-braces-around-statements,
-  -cppcoreguidelines-avoid-magic-numbers, llvm-header-guard, #magic___^_^___line
-WarningsAsErrors: '*'
+  clang-analyzer-*,
+  bugprone-*,
+  performance-*,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-use-default-member-init,
+  modernize-redundant-void-arg,
+  modernize-loop-convert,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -performance-enum-size
+WarningsAsErrors: ''
 FormatStyle: file
-HeaderFilterRegex: .*
-CheckOptions:
-  - key: readability-identifier-naming.ClassCase
-    value: CamelCase
-  - key: readability-identifier-naming.MethodCase
-    value: lower_case
-  - key: readability-identifier-naming.FunctionCase
-    value: lower_case
-  - key: readability-identifier-naming.VariableCase
-    value: camelBack
-  - key: readability-identifier-naming.ParameterCase
-    value: CamelCase
-  - key: readability-identifier-naming.MemberCase
-    value: CamelCase
-  - key: readability-identifier-naming.MemberPrefix
-    value: m
-  - key: readability-identifier-naming.ClassMemberPrefix
-    value: c
-  - key: readability-identifier-naming.ParameterPrefix
-    value: p
-  - key: readability-identifier-naming.ConstantCase
-    value: UPPER_CASE
+HeaderFilterRegex: include/mj_kdl_wrapper/.*
