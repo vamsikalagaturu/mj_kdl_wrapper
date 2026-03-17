@@ -295,178 +295,6 @@ static tinyxml2::XMLElement *xml_clone_prefixed(const tinyxml2::XMLElement *src,
     return cl;
 }
 
-/* Append skybox + groundplane assets and a floor geom + directional light to
- * already-existing asset and worldbody elements. */
-static void xml_add_floor_visuals(tinyxml2::XMLDocument &doc,
-  tinyxml2::XMLElement                                  *asset,
-  tinyxml2::XMLElement                                  *wb)
-{
-    tinyxml2::XMLElement *sky = doc.NewElement("texture");
-    sky->SetAttribute("type", "skybox");
-    sky->SetAttribute("builtin", "gradient");
-    sky->SetAttribute("rgb1", "0.3 0.45 0.65");
-    sky->SetAttribute("rgb2", "0.65 0.8 0.95");
-    sky->SetAttribute("width", "200");
-    sky->SetAttribute("height", "200");
-    asset->InsertEndChild(sky);
-
-    tinyxml2::XMLElement *t = doc.NewElement("texture");
-    t->SetAttribute("type", "2d");
-    t->SetAttribute("name", "groundplane");
-    t->SetAttribute("builtin", "checker");
-    t->SetAttribute("rgb1", "0.2 0.3 0.4");
-    t->SetAttribute("rgb2", "0.1 0.2 0.3");
-    t->SetAttribute("width", "300");
-    t->SetAttribute("height", "300");
-    asset->InsertEndChild(t);
-
-    tinyxml2::XMLElement *m = doc.NewElement("material");
-    m->SetAttribute("name", "groundplane");
-    m->SetAttribute("texture", "groundplane");
-    m->SetAttribute("texrepeat", "5 5");
-    m->SetAttribute("reflectance", "0.2");
-    asset->InsertEndChild(m);
-
-    tinyxml2::XMLElement *light = doc.NewElement("light");
-    light->SetAttribute("pos", "0 0 4");
-    light->SetAttribute("directional", "true");
-    wb->InsertFirstChild(light);
-
-    tinyxml2::XMLElement *f = doc.NewElement("geom");
-    f->SetAttribute("name", "floor");
-    f->SetAttribute("type", "plane");
-    f->SetAttribute("material", "groundplane");
-    f->SetAttribute("size", "10 10 0.05");
-    f->SetAttribute("condim", "3");
-    wb->InsertAfterChild(light, f);
-}
-
-/* Build and append a table body (top geom + 4 optional legs) to wb. */
-static void xml_add_table(tinyxml2::XMLDocument &doc,
-  tinyxml2::XMLElement                          *wb,
-  const TableSpec                               &t)
-{
-    auto set_rgba4 = [](tinyxml2::XMLElement *e, const float rgba[4]) {
-        char buf[64];
-        std::snprintf(buf,
-          sizeof(buf),
-          "%.3f %.3f %.3f %.3f",
-          (double)rgba[0],
-          (double)rgba[1],
-          (double)rgba[2],
-          (double)rgba[3]);
-        e->SetAttribute("rgba", buf);
-    };
-    auto set_pos3 = [](tinyxml2::XMLElement *e, double x, double y, double z) {
-        char buf[64];
-        std::snprintf(buf, sizeof(buf), "%.5f %.5f %.5f", x, y, z);
-        e->SetAttribute("pos", buf);
-    };
-
-    double sz         = t.pos[2];
-    double half_thick = t.thickness * 0.5;
-    double top_cz     = sz - half_thick;
-    double leg_h      = sz - t.thickness;
-
-    tinyxml2::XMLElement *tb = doc.NewElement("body");
-    tb->SetAttribute("name", "table");
-    set_pos3(tb, t.pos[0], t.pos[1], top_cz);
-
-    tinyxml2::XMLElement *top = doc.NewElement("geom");
-    top->SetAttribute("name", "table_top");
-    top->SetAttribute("type", "box");
-    {
-        char s[64];
-        std::snprintf(s, sizeof(s), "%.5f %.5f %.5f", t.top_size[0], t.top_size[1], half_thick);
-        top->SetAttribute("size", s);
-    }
-    set_rgba4(top, t.rgba);
-    top->SetAttribute("condim", "3");
-    tb->InsertEndChild(top);
-
-    if (leg_h > 0.0) {
-        double       half_leg      = leg_h * 0.5;
-        double       leg_rel_z     = -(sz * 0.5);
-        double       lx            = t.top_size[0] - t.leg_radius;
-        double       ly            = t.top_size[1] - t.leg_radius;
-        const double corners[4][2] = { { lx, ly }, { -lx, ly }, { lx, -ly }, { -lx, -ly } };
-        for (int i = 0; i < 4; ++i) {
-            tinyxml2::XMLElement *leg = doc.NewElement("geom");
-            char                  nm[32];
-            std::snprintf(nm, sizeof(nm), "table_leg%d", i);
-            leg->SetAttribute("name", nm);
-            leg->SetAttribute("type", "cylinder");
-            {
-                char s[32];
-                std::snprintf(s, sizeof(s), "%.5f %.5f", t.leg_radius, half_leg);
-                leg->SetAttribute("size", s);
-            }
-            set_pos3(leg, corners[i][0], corners[i][1], leg_rel_z);
-            set_rgba4(leg, t.rgba);
-            leg->SetAttribute("condim", "3");
-            tb->InsertEndChild(leg);
-        }
-    }
-    wb->InsertEndChild(tb);
-}
-
-/* Build and append one physics object (body + optional freejoint + geom) to wb.
- * Sets mass, friction, and condim from the SceneObject; uses shape-correct size format. */
-static void xml_add_object(tinyxml2::XMLDocument &doc,
-  tinyxml2::XMLElement                           *wb,
-  const SceneObject                              &obj)
-{
-    tinyxml2::XMLElement *body = doc.NewElement("body");
-    body->SetAttribute("name", obj.name.c_str());
-    {
-        char buf[64];
-        std::snprintf(buf, sizeof(buf), "%.5f %.5f %.5f", obj.pos[0], obj.pos[1], obj.pos[2]);
-        body->SetAttribute("pos", buf);
-    }
-    if (!obj.fixed) {
-        tinyxml2::XMLElement *fj = doc.NewElement("freejoint");
-        fj->SetAttribute("name", (obj.name + "_joint").c_str());
-        body->InsertEndChild(fj);
-    }
-
-    tinyxml2::XMLElement *geom      = doc.NewElement("geom");
-    const char           *shape_str = (obj.shape == ObjShape::SPHERE)     ? "sphere"
-                                      : (obj.shape == ObjShape::CYLINDER) ? "cylinder"
-                                                                           : "box";
-    geom->SetAttribute("type", shape_str);
-    {
-        char s[64];
-        if (obj.shape == ObjShape::SPHERE)
-            std::snprintf(s, sizeof(s), "%.5f", obj.size[0]);
-        else if (obj.shape == ObjShape::CYLINDER)
-            std::snprintf(s, sizeof(s), "%.5f %.5f", obj.size[0], obj.size[1]);
-        else
-            std::snprintf(s, sizeof(s), "%.5f %.5f %.5f", obj.size[0], obj.size[1], obj.size[2]);
-        geom->SetAttribute("size", s);
-    }
-    geom->SetAttribute("mass", std::to_string(obj.mass).c_str());
-    {
-        char buf[64];
-        std::snprintf(buf,
-          sizeof(buf),
-          "%.3f %.3f %.3f %.3f",
-          (double)obj.rgba[0],
-          (double)obj.rgba[1],
-          (double)obj.rgba[2],
-          (double)obj.rgba[3]);
-        geom->SetAttribute("rgba", buf);
-    }
-    geom->SetAttribute("condim", obj.condim);
-    {
-        char buf[64];
-        std::snprintf(
-          buf, sizeof(buf), "%.4f %.4f %.4f", obj.friction[0], obj.friction[1], obj.friction[2]);
-        geom->SetAttribute("friction", buf);
-    }
-    body->InsertEndChild(geom);
-    wb->InsertEndChild(body);
-}
-
 static bool urdf_to_raw_mjcf(const std::string &proc, const std::string &raw)
 {
     char     err[2048] = {};
@@ -482,50 +310,6 @@ static bool urdf_to_raw_mjcf(const std::string &proc, const std::string &raw)
         return false;
     }
     return true;
-}
-
-static bool inject_scene(const std::string &in,
-  const std::string                        &out,
-  double                                    timestep,
-  double                                    gravity_z,
-  bool                                      floor)
-{
-    using namespace tinyxml2;
-    XMLDocument doc;
-    if (doc.LoadFile(in.c_str()) != XML_SUCCESS) return false;
-    XMLElement *mj = doc.FirstChildElement("mujoco");
-    if (!mj) return false;
-
-    XMLElement *cmp = mj->FirstChildElement("compiler");
-    if (!cmp) {
-        cmp = doc.NewElement("compiler");
-        mj->InsertFirstChild(cmp);
-    }
-    cmp->SetAttribute("balanceinertia", "true");
-    cmp->SetAttribute("discardvisual", "false");
-
-    XMLElement *opt = mj->FirstChildElement("option");
-    if (!opt) {
-        opt = doc.NewElement("option");
-        mj->InsertFirstChild(opt);
-    }
-    opt->SetAttribute("timestep", timestep);
-    {
-        char g[64];
-        std::snprintf(g, sizeof(g), "0 0 %.4f", gravity_z);
-        opt->SetAttribute("gravity", g);
-    }
-
-    if (floor) {
-        XMLElement *asset = mj->FirstChildElement("asset");
-        if (!asset) {
-            asset = doc.NewElement("asset");
-            mj->InsertAfterChild(opt, asset);
-        }
-        XMLElement *wb = xml_get_or_create(mj, "worldbody", doc);
-        xml_add_floor_visuals(doc, asset, wb);
-    }
-    return doc.SaveFile(out.c_str()) == XML_SUCCESS;
 }
 
 static bool
@@ -595,24 +379,6 @@ static bool
         wrap_robot(bwb, kids, sc->robots[i], i);
     }
     return base.SaveFile(out.c_str()) == XML_SUCCESS;
-}
-
-/* Injects table and objects into an existing MJCF file (multi-robot XML path). */
-static bool inject_extras_xml(const std::string &path, const SceneSpec *sc)
-{
-    if (!sc->table.enabled && sc->objects.empty()) return true;
-
-    using namespace tinyxml2;
-    XMLDocument doc;
-    if (doc.LoadFile(path.c_str()) != XML_SUCCESS) return false;
-    XMLElement *mj = doc.FirstChildElement("mujoco");
-    if (!mj) return false;
-    XMLElement *wb = mj->FirstChildElement("worldbody");
-    if (!wb) return false;
-
-    if (sc->table.enabled) xml_add_table(doc, wb, sc->table);
-    for (const auto &obj : sc->objects) xml_add_object(doc, wb, obj);
-    return doc.SaveFile(path.c_str()) == XML_SUCCESS;
 }
 
 /* KDL helpers */
@@ -878,18 +644,27 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
         raws.push_back(raw.string());
     }
     fs::path combined = tmp / "_mj_kdl_combined_raw.xml";
-    fs::path scene    = tmp / "_mj_kdl_scene.xml";
     if (!combine_mjcf(raws, sc, combined.string())) return false;
-    if (!inject_scene(
-          combined.string(), scene.string(), sc->timestep, sc->gravity_z, sc->add_floor))
-        return false;
-    if (!inject_extras_xml(scene.string(), sc)) return false;
-    char err[2048] = {};
-    *out_model     = mj_loadXML(scene.c_str(), nullptr, err, sizeof(err));
-    if (!*out_model) {
-        std::cerr << "[mj_kdl] loadXML: " << err << "\n";
+    char    err[2048] = {};
+    mjSpec *spec      = mj_parseXML(combined.c_str(), nullptr, err, sizeof(err));
+    if (!spec) {
+        std::cerr << "[mj_kdl] parseXML: " << err << "\n";
         return false;
     }
+    spec->option.timestep         = sc->timestep;
+    spec->option.gravity[2]       = sc->gravity_z;
+    spec->compiler.balanceinertia = 1;
+    spec->compiler.discardvisual  = 0;
+    if (sc->add_floor) add_floor_to_spec(spec);
+    if (sc->table.enabled) add_table_to_spec(spec, sc->table);
+    if (!sc->objects.empty()) add_objects_to_spec(spec, sc->objects);
+    *out_model = mj_compile(spec, nullptr);
+    if (!*out_model) {
+        std::cerr << "[mj_kdl] compile: " << mjs_getError(spec) << "\n";
+        mj_deleteSpec(spec);
+        return false;
+    }
+    mj_deleteSpec(spec);
     *out_data = mj_makeData(*out_model);
     if (!*out_data) {
         mj_deleteModel(*out_model);
@@ -919,28 +694,38 @@ bool load_mjcf(mjModel **out_model, mjData **out_data, const char *path)
 
 bool patch_mjcf_visuals(const char *mjcf_path)
 {
-    using namespace tinyxml2;
-    XMLDocument doc;
-    if (doc.LoadFile(mjcf_path) != XML_SUCCESS) return false;
-    XMLElement *mj = doc.FirstChildElement("mujoco");
-    if (!mj) return false;
-    XMLElement *asset = xml_get_or_create(mj, "asset", doc);
-    XMLElement *wb    = xml_get_or_create(mj, "worldbody", doc);
-    xml_add_floor_visuals(doc, asset, wb);
-    return doc.SaveFile(mjcf_path) == XML_SUCCESS;
+    ensure_plugins_loaded();
+    char    err[2048] = {};
+    mjSpec *spec      = mj_parseXML(mjcf_path, nullptr, err, sizeof(err));
+    if (!spec) {
+        std::cerr << "[mj_kdl] patch_mjcf_visuals: " << err << "\n";
+        return false;
+    }
+    add_floor_to_spec(spec);
+    mjModel *m = mj_compile(spec, nullptr);
+    mj_deleteSpec(spec);
+    if (!m) return false;
+    int ok = mj_saveLastXML(mjcf_path, m, err, sizeof(err));
+    mj_deleteModel(m);
+    return ok != 0;
 }
 
 bool patch_mjcf_add_objects(const char *mjcf_path, const std::vector<SceneObject> &objects)
 {
-    using namespace tinyxml2;
-    XMLDocument doc;
-    if (doc.LoadFile(mjcf_path) != XML_SUCCESS) return false;
-    XMLElement *mj = doc.FirstChildElement("mujoco");
-    if (!mj) return false;
-    XMLElement *wb = mj->FirstChildElement("worldbody");
-    if (!wb) return false;
-    for (const auto &obj : objects) xml_add_object(doc, wb, obj);
-    return doc.SaveFile(mjcf_path) == XML_SUCCESS;
+    ensure_plugins_loaded();
+    char    err[2048] = {};
+    mjSpec *spec      = mj_parseXML(mjcf_path, nullptr, err, sizeof(err));
+    if (!spec) {
+        std::cerr << "[mj_kdl] patch_mjcf_add_objects: " << err << "\n";
+        return false;
+    }
+    add_objects_to_spec(spec, objects);
+    mjModel *m = mj_compile(spec, nullptr);
+    mj_deleteSpec(spec);
+    if (!m) return false;
+    int ok = mj_saveLastXML(mjcf_path, m, err, sizeof(err));
+    mj_deleteModel(m);
+    return ok != 0;
 }
 
 bool attach_gripper(const char *arm_mjcf, const GripperSpec *g, const char *out_path)
