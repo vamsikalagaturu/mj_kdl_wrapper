@@ -12,6 +12,7 @@
  * Usage: test_gravity_comp [urdf_path] [--gui] */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "test_utils.hpp"
 
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chaindynparam.hpp>
@@ -47,7 +48,7 @@ int main(int argc, char *argv[])
 
     mj_kdl::State s;
     if (!mj_kdl::init(&s, &cfg)) {
-        std::cerr << "FAIL: init\n";
+        TEST_FAIL("init() returned false");
         return 1;
     }
 
@@ -65,7 +66,7 @@ int main(int argc, char *argv[])
 
         KDL::JntArray g(n);
         if (dyn.JntToGravity(q_home, g) < 0) {
-            std::cerr << "FAIL: JntToGravity returned error\n";
+            TEST_FAIL("JntToGravity returned error");
             mj_kdl::cleanup(&s);
             return 1;
         }
@@ -75,15 +76,14 @@ int main(int argc, char *argv[])
             max_err = std::max(max_err, std::abs(g(i) - s.data->qfrc_bias[s.kdl_to_mj_dof[i]]));
 
         std::cout << std::fixed << std::setprecision(6);
-        std::cout << "Part 1 — KDL gravity vs MuJoCo bias at home pose:\n";
-        std::cout << "  max |error| = " << max_err << " Nm\n";
+        TEST_INFO("Part 1 — KDL gravity vs MuJoCo bias at home pose: max|error| = " << max_err << " Nm");
 
         if (max_err > 1e-3) {
-            std::cerr << "FAIL: max error " << max_err << " Nm > 0.001 Nm\n";
+            TEST_FAIL("gravity error " << max_err << " Nm exceeds 0.001 Nm threshold");
             mj_kdl::cleanup(&s);
             return 1;
         }
-        std::cout << "  OK\n";
+        TEST_PASS("Part 1: KDL gravity vs MuJoCo bias");
     }
 
     // Part 2: KDL gravity comp drift test at home pose
@@ -107,15 +107,15 @@ int main(int argc, char *argv[])
     fk.JntToCart(q_end, fk_end);
     double drift = (fk_initial.p - fk_end.p).Norm();
 
-    std::cout << "\nPart 2 — KDL gravity comp drift after 500 steps:\n";
-    std::cout << "  EE drift = " << std::setprecision(3) << drift * 1000.0 << " mm\n";
+    TEST_INFO("Part 2 — KDL gravity comp drift after 500 steps: "
+              << std::setprecision(3) << drift * 1000.0 << " mm");
 
     if (drift > 0.001) {
-        std::cerr << "FAIL: drift " << drift * 1000.0 << " mm > 1 mm\n";
+        TEST_FAIL("EE drift " << drift * 1000.0 << " mm exceeds 1 mm threshold");
         mj_kdl::cleanup(&s);
         return 1;
     }
-    std::cout << "  OK\n\nOK\n";
+    TEST_PASS("Part 2: gravity comp drift < 1 mm");
 
     if (gui) {
         mj_kdl::sync_from_kdl(&s, q_home);

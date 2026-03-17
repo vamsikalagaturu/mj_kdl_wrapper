@@ -11,6 +11,7 @@
  * Usage: test_kinova_gen3_menagerie [--gui] */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "test_utils.hpp"
 
 #include <kdl/chaindynparam.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
@@ -35,8 +36,7 @@ int main(int argc, char *argv[])
 
     const fs::path root = repo_root();
     if (!fs::exists(root / "third_party/menagerie")) {
-        std::cerr << "SKIP: third_party/menagerie/ not found (gitignored). Run locally with the "
-                     "submodule.\n";
+        TEST_SKIP("third_party/menagerie/ not found — run locally with the submodule");
         return 0;
     }
     /* scene.xml includes gen3.xml and already has floor, lights, and skybox —
@@ -46,38 +46,38 @@ int main(int argc, char *argv[])
     mjModel *model = nullptr;
     mjData  *data  = nullptr;
     if (!mj_kdl::load_mjcf(&model, &data, mjcf.c_str())) {
-        std::cerr << "FAIL: load_mjcf\n";
+        TEST_FAIL("load_mjcf() returned false for '" << mjcf << "'");
         return 1;
     }
 
     if (model->nv != 7) {
-        std::cerr << "FAIL: expected nv=7, got " << model->nv << "\n";
+        TEST_FAIL("expected nv=7, got " << model->nv);
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
     if (model->nbody < 9) {
-        std::cerr << "FAIL: expected nbody>=9, got " << model->nbody << "\n";
+        TEST_FAIL("expected nbody>=9, got " << model->nbody);
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
-    std::cout << "Model: nq=" << model->nq << " nv=" << model->nv << " nbody=" << model->nbody
-              << " nu=" << model->nu << "\n";
+    TEST_INFO("model: nq=" << model->nq << " nv=" << model->nv
+              << " nbody=" << model->nbody << " nu=" << model->nu);
 
     mj_kdl::State s;
     if (!mj_kdl::init_from_mjcf(&s, model, data, "base_link", "bracelet_link")) {
-        std::cerr << "FAIL: init_from_mjcf\n";
+        TEST_FAIL("init_from_mjcf() returned false");
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
 
     unsigned n = s.chain.getNrOfJoints();
     if (n != 7u) {
-        std::cerr << "FAIL: expected 7 KDL joints, got " << n << "\n";
+        TEST_FAIL("expected 7 KDL joints, got " << n);
         mj_kdl::cleanup(&s);
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
-    std::cout << "KDL chain: " << n << " joints\n";
+    TEST_INFO("KDL chain: " << n << " joints");
 
     KDL::ChainFkSolverPos_recursive fk(s.chain);
     KDL::ChainDynParam              dyn(s.chain, KDL::Vector(0, 0, -9.81));
@@ -100,7 +100,7 @@ int main(int argc, char *argv[])
     {
         KDL::JntArray g(n);
         if (dyn.JntToGravity(q_home_kdl, g) < 0) {
-            std::cerr << "FAIL: JntToGravity\n";
+            TEST_FAIL("JntToGravity() returned error");
             mj_kdl::cleanup(&s);
             mj_kdl::destroy_scene(model, data);
             return 1;
@@ -110,16 +110,16 @@ int main(int argc, char *argv[])
         for (unsigned i = 0; i < n; ++i)
             max_err = std::max(max_err, std::abs(g(i) - data->qfrc_bias[s.kdl_to_mj_dof[i]]));
 
-        std::cout << std::fixed << std::setprecision(6)
-                  << "Gravity accuracy at home pose: max|KDL - MuJoCo| = " << max_err << " Nm\n";
+        TEST_INFO("gravity accuracy at home pose: max|KDL - MuJoCo| = "
+                  << std::fixed << std::setprecision(6) << max_err << " Nm");
 
         if (max_err > 1e-3) {
-            std::cerr << "FAIL: gravity error " << max_err << " Nm > 1e-3\n";
+            TEST_FAIL("gravity error " << max_err << " Nm exceeds 1e-3 Nm threshold");
             mj_kdl::cleanup(&s);
             mj_kdl::destroy_scene(model, data);
             return 1;
         }
-        std::cout << "  OK\n";
+        TEST_PASS("gravity accuracy < 1e-3 Nm");
     }
 
     // Test 4: 500-step gravity-comp drift at home pose
@@ -145,16 +145,16 @@ int main(int argc, char *argv[])
     fk.JntToCart(q_end, fk_end);
     double drift = (fk_initial.p - fk_end.p).Norm();
 
-    std::cout << std::setprecision(3) << "Gravity-comp drift after 500 steps: " << drift * 1000.0
-              << " mm\n";
+    TEST_INFO("gravity-comp drift after 500 steps: "
+              << std::setprecision(3) << drift * 1000.0 << " mm");
 
     if (drift > 0.001) {
-        std::cerr << "FAIL: drift " << drift * 1000.0 << " mm > 1 mm\n";
+        TEST_FAIL("EE drift " << drift * 1000.0 << " mm exceeds 1 mm threshold");
         mj_kdl::cleanup(&s);
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
-    std::cout << "  OK\n\nOK\n";
+    TEST_PASS("gravity comp drift < 1 mm");
 
     if (gui) {
         // Reset to home pose

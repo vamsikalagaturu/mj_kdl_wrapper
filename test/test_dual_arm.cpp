@@ -10,6 +10,7 @@
  * Usage: test_dual_arm [urdf_path] [--gui] */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "test_utils.hpp"
 
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chaindynparam.hpp>
@@ -75,7 +76,7 @@ int main(int argc, char *argv[])
     mjModel *model = nullptr;
     mjData  *data  = nullptr;
     if (!mj_kdl::build_scene(&model, &data, &scene)) {
-        std::cerr << "FAIL: build_scene\n";
+        TEST_FAIL("build_scene() returned false");
         return 1;
     }
 
@@ -84,13 +85,13 @@ int main(int argc, char *argv[])
 
     if (!mj_kdl::init_robot(
           &arm1, model, data, urdf.c_str(), "base_link", "EndEffector_Link", "")) {
-        std::cerr << "FAIL: arm1 init_robot\n";
+        TEST_FAIL("arm1 init_robot() returned false");
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
     if (!mj_kdl::init_robot(
           &arm2, model, data, urdf.c_str(), "base_link", "EndEffector_Link", "r2_")) {
-        std::cerr << "FAIL: arm2 init_robot\n";
+        TEST_FAIL("arm2 init_robot() returned false");
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
@@ -132,10 +133,9 @@ int main(int argc, char *argv[])
             err2 = std::max(err2, std::abs(g2(j) - data->qfrc_bias[arm2.kdl_to_mj_dof[j]]));
         }
 
-        std::cout << "Part 1 — KDL vs MuJoCo gravity at home pose (informational):\n";
-        std::cout << "  Arm 1 max |KDL - qfrc_bias| = " << err1 << " Nm\n";
-        std::cout << "  Arm 2 max |KDL - qfrc_bias| = " << err2 << " Nm\n";
-        std::cout << "  (difference due to balanceinertia; see Part 2 for actual test)\n\n";
+        TEST_INFO("Part 1 — KDL vs MuJoCo gravity at home pose (informational)");
+        TEST_INFO("  Arm 1 max |KDL - qfrc_bias| = " << err1 << " Nm");
+        TEST_INFO("  Arm 2 max |KDL - qfrc_bias| = " << err2 << " Nm");
     }
 
     /* Part 2: 500-step closed-loop gravity compensation; check EE drift.
@@ -157,18 +157,19 @@ int main(int argc, char *argv[])
     double drift1 = (ee1_init.p - ee1_end.p).Norm();
     double drift2 = (ee2_init.p - ee2_end.p).Norm();
 
-    std::cout << "Part 2 — EE drift after 500 steps (KDL gravity comp):\n";
-    std::cout << "  Arm 1 drift = " << std::setprecision(3) << drift1 * 1000.0 << " mm\n";
-    std::cout << "  Arm 2 drift = " << drift2 * 1000.0 << " mm\n";
+    TEST_INFO("Part 2 — EE drift after 500 steps:"
+              << " arm1=" << std::setprecision(3) << drift1 * 1000.0
+              << " mm  arm2=" << drift2 * 1000.0 << " mm");
 
     if (drift1 > 0.001 || drift2 > 0.001) {
-        std::cerr << "FAIL: drift exceeds 1 mm\n";
+        TEST_FAIL("drift exceeds 1 mm threshold (arm1=" << drift1 * 1000.0
+                  << " mm, arm2=" << drift2 * 1000.0 << " mm)");
         mj_kdl::cleanup(&arm1);
         mj_kdl::cleanup(&arm2);
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
-    std::cout << "  OK\n\nOK\n";
+    TEST_PASS("dual-arm gravity comp drift < 1 mm");
 
     // GUI loop — one window shows both arms; user can perturb either.
     if (gui) {

@@ -20,6 +20,7 @@
  * Usage: test_kinova_gen3_pick [--gui] */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "test_utils.hpp"
 
 #include <tinyxml2.h>
 
@@ -112,8 +113,7 @@ int main(int argc, char *argv[])
 
     const fs::path root = repo_root();
     if (!fs::exists(root / "third_party/menagerie")) {
-        std::cerr << "SKIP: third_party/menagerie/ not found (gitignored). Run locally with the "
-                     "submodule.\n";
+        TEST_SKIP("third_party/menagerie/ not found — run locally with the submodule");
         return 0;
     }
     const std::string arm_mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
@@ -134,15 +134,15 @@ int main(int argc, char *argv[])
     gs.quat[3]   = 0.0;
 
     if (!mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined.c_str())) {
-        std::cerr << "FAIL: attach_gripper\n";
+        TEST_FAIL("attach_gripper() returned false");
         return 1;
     }
     if (!mj_kdl::patch_mjcf_visuals(combined.c_str())) {
-        std::cerr << "FAIL: patch_mjcf_visuals\n";
+        TEST_FAIL("patch_mjcf_visuals() returned false");
         return 1;
     }
     if (!patch_contact_exclusions(combined)) {
-        std::cerr << "FAIL: patch_contact_exclusions\n";
+        TEST_FAIL("patch_contact_exclusions() returned false");
         return 1;
     }
 
@@ -166,7 +166,7 @@ int main(int argc, char *argv[])
     cube_obj.friction[2] = 0.001;
 
     if (!mj_kdl::patch_mjcf_add_objects(combined.c_str(), { cube_obj })) {
-        std::cerr << "FAIL: patch_mjcf_add_objects\n";
+        TEST_FAIL("patch_mjcf_add_objects() returned false");
         return 1;
     }
 
@@ -174,35 +174,35 @@ int main(int argc, char *argv[])
     mjModel *model = nullptr;
     mjData  *data  = nullptr;
     if (!mj_kdl::load_mjcf(&model, &data, combined.c_str())) {
-        std::cerr << "FAIL: load_mjcf\n";
+        TEST_FAIL("load_mjcf() returned false for combined MJCF");
         return 1;
     }
 
     int cube_bid = mj_name2id(model, mjOBJ_BODY, "cube");
     int cube_jnt = mj_name2id(model, mjOBJ_JOINT, "cube_joint");
     if (cube_bid < 0 || cube_jnt < 0) {
-        std::cerr << "FAIL: cube body/joint not found\n";
+        TEST_FAIL("cube body or joint not found (body=" << cube_bid << " joint=" << cube_jnt << ")");
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
-    std::cout << "Model: nq=" << model->nq << " nbody=" << model->nbody << " cube_body=" << cube_bid
-              << "  OK\n";
+    TEST_PASS("Test 1: model loaded, cube body found (nq=" << model->nq
+              << " nbody=" << model->nbody << ")");
 
     // Test 2: KDL chain.
     mj_kdl::State s;
     if (!mj_kdl::init_from_mjcf(&s, model, data, "base_link", "bracelet_link")) {
-        std::cerr << "FAIL: init_from_mjcf\n";
+        TEST_FAIL("init_from_mjcf() returned false");
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
     unsigned n = s.chain.getNrOfJoints();
     if (n != 7u) {
-        std::cerr << "FAIL: expected 7 joints, got " << n << "\n";
+        TEST_FAIL("expected 7 joints, got " << n);
         mj_kdl::cleanup(&s);
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
-    std::cout << "KDL chain: " << n << " joints  OK\n";
+    TEST_PASS("Test 2: KDL arm chain — " << n << " joints");
 
     KDL::ChainFkSolverPos_recursive fk(s.chain);
 
@@ -222,7 +222,7 @@ int main(int argc, char *argv[])
 
     int fingers_act = mj_name2id(model, mjOBJ_ACTUATOR, "g_fingers_actuator");
     if (fingers_act < 0) {
-        std::cerr << "FAIL: g_fingers_actuator not found\n";
+        TEST_FAIL("g_fingers_actuator not found in compiled model");
         mj_kdl::cleanup(&s);
         mj_kdl::destroy_scene(model, data);
         return 1;
@@ -261,13 +261,14 @@ int main(int argc, char *argv[])
         KDL::Frame ik_frame;
         fk.JntToCart(*ik_out[wi], ik_frame);
         double err = (ik_frame.p - target.p).Norm() * 1000.0;
-        std::cout << std::fixed << std::setprecision(2) << "IK " << wps[wi].name
-                  << " z=" << wps[wi].z << " (ret=" << ret << ") pos_err=" << err << " mm";
         if (ret < 0 || err > 2.0) {
-            std::cout << "  FAIL\n";
+            TEST_FAIL("IK " << wps[wi].name << " z=" << wps[wi].z
+                      << " failed (ret=" << ret << " pos_err=" << std::fixed
+                      << std::setprecision(2) << err << " mm)");
             ik_ok = false;
         } else {
-            std::cout << "  OK\n";
+            TEST_PASS("IK " << wps[wi].name << " z=" << wps[wi].z
+                      << " pos_err=" << std::fixed << std::setprecision(2) << err << " mm");
         }
     }
     if (!ik_ok) {
@@ -351,18 +352,19 @@ int main(int argc, char *argv[])
         int    qadr         = model->jnt_qposadr[cube_jnt];
         double cube_final_z = data->qpos[qadr + 2];
 
-        std::cout << std::fixed << std::setprecision(3)
-                  << "Cube Z after pick simulation: " << cube_final_z << " m\n";
+        TEST_INFO("cube Z after pick simulation: "
+                  << std::fixed << std::setprecision(3) << cube_final_z << " m");
 
         const double kLiftThreshold = 0.20;
         if (cube_final_z < kLiftThreshold) {
-            std::cerr << "FAIL: cube Z " << cube_final_z << " < " << kLiftThreshold
-                      << " m (not lifted)\n";
+            TEST_FAIL("cube Z " << cube_final_z << " m < " << kLiftThreshold
+                      << " m threshold (cube not lifted)");
             mj_kdl::cleanup(&s);
             mj_kdl::destroy_scene(model, data);
             return 1;
         }
-        std::cout << "  OK\n\nOK\n";
+        TEST_PASS("Test 4: cube lifted to " << std::fixed << std::setprecision(3)
+                  << cube_final_z << " m (> " << kLiftThreshold << " m)");
     }
 
     // GUI

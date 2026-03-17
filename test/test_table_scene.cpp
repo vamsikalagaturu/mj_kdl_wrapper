@@ -8,6 +8,7 @@
  * Usage: test_table_scene [urdf_path] [--gui] */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "test_utils.hpp"
 
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chaindynparam.hpp>
@@ -115,19 +116,19 @@ int main(int argc, char *argv[])
     mjModel *model = nullptr;
     mjData  *data  = nullptr;
     if (!mj_kdl::build_scene(&model, &data, &spec)) {
-        std::cerr << "FAIL: build_scene\n";
+        TEST_FAIL("build_scene() returned false");
         return 1;
     }
-    std::cout << "Scene built — " << model->nbody << " bodies, " << model->nq << " DOFs\n";
+    TEST_INFO("scene built: " << model->nbody << " bodies, " << model->nq << " DOFs");
 
     // Attach KDL state for the robot.
     mj_kdl::State s;
     if (!mj_kdl::init_robot(&s, model, data, urdf.c_str(), "base_link", "EndEffector_Link")) {
-        std::cerr << "FAIL: init_robot\n";
+        TEST_FAIL("init_robot() returned false");
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
-    std::cout << "Robot: " << s.n_joints << " joints\n";
+    TEST_INFO("robot: " << s.n_joints << " joints");
 
     unsigned n = static_cast<unsigned>(s.n_joints);
 
@@ -158,39 +159,39 @@ int main(int argc, char *argv[])
     fk.JntToCart(q_end, ee_end);
     double drift = (ee_init.p - ee_end.p).Norm();
 
-    std::cout << std::fixed << std::setprecision(3);
-    std::cout << "EE drift after 500 steps: " << drift * 1000.0 << " mm\n";
+    TEST_INFO("EE drift after 500 steps: " << std::fixed << std::setprecision(3)
+              << drift * 1000.0 << " mm");
     if (drift > 0.001) {
-        std::cerr << "FAIL: drift > 1 mm\n";
+        TEST_FAIL("drift " << drift * 1000.0 << " mm exceeds 1 mm threshold");
         mj_kdl::cleanup(&s);
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
-    std::cout << "OK\n";
+    TEST_PASS("gravity comp drift < 1 mm");
 
     // Runtime add / remove demo (headless only).
     if (!gui) {
-        std::cout << "\n--- Runtime object add/remove ---\n";
-        std::cout << "Bodies before add: " << model->nbody << "\n";
+        TEST_INFO("runtime object add/remove test");
+        int nbody_before = model->nbody;
 
         mj_kdl::cleanup(&s);
 
         mj_kdl::SceneObject extra =
           make_box("yellow_cube", 0.0, 0.4, 0.03, 0.03, 0.03, 1.0f, 1.0f, 0.0f);
         if (!mj_kdl::scene_add_object(&model, &data, &spec, extra)) {
-            std::cerr << "FAIL: scene_add_object\n";
+            TEST_FAIL("scene_add_object() returned false");
             mj_kdl::destroy_scene(model, data);
             return 1;
         }
-        std::cout << "Bodies after add:    " << model->nbody << "\n";
+        TEST_INFO("bodies: " << nbody_before << " -> " << model->nbody << " (after add)");
 
         if (!mj_kdl::scene_remove_object(&model, &data, &spec, "yellow_cube")) {
-            std::cerr << "FAIL: scene_remove_object\n";
+            TEST_FAIL("scene_remove_object() returned false");
             mj_kdl::destroy_scene(model, data);
             return 1;
         }
-        std::cout << "Bodies after remove: " << model->nbody << "\n";
-        std::cout << "OK\n";
+        TEST_INFO("bodies: " << model->nbody << " (after remove)");
+        TEST_PASS("runtime scene_add_object / scene_remove_object");
 
         mj_kdl::destroy_scene(model, data);
         return 0;

@@ -1,3 +1,7 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2024 Vamsi Kalagaturu
+ * See LICENSE for details. */
+
 #pragma once
 
 #include <mujoco/mujoco.h>
@@ -9,6 +13,22 @@
 #include <vector>
 
 namespace mj_kdl {
+
+/*
+ * Log verbosity level.  Each level includes all levels below it:
+ *   NONE  — nothing printed.
+ *   INFO  — informational messages only (scene/chain construction progress).
+ *   WARN  — INFO + recoverable warnings (e.g. fallback to headless mode).
+ *   ERROR — all messages, including errors that cause functions to fail.  Default.
+ */
+enum class LogLevel { NONE = 0, INFO = 1, WARN = 2, ERROR = 3 };
+
+/* Set the library-wide log verbosity.  Thread-safe for the set call itself;
+ * log messages may interleave if called from multiple threads simultaneously. */
+void set_log_level(LogLevel level);
+
+/* Return the current log verbosity level. */
+LogLevel get_log_level();
 
 /* Single-robot convenience config for init(). */
 struct Config

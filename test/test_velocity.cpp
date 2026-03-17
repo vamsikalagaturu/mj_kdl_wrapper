@@ -4,6 +4,7 @@
  * With --gui: displays the robot at the home pose / IK solution. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "test_utils.hpp"
 
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chainiksolvervel_pinv.hpp>
@@ -41,7 +42,7 @@ int main(int argc, char *argv[])
 
     mj_kdl::State s;
     if (!mj_kdl::init(&s, &cfg)) {
-        std::cerr << "FAIL: init\n";
+        TEST_FAIL("init() returned false");
         return 1;
     }
 
@@ -62,7 +63,7 @@ int main(int argc, char *argv[])
     for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
     KDL::Frame fk_home;
     if (fk.JntToCart(q_home, fk_home) < 0) {
-        std::cerr << "FAIL: FK at home pose\n";
+        TEST_FAIL("FK failed at home pose");
         mj_kdl::cleanup(&s);
         return 1;
     }
@@ -75,7 +76,7 @@ int main(int argc, char *argv[])
 
     KDL::Frame fk_test;
     if (fk.JntToCart(q_test, fk_test) < 0) {
-        std::cerr << "FAIL: FK at test config\n";
+        TEST_FAIL("FK failed at test config");
         mj_kdl::cleanup(&s);
         return 1;
     }
@@ -86,14 +87,14 @@ int main(int argc, char *argv[])
     KDL::JntArray q_ik(n);
     int           ik_ret = ik.CartToJnt(q_home, fk_test, q_ik);
     if (ik_ret < 0) {
-        std::cout << "WARN: IK did not converge (ret=" << ik_ret << "), skipping IK check\n";
+        TEST_WARN("IK did not converge (ret=" << ik_ret << "), skipping IK check");
     } else {
         KDL::Frame fk_ik;
         fk.JntToCart(q_ik, fk_ik);
         double pos_err = (fk_test.p - fk_ik.p).Norm();
-        std::cout << "IK pos error: " << pos_err * 1000.0 << " mm\n";
+        TEST_INFO("IK pos error: " << pos_err * 1000.0 << " mm");
         if (pos_err > 1e-3) {
-            std::cerr << "FAIL: IK position error too large\n";
+            TEST_FAIL("IK position error " << pos_err * 1000.0 << " mm exceeds 1 mm threshold");
             mj_kdl::cleanup(&s);
             return 1;
         }
@@ -102,18 +103,19 @@ int main(int argc, char *argv[])
     // Jacobian at home pose
     KDL::Jacobian jac(n);
     if (jac_solver.JntToJac(q_home, jac) < 0) {
-        std::cerr << "FAIL: Jacobian\n";
+        TEST_FAIL("Jacobian solver returned error");
         mj_kdl::cleanup(&s);
         return 1;
     }
-    std::cout << "Jacobian rows=" << jac.rows() << " cols=" << jac.columns() << "\n";
+    TEST_INFO("Jacobian: " << jac.rows() << " rows x " << jac.columns() << " cols");
     if (jac.rows() != 6 || jac.columns() != n) {
-        std::cerr << "FAIL: unexpected Jacobian dimensions\n";
+        TEST_FAIL("unexpected Jacobian dimensions: " << jac.rows() << "x" << jac.columns()
+                  << " (expected 6x" << n << ")");
         mj_kdl::cleanup(&s);
         return 1;
     }
 
-    std::cout << "OK\n";
+    TEST_PASS("velocity kinematics (FK, IK, Jacobian)");
 
     if (gui) {
         // Show IK solution (or home pose if IK failed) statically with gravity comp.

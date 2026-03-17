@@ -1,3 +1,7 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2024 Vamsi Kalagaturu
+ * See LICENSE for details. */
+
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "kdl_parser/kdl_parser.hpp"
 #include "urdf_model/joint.h"
@@ -13,6 +17,7 @@
 #include <cstring>
 #include <cmath>
 #include <iostream>
+#include <sstream>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -33,6 +38,32 @@ static void ensure_plugins_loaded()
 }
 
 namespace mj_kdl {
+
+/* Logging ----------------------------------------------------------------- */
+
+static LogLevel g_log_level = LogLevel::ERROR; // most verbose by default
+
+void set_log_level(LogLevel level) { g_log_level = level; }
+LogLevel get_log_level() { return g_log_level; }
+
+/* Emit a log message to stderr with ANSI colour, location, and function name.
+ * Only file basename is shown (not the full path). */
+#define MJ_FILENAME_ (::strrchr(__FILE__, '/') ? ::strrchr(__FILE__, '/') + 1 : __FILE__)
+
+#define MJ_LOG_(lvl_enum, color, label, expr)                                         \
+    do {                                                                               \
+        if (g_log_level >= mj_kdl::LogLevel::lvl_enum) {                              \
+            std::ostringstream _mj_oss;                                                \
+            _mj_oss << expr;                                                           \
+            std::fprintf(stderr,                                                       \
+                color "[mj_kdl " label "] %s:%d (%s): %s\033[0m\n",                   \
+                MJ_FILENAME_, __LINE__, __func__, _mj_oss.str().c_str());              \
+        }                                                                              \
+    } while (0)
+
+#define LOG_INFO(expr)  MJ_LOG_(INFO,  "",         "INFO ", expr)
+#define LOG_WARN(expr)  MJ_LOG_(WARN,  "\033[33m", "WARN ", expr)
+#define LOG_ERROR(expr) MJ_LOG_(ERROR, "\033[31m", "ERROR", expr)
 
 /* URDF preprocessing */
 
@@ -300,13 +331,13 @@ static bool urdf_to_raw_mjcf(const std::string &proc, const std::string &raw)
     char     err[2048] = {};
     mjModel *tmp       = mj_loadXML(proc.c_str(), nullptr, err, sizeof(err));
     if (!tmp) {
-        std::cerr << "[mj_kdl] mj_loadXML: " << err << "\n";
+        LOG_ERROR("mj_loadXML failed for '" << proc << "': " << err);
         return false;
     }
     int r = mj_saveLastXML(raw.c_str(), tmp, err, sizeof(err));
     mj_deleteModel(tmp);
     if (!r) {
-        std::cerr << "[mj_kdl] mj_saveLastXML: " << err << "\n";
+        LOG_ERROR("mj_saveLastXML failed for '" << raw << "': " << err);
         return false;
     }
     return true;
@@ -318,7 +349,7 @@ static bool
     using namespace tinyxml2;
     XMLDocument base;
     if (base.LoadFile(raws[0].c_str()) != XML_SUCCESS) {
-        std::cerr << "[mj_kdl] cannot load " << raws[0] << "\n";
+        LOG_ERROR("failed to parse base MJCF '" << raws[0] << "'");
         return false;
     }
     XMLElement *bmj = base.FirstChildElement("mujoco");
@@ -362,7 +393,7 @@ static bool
     for (int i = 1; i < (int)raws.size(); ++i) {
         XMLDocument di;
         if (di.LoadFile(raws[i].c_str()) != XML_SUCCESS) {
-            std::cerr << "[mj_kdl] cannot load " << raws[i] << "\n";
+            LOG_ERROR("failed to parse MJCF for robot " << i << " ('" << raws[i] << "')");
             return false;
         }
         XMLElement *mi = di.FirstChildElement("mujoco");
@@ -419,11 +450,12 @@ static bool
 {
     KDL::Tree tree;
     if (!kdl_parser::treeFromFile(urdf, tree)) {
-        std::cerr << "[mj_kdl] kdl treeFromFile failed\n";
+        LOG_ERROR("kdl_parser::treeFromFile failed for URDF '" << urdf << "'");
         return false;
     }
     if (!tree.getChain(base_link, tip_link, s->chain)) {
-        std::cerr << "[mj_kdl] getChain failed: " << base_link << " -> " << tip_link << "\n";
+        LOG_ERROR("KDL chain not found: '" << base_link << "' -> '" << tip_link
+                                           << "' — verify link names in URDF");
         return false;
     }
     auto model = urdf::parseURDFFile(urdf);
@@ -471,7 +503,8 @@ static void build_index_map(State *s, const std::string &pfx = "")
     for (const auto &name : s->joint_names) {
         int id = mj_name2id(s->model, mjOBJ_JOINT, (pfx + name).c_str());
         if (id < 0) {
-            std::cerr << "[mj_kdl] joint not found: " << pfx << name << "\n";
+            LOG_ERROR("joint '" << pfx << name
+                                << "' not found in MuJoCo model — check robot prefix or URDF joint names");
             int idx = (int)s->kdl_to_mj_qpos.size();
             s->kdl_to_mj_qpos.push_back(idx);
             s->kdl_to_mj_dof.push_back(idx);
@@ -490,18 +523,19 @@ static bool
     int base_bid = mj_name2id(model, mjOBJ_BODY, base_body);
     int tip_bid  = mj_name2id(model, mjOBJ_BODY, tip_body);
     if (base_bid < 0) {
-        std::cerr << "[mj_kdl] base body not found: " << base_body << "\n";
+        LOG_ERROR("base body '" << base_body << "' not found in compiled model");
         return false;
     }
     if (tip_bid < 0) {
-        std::cerr << "[mj_kdl] tip body not found: " << tip_body << "\n";
+        LOG_ERROR("tip body '" << tip_body << "' not found in compiled model");
         return false;
     }
 
     std::vector<int> bids;
     for (int b = tip_bid; b != base_bid; b = model->body_parentid[b]) {
         if (b == 0) {
-            std::cerr << "[mj_kdl] tip not under base\n";
+            LOG_ERROR("'" << tip_body << "' is not a descendant of '" << base_body
+                         << "' — check body hierarchy in the model");
             return false;
         }
         bids.push_back(b);
@@ -576,6 +610,9 @@ struct GLMouseState
 bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
 {
     ensure_plugins_loaded();
+    LOG_INFO("building scene: " << sc->robots.size() << " robot(s)"
+             << ", table=" << (sc->table.enabled ? "yes" : "no")
+             << ", objects=" << sc->objects.size());
     if (!sc || sc->robots.empty()) return false;
 
     fs::path tmp = fs::absolute(fs::path(sc->robots[0].urdf_path).parent_path());
@@ -590,7 +627,7 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
         char    err[2048] = {};
         mjSpec *spec      = mj_parseXML(proc.c_str(), nullptr, err, sizeof(err));
         if (!spec) {
-            std::cerr << "[mj_kdl] parseXML: " << err << "\n";
+            LOG_ERROR("mj_parseXML failed for '" << proc.string() << "': " << err);
             return false;
         }
 
@@ -620,10 +657,12 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
 
         *out_model = mj_compile(spec, nullptr);
         if (!*out_model) {
-            std::cerr << "[mj_kdl] compile: " << mjs_getError(spec) << "\n";
+            LOG_ERROR("mj_compile failed (single robot): " << mjs_getError(spec));
             mj_deleteSpec(spec);
             return false;
         }
+        LOG_INFO("scene compiled: nq=" << (*out_model)->nq << " nv=" << (*out_model)->nv
+                 << " nbody=" << (*out_model)->nbody);
         mj_deleteSpec(spec);
         *out_data = mj_makeData(*out_model);
         if (!*out_data) {
@@ -648,7 +687,7 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     char    err[2048] = {};
     mjSpec *spec      = mj_parseXML(combined.c_str(), nullptr, err, sizeof(err));
     if (!spec) {
-        std::cerr << "[mj_kdl] parseXML: " << err << "\n";
+        LOG_ERROR("mj_parseXML failed for combined MJCF '" << combined.string() << "': " << err);
         return false;
     }
     spec->option.timestep         = sc->timestep;
@@ -660,10 +699,12 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     if (!sc->objects.empty()) add_objects_to_spec(spec, sc->objects);
     *out_model = mj_compile(spec, nullptr);
     if (!*out_model) {
-        std::cerr << "[mj_kdl] compile: " << mjs_getError(spec) << "\n";
+        LOG_ERROR("mj_compile failed (" << sc->robots.size() << " robots): " << mjs_getError(spec));
         mj_deleteSpec(spec);
         return false;
     }
+    LOG_INFO("scene compiled: nq=" << (*out_model)->nq << " nv=" << (*out_model)->nv
+             << " nbody=" << (*out_model)->nbody);
     mj_deleteSpec(spec);
     *out_data = mj_makeData(*out_model);
     if (!*out_data) {
@@ -678,9 +719,10 @@ bool load_mjcf(mjModel **out_model, mjData **out_data, const char *path)
 {
     ensure_plugins_loaded();
     char err[2048] = {};
+    LOG_INFO("loading MJCF: '" << path << "'");
     *out_model     = mj_loadXML(path, nullptr, err, sizeof(err));
     if (!*out_model) {
-        std::cerr << "[mj_kdl] load_mjcf: " << err << "\n";
+        LOG_ERROR("mj_loadXML failed for '" << path << "': " << err);
         return false;
     }
     *out_data = mj_makeData(*out_model);
@@ -696,7 +738,11 @@ bool save_model_xml(const mjModel *model, const char *path)
 {
     char err[2048] = {};
     int  ok        = mj_saveLastXML(path, model, err, sizeof(err));
-    if (!ok) std::cerr << "[mj_kdl] save_model_xml: " << err << "\n";
+    if (!ok) {
+        LOG_ERROR("mj_saveLastXML failed for '" << path << "': " << err);
+    } else {
+        LOG_INFO("model saved to '" << path << "'");
+    }
     return ok != 0;
 }
 
@@ -706,15 +752,21 @@ bool patch_mjcf_visuals(const char *mjcf_path)
     char    err[2048] = {};
     mjSpec *spec      = mj_parseXML(mjcf_path, nullptr, err, sizeof(err));
     if (!spec) {
-        std::cerr << "[mj_kdl] patch_mjcf_visuals: " << err << "\n";
+        LOG_ERROR("patch_mjcf_visuals: mj_parseXML failed for '" << mjcf_path << "': " << err);
         return false;
     }
     add_floor_to_spec(spec);
     mjModel *m = mj_compile(spec, nullptr);
+    if (!m) {
+        std::string ce = mjs_getError(spec) ? mjs_getError(spec) : "unknown";
+        mj_deleteSpec(spec);
+        LOG_ERROR("patch_mjcf_visuals: mj_compile failed for '" << mjcf_path << "': " << ce);
+        return false;
+    }
     mj_deleteSpec(spec);
-    if (!m) return false;
     int ok = mj_saveLastXML(mjcf_path, m, err, sizeof(err));
     mj_deleteModel(m);
+    if (!ok) LOG_ERROR("patch_mjcf_visuals: mj_saveLastXML failed for '" << mjcf_path << "': " << err);
     return ok != 0;
 }
 
@@ -724,13 +776,18 @@ bool patch_mjcf_add_objects(const char *mjcf_path, const std::vector<SceneObject
     char    err[2048] = {};
     mjSpec *spec      = mj_parseXML(mjcf_path, nullptr, err, sizeof(err));
     if (!spec) {
-        std::cerr << "[mj_kdl] patch_mjcf_add_objects: " << err << "\n";
+        LOG_ERROR("patch_mjcf_add_objects: mj_parseXML failed for '" << mjcf_path << "': " << err);
         return false;
     }
     add_objects_to_spec(spec, objects);
     mjModel *m = mj_compile(spec, nullptr);
+    if (!m) {
+        std::string ce = mjs_getError(spec) ? mjs_getError(spec) : "unknown";
+        mj_deleteSpec(spec);
+        LOG_ERROR("patch_mjcf_add_objects: mj_compile failed for '" << mjcf_path << "': " << ce);
+        return false;
+    }
     mj_deleteSpec(spec);
-    if (!m) return false;
     int ok = mj_saveLastXML(mjcf_path, m, err, sizeof(err));
     mj_deleteModel(m);
     return ok != 0;
@@ -741,12 +798,14 @@ bool attach_gripper(const char *arm_mjcf, const GripperSpec *g, const char *out_
     using namespace tinyxml2;
 
     XMLDocument arm_doc, grp_doc;
+    LOG_INFO("attaching gripper (prefix='" << std::string(g->prefix ? g->prefix : "")
+             << "') from '" << g->mjcf_path << "' to body '" << g->attach_to << "'");
     if (arm_doc.LoadFile(arm_mjcf) != XML_SUCCESS) {
-        std::cerr << "[mj_kdl] cannot load arm: " << arm_mjcf << "\n";
+        LOG_ERROR("failed to load arm MJCF '" << arm_mjcf << "'");
         return false;
     }
     if (grp_doc.LoadFile(g->mjcf_path) != XML_SUCCESS) {
-        std::cerr << "[mj_kdl] cannot load gripper: " << g->mjcf_path << "\n";
+        LOG_ERROR("failed to load gripper MJCF '" << g->mjcf_path << "'");
         return false;
     }
 
@@ -826,7 +885,8 @@ bool attach_gripper(const char *arm_mjcf, const GripperSpec *g, const char *out_
     if (!arm_wb) return false;
     XMLElement *attach_el = find_body(arm_wb, g->attach_to);
     if (!attach_el) {
-        std::cerr << "[mj_kdl] attach body not found: " << g->attach_to << "\n";
+        LOG_ERROR("attach body '" << g->attach_to
+                                  << "' not found in arm worldbody — check arm MJCF for correct body name");
         return false;
     }
 
@@ -923,6 +983,8 @@ bool init_robot(State *s,
   const char          *tip_link,
   const char          *prefix)
 {
+    LOG_INFO("init_robot: '" << base_link << "' -> '" << tip_link
+             << "' prefix='" << (prefix ? prefix : "") << "' urdf='" << urdf << "'");
     s->model       = model;
     s->data        = data;
     s->_owns_model = false;
@@ -930,6 +992,7 @@ bool init_robot(State *s,
     std::string pfx = prefix ? prefix : "";
     sync_chain_inertias(s, pfx);
     build_index_map(s, pfx);
+    LOG_INFO("chain ready: " << s->n_joints << " joints [" << base_link << " -> " << tip_link << "]");
     return true;
 }
 
@@ -940,11 +1003,14 @@ bool init_from_mjcf(State *s,
   const char              *tip_body,
   const char              *prefix)
 {
+    LOG_INFO("init_from_mjcf: '" << base_body << "' -> '" << tip_body
+             << "' prefix='" << (prefix ? prefix : "") << "'");
     s->model       = model;
     s->data        = data;
     s->_owns_model = false;
     if (!build_kdl_from_model(s, model, base_body, tip_body)) return false;
     build_index_map(s, prefix ? prefix : "");
+    LOG_INFO("chain ready: " << s->n_joints << " joints [" << base_body << " -> " << tip_body << "]");
     return true;
 }
 
@@ -1026,7 +1092,7 @@ bool init(State *s, const Config *cfg)
     build_index_map(s);
 
     if (!cfg->headless && !init_window(s, cfg->win_title, cfg->win_width, cfg->win_height))
-        std::cerr << "[mj_kdl] no GL — headless\n";
+        LOG_WARN("GLFW window creation failed — running headless");
     return true;
 }
 

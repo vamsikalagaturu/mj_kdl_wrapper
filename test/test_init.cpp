@@ -4,6 +4,7 @@
  * Usage: test_init [urdf_path] [--gui] */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "test_utils.hpp"
 
 #include <iostream>
 #include <string>
@@ -35,18 +36,17 @@ int main(int argc, char *argv[])
 
     mj_kdl::State s;
     if (!mj_kdl::init(&s, &cfg)) {
-        std::cerr << "FAIL: init\n";
+        TEST_FAIL("init() returned false");
         return 1;
     }
 
     if (s.model->nq != 7 || s.model->nv != 7) {
-        std::cerr << "FAIL: expected 7 DOF, got nq=" << s.model->nq << " nv=" << s.model->nv
-                  << "\n";
+        TEST_FAIL("expected 7 DOF, got nq=" << s.model->nq << " nv=" << s.model->nv);
         mj_kdl::cleanup(&s);
         return 1;
     }
     if (s.n_joints != 7) {
-        std::cerr << "FAIL: expected 7 KDL joints, got " << s.n_joints << "\n";
+        TEST_FAIL("expected 7 KDL joints, got " << s.n_joints);
         mj_kdl::cleanup(&s);
         return 1;
     }
@@ -61,13 +61,13 @@ int main(int argc, char *argv[])
     const double t0 = s.data->time;
     mj_kdl::step_n(&s, 100);
     if (s.data->time <= t0) {
-        std::cerr << "FAIL: simulation time did not advance\n";
+        TEST_FAIL("simulation time did not advance after 100 steps");
         mj_kdl::cleanup(&s);
         return 1;
     }
 
-    std::cout << "OK  nq=" << s.model->nq << " nv=" << s.model->nv << " kdl_joints=" << s.n_joints
-              << " sim_time=" << s.data->time << "\n";
+    TEST_PASS("nq=" << s.model->nq << " nv=" << s.model->nv
+              << " kdl_joints=" << s.n_joints << " sim_time=" << s.data->time);
 
     if (gui) {
         std::cout << "GUI mode — close window to exit\n";

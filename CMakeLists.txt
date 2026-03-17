@@ -121,12 +121,15 @@ target_compile_definitions(mj_kdl_wrapper PRIVATE
   MUJOCO_PLUGIN_DIR="${MUJOCO_ROOT}/bin/mujoco_plugin")
 
 # Tests  (all link mj_kdl_wrapper)
+enable_testing()
+
 foreach(test_name test_init test_velocity test_gravity_comp test_dual_arm test_table_scene
                   test_kinova_gen3_menagerie test_kinova_gen3_gripper
                   test_kinova_gen3_impedance test_kinova_gen3_pick)
   add_executable(${test_name} test/${test_name}.cpp)
   target_link_libraries(${test_name} PRIVATE mj_kdl_wrapper)
   target_compile_options(${test_name} PRIVATE -Wall -Wextra)
+  add_test(NAME ${test_name} COMMAND ${test_name})
 endforeach()
 
 add_executable(export_table_scene tools/export_table_scene.cpp)

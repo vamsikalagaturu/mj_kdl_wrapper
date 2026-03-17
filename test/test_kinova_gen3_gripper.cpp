@@ -16,6 +16,7 @@
  * Usage: test_kinova_gen3_gripper [--gui] */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "test_utils.hpp"
 
 #include <tinyxml2.h>
 
@@ -81,8 +82,7 @@ int main(int argc, char *argv[])
 
     const fs::path root = repo_root();
     if (!fs::exists(root / "third_party/menagerie")) {
-        std::cerr << "SKIP: third_party/menagerie/ not found (gitignored). Run locally with the "
-                     "submodule.\n";
+        TEST_SKIP("third_party/menagerie/ not found — run locally with the submodule");
         return 0;
     }
     const std::string arm_mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
@@ -103,60 +103,60 @@ int main(int argc, char *argv[])
     gs.quat[3]   = 0.0;
 
     if (!mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined.c_str())) {
-        std::cerr << "FAIL: attach_gripper\n";
+        TEST_FAIL("attach_gripper() returned false");
         return 1;
     }
 
     // Add visuals (floor + sky + light) via wrapper utility.
     if (!mj_kdl::patch_mjcf_visuals(combined.c_str())) {
-        std::cerr << "FAIL: patch_mjcf_visuals\n";
+        TEST_FAIL("patch_mjcf_visuals() returned false");
         return 1;
     }
 
     // Add contact exclusions (gripper-specific).
     if (!patch_contact_exclusions(combined)) {
-        std::cerr << "FAIL: patch_contact_exclusions\n";
+        TEST_FAIL("patch_contact_exclusions() returned false");
         return 1;
     }
 
     mjModel *model = nullptr;
     mjData  *data  = nullptr;
     if (!mj_kdl::load_mjcf(&model, &data, combined.c_str())) {
-        std::cerr << "FAIL: load_mjcf\n";
+        TEST_FAIL("load_mjcf() returned false for combined MJCF");
         return 1;
     }
 
-    std::cout << "Model: nq=" << model->nq << " nv=" << model->nv << " nbody=" << model->nbody
-              << " nu=" << model->nu << "\n";
+    TEST_INFO("model: nq=" << model->nq << " nv=" << model->nv
+              << " nbody=" << model->nbody << " nu=" << model->nu);
 
     if (model->nq < 13) {
-        std::cerr << "FAIL: expected nq >= 13 (7 arm + 6 gripper), got " << model->nq << "\n";
+        TEST_FAIL("expected nq >= 13 (7 arm + 6 gripper), got " << model->nq);
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
     if (model->nu < 8) {
-        std::cerr << "FAIL: expected nu >= 8 (7 arm + 1 gripper), got " << model->nu << "\n";
+        TEST_FAIL("expected nu >= 8 (7 arm + 1 gripper), got " << model->nu);
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
-    std::cout << "  OK\n";
+    TEST_PASS("Test 1: arm+gripper MJCF loaded (nq=" << model->nq << " nu=" << model->nu << ")");
 
     // Test 2: KDL arm chain from combined model
     mj_kdl::State s;
     if (!mj_kdl::init_from_mjcf(&s, model, data, "base_link", "bracelet_link")) {
-        std::cerr << "FAIL: init_from_mjcf\n";
+        TEST_FAIL("init_from_mjcf() returned false");
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
 
     unsigned n = s.chain.getNrOfJoints();
     if (n != 7u) {
-        std::cerr << "FAIL: expected 7 KDL joints, got " << n << "\n";
+        TEST_FAIL("expected 7 KDL joints, got " << n);
         mj_kdl::cleanup(&s);
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
-    std::cout << "KDL chain (arm): " << n << " joints\n";
+    TEST_PASS("Test 2: KDL arm chain — " << n << " joints");
 
     KDL::ChainFkSolverPos_recursive fk(s.chain);
     KDL::ChainDynParam              dyn(s.chain, KDL::Vector(0, 0, -9.81));
@@ -171,7 +171,7 @@ int main(int argc, char *argv[])
 
         KDL::JntArray g(n);
         if (dyn.JntToGravity(q_zero, g) < 0) {
-            std::cerr << "FAIL: JntToGravity\n";
+            TEST_FAIL("JntToGravity() returned error");
             mj_kdl::cleanup(&s);
             mj_kdl::destroy_scene(model, data);
             return 1;
@@ -181,16 +181,16 @@ int main(int argc, char *argv[])
         for (unsigned i = 0; i < n; ++i)
             max_err = std::max(max_err, std::abs(g(i) - data->qfrc_bias[s.kdl_to_mj_dof[i]]));
 
-        std::cout << std::fixed << std::setprecision(6)
-                  << "Gravity accuracy at q=0: max|KDL - MuJoCo| = " << max_err << " Nm\n";
+        TEST_INFO("gravity accuracy at q=0: max|KDL - MuJoCo| = "
+                  << std::fixed << std::setprecision(6) << max_err << " Nm");
 
         if (max_err > 5e-2) {
-            std::cerr << "FAIL: gravity error " << max_err << " Nm > 5e-2\n";
+            TEST_FAIL("gravity error " << max_err << " Nm exceeds 5e-2 Nm threshold");
             mj_kdl::cleanup(&s);
             mj_kdl::destroy_scene(model, data);
             return 1;
         }
-        std::cout << "  OK\n";
+        TEST_PASS("Test 3: gravity accuracy < 5e-2 Nm");
     }
 
     // Test 4: FK sanity check at home pose
@@ -201,22 +201,22 @@ int main(int argc, char *argv[])
         fk.JntToCart(q_home, fk_pose);
         double ee_dist = fk_pose.p.Norm();
 
-        std::cout << std::fixed << std::setprecision(3)
-                  << "EE distance from base at home pose: " << ee_dist * 1000.0 << " mm\n";
+        TEST_INFO("EE distance from base at home pose: "
+                  << std::fixed << std::setprecision(3) << ee_dist * 1000.0 << " mm");
 
         if (ee_dist < 0.1 || ee_dist > 1.1) {
-            std::cerr << "FAIL: EE distance " << ee_dist << " m outside expected [0.1, 1.1]\n";
+            TEST_FAIL("EE distance " << ee_dist << " m outside expected workspace [0.1, 1.1] m");
             mj_kdl::cleanup(&s);
             mj_kdl::destroy_scene(model, data);
             return 1;
         }
-        std::cout << "  OK\n";
+        TEST_PASS("Test 4: FK workspace sanity check");
     }
 
     // Test 5: gripper joints and actuator
     int fingers_act = mj_name2id(model, mjOBJ_ACTUATOR, "g_fingers_actuator");
     if (fingers_act < 0) {
-        std::cerr << "FAIL: g_fingers_actuator not found\n";
+        TEST_FAIL("g_fingers_actuator not found in compiled model");
         mj_kdl::cleanup(&s);
         mj_kdl::destroy_scene(model, data);
         return 1;
@@ -225,7 +225,8 @@ int main(int argc, char *argv[])
     int rdriver_jnt = mj_name2id(model, mjOBJ_JOINT, "g_right_driver_joint");
     int ldriver_jnt = mj_name2id(model, mjOBJ_JOINT, "g_left_driver_joint");
     if (rdriver_jnt < 0 || ldriver_jnt < 0) {
-        std::cerr << "FAIL: gripper driver joints not found\n";
+        TEST_FAIL("gripper driver joints not found (rdriver=" << rdriver_jnt
+                  << " ldriver=" << ldriver_jnt << ")");
         mj_kdl::cleanup(&s);
         mj_kdl::destroy_scene(model, data);
         return 1;
@@ -233,16 +234,17 @@ int main(int argc, char *argv[])
 
     double jrange_lo = model->jnt_range[2 * rdriver_jnt];
     double jrange_hi = model->jnt_range[2 * rdriver_jnt + 1];
-    std::cout << std::fixed << std::setprecision(4) << "Gripper right_driver_joint range: ["
-              << jrange_lo << ", " << jrange_hi << "] rad\n";
+    TEST_INFO("gripper right_driver_joint range: ["
+              << std::fixed << std::setprecision(4) << jrange_lo << ", " << jrange_hi << "] rad");
 
     if (std::abs(jrange_hi - 0.8) > 0.01 || jrange_lo < -0.01) {
-        std::cerr << "FAIL: unexpected driver joint range\n";
+        TEST_FAIL("unexpected driver joint range [" << jrange_lo << ", " << jrange_hi
+                  << "] — expected [~0, ~0.8]");
         mj_kdl::cleanup(&s);
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
-    std::cout << "  OK\n\nOK\n";
+    TEST_PASS("Test 5: gripper joint range valid");
 
     // GUI: simulate UI with real-time physics loop
     if (gui) {

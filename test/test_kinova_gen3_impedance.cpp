@@ -16,6 +16,7 @@
  * Usage: test_kinova_gen3_impedance [--gui] */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "test_utils.hpp"
 
 #include <tinyxml2.h>
 
@@ -83,8 +84,7 @@ int main(int argc, char *argv[])
 
     const fs::path root = repo_root();
     if (!fs::exists(root / "third_party/menagerie")) {
-        std::cerr << "SKIP: third_party/menagerie/ not found (gitignored). Run locally with the "
-                     "submodule.\n";
+        TEST_SKIP("third_party/menagerie/ not found — run locally with the submodule");
         return 0;
     }
     const std::string arm_mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
@@ -105,15 +105,15 @@ int main(int argc, char *argv[])
     gs.quat[3]   = 0.0;
 
     if (!mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined.c_str())) {
-        std::cerr << "FAIL: attach_gripper\n";
+        TEST_FAIL("attach_gripper() returned false");
         return 1;
     }
     if (!mj_kdl::patch_mjcf_visuals(combined.c_str())) {
-        std::cerr << "FAIL: patch_mjcf_visuals\n";
+        TEST_FAIL("patch_mjcf_visuals() returned false");
         return 1;
     }
     if (!patch_contact_exclusions(combined)) {
-        std::cerr << "FAIL: patch_contact_exclusions\n";
+        TEST_FAIL("patch_contact_exclusions() returned false");
         return 1;
     }
 
@@ -121,37 +121,37 @@ int main(int argc, char *argv[])
     mjModel *model = nullptr;
     mjData  *data  = nullptr;
     if (!mj_kdl::load_mjcf(&model, &data, combined.c_str())) {
-        std::cerr << "FAIL: load_mjcf\n";
+        TEST_FAIL("load_mjcf() returned false for combined MJCF");
         return 1;
     }
     if (model->nq < 13 || model->nu < 8) {
-        std::cerr << "FAIL: nq=" << model->nq << " nu=" << model->nu << "\n";
+        TEST_FAIL("expected nq>=13 nu>=8, got nq=" << model->nq << " nu=" << model->nu);
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
-    std::cout << "Model: nq=" << model->nq << " nu=" << model->nu << "  OK\n";
+    TEST_PASS("Test 1: model loaded (nq=" << model->nq << " nu=" << model->nu << ")");
 
     // Test 2: KDL arm chain.
     mj_kdl::State s;
     if (!mj_kdl::init_from_mjcf(&s, model, data, "base_link", "bracelet_link")) {
-        std::cerr << "FAIL: init_from_mjcf\n";
+        TEST_FAIL("init_from_mjcf() returned false");
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
     unsigned n = s.chain.getNrOfJoints();
     if (n != 7u) {
-        std::cerr << "FAIL: expected 7 KDL joints, got " << n << "\n";
+        TEST_FAIL("expected 7 KDL joints, got " << n);
         mj_kdl::cleanup(&s);
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
-    std::cout << "KDL chain: " << n << " joints  OK\n";
+    TEST_PASS("Test 2: KDL arm chain — " << n << " joints");
 
     KDL::ChainFkSolverPos_recursive fk(s.chain);
 
     int fingers_act = mj_name2id(model, mjOBJ_ACTUATOR, "g_fingers_actuator");
     if (fingers_act < 0) {
-        std::cerr << "FAIL: g_fingers_actuator not found\n";
+        TEST_FAIL("g_fingers_actuator not found in compiled model");
         mj_kdl::cleanup(&s);
         mj_kdl::destroy_scene(model, data);
         return 1;
@@ -188,15 +188,15 @@ int main(int argc, char *argv[])
         fk.JntToCart(q_now, ee_now);
         double drift = (ee_now.p - ee_init.p).Norm() * 1000.0;
 
-        std::cout << std::fixed << std::setprecision(3)
-                  << "Impedance hold drift (200 steps): " << drift << " mm\n";
+        TEST_INFO("impedance hold drift (200 steps): "
+                  << std::fixed << std::setprecision(3) << drift << " mm");
         if (drift > 1.0) {
-            std::cerr << "FAIL: drift " << drift << " mm > 1 mm\n";
+            TEST_FAIL("EE drift " << drift << " mm exceeds 1 mm threshold");
             mj_kdl::cleanup(&s);
             mj_kdl::destroy_scene(model, data);
             return 1;
         }
-        std::cout << "  OK\n\nOK\n";
+        TEST_PASS("Test 3: impedance hold drift < 1 mm");
     }
 
     // GUI
