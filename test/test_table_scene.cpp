@@ -1,11 +1,11 @@
-// test_table_scene.cpp
-// Load a robot arm on a table with pickable objects (cubes and spheres).
-// Runs KDL gravity compensation so the arm holds position while the objects
-// can be perturbed in GUI mode.
-//
-// Also demonstrates runtime scene_add_object / scene_remove_object.
-//
-// Usage: test_table_scene [urdf_path] [--gui]
+/* test_table_scene.cpp
+ * Load a robot arm on a table with pickable objects (cubes and spheres).
+ * Runs KDL gravity compensation so the arm holds position while the objects
+ * can be perturbed in GUI mode.
+ *
+ * Also demonstrates runtime scene_add_object / scene_remove_object.
+ *
+ * Usage: test_table_scene [urdf_path] [--gui] */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 

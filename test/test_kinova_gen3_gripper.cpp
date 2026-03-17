@@ -1,19 +1,19 @@
-// test_kinova_gen3_gripper.cpp
-// Attach Robotiq 2F-85 gripper (MuJoCo Menagerie) to Kinova Gen3 using attach_gripper(),
-// load the combined model, validate arm KDL and gripper simulation.
-//
-// Tests:
-//   1. attach_gripper produces a valid MJCF that loads (nq >= 13, nu >= 8).
-//   2. KDL chain for arm (7 joints) built from combined model.
-//   3. KDL gravity torques agree with MuJoCo qfrc_bias[0..6] within 5e-2 Nm.
-//   4. FK sanity check — EE position within expected workspace.
-//   5. Gripper open/close: driver joint range validated.
-//
-// GUI (--gui):
-//   Uses mj_kdl::run_simulate_ui for the real-time simulate window.
-//   Physics: position actuators hold arm at home pose + continuous gripper open/close every 3 s.
-//
-// Usage: test_kinova_gen3_gripper [--gui]
+/* test_kinova_gen3_gripper.cpp
+ * Attach Robotiq 2F-85 gripper (MuJoCo Menagerie) to Kinova Gen3 using attach_gripper(),
+ * load the combined model, validate arm KDL and gripper simulation.
+ *
+ * Tests:
+ *   1. attach_gripper produces a valid MJCF that loads (nq >= 13, nu >= 8).
+ *   2. KDL chain for arm (7 joints) built from combined model.
+ *   3. KDL gravity torques agree with MuJoCo qfrc_bias[0..6] within 5e-2 Nm.
+ *   4. FK sanity check — EE position within expected workspace.
+ *   5. Gripper open/close: driver joint range validated.
+ *
+ * GUI (--gui):
+ *   Uses mj_kdl::run_simulate_ui for the real-time simulate window.
+ *   Physics: position actuators hold arm at home pose + continuous gripper open/close every 3 s.
+ *
+ * Usage: test_kinova_gen3_gripper [--gui] */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 
@@ -37,8 +37,8 @@ static fs::path repo_root()
     return fs::path(__FILE__).parent_path().parent_path();
 }
 
-// Add contact exclusions between bracelet_link and all g_* gripper bodies.
-// Called after patch_mjcf_visuals() on the combined MJCF.
+/* Add contact exclusions between bracelet_link and all g_* gripper bodies.
+ * Called after patch_mjcf_visuals() on the combined MJCF. */
 static bool patch_contact_exclusions(const std::string& path)
 {
     tinyxml2::XMLDocument doc;
@@ -144,9 +144,9 @@ int main(int argc, char* argv[])
     KDL::ChainFkSolverPos_recursive fk(s.chain);
     KDL::ChainDynParam              dyn(s.chain, KDL::Vector(0, 0, -9.81));
 
-    // Test 3: gravity torques vs MuJoCo qfrc_bias at q=0.
-    // (At q=0 the arm is upright and gripper weight contributes minimally,
-    //  keeping the KDL vs MuJoCo discrepancy within tolerance.)
+    /* Test 3: gravity torques vs MuJoCo qfrc_bias at q=0.
+     * (At q=0 the arm is upright and gripper weight contributes minimally,
+     *  keeping the KDL vs MuJoCo discrepancy within tolerance.) */
     {
         KDL::JntArray q_zero(n);
         mj_kdl::sync_from_kdl(&s, q_zero);
@@ -232,9 +232,9 @@ int main(int argc, char* argv[])
         std::cout << "GUI: close window to exit\n";
         mj_kdl::run_simulate_ui(model, data, combined.c_str(),
             [&](mjModel* m, mjData* d) {
-                // Pure gravity compensation:
-                // Zero P-term (track current qpos) + cancel gravity via qfrc_bias.
-                // qfrc_bias includes gripper mass — KDL alone would miss ~1.7 kg.
+                /* Pure gravity compensation:
+                 * Zero P-term (track current qpos) + cancel gravity via qfrc_bias.
+                 * qfrc_bias includes gripper mass — KDL alone would miss ~1.7 kg. */
                 for (unsigned i = 0; i < n; ++i) {
                     int dof = s.kdl_to_mj_dof[i];
                     int jid = m->dof_jntid[dof];

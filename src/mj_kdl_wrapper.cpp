@@ -649,8 +649,8 @@ bool build_scene(mjModel** out_model, mjData** out_data, const SceneSpec* sc)
 
     fs::path tmp = fs::absolute(fs::path(sc->robots[0].urdf_path).parent_path());
 
-    // Single robot: use spec API (avoids mj_saveLastXML which is unstable for
-    // URDF-sourced models on some MuJoCo versions).
+    /* Single robot: use spec API (avoids mj_saveLastXML which is unstable for
+     * URDF-sourced models on some MuJoCo versions). */
     if (sc->robots.size() == 1) {
         const SceneRobot& r = sc->robots[0];
         fs::path proc = tmp / "_mj_kdl_r0_proc.urdf";
@@ -848,8 +848,8 @@ bool attach_gripper(const char* arm_mjcf, const GripperSpec* g, const char* out_
     // Resolve gripper asset paths to absolute (for meshdir)
     fs::path grp_dir = fs::absolute(fs::path(g->mjcf_path).parent_path());
 
-    // Fix gripper mesh file paths to absolute, and add explicit names (stem of filename)
-    // so that xml_prefix_names can rename them consistently.
+    /* Fix gripper mesh file paths to absolute, and add explicit names (stem of filename)
+     * so that xml_prefix_names can rename them consistently. */
     auto fix_meshdir = [&](XMLElement* root, const std::string& meshdir) {
         if (XMLElement* asset = root->FirstChildElement("asset")) {
             for (auto* m = asset->FirstChildElement("mesh"); m; m = m->NextSiblingElement("mesh")) {
@@ -955,9 +955,9 @@ bool attach_gripper(const char* arm_mjcf, const GripperSpec* g, const char* out_
     };
     merge_section("contact");
     merge_section("tendon");
-    // Equality constraints are copied verbatim: MuJoCo computes local body
-    // offsets from the anchor at compile time, so anchor="0 0 0" is correct
-    // regardless of where the gripper is attached.
+    /* Equality constraints are copied verbatim: MuJoCo computes local body
+     * offsets from the anchor at compile time, so anchor="0 0 0" is correct
+     * regardless of where the gripper is attached. */
     merge_section("equality");
     merge_section("actuator");
 
@@ -1287,9 +1287,9 @@ void run_simulate_ui(mjModel* m, mjData* d, const char* path,
     );
     sim->font = 1;  // 100% font scale (0=50%, 1=100%, 2=150%, ...)
 
-    // Physics thread: real-time sync loop (mirrors PhysicsLoop from main.cc).
-    // Load must happen from this thread so that LoadOnRenderThread() on the
-    // render thread can acknowledge via cond_loadrequest.
+    /* Physics thread: real-time sync loop (mirrors PhysicsLoop from main.cc).
+     * Load must happen from this thread so that LoadOnRenderThread() on the
+     * render thread can acknowledge via cond_loadrequest. */
     std::thread phys([&]() {
         sim->LoadMessage(path);
         sim->Load(m, d, path);

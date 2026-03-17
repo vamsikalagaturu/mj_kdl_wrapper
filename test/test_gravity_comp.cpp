@@ -1,15 +1,15 @@
-// test_gravity_comp.cpp
-// Two-part gravity compensation test using KDL dynamics:
-//
-// Part 1 — KDL vs MuJoCo accuracy at home pose:
-//   Compares KDL::ChainDynParam::JntToGravity against MuJoCo qfrc_bias.
-//   Checks |kdl_g - mujoco_bias| < 1e-3 Nm for all joints.
-//
-// Part 2 — KDL gravity comp drift test:
-//   Sets arm to home pose, then runs 500 steps applying KDL-computed gravity
-//   torques via ChainDynParam::JntToGravity each step.  EE drift must stay < 1 mm.
-//
-// Usage: test_gravity_comp [urdf_path] [--gui]
+/* test_gravity_comp.cpp
+ * Two-part gravity compensation test using KDL dynamics:
+ *
+ * Part 1 — KDL vs MuJoCo accuracy at home pose:
+ *   Compares KDL::ChainDynParam::JntToGravity against MuJoCo qfrc_bias.
+ *   Checks |kdl_g - mujoco_bias| < 1e-3 Nm for all joints.
+ *
+ * Part 2 — KDL gravity comp drift test:
+ *   Sets arm to home pose, then runs 500 steps applying KDL-computed gravity
+ *   torques via ChainDynParam::JntToGravity each step.  EE drift must stay < 1 mm.
+ *
+ * Usage: test_gravity_comp [urdf_path] [--gui] */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 

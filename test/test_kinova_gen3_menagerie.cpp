@@ -1,14 +1,14 @@
-// test_kinova_gen3_menagerie.cpp
-// Load Kinova Gen3 from third_party/menagerie/kinova_gen3/gen3.xml (MuJoCo Menagerie MJCF)
-// and validate the KDL chain built directly from the compiled model.
-//
-// Tests:
-//   1. MJCF loads: nv=7, nbody=9.
-//   2. KDL chain (7 joints) built from model via init_from_mjcf.
-//   3. KDL gravity torques agree with MuJoCo qfrc_bias at home pose within 1e-3 Nm.
-//   4. 500-step gravity-comp loop: EE drift < 1 mm.
-//
-// Usage: test_kinova_gen3_menagerie [--gui]
+/* test_kinova_gen3_menagerie.cpp
+ * Load Kinova Gen3 from third_party/menagerie/kinova_gen3/gen3.xml (MuJoCo Menagerie MJCF)
+ * and validate the KDL chain built directly from the compiled model.
+ *
+ * Tests:
+ *   1. MJCF loads: nv=7, nbody=9.
+ *   2. KDL chain (7 joints) built from model via init_from_mjcf.
+ *   3. KDL gravity torques agree with MuJoCo qfrc_bias at home pose within 1e-3 Nm.
+ *   4. 500-step gravity-comp loop: EE drift < 1 mm.
+ *
+ * Usage: test_kinova_gen3_menagerie [--gui] */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 
@@ -41,8 +41,8 @@ int main(int argc, char* argv[])
         std::cerr << "SKIP: third_party/menagerie/ not found (gitignored). Run locally with the submodule.\n";
         return 0;
     }
-    // scene.xml includes gen3.xml and already has floor, lights, and skybox —
-    // no patching or temp file needed.
+    /* scene.xml includes gen3.xml and already has floor, lights, and skybox —
+     * no patching or temp file needed. */
     const std::string mjcf = (root / "third_party/menagerie/kinova_gen3/scene.xml").string();
 
     mjModel* model = nullptr;

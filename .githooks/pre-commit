@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pre-commit hook: enforce clang-format on staged C++ files.
+# Pre-commit hook: enforce clang-format and comment style on staged C++ files.
 # Install: git config core.hooksPath .githooks
 
 set -euo pipefail
@@ -10,18 +10,46 @@ if [ -z "$staged" ]; then
     exit 0
 fi
 
-failed=()
+fmt_failed=()
+style_failed=()
+
 for f in $staged; do
+    # clang-format check
     if ! clang-format --dry-run --Werror "$f" 2>/dev/null; then
-        failed+=("$f")
+        fmt_failed+=("$f")
+    fi
+
+    # Reject /// (doxygen triple-slash); use /* ... */ instead
+    if grep -qn "///" "$f"; then
+        style_failed+=("$f: found /// comment (use /* ... */ for block comments)")
+    fi
+
+    # Reject 2+ consecutive pure // comment lines (block comment disguised as line comments)
+    if ! awk '
+        /^[[:space:]]*\/\// { consec++; if (consec >= 2) { exit 1 } next }
+        { consec = 0 }
+    ' "$f"; then
+        style_failed+=("$f: found multi-line // block (use /* ... */ for block comments)")
     fi
 done
 
-if [ ${#failed[@]} -gt 0 ]; then
+exit_code=0
+
+if [ ${#fmt_failed[@]} -gt 0 ]; then
     echo "clang-format: the following files need formatting:"
-    for f in "${failed[@]}"; do
+    for f in "${fmt_failed[@]}"; do
         echo "  $f"
     done
-    echo "Run: clang-format -i ${failed[*]}"
-    exit 1
+    echo "Run: clang-format -i ${fmt_failed[*]}"
+    exit_code=1
 fi
+
+if [ ${#style_failed[@]} -gt 0 ]; then
+    echo "comment style: violations found (CLAUDE.md: use /* ... */ for block comments):"
+    for msg in "${style_failed[@]}"; do
+        echo "  $msg"
+    done
+    exit_code=1
+fi
+
+exit $exit_code

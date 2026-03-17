@@ -1,13 +1,13 @@
-// test_dual_arm.cpp
-// Two Kinova GEN3 arms in one shared MuJoCo scene, facing each other.
-// Each arm is its own mj_kdl::State (sharing model/data).
-// Gravity compensation uses KDL::ChainDynParam::JntToGravity — not qfrc_bias.
-//
-// Part 1 — KDL vs MuJoCo gravity comparison at home pose (zero velocity,
-//           so qfrc_bias == gravity torques; tolerance 0.1 Nm).
-// Part 2 — 500-step closed-loop gravity comp; EE drift must be < 1 mm.
-//
-// Usage: test_dual_arm [urdf_path] [--gui]
+/* test_dual_arm.cpp
+ * Two Kinova GEN3 arms in one shared MuJoCo scene, facing each other.
+ * Each arm is its own mj_kdl::State (sharing model/data).
+ * Gravity compensation uses KDL::ChainDynParam::JntToGravity — not qfrc_bias.
+ *
+ * Part 1 — KDL vs MuJoCo gravity comparison at home pose (zero velocity,
+ *           so qfrc_bias == gravity torques; tolerance 0.1 Nm).
+ * Part 2 — 500-step closed-loop gravity comp; EE drift must be < 1 mm.
+ *
+ * Usage: test_dual_arm [urdf_path] [--gui] */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 
@@ -45,10 +45,10 @@ int main(int argc, char* argv[])
         else if (a[0] != '-') urdf = a;
     }
 
-    // Build a single MuJoCo scene with two arms facing each other.
-    //   arm1: at x = -0.5 m, facing +X (default orientation)
-    //   arm2: at x = +0.5 m, facing -X (rotated 180° around Z)
-    // arm2 joints are prefixed "r2_" in MuJoCo to avoid name collisions.
+    /* Build a single MuJoCo scene with two arms facing each other.
+     *   arm1: at x = -0.5 m, facing +X (default orientation)
+     *   arm2: at x = +0.5 m, facing -X (rotated 180° around Z)
+     * arm2 joints are prefixed "r2_" in MuJoCo to avoid name collisions. */
     mj_kdl::SceneSpec scene;
     scene.timestep  = 0.002;
     scene.gravity_z = -9.81;
@@ -132,9 +132,9 @@ int main(int argc, char* argv[])
         std::cout << "  (difference due to balanceinertia; see Part 2 for actual test)\n\n";
     }
 
-    // Part 2: 500-step closed-loop gravity compensation; check EE drift.
-    // Both arms share the same model/data — step() is called once per
-    // timestep (on arm1), which advances the whole world.
+    /* Part 2: 500-step closed-loop gravity compensation; check EE drift.
+     * Both arms share the same model/data — step() is called once per
+     * timestep (on arm1), which advances the whole world. */
     for (int i = 0; i < 500; ++i) {
         apply_grav_comp(&arm1, dyn1);
         apply_grav_comp(&arm2, dyn2);

@@ -1,23 +1,23 @@
-// test_kinova_gen3_pick.cpp
-// Kinova Gen3 + Robotiq 2F-85: pick a cube from the floor.
-//
-// Cube (4 cm, orange) spawned at (0.4, 0, 0.02) in front of arm.
-// Target orientation: KDL::Rotation::Identity() on bracelet_link, which
-// makes the gripper approach axis point straight down (gripper is attached
-// 180° around X below bracelet_link).
-//
-// Bracelet_link Z target = cube_center_Z + 0.184
-//   (0.062 gs_offset + 0.122 finger reach along gripper Z axis)
-//
-// Tests:
-//   1. Model loads; cube body found.
-//   2. KDL chain: 7 arm joints.
-//   3. IK converges for pre-grasp, grasp, lift (pos error < 2 mm).
-//   4. Headless pick simulation (9.5 s): cube lifted > 0.20 m.
-//
-// GUI (--gui): scripted pick demo with impedance control.
-//
-// Usage: test_kinova_gen3_pick [--gui]
+/* test_kinova_gen3_pick.cpp
+ * Kinova Gen3 + Robotiq 2F-85: pick a cube from the floor.
+ *
+ * Cube (4 cm, orange) spawned at (0.4, 0, 0.02) in front of arm.
+ * Target orientation: KDL::Rotation::Identity() on bracelet_link, which
+ * makes the gripper approach axis point straight down (gripper is attached
+ * 180° around X below bracelet_link).
+ *
+ * Bracelet_link Z target = cube_center_Z + 0.184
+ *   (0.062 gs_offset + 0.122 finger reach along gripper Z axis)
+ *
+ * Tests:
+ *   1. Model loads; cube body found.
+ *   2. KDL chain: 7 arm joints.
+ *   3. IK converges for pre-grasp, grasp, lift (pos error < 2 mm).
+ *   4. Headless pick simulation (9.5 s): cube lifted > 0.20 m.
+ *
+ * GUI (--gui): scripted pick demo with impedance control.
+ *
+ * Usage: test_kinova_gen3_pick [--gui] */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 
@@ -38,14 +38,14 @@ namespace fs = std::filesystem;
 
 static constexpr double kHomePose[7] = {0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708};
 
-// Gravity-compensation-only gains (used for the hold/GUI modes).
-// For trajectory tracking, we use the position actuators directly (ctrl=q_target)
-// which have clamped forcerange and are inherently stable.
+/* Gravity-compensation-only gains (used for the hold/GUI modes).
+ * For trajectory tracking, we use the position actuators directly (ctrl=q_target)
+ * which have clamped forcerange and are inherently stable. */
 static constexpr double kKd[7] = { 10, 20, 10, 20, 10, 20, 10 };
 
-// Bracelet_link → finger pad offset along gripper Z (measured from 2F-85 geometry):
-//   gs_offset(0.0615) + base_mount(0.007) + base(0.0038) +
-//   spring_link_z(0.0609) + follower_z(0.0375) + pad_z(0.01352) = 0.18422 m
+/* Bracelet_link → finger pad offset along gripper Z (measured from 2F-85 geometry):
+ *   gs_offset(0.0615) + base_mount(0.007) + base(0.0038) +
+ *   spring_link_z(0.0609) + follower_z(0.0375) + pad_z(0.01352) = 0.18422 m */
 static constexpr double kGripperReach = 0.18422;
 
 // Cube spawn
@@ -196,9 +196,9 @@ int main(int argc, char* argv[])
         mj_kdl::cleanup(&s); mj_kdl::destroy_scene(model, data); return 1;
     }
 
-    // Waypoint bracelet_link Z targets (using exact gripper reach geometry).
-    // +0.02 m offset: keeps finger geometry clear of the floor when the gripper
-    // is open during approach (open fingers extend further down than closed).
+    /* Waypoint bracelet_link Z targets (using exact gripper reach geometry).
+     * +0.02 m offset: keeps finger geometry clear of the floor when the gripper
+     * is open during approach (open fingers extend further down than closed). */
     const double kGraspZ    = kCubeZ + kGripperReach + 0.02;
     const double kPreGraspZ = kGraspZ + 0.20;
     const double kLiftZ     = kGraspZ + 0.30;
@@ -277,9 +277,9 @@ int main(int argc, char* argv[])
 
         for (unsigned i = 0; i < n; ++i) {
             int dof = s.kdl_to_mj_dof[i];
-            // Position actuators track q_target (stable: force clamped to forcerange).
-            // qfrc_applied adds gravity compensation so the actuator P-term
-            // only needs to handle tracking error, not fight gravity.
+            /* Position actuators track q_target (stable: force clamped to forcerange).
+             * qfrc_applied adds gravity compensation so the actuator P-term
+             * only needs to handle tracking error, not fight gravity. */
             d->ctrl[i]           = q_target(i);
             d->qfrc_applied[dof] = d->qfrc_bias[dof];
         }

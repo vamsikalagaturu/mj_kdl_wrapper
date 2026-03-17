@@ -1,7 +1,7 @@
-// test_velocity.cpp
-// Tests velocity-level kinematics: FK, IK, and Jacobian on the Kinova GEN3.
-// Usage: test_velocity [urdf_path] [--gui]
-// With --gui: displays the robot at the home pose / IK solution.
+/* test_velocity.cpp
+ * Tests velocity-level kinematics: FK, IK, and Jacobian on the Kinova GEN3.
+ * Usage: test_velocity [urdf_path] [--gui]
+ * With --gui: displays the robot at the home pose / IK solution. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 
