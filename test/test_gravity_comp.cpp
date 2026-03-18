@@ -1,11 +1,11 @@
 /* test_gravity_comp.cpp
  * Two-part gravity compensation test using KDL dynamics:
  *
- * Part 1 — KDL vs MuJoCo accuracy at home pose:
+ * GravityAccuracy — KDL vs MuJoCo accuracy at home pose:
  *   Compares KDL::ChainDynParam::JntToGravity against MuJoCo qfrc_bias.
  *   Checks |kdl_g - mujoco_bias| < 1e-3 Nm for all joints.
  *
- * Part 2 — KDL gravity comp drift test:
+ * GravityCompDrift — KDL gravity comp drift test:
  *   Sets arm to home pose, then runs 500 steps applying KDL-computed gravity
  *   torques via ChainDynParam::JntToGravity each step.  EE drift must stay < 1 mm.
  *
@@ -14,12 +14,15 @@
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "test_utils.hpp"
 
+#include <gtest/gtest.h>
+
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chaindynparam.hpp>
 
 #include <iostream>
 #include <iomanip>
 #include <cmath>
+#include <memory>
 #include <string>
 #include <filesystem>
 
@@ -28,106 +31,151 @@ static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.95
 namespace fs = std::filesystem;
 static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
 
-int main(int argc, char *argv[])
-{
-    std::string urdf = (repo_root() / "assets/gen3_urdf/GEN3_URDF_V12.urdf").string();
-    bool        gui  = false;
-    for (int i = 1; i < argc; ++i) {
-        std::string a(argv[i]);
-        if (a == "--gui")
-            gui = true;
-        else if (a[0] != '-')
-            urdf = a;
-    }
+/* urdf_ is set once from main() before RUN_ALL_TESTS(). */
+static std::string g_urdf;
 
+static void run_gui(const std::string &urdf)
+{
     mj_kdl::Config cfg;
     cfg.urdf_path = urdf.c_str();
     cfg.base_link = "base_link";
     cfg.tip_link  = "EndEffector_Link";
-    cfg.headless  = true;
+    cfg.headless  = false;
 
     mj_kdl::State s;
     if (!mj_kdl::init(&s, &cfg)) {
-        TEST_FAIL("init() returned false");
-        return 1;
+        std::cerr << "GUI: init() failed\n";
+        return;
     }
 
-    unsigned                        n = s.chain.getNrOfJoints();
+    unsigned n = static_cast<unsigned>(s.n_joints);
     KDL::ChainFkSolverPos_recursive fk(s.chain);
     KDL::ChainDynParam              dyn(s.chain, KDL::Vector(0.0, 0.0, -9.81));
 
     KDL::JntArray q_home(n);
     for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
 
-    BEGIN_TEST("KDL gravity vs MuJoCo bias at home pose")
-        mj_kdl::sync_from_kdl(&s, q_home);
-        mj_forward(s.model, s.data);
+    mj_kdl::sync_from_kdl(&s, q_home);
+    mj_forward(s.model, s.data);
+    for (unsigned i = 0; i < n; ++i)
+        s.data->ctrl[i] = s.data->qpos[s.kdl_to_mj_qpos[i]];
 
-        KDL::JntArray g(n);
-        if (dyn.JntToGravity(q_home, g) < 0) {
-            TEST_FAIL("JntToGravity returned error");
-            mj_kdl::cleanup(&s);
-            return 1;
-        }
-
-        double max_err = 0.0;
+    std::cout << "GUI mode — close window to exit\n";
+    mj_kdl::run_simulate_ui(s.model, s.data, urdf.c_str(), [&](mjModel *, mjData *d) {
         for (unsigned i = 0; i < n; ++i)
-            max_err = std::max(max_err, std::abs(g(i) - s.data->qfrc_bias[s.kdl_to_mj_dof[i]]));
+            d->ctrl[i] = d->qpos[s.kdl_to_mj_qpos[i]];
+        KDL::JntArray q, g(n);
+        mj_kdl::sync_to_kdl(&s, q);
+        dyn.JntToGravity(q, g);
+        mj_kdl::set_torques(&s, g);
+    });
 
-        TEST_INFO("max|KDL - qfrc_bias| = " << std::fixed << std::setprecision(6)
-                  << max_err << " Nm");
-        if (max_err > 1e-3) {
-            TEST_FAIL("gravity error " << max_err << " Nm exceeds 0.001 Nm threshold");
-            mj_kdl::cleanup(&s);
-            return 1;
-        }
-    END_TEST
+    mj_kdl::cleanup(&s);
+}
 
-    /* Reset to home pose for drift test. */
+class GravityCompTest : public ::testing::Test {
+protected:
+    mj_kdl::State s;
+    std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk;
+    std::unique_ptr<KDL::ChainDynParam>              dyn;
+    KDL::JntArray                                    q_home;
+    unsigned                                         n = 0;
+
+    void SetUp() override
+    {
+        mj_kdl::Config cfg;
+        cfg.urdf_path = g_urdf.c_str();
+        cfg.base_link = "base_link";
+        cfg.tip_link  = "EndEffector_Link";
+        cfg.headless  = true;
+
+        ASSERT_TRUE(mj_kdl::init(&s, &cfg)) << "init() returned false";
+
+        n = static_cast<unsigned>(s.n_joints);
+        fk  = std::make_unique<KDL::ChainFkSolverPos_recursive>(s.chain);
+        dyn = std::make_unique<KDL::ChainDynParam>(s.chain, KDL::Vector(0.0, 0.0, -9.81));
+
+        q_home.resize(n);
+        for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
+    }
+
+    void TearDown() override
+    {
+        mj_kdl::cleanup(&s);
+    }
+};
+
+TEST_F(GravityCompTest, GravityAccuracy)
+{
+    mj_kdl::sync_from_kdl(&s, q_home);
+    mj_forward(s.model, s.data);
+
+    KDL::JntArray g(n);
+    ASSERT_GE(dyn->JntToGravity(q_home, g), 0) << "JntToGravity returned error";
+
+    double max_err = 0.0;
+    for (unsigned i = 0; i < n; ++i)
+        max_err = std::max(max_err, std::abs(g(i) - s.data->qfrc_bias[s.kdl_to_mj_dof[i]]));
+
+    TEST_INFO("max|KDL - qfrc_bias| = " << std::fixed << std::setprecision(6)
+              << max_err << " Nm");
+
+    ASSERT_LE(max_err, 1e-3) << "gravity error " << max_err << " Nm exceeds 0.001 Nm threshold";
+}
+
+TEST_F(GravityCompTest, GravityCompDrift)
+{
+    /* Sync to home pose and record initial FK frame. */
     mj_kdl::sync_from_kdl(&s, q_home);
     mj_forward(s.model, s.data);
 
     KDL::Frame fk_initial;
-    fk.JntToCart(q_home, fk_initial);
+    fk->JntToCart(q_home, fk_initial);
 
-    BEGIN_TEST("gravity compensation drift")
-        for (int i = 0; i < 500; ++i) {
-            KDL::JntArray q, g(n);
-            mj_kdl::sync_to_kdl(&s, q);
-            dyn.JntToGravity(q, g);
-            mj_kdl::set_torques(&s, g);
-            mj_kdl::step(&s);
-        }
-
-        KDL::JntArray q_end;
-        mj_kdl::sync_to_kdl(&s, q_end);
-        KDL::Frame fk_end;
-        fk.JntToCart(q_end, fk_end);
-        double drift = (fk_initial.p - fk_end.p).Norm();
-
-        TEST_INFO("EE drift after 500 steps: " << std::setprecision(3)
-                  << drift * 1000.0 << " mm");
-        if (drift > 0.001) {
-            TEST_FAIL("EE drift " << drift * 1000.0 << " mm exceeds 1 mm threshold");
-            mj_kdl::cleanup(&s);
-            return 1;
-        }
-    END_TEST
-
-    if (gui) {
-        mj_kdl::sync_from_kdl(&s, q_home);
-        mj_forward(s.model, s.data);
-        for (unsigned i = 0; i < n; ++i) s.data->ctrl[i] = s.data->qpos[s.kdl_to_mj_qpos[i]];
-        std::cout << "GUI mode — close window to exit\n";
-        mj_kdl::run_simulate_ui(s.model, s.data, urdf.c_str(), [&](mjModel *, mjData *d) {
-            for (unsigned i = 0; i < n; ++i) d->ctrl[i] = d->qpos[s.kdl_to_mj_qpos[i]];
-            KDL::JntArray q, g(n);
-            mj_kdl::sync_to_kdl(&s, q);
-            dyn.JntToGravity(q, g);
-            mj_kdl::set_torques(&s, g);
-        });
+    for (int i = 0; i < 500; ++i) {
+        KDL::JntArray q, g(n);
+        mj_kdl::sync_to_kdl(&s, q);
+        dyn->JntToGravity(q, g);
+        mj_kdl::set_torques(&s, g);
+        mj_kdl::step(&s);
     }
 
-    mj_kdl::cleanup(&s);
-    return 0;
+    KDL::JntArray q_end;
+    mj_kdl::sync_to_kdl(&s, q_end);
+    KDL::Frame fk_end;
+    fk->JntToCart(q_end, fk_end);
+    double drift = (fk_initial.p - fk_end.p).Norm();
+
+    TEST_INFO("EE drift after 500 steps: " << std::setprecision(3)
+              << drift * 1000.0 << " mm");
+
+    ASSERT_LE(drift, 0.001) << "EE drift " << drift * 1000.0 << " mm exceeds 1 mm threshold";
+}
+
+int main(int argc, char *argv[])
+{
+    g_urdf = (repo_root() / "assets/gen3_urdf/GEN3_URDF_V12.urdf").string();
+
+    bool gui = false;
+    std::vector<char *> gtest_argv;
+    gtest_argv.push_back(argv[0]);
+
+    for (int i = 1; i < argc; ++i) {
+        std::string a(argv[i]);
+        if (a == "--gui")
+            gui = true;
+        else if (a[0] != '-')
+            g_urdf = a;
+        else
+            gtest_argv.push_back(argv[i]);
+    }
+
+    if (gui) {
+        run_gui(g_urdf);
+        return 0;
+    }
+
+    int gtest_argc = static_cast<int>(gtest_argv.size());
+    ::testing::InitGoogleTest(&gtest_argc, gtest_argv.data());
+    return RUN_ALL_TESTS();
 }

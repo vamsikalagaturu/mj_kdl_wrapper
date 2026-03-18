@@ -6,9 +6,8 @@
  * Applied via qfrc_applied; position actuators are zeroed (ctrl = current_qpos).
  *
  * Tests:
- *   1. Model loads with nq >= 13, nu >= 8.
- *   2. KDL chain: 7 arm joints.
- *   3. 200-step impedance hold at home pose — EE drift < 1 mm.
+ *   1. KDL chain: 7 arm joints.
+ *   2. 200-step impedance hold at home pose — EE drift < 1 mm.
  *
  * GUI (--gui):
  *   Arm holds home pose via impedance; gripper cycles open/close every 3 s.
@@ -18,6 +17,8 @@
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "test_utils.hpp"
 
+#include <gtest/gtest.h>
+
 #include <tinyxml2.h>
 
 #include <kdl/chainfksolverpos_recursive.hpp>
@@ -26,6 +27,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <string>
 
 namespace fs = std::filesystem;
@@ -76,91 +78,77 @@ static bool patch_contact_exclusions(const std::string &path)
     return doc.SaveFile(path.c_str()) == tinyxml2::XML_SUCCESS;
 }
 
-int main(int argc, char *argv[])
-{
-    bool gui = false;
-    for (int i = 1; i < argc; ++i)
-        if (std::string(argv[i]) == "--gui") gui = true;
+class ImpedanceTest : public ::testing::Test {
+protected:
+    fs::path    root_;
+    std::string combined_;
+    mjModel    *model_       = nullptr;
+    mjData     *data_        = nullptr;
+    mj_kdl::State s_;
+    int          fingers_act_ = -1;
+    unsigned     n_           = 0;
+    std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_;
 
-    const fs::path root = repo_root();
-    if (!fs::exists(root / "third_party/menagerie")) {
-        TEST_SKIP("third_party/menagerie/ not found — run locally with the submodule");
-        return 0;
-    }
-    const std::string arm_mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-    const std::string grp_mjcf = (root / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
-    const std::string combined = "/tmp/gen3_with_2f85_impedance.xml";
+    void SetUp() override
+    {
+        root_ = repo_root();
+        if (!fs::exists(root_ / "third_party/menagerie")) {
+            GTEST_SKIP() << "third_party/menagerie/ not found — run locally with the submodule";
+            return;
+        }
 
-    // Build combined model.
-    mj_kdl::GripperSpec gs;
-    gs.mjcf_path = grp_mjcf.c_str();
-    gs.attach_to = "bracelet_link";
-    gs.prefix    = "g_";
-    gs.pos[0]    = 0.0;
-    gs.pos[1]    = 0.0;
-    gs.pos[2]    = -0.061525;
-    gs.quat[0]   = 0.0;
-    gs.quat[1]   = 1.0;
-    gs.quat[2]   = 0.0;
-    gs.quat[3]   = 0.0;
+        const std::string arm_mjcf = (root_ / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+        const std::string grp_mjcf = (root_ / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+        combined_ = "/tmp/gen3_with_2f85_impedance.xml";
 
-    if (!mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined.c_str())) {
-        TEST_FAIL("attach_gripper() returned false");
-        return 1;
-    }
-    if (!mj_kdl::patch_mjcf_visuals(combined.c_str())) {
-        TEST_FAIL("patch_mjcf_visuals() returned false");
-        return 1;
-    }
-    if (!patch_contact_exclusions(combined)) {
-        TEST_FAIL("patch_contact_exclusions() returned false");
-        return 1;
-    }
+        mj_kdl::GripperSpec gs;
+        gs.mjcf_path = grp_mjcf.c_str();
+        gs.attach_to = "bracelet_link";
+        gs.prefix    = "g_";
+        gs.pos[0]    = 0.0;
+        gs.pos[1]    = 0.0;
+        gs.pos[2]    = -0.061525;
+        gs.quat[0]   = 0.0;
+        gs.quat[1]   = 1.0;
+        gs.quat[2]   = 0.0;
+        gs.quat[3]   = 0.0;
 
-    // Test 1: model loads.
-    mjModel *model = nullptr;
-    mjData  *data  = nullptr;
-    if (!mj_kdl::load_mjcf(&model, &data, combined.c_str())) {
-        TEST_FAIL("load_mjcf() returned false for combined MJCF");
-        return 1;
-    }
-    if (model->nq < 13 || model->nu < 8) {
-        TEST_FAIL("expected nq>=13 nu>=8, got nq=" << model->nq << " nu=" << model->nu);
-        mj_kdl::destroy_scene(model, data);
-        return 1;
-    }
-    TEST_PASS("Test 1: model loaded (nq=" << model->nq << " nu=" << model->nu << ")");
+        ASSERT_TRUE(mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined_.c_str()))
+            << "attach_gripper() returned false";
+        ASSERT_TRUE(mj_kdl::patch_mjcf_visuals(combined_.c_str()))
+            << "patch_mjcf_visuals() returned false";
+        ASSERT_TRUE(patch_contact_exclusions(combined_))
+            << "patch_contact_exclusions() returned false";
 
-    // Test 2: KDL arm chain.
-    mj_kdl::State s;
-    if (!mj_kdl::init_from_mjcf(&s, model, data, "base_link", "bracelet_link")) {
-        TEST_FAIL("init_from_mjcf() returned false");
-        mj_kdl::destroy_scene(model, data);
-        return 1;
-    }
-    unsigned n = s.chain.getNrOfJoints();
-    if (n != 7u) {
-        TEST_FAIL("expected 7 KDL joints, got " << n);
-        mj_kdl::cleanup(&s);
-        mj_kdl::destroy_scene(model, data);
-        return 1;
-    }
-    TEST_PASS("Test 2: KDL arm chain — " << n << " joints");
+        ASSERT_TRUE(mj_kdl::load_mjcf(&model_, &data_, combined_.c_str()))
+            << "load_mjcf() returned false for combined MJCF";
+        ASSERT_GE(model_->nq, 13) << "expected nq>=13, got " << model_->nq;
+        ASSERT_GE(model_->nu, 8)  << "expected nu>=8, got " << model_->nu;
 
-    KDL::ChainFkSolverPos_recursive fk(s.chain);
+        ASSERT_TRUE(mj_kdl::init_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link"))
+            << "init_from_mjcf() returned false";
+        n_ = s_.chain.getNrOfJoints();
+        ASSERT_EQ(n_, 7u);
 
-    int fingers_act = mj_name2id(model, mjOBJ_ACTUATOR, "g_fingers_actuator");
-    if (fingers_act < 0) {
-        TEST_FAIL("g_fingers_actuator not found in compiled model");
-        mj_kdl::cleanup(&s);
-        mj_kdl::destroy_scene(model, data);
-        return 1;
+        fk_ = std::make_unique<KDL::ChainFkSolverPos_recursive>(s_.chain);
+
+        fingers_act_ = mj_name2id(model_, mjOBJ_ACTUATOR, "g_fingers_actuator");
+        ASSERT_GE(fingers_act_, 0) << "g_fingers_actuator not found";
     }
 
-    // Helper: apply one impedance step and advance simulation.
-    auto step_impedance = [&](mjModel *m, mjData *d, const double q_target[7]) {
-        for (unsigned i = 0; i < n; ++i) {
-            int    dof           = s.kdl_to_mj_dof[i];
+    void TearDown() override
+    {
+        if (model_) {
+            mj_kdl::cleanup(&s_);
+            mj_kdl::destroy_scene(model_, data_);
+        }
+    }
+
+    /* Apply one impedance step targeting q_target and advance the simulation. */
+    void step_impedance(mjModel *m, mjData *d, const double q_target[7])
+    {
+        for (unsigned i = 0; i < n_; ++i) {
+            int    dof           = s_.kdl_to_mj_dof[i];
             int    jid           = m->dof_jntid[dof];
             double q             = d->qpos[m->jnt_qposadr[jid]];
             double qdot          = d->qvel[dof];
@@ -168,66 +156,127 @@ int main(int argc, char *argv[])
             d->qfrc_applied[dof] = kKp[i] * (q_target[i] - q) - kKd[i] * qdot + d->qfrc_bias[dof];
         }
         mj_step(m, d);
-    };
+    }
+};
 
-    // Test 3: impedance hold at home — EE drift < 1 mm over 200 steps.
-    {
+TEST_F(ImpedanceTest, KDLChain)
+{
+    TEST_INFO("KDL chain: " << n_ << " joints");
+    EXPECT_EQ(n_, 7u);
+}
+
+TEST_F(ImpedanceTest, ImpedanceDrift)
+{
+    KDL::JntArray q_home_kdl(n_);
+    for (unsigned i = 0; i < n_; ++i) q_home_kdl(i) = kHomePose[i];
+    mj_kdl::sync_from_kdl(&s_, q_home_kdl);
+    mj_forward(model_, data_);
+
+    KDL::Frame ee_init;
+    fk_->JntToCart(q_home_kdl, ee_init);
+
+    for (int step = 0; step < 200; ++step)
+        step_impedance(model_, data_, kHomePose);
+
+    KDL::JntArray q_now(n_);
+    mj_kdl::sync_to_kdl(&s_, q_now);
+    KDL::Frame ee_now;
+    fk_->JntToCart(q_now, ee_now);
+    double drift = (ee_now.p - ee_init.p).Norm() * 1000.0;
+
+    TEST_INFO("impedance hold drift (200 steps): "
+              << std::fixed << std::setprecision(3) << drift << " mm");
+
+    EXPECT_LE(drift, 1.0) << "EE drift " << drift << " mm exceeds 1 mm threshold";
+}
+
+static void run_gui(mjModel *model, mjData *data, mj_kdl::State &s, unsigned n,
+                    int fingers_act, const std::string &combined)
+{
+    int key_id = mj_name2id(model, mjOBJ_KEY, "home");
+    if (key_id >= 0) {
+        mj_resetDataKeyframe(model, data, key_id);
+    } else {
         KDL::JntArray q_home_kdl(n);
         for (unsigned i = 0; i < n; ++i) q_home_kdl(i) = kHomePose[i];
         mj_kdl::sync_from_kdl(&s, q_home_kdl);
-        mj_forward(model, data);
+    }
+    mj_forward(model, data);
 
-        KDL::Frame ee_init;
-        fk.JntToCart(q_home_kdl, ee_init);
+    std::cout << "GUI: close window to exit\n";
+    mj_kdl::run_simulate_ui(model, data, combined.c_str(), [&](mjModel *m, mjData *d) {
+        for (unsigned i = 0; i < n; ++i) {
+            int    dof  = s.kdl_to_mj_dof[i];
+            int    jid  = m->dof_jntid[dof];
+            double q    = d->qpos[m->jnt_qposadr[jid]];
+            double qdot = d->qvel[dof];
+            d->ctrl[i]  = q;
+            d->qfrc_applied[dof] =
+              kKp[i] * (kHomePose[i] - q) - kKd[i] * qdot + d->qfrc_bias[dof];
+        }
+        d->ctrl[fingers_act] = (std::fmod(d->time, 6.0) < 3.0) ? 255.0 : 0.0;
+    });
+}
 
-        for (int step = 0; step < 200; ++step) step_impedance(model, data, kHomePose);
+int main(int argc, char *argv[])
+{
+    bool gui = false;
 
-        KDL::JntArray q_now(n);
-        mj_kdl::sync_to_kdl(&s, q_now);
-        KDL::Frame ee_now;
-        fk.JntToCart(q_now, ee_now);
-        double drift = (ee_now.p - ee_init.p).Norm() * 1000.0;
+    /* Parse non-GTest arguments before handing off to GTest. */
+    std::vector<char *> remaining;
+    remaining.push_back(argv[0]);
+    for (int i = 1; i < argc; ++i) {
+        std::string a(argv[i]);
+        if (a == "--gui")
+            gui = true;
+        else
+            remaining.push_back(argv[i]);
+    }
+    int remaining_argc = static_cast<int>(remaining.size());
 
-        TEST_INFO("impedance hold drift (200 steps): "
-                  << std::fixed << std::setprecision(3) << drift << " mm");
-        if (drift > 1.0) {
-            TEST_FAIL("EE drift " << drift << " mm exceeds 1 mm threshold");
-            mj_kdl::cleanup(&s);
+    ::testing::InitGoogleTest(&remaining_argc, remaining.data());
+
+    if (gui) {
+        const fs::path root = repo_root();
+        if (!fs::exists(root / "third_party/menagerie")) {
+            std::cerr << "GUI: third_party/menagerie/ not found\n";
+            return 0;
+        }
+        const std::string arm_mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+        const std::string grp_mjcf = (root / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+        const std::string combined = "/tmp/gen3_with_2f85_impedance.xml";
+
+        mj_kdl::GripperSpec gs;
+        gs.mjcf_path = grp_mjcf.c_str();
+        gs.attach_to = "bracelet_link";
+        gs.prefix    = "g_";
+        gs.pos[0] = 0.0; gs.pos[1] = 0.0; gs.pos[2] = -0.061525;
+        gs.quat[0] = 0.0; gs.quat[1] = 1.0; gs.quat[2] = 0.0; gs.quat[3] = 0.0;
+
+        if (!mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined.c_str()) ||
+            !mj_kdl::patch_mjcf_visuals(combined.c_str()) ||
+            !patch_contact_exclusions(combined)) {
+            std::cerr << "GUI: model preparation failed\n";
+            return 1;
+        }
+        mjModel *model = nullptr;
+        mjData  *data  = nullptr;
+        if (!mj_kdl::load_mjcf(&model, &data, combined.c_str())) {
+            std::cerr << "GUI: load_mjcf() failed\n";
+            return 1;
+        }
+        mj_kdl::State s;
+        if (!mj_kdl::init_from_mjcf(&s, model, data, "base_link", "bracelet_link")) {
+            std::cerr << "GUI: init_from_mjcf() failed\n";
             mj_kdl::destroy_scene(model, data);
             return 1;
         }
-        TEST_PASS("Test 3: impedance hold drift < 1 mm");
+        unsigned n = s.chain.getNrOfJoints();
+        int fingers_act = mj_name2id(model, mjOBJ_ACTUATOR, "g_fingers_actuator");
+        run_gui(model, data, s, n, fingers_act, combined);
+        mj_kdl::cleanup(&s);
+        mj_kdl::destroy_scene(model, data);
     }
 
-    // GUI
-    if (gui) {
-        // Reset to home pose.
-        int key_id = mj_name2id(model, mjOBJ_KEY, "home");
-        if (key_id >= 0) {
-            mj_resetDataKeyframe(model, data, key_id);
-        } else {
-            KDL::JntArray q_home_kdl(n);
-            for (unsigned i = 0; i < n; ++i) q_home_kdl(i) = kHomePose[i];
-            mj_kdl::sync_from_kdl(&s, q_home_kdl);
-        }
-        mj_forward(model, data);
-
-        std::cout << "GUI: close window to exit\n";
-        mj_kdl::run_simulate_ui(model, data, combined.c_str(), [&](mjModel *m, mjData *d) {
-            for (unsigned i = 0; i < n; ++i) {
-                int    dof  = s.kdl_to_mj_dof[i];
-                int    jid  = m->dof_jntid[dof];
-                double q    = d->qpos[m->jnt_qposadr[jid]];
-                double qdot = d->qvel[dof];
-                d->ctrl[i]  = q;
-                d->qfrc_applied[dof] =
-                  kKp[i] * (kHomePose[i] - q) - kKd[i] * qdot + d->qfrc_bias[dof];
-            }
-            d->ctrl[fingers_act] = (std::fmod(d->time, 6.0) < 3.0) ? 255.0 : 0.0;
-        });
-    }
-
-    mj_kdl::cleanup(&s);
-    mj_kdl::destroy_scene(model, data);
-    return 0;
+    return RUN_ALL_TESTS();
 }

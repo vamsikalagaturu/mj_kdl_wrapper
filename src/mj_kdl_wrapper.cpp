@@ -748,49 +748,121 @@ bool save_model_xml(const mjModel *model, const char *path)
 
 bool patch_mjcf_visuals(const char *mjcf_path)
 {
-    ensure_plugins_loaded();
-    char    err[2048] = {};
-    mjSpec *spec      = mj_parseXML(mjcf_path, nullptr, err, sizeof(err));
-    if (!spec) {
-        LOG_ERROR("patch_mjcf_visuals: mj_parseXML failed for '" << mjcf_path << "': " << err);
+    using namespace tinyxml2;
+    XMLDocument doc;
+    if (doc.LoadFile(mjcf_path) != XML_SUCCESS) {
+        LOG_ERROR("patch_mjcf_visuals: failed to load '" << mjcf_path << "'");
         return false;
     }
-    add_floor_to_spec(spec);
-    mjModel *m = mj_compile(spec, nullptr);
-    if (!m) {
-        std::string ce = mjs_getError(spec) ? mjs_getError(spec) : "unknown";
-        mj_deleteSpec(spec);
-        LOG_ERROR("patch_mjcf_visuals: mj_compile failed for '" << mjcf_path << "': " << ce);
-        return false;
-    }
-    mj_deleteSpec(spec);
-    int ok = mj_saveLastXML(mjcf_path, m, err, sizeof(err));
-    mj_deleteModel(m);
-    if (!ok) LOG_ERROR("patch_mjcf_visuals: mj_saveLastXML failed for '" << mjcf_path << "': " << err);
-    return ok != 0;
+    XMLElement *root = doc.FirstChildElement("mujoco");
+    if (!root) return false;
+
+    XMLElement *asset = xml_get_or_create(root, "asset", doc);
+    XMLElement *wb    = xml_get_or_create(root, "worldbody", doc);
+
+    /* Skybox gradient texture */
+    XMLElement *sky = doc.NewElement("texture");
+    sky->SetAttribute("name",    "skybox");
+    sky->SetAttribute("type",    "skybox");
+    sky->SetAttribute("builtin", "gradient");
+    sky->SetAttribute("rgb1",    "0.3 0.45 0.65");
+    sky->SetAttribute("rgb2",    "0.65 0.8 0.95");
+    sky->SetAttribute("width",   "200");
+    sky->SetAttribute("height",  "200");
+    asset->InsertEndChild(sky);
+
+    /* Checker groundplane texture */
+    XMLElement *tex = doc.NewElement("texture");
+    tex->SetAttribute("name",    "groundplane");
+    tex->SetAttribute("type",    "2d");
+    tex->SetAttribute("builtin", "checker");
+    tex->SetAttribute("rgb1",    "0.2 0.3 0.4");
+    tex->SetAttribute("rgb2",    "0.1 0.2 0.3");
+    tex->SetAttribute("width",   "300");
+    tex->SetAttribute("height",  "300");
+    asset->InsertEndChild(tex);
+
+    /* Groundplane material */
+    XMLElement *mat = doc.NewElement("material");
+    mat->SetAttribute("name",        "groundplane");
+    mat->SetAttribute("texture",     "groundplane");
+    mat->SetAttribute("texrepeat",   "5 5");
+    mat->SetAttribute("reflectance", "0.2");
+    asset->InsertEndChild(mat);
+
+    /* Floor plane geom */
+    XMLElement *floor = doc.NewElement("geom");
+    floor->SetAttribute("name",        "floor");
+    floor->SetAttribute("type",        "plane");
+    floor->SetAttribute("size",        "10 10 0.05");
+    floor->SetAttribute("material",    "groundplane");
+    floor->SetAttribute("contype",     "1");
+    floor->SetAttribute("conaffinity", "1");
+    floor->SetAttribute("condim",      "3");
+    wb->InsertFirstChild(floor);
+
+    /* Directional light */
+    XMLElement *light = doc.NewElement("light");
+    light->SetAttribute("directional", "true");
+    light->SetAttribute("pos",         "0 0 4");
+    wb->InsertFirstChild(light);
+
+    return doc.SaveFile(mjcf_path) == XML_SUCCESS;
 }
 
 bool patch_mjcf_add_objects(const char *mjcf_path, const std::vector<SceneObject> &objects)
 {
-    ensure_plugins_loaded();
-    char    err[2048] = {};
-    mjSpec *spec      = mj_parseXML(mjcf_path, nullptr, err, sizeof(err));
-    if (!spec) {
-        LOG_ERROR("patch_mjcf_add_objects: mj_parseXML failed for '" << mjcf_path << "': " << err);
+    using namespace tinyxml2;
+    XMLDocument doc;
+    if (doc.LoadFile(mjcf_path) != XML_SUCCESS) {
+        LOG_ERROR("patch_mjcf_add_objects: failed to load '" << mjcf_path << "'");
         return false;
     }
-    add_objects_to_spec(spec, objects);
-    mjModel *m = mj_compile(spec, nullptr);
-    if (!m) {
-        std::string ce = mjs_getError(spec) ? mjs_getError(spec) : "unknown";
-        mj_deleteSpec(spec);
-        LOG_ERROR("patch_mjcf_add_objects: mj_compile failed for '" << mjcf_path << "': " << ce);
-        return false;
+    XMLElement *root = doc.FirstChildElement("mujoco");
+    if (!root) return false;
+    XMLElement *wb = xml_get_or_create(root, "worldbody", doc);
+
+    for (const auto &obj : objects) {
+        XMLElement *body = doc.NewElement("body");
+        body->SetAttribute("name", obj.name.c_str());
+        char pos_str[64];
+        std::snprintf(pos_str, sizeof(pos_str), "%.6f %.6f %.6f", obj.pos[0], obj.pos[1], obj.pos[2]);
+        body->SetAttribute("pos", pos_str);
+
+        if (!obj.fixed) {
+            XMLElement *fj = doc.NewElement("freejoint");
+            fj->SetAttribute("name", (obj.name + "_joint").c_str());
+            body->InsertEndChild(fj);
+        }
+
+        const char *shape_str = "box";
+        if (obj.shape == ObjShape::SPHERE)   shape_str = "sphere";
+        if (obj.shape == ObjShape::CYLINDER) shape_str = "cylinder";
+
+        char size_str[64];
+        std::snprintf(size_str, sizeof(size_str), "%.6f %.6f %.6f", obj.size[0], obj.size[1], obj.size[2]);
+        char rgba_str[64];
+        std::snprintf(rgba_str, sizeof(rgba_str), "%.3f %.3f %.3f %.3f",
+                      obj.rgba[0], obj.rgba[1], obj.rgba[2], obj.rgba[3]);
+        char fric_str[64];
+        std::snprintf(fric_str, sizeof(fric_str), "%.4f %.4f %.4f",
+                      obj.friction[0], obj.friction[1], obj.friction[2]);
+
+        XMLElement *geom = doc.NewElement("geom");
+        geom->SetAttribute("name",        (obj.name + "_geom").c_str());
+        geom->SetAttribute("type",        shape_str);
+        geom->SetAttribute("size",        size_str);
+        geom->SetAttribute("mass",        obj.mass);
+        geom->SetAttribute("rgba",        rgba_str);
+        geom->SetAttribute("condim",      obj.condim);
+        geom->SetAttribute("friction",    fric_str);
+        geom->SetAttribute("contype",     "1");
+        geom->SetAttribute("conaffinity", "1");
+        body->InsertEndChild(geom);
+
+        wb->InsertEndChild(body);
     }
-    mj_deleteSpec(spec);
-    int ok = mj_saveLastXML(mjcf_path, m, err, sizeof(err));
-    mj_deleteModel(m);
-    return ok != 0;
+    return doc.SaveFile(mjcf_path) == XML_SUCCESS;
 }
 
 bool attach_gripper(const char *arm_mjcf, const GripperSpec *g, const char *out_path)

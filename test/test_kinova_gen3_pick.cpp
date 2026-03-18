@@ -10,10 +10,9 @@
  *   (0.062 gs_offset + 0.122 finger reach along gripper Z axis)
  *
  * Tests:
- *   1. Model loads; cube body found.
- *   2. KDL chain: 7 arm joints.
- *   3. IK converges for pre-grasp, grasp, lift (pos error < 2 mm).
- *   4. Headless pick simulation (9.5 s): cube lifted > 0.20 m.
+ *   1. KDL chain: 7 arm joints.
+ *   2. IK converges for pre-grasp, grasp, lift (pos error < 2 mm).
+ *   3. Headless pick simulation (10.5 s): cube lifted > 0.20 m.
  *
  * GUI (--gui): scripted pick demo with impedance control.
  *
@@ -21,6 +20,8 @@
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "test_utils.hpp"
+
+#include <gtest/gtest.h>
 
 #include <tinyxml2.h>
 
@@ -33,19 +34,19 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <string>
 
 namespace fs = std::filesystem;
 
 static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
 
-
 /* Bracelet_link → finger pad offset along gripper Z (measured from 2F-85 geometry):
  *   gs_offset(0.0615) + base_mount(0.007) + base(0.0038) +
  *   spring_link_z(0.0609) + follower_z(0.0375) + pad_z(0.01352) = 0.18422 m */
 static constexpr double kGripperReach = 0.18422;
 
-// Cube spawn
+/* Cube spawn */
 static constexpr double kCubeX  = 0.4;
 static constexpr double kCubeY  = 0.0;
 static constexpr double kCubeZ  = 0.02; // centre (bottom at z=0)
@@ -53,8 +54,7 @@ static constexpr double kCubeHS = 0.02; // half-size: 4 cm cube
 
 static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
 
-/* MJCF patching helpers */
-
+/* Add contact exclusions between bracelet_link and all g_* gripper bodies. */
 static bool patch_contact_exclusions(const std::string &path)
 {
     tinyxml2::XMLDocument doc;
@@ -91,8 +91,6 @@ static bool patch_contact_exclusions(const std::string &path)
     return doc.SaveFile(path.c_str()) == tinyxml2::XML_SUCCESS;
 }
 
-/* Trajectory helpers */
-
 static double clamp01(double t) { return t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t); }
 
 static void
@@ -103,184 +101,283 @@ static void
     for (unsigned i = 0; i < n; ++i) out(i) = from(i) + alpha * (to(i) - from(i));
 }
 
-/* Main */
-
-int main(int argc, char *argv[])
+struct Phase
 {
-    bool gui = false;
-    for (int i = 1; i < argc; ++i)
-        if (std::string(argv[i]) == "--gui") gui = true;
+    double               t_start, duration;
+    const KDL::JntArray *q_from;
+    const KDL::JntArray *q_to;
+    double               gripper;
+};
 
-    const fs::path root = repo_root();
-    if (!fs::exists(root / "third_party/menagerie")) {
-        TEST_SKIP("third_party/menagerie/ not found — run locally with the submodule");
-        return 0;
-    }
-    const std::string arm_mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-    const std::string grp_mjcf = (root / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
-    const std::string combined = "/tmp/gen3_with_2f85_pick.xml";
+class PickTest : public ::testing::Test {
+protected:
+    fs::path    root_;
+    std::string combined_;
+    mjModel    *model_       = nullptr;
+    mjData     *data_        = nullptr;
+    mj_kdl::State s_;
+    int          fingers_act_ = -1;
+    int          cube_bid_    = -1;
+    int          cube_jnt_    = -1;
+    unsigned     n_           = 0;
+    std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_;
+    std::unique_ptr<KDL::ChainIkSolverVel_pinv>      ik_vel_;
+    std::unique_ptr<KDL::ChainIkSolverPos_NR_JL>     ik_;
+    KDL::JntArray q_home_kdl_;
+    KDL::JntArray q_pregrasp_, q_grasp_, q_lift_;
+    int key_id_ = -1;
 
-    // Build combined model.
-    mj_kdl::GripperSpec gs;
-    gs.mjcf_path = grp_mjcf.c_str();
-    gs.attach_to = "bracelet_link";
-    gs.prefix    = "g_";
-    gs.pos[0]    = 0.0;
-    gs.pos[1]    = 0.0;
-    gs.pos[2]    = -0.061525;
-    gs.quat[0]   = 0.0;
-    gs.quat[1]   = 1.0;
-    gs.quat[2]   = 0.0;
-    gs.quat[3]   = 0.0;
+    void SetUp() override
+    {
+        root_ = repo_root();
+        if (!fs::exists(root_ / "third_party/menagerie")) {
+            GTEST_SKIP() << "third_party/menagerie/ not found — run locally with the submodule";
+            return;
+        }
 
-    if (!mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined.c_str())) {
-        TEST_FAIL("attach_gripper() returned false");
-        return 1;
-    }
-    if (!mj_kdl::patch_mjcf_visuals(combined.c_str())) {
-        TEST_FAIL("patch_mjcf_visuals() returned false");
-        return 1;
-    }
-    if (!patch_contact_exclusions(combined)) {
-        TEST_FAIL("patch_contact_exclusions() returned false");
-        return 1;
-    }
+        const std::string arm_mjcf = (root_ / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+        const std::string grp_mjcf = (root_ / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+        combined_ = "/tmp/gen3_with_2f85_pick.xml";
 
-    mj_kdl::SceneObject cube_obj;
-    cube_obj.name        = "cube";
-    cube_obj.shape       = mj_kdl::ObjShape::BOX;
-    cube_obj.size[0]     = kCubeHS;
-    cube_obj.size[1]     = kCubeHS;
-    cube_obj.size[2]     = kCubeHS;
-    cube_obj.pos[0]      = kCubeX;
-    cube_obj.pos[1]      = kCubeY;
-    cube_obj.pos[2]      = kCubeZ;
-    cube_obj.rgba[0]     = 1.0f;
-    cube_obj.rgba[1]     = 0.5f;
-    cube_obj.rgba[2]     = 0.0f;
-    cube_obj.rgba[3]     = 1.0f;
-    cube_obj.mass        = 0.1;
-    cube_obj.condim      = 4;
-    cube_obj.friction[0] = 0.8;
-    cube_obj.friction[1] = 0.02;
-    cube_obj.friction[2] = 0.001;
+        mj_kdl::GripperSpec gs;
+        gs.mjcf_path = grp_mjcf.c_str();
+        gs.attach_to = "bracelet_link";
+        gs.prefix    = "g_";
+        gs.pos[0]    = 0.0;
+        gs.pos[1]    = 0.0;
+        gs.pos[2]    = -0.061525;
+        gs.quat[0]   = 0.0;
+        gs.quat[1]   = 1.0;
+        gs.quat[2]   = 0.0;
+        gs.quat[3]   = 0.0;
 
-    if (!mj_kdl::patch_mjcf_add_objects(combined.c_str(), { cube_obj })) {
-        TEST_FAIL("patch_mjcf_add_objects() returned false");
-        return 1;
-    }
+        ASSERT_TRUE(mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined_.c_str()))
+            << "attach_gripper() returned false";
+        ASSERT_TRUE(mj_kdl::patch_mjcf_visuals(combined_.c_str()))
+            << "patch_mjcf_visuals() returned false";
+        ASSERT_TRUE(patch_contact_exclusions(combined_))
+            << "patch_contact_exclusions() returned false";
 
-    // Test 1: model loads; cube body found.
-    mjModel *model = nullptr;
-    mjData  *data  = nullptr;
-    if (!mj_kdl::load_mjcf(&model, &data, combined.c_str())) {
-        TEST_FAIL("load_mjcf() returned false for combined MJCF");
-        return 1;
-    }
+        mj_kdl::SceneObject cube_obj;
+        cube_obj.name        = "cube";
+        cube_obj.shape       = mj_kdl::ObjShape::BOX;
+        cube_obj.size[0]     = kCubeHS;
+        cube_obj.size[1]     = kCubeHS;
+        cube_obj.size[2]     = kCubeHS;
+        cube_obj.pos[0]      = kCubeX;
+        cube_obj.pos[1]      = kCubeY;
+        cube_obj.pos[2]      = kCubeZ;
+        cube_obj.rgba[0]     = 1.0f;
+        cube_obj.rgba[1]     = 0.5f;
+        cube_obj.rgba[2]     = 0.0f;
+        cube_obj.rgba[3]     = 1.0f;
+        cube_obj.mass        = 0.1;
+        cube_obj.condim      = 4;
+        cube_obj.friction[0] = 0.8;
+        cube_obj.friction[1] = 0.02;
+        cube_obj.friction[2] = 0.001;
 
-    int cube_bid = mj_name2id(model, mjOBJ_BODY, "cube");
-    int cube_jnt = mj_name2id(model, mjOBJ_JOINT, "cube_joint");
-    if (cube_bid < 0 || cube_jnt < 0) {
-        TEST_FAIL("cube body or joint not found (body=" << cube_bid << " joint=" << cube_jnt << ")");
-        mj_kdl::destroy_scene(model, data);
-        return 1;
-    }
-    TEST_PASS("Test 1: model loaded, cube body found (nq=" << model->nq
-              << " nbody=" << model->nbody << ")");
+        ASSERT_TRUE(mj_kdl::patch_mjcf_add_objects(combined_.c_str(), { cube_obj }))
+            << "patch_mjcf_add_objects() returned false";
 
-    // Test 2: KDL chain.
-    mj_kdl::State s;
-    if (!mj_kdl::init_from_mjcf(&s, model, data, "base_link", "bracelet_link")) {
-        TEST_FAIL("init_from_mjcf() returned false");
-        mj_kdl::destroy_scene(model, data);
-        return 1;
-    }
-    unsigned n = s.chain.getNrOfJoints();
-    if (n != 7u) {
-        TEST_FAIL("expected 7 joints, got " << n);
-        mj_kdl::cleanup(&s);
-        mj_kdl::destroy_scene(model, data);
-        return 1;
-    }
-    TEST_PASS("Test 2: KDL arm chain — " << n << " joints");
+        ASSERT_TRUE(mj_kdl::load_mjcf(&model_, &data_, combined_.c_str()))
+            << "load_mjcf() returned false for combined MJCF";
 
-    KDL::ChainFkSolverPos_recursive fk(s.chain);
+        cube_bid_ = mj_name2id(model_, mjOBJ_BODY,  "cube");
+        cube_jnt_ = mj_name2id(model_, mjOBJ_JOINT, "cube_joint");
+        ASSERT_GE(cube_bid_, 0) << "cube body not found";
+        ASSERT_GE(cube_jnt_, 0) << "cube_joint not found";
 
-    KDL::JntArray q_min(n), q_max(n);
-    for (unsigned i = 0; i < n; ++i) {
-        int jid = model->dof_jntid[s.kdl_to_mj_dof[i]];
-        if (model->jnt_limited[jid]) {
-            q_min(i) = model->jnt_range[2 * jid];
-            q_max(i) = model->jnt_range[2 * jid + 1];
-        } else {
-            q_min(i) = -2 * M_PI;
-            q_max(i) = 2 * M_PI;
+        TEST_INFO("model: nq=" << model_->nq << " nbody=" << model_->nbody);
+
+        ASSERT_TRUE(mj_kdl::init_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link"))
+            << "init_from_mjcf() returned false";
+        n_ = s_.chain.getNrOfJoints();
+        ASSERT_EQ(n_, 7u);
+
+        fk_ = std::make_unique<KDL::ChainFkSolverPos_recursive>(s_.chain);
+
+        KDL::JntArray q_min(n_), q_max(n_);
+        for (unsigned i = 0; i < n_; ++i) {
+            int jid = model_->dof_jntid[s_.kdl_to_mj_dof[i]];
+            if (model_->jnt_limited[jid]) {
+                q_min(i) = model_->jnt_range[2 * jid];
+                q_max(i) = model_->jnt_range[2 * jid + 1];
+            } else {
+                q_min(i) = -2 * M_PI;
+                q_max(i) =  2 * M_PI;
+            }
+        }
+        ik_vel_ = std::make_unique<KDL::ChainIkSolverVel_pinv>(s_.chain);
+        ik_     = std::make_unique<KDL::ChainIkSolverPos_NR_JL>(
+                    s_.chain, q_min, q_max, *fk_, *ik_vel_, 500, 1e-5);
+
+        fingers_act_ = mj_name2id(model_, mjOBJ_ACTUATOR, "g_fingers_actuator");
+        ASSERT_GE(fingers_act_, 0) << "g_fingers_actuator not found";
+
+        key_id_ = mj_name2id(model_, mjOBJ_KEY, "home");
+        q_home_kdl_.resize(n_);
+        for (unsigned i = 0; i < n_; ++i) q_home_kdl_(i) = kHomePose[i];
+
+        /* Waypoint Z targets (using exact gripper reach geometry).
+         * +0.02 m offset: keeps finger geometry clear of the floor when the gripper
+         * is open during approach (open fingers extend further down than closed). */
+        const double kGraspZ    = kCubeZ + kGripperReach + 0.02;
+        const double kPreGraspZ = kGraspZ + 0.20;
+        const double kLiftZ     = kGraspZ + 0.30;
+
+        const KDL::Rotation kDownRot = KDL::Rotation::Identity();
+
+        struct WP { const char *name; double z; KDL::JntArray *out; const KDL::JntArray *seed; };
+        q_pregrasp_.resize(n_); q_grasp_.resize(n_); q_lift_.resize(n_);
+        WP wps[] = {
+            { "pre-grasp", kPreGraspZ, &q_pregrasp_, &q_home_kdl_ },
+            { "grasp",     kGraspZ,    &q_grasp_,    &q_pregrasp_ },
+            { "lift",      kLiftZ,     &q_lift_,     &q_grasp_    },
+        };
+
+        for (auto &wp : wps) {
+            KDL::Frame target(kDownRot, KDL::Vector(kCubeX, kCubeY, wp.z));
+            int ret = ik_->CartToJnt(*wp.seed, target, *wp.out);
+            KDL::Frame ik_frame;
+            fk_->JntToCart(*wp.out, ik_frame);
+            double err = (ik_frame.p - target.p).Norm() * 1000.0;
+            ASSERT_GE(ret, 0) << "IK SetUp " << wp.name << " failed (ret=" << ret << ")";
+            ASSERT_LE(err, 2.0) << "IK SetUp " << wp.name << " pos_err=" << err << " mm > 2 mm";
         }
     }
-    KDL::ChainIkSolverVel_pinv  ik_vel(s.chain);
-    KDL::ChainIkSolverPos_NR_JL ik(s.chain, q_min, q_max, fk, ik_vel, 500, 1e-5);
 
-    int fingers_act = mj_name2id(model, mjOBJ_ACTUATOR, "g_fingers_actuator");
-    if (fingers_act < 0) {
-        TEST_FAIL("g_fingers_actuator not found in compiled model");
-        mj_kdl::cleanup(&s);
-        mj_kdl::destroy_scene(model, data);
-        return 1;
+    void TearDown() override
+    {
+        if (model_) {
+            mj_kdl::cleanup(&s_);
+            mj_kdl::destroy_scene(model_, data_);
+        }
     }
 
-    /* Waypoint bracelet_link Z targets (using exact gripper reach geometry).
-     * +0.02 m offset: keeps finger geometry clear of the floor when the gripper
-     * is open during approach (open fingers extend further down than closed). */
+    /* Place cube at spawn position. */
+    void reset_cube(mjData *d)
+    {
+        int qadr          = model_->jnt_qposadr[cube_jnt_];
+        d->qpos[qadr + 0] = kCubeX;
+        d->qpos[qadr + 1] = kCubeY;
+        d->qpos[qadr + 2] = kCubeZ;
+        d->qpos[qadr + 3] = 1.0;
+        d->qpos[qadr + 4] = d->qpos[qadr + 5] = d->qpos[qadr + 6] = 0.0;
+    }
+
+    /* Apply scripted position+gravity-comp control for one simulation step. */
+    void apply_control(mjModel * /*m*/, mjData *d,
+                       const Phase *phases, int n_phases)
+    {
+        double       t  = d->time;
+        const Phase *ph = &phases[n_phases - 1];
+        for (int pi = 0; pi < n_phases - 1; ++pi)
+            if (t < phases[pi + 1].t_start) {
+                ph = &phases[pi];
+                break;
+            }
+
+        double        alpha = clamp01((t - ph->t_start) / ph->duration);
+        KDL::JntArray q_target(n_);
+        lerp_q(*ph->q_from, *ph->q_to, alpha, q_target);
+
+        for (unsigned i = 0; i < n_; ++i) {
+            int dof = s_.kdl_to_mj_dof[i];
+            /* Position actuators track q_target (stable: force clamped to forcerange).
+             * qfrc_applied adds gravity compensation so the actuator P-term
+             * only needs to handle tracking error, not fight gravity. */
+            d->ctrl[i]           = q_target(i);
+            d->qfrc_applied[dof] = d->qfrc_bias[dof];
+        }
+        d->ctrl[fingers_act_] = ph->gripper;
+    }
+};
+
+TEST_F(PickTest, KDLChain)
+{
+    TEST_INFO("KDL chain: " << n_ << " joints");
+    EXPECT_EQ(n_, 7u);
+}
+
+TEST_F(PickTest, IKConvergence)
+{
+    /* Waypoint Z targets */
     const double kGraspZ    = kCubeZ + kGripperReach + 0.02;
     const double kPreGraspZ = kGraspZ + 0.20;
     const double kLiftZ     = kGraspZ + 0.30;
-
-    // Target rotation: Identity — bracelet_link Z = world Z → gripper points straight down.
     const KDL::Rotation kDownRot = KDL::Rotation::Identity();
 
-    KDL::JntArray q_home_kdl(n);
-    for (unsigned i = 0; i < n; ++i) q_home_kdl(i) = kHomePose[i];
-
-    struct WP
-    {
-        const char *name;
-        double      z;
-    };
+    struct WP { const char *name; double z; };
     WP wps[] = { { "pre-grasp", kPreGraspZ }, { "grasp", kGraspZ }, { "lift", kLiftZ } };
 
-    KDL::JntArray  q_pregrasp(n), q_grasp(n), q_lift(n);
-    KDL::JntArray *ik_out[] = { &q_pregrasp, &q_grasp, &q_lift };
+    KDL::JntArray q_out(n_);
+    const KDL::JntArray *seed = &q_home_kdl_;
+    KDL::JntArray q_prev(n_);
 
-    // Test 3: IK convergence.
-    bool ik_ok = true;
     for (int wi = 0; wi < 3; ++wi) {
-        KDL::Frame     target(kDownRot, KDL::Vector(kCubeX, kCubeY, wps[wi].z));
-        KDL::JntArray &seed = (wi == 0) ? q_home_kdl : *ik_out[wi - 1];
-        int            ret  = ik.CartToJnt(seed, target, *ik_out[wi]);
+        KDL::Frame target(kDownRot, KDL::Vector(kCubeX, kCubeY, wps[wi].z));
+        int ret = ik_->CartToJnt(*seed, target, q_out);
 
         KDL::Frame ik_frame;
-        fk.JntToCart(*ik_out[wi], ik_frame);
+        fk_->JntToCart(q_out, ik_frame);
         double err = (ik_frame.p - target.p).Norm() * 1000.0;
-        if (ret < 0 || err > 2.0) {
-            TEST_FAIL("IK " << wps[wi].name << " z=" << wps[wi].z
-                      << " failed (ret=" << ret << " pos_err=" << std::fixed
-                      << std::setprecision(2) << err << " mm)");
-            ik_ok = false;
-        } else {
-            TEST_PASS("IK " << wps[wi].name << " z=" << wps[wi].z
-                      << " pos_err=" << std::fixed << std::setprecision(2) << err << " mm");
-        }
+
+        TEST_INFO("IK " << wps[wi].name << " z=" << wps[wi].z
+                  << " pos_err=" << std::fixed << std::setprecision(2) << err << " mm");
+
+        EXPECT_GE(ret, 0) << "IK " << wps[wi].name << " solver returned error";
+        EXPECT_LE(err, 2.0) << "IK " << wps[wi].name << " pos_err=" << err << " mm > 2 mm";
+
+        q_prev = q_out;
+        seed   = &q_prev;
     }
-    if (!ik_ok) {
-        mj_kdl::cleanup(&s);
-        mj_kdl::destroy_scene(model, data);
-        return 1;
+}
+
+TEST_F(PickTest, CubeLifted)
+{
+    Phase phases[] = {
+        { 0.0, 1.0, &q_home_kdl_,  &q_home_kdl_,  0.0 },   // hold home
+        { 1.0, 2.0, &q_home_kdl_,  &q_pregrasp_,  0.0 },   // → pre-grasp
+        { 3.0, 2.0, &q_pregrasp_,  &q_grasp_,     0.0 },   // descend
+        { 5.0, 1.5, &q_grasp_,     &q_grasp_,     255.0 }, // close gripper
+        { 6.5, 3.0, &q_grasp_,     &q_lift_,      255.0 }, // lift
+        { 9.5, 1e9, &q_lift_,      &q_lift_,      255.0 }, // hold
+    };
+    constexpr int kNPhases = static_cast<int>(sizeof(phases) / sizeof(phases[0]));
+
+    if (key_id_ >= 0)
+        mj_resetDataKeyframe(model_, data_, key_id_);
+    else
+        mj_kdl::sync_from_kdl(&s_, q_home_kdl_);
+    reset_cube(data_);
+    mj_forward(model_, data_);
+
+    const int kSteps = static_cast<int>(10.5 / model_->opt.timestep);
+    for (int step = 0; step < kSteps; ++step) {
+        apply_control(model_, data_, phases, kNPhases);
+        mj_step(model_, data_);
     }
 
-    // Shared control logic (used by headless test and GUI).
+    int    qadr         = model_->jnt_qposadr[cube_jnt_];
+    double cube_final_z = data_->qpos[qadr + 2];
 
-    // Place cube at spawn position (freejoint qpos zeroed by keyframe reset).
-    auto reset_cube = [&](mjData *d) {
+    TEST_INFO("cube Z after pick simulation: "
+              << std::fixed << std::setprecision(3) << cube_final_z << " m");
+
+    EXPECT_GT(cube_final_z, 0.20)
+        << "cube Z " << cube_final_z << " m < 0.20 m threshold (cube not lifted)";
+}
+
+static void run_gui(mjModel *model, mjData *data, mj_kdl::State &s, unsigned n,
+                    int fingers_act, int cube_jnt, int key_id,
+                    const KDL::JntArray &q_home_kdl,
+                    const KDL::JntArray &q_pregrasp,
+                    const KDL::JntArray &q_grasp,
+                    const KDL::JntArray &q_lift,
+                    const std::string &combined)
+{
+    auto reset_cube_gui = [&](mjData *d) {
         int qadr          = model->jnt_qposadr[cube_jnt];
         d->qpos[qadr + 0] = kCubeX;
         d->qpos[qadr + 1] = kCubeY;
@@ -289,100 +386,157 @@ int main(int argc, char *argv[])
         d->qpos[qadr + 4] = d->qpos[qadr + 5] = d->qpos[qadr + 6] = 0.0;
     };
 
-    struct Phase
-    {
-        double               t_start, duration;
-        const KDL::JntArray *q_from;
-        const KDL::JntArray *q_to;
-        double               gripper;
-    };
     Phase phases[] = {
-        { 0.0, 1.0, &q_home_kdl, &q_home_kdl, 0.0 }, // hold home
-        { 1.0, 2.0, &q_home_kdl, &q_pregrasp, 0.0 }, // → pre-grasp
-        { 3.0, 2.0, &q_pregrasp, &q_grasp, 0.0 },    // descend
-        { 5.0, 1.5, &q_grasp, &q_grasp, 255.0 },     // close gripper
-        { 6.5, 3.0, &q_grasp, &q_lift, 255.0 },      // lift
-        { 9.5, 1e9, &q_lift, &q_lift, 255.0 },       // hold
+        { 0.0, 1.0, &q_home_kdl,  &q_home_kdl,  0.0 },
+        { 1.0, 2.0, &q_home_kdl,  &q_pregrasp,  0.0 },
+        { 3.0, 2.0, &q_pregrasp,  &q_grasp,     0.0 },
+        { 5.0, 1.5, &q_grasp,     &q_grasp,     255.0 },
+        { 6.5, 3.0, &q_grasp,     &q_lift,      255.0 },
+        { 9.5, 1e9, &q_lift,      &q_lift,      255.0 },
     };
-    constexpr int kNPhases = sizeof(phases) / sizeof(phases[0]);
+    constexpr int kNPhases = static_cast<int>(sizeof(phases) / sizeof(phases[0]));
 
-    auto apply_control = [&](mjModel * /*m*/, mjData *d) {
-        double       t  = d->time;
-        const Phase *ph = &phases[kNPhases - 1];
-        for (int pi = 0; pi < kNPhases - 1; ++pi)
-            if (t < phases[pi + 1].t_start) {
-                ph = &phases[pi];
-                break;
+    if (key_id >= 0)
+        mj_resetDataKeyframe(model, data, key_id);
+    else
+        mj_kdl::sync_from_kdl(&s, q_home_kdl);
+    reset_cube_gui(data);
+    mj_forward(model, data);
+
+    std::cout << "GUI: pick demo — close window to exit\n";
+    mj_kdl::run_simulate_ui(model, data, combined.c_str(),
+        [&](mjModel * /*m*/, mjData *d) {
+            double       t  = d->time;
+            const Phase *ph = &phases[kNPhases - 1];
+            for (int pi = 0; pi < kNPhases - 1; ++pi)
+                if (t < phases[pi + 1].t_start) { ph = &phases[pi]; break; }
+
+            double        alpha = clamp01((t - ph->t_start) / ph->duration);
+            KDL::JntArray q_target(n);
+            lerp_q(*ph->q_from, *ph->q_to, alpha, q_target);
+
+            for (unsigned i = 0; i < n; ++i) {
+                int dof = s.kdl_to_mj_dof[i];
+                d->ctrl[i]           = q_target(i);
+                d->qfrc_applied[dof] = d->qfrc_bias[dof];
             }
+            d->ctrl[fingers_act] = ph->gripper;
+        });
+}
 
-        double        alpha = clamp01((t - ph->t_start) / ph->duration);
-        KDL::JntArray q_target(n);
-        lerp_q(*ph->q_from, *ph->q_to, alpha, q_target);
+int main(int argc, char *argv[])
+{
+    bool gui = false;
 
-        for (unsigned i = 0; i < n; ++i) {
-            int dof = s.kdl_to_mj_dof[i];
-            /* Position actuators track q_target (stable: force clamped to forcerange).
-             * qfrc_applied adds gravity compensation so the actuator P-term
-             * only needs to handle tracking error, not fight gravity. */
-            d->ctrl[i]           = q_target(i);
-            d->qfrc_applied[dof] = d->qfrc_bias[dof];
-        }
-        d->ctrl[fingers_act] = ph->gripper;
-    };
-
-    // Test 4: headless pick simulation — verify cube is lifted.
-    {
-        int key_id = mj_name2id(model, mjOBJ_KEY, "home");
-        if (key_id >= 0)
-            mj_resetDataKeyframe(model, data, key_id);
+    /* Parse non-GTest arguments before handing off to GTest. */
+    std::vector<char *> remaining;
+    remaining.push_back(argv[0]);
+    for (int i = 1; i < argc; ++i) {
+        std::string a(argv[i]);
+        if (a == "--gui")
+            gui = true;
         else
-            mj_kdl::sync_from_kdl(&s, q_home_kdl);
-        reset_cube(data);
-        mj_forward(model, data);
+            remaining.push_back(argv[i]);
+    }
+    int remaining_argc = static_cast<int>(remaining.size());
 
-        const double kSimEnd = 10.5;
-        const int    kSteps  = static_cast<int>(kSimEnd / model->opt.timestep);
+    ::testing::InitGoogleTest(&remaining_argc, remaining.data());
 
-        for (int step = 0; step < kSteps; ++step) {
-            apply_control(model, data);
-            mj_step(model, data);
+    if (gui) {
+        const fs::path root = repo_root();
+        if (!fs::exists(root / "third_party/menagerie")) {
+            std::cerr << "GUI: third_party/menagerie/ not found\n";
+            return 0;
+        }
+        const std::string arm_mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+        const std::string grp_mjcf = (root / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+        const std::string combined = "/tmp/gen3_with_2f85_pick.xml";
+
+        mj_kdl::GripperSpec gs;
+        gs.mjcf_path = grp_mjcf.c_str();
+        gs.attach_to = "bracelet_link";
+        gs.prefix    = "g_";
+        gs.pos[0] = 0.0; gs.pos[1] = 0.0; gs.pos[2] = -0.061525;
+        gs.quat[0] = 0.0; gs.quat[1] = 1.0; gs.quat[2] = 0.0; gs.quat[3] = 0.0;
+
+        if (!mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined.c_str()) ||
+            !mj_kdl::patch_mjcf_visuals(combined.c_str()) ||
+            !patch_contact_exclusions(combined)) {
+            std::cerr << "GUI: model preparation failed\n";
+            return 1;
         }
 
-        // Cube centre Z after lift hold.
-        int    qadr         = model->jnt_qposadr[cube_jnt];
-        double cube_final_z = data->qpos[qadr + 2];
+        mj_kdl::SceneObject cube_obj;
+        cube_obj.name        = "cube";
+        cube_obj.shape       = mj_kdl::ObjShape::BOX;
+        cube_obj.size[0] = cube_obj.size[1] = cube_obj.size[2] = kCubeHS;
+        cube_obj.pos[0] = kCubeX; cube_obj.pos[1] = kCubeY; cube_obj.pos[2] = kCubeZ;
+        cube_obj.rgba[0] = 1.0f; cube_obj.rgba[1] = 0.5f;
+        cube_obj.rgba[2] = 0.0f; cube_obj.rgba[3] = 1.0f;
+        cube_obj.mass = 0.1; cube_obj.condim = 4;
+        cube_obj.friction[0] = 0.8; cube_obj.friction[1] = 0.02; cube_obj.friction[2] = 0.001;
+        if (!mj_kdl::patch_mjcf_add_objects(combined.c_str(), { cube_obj })) {
+            std::cerr << "GUI: patch_mjcf_add_objects() failed\n";
+            return 1;
+        }
 
-        TEST_INFO("cube Z after pick simulation: "
-                  << std::fixed << std::setprecision(3) << cube_final_z << " m");
-
-        const double kLiftThreshold = 0.20;
-        if (cube_final_z < kLiftThreshold) {
-            TEST_FAIL("cube Z " << cube_final_z << " m < " << kLiftThreshold
-                      << " m threshold (cube not lifted)");
-            mj_kdl::cleanup(&s);
+        mjModel *model = nullptr;
+        mjData  *data  = nullptr;
+        if (!mj_kdl::load_mjcf(&model, &data, combined.c_str())) {
+            std::cerr << "GUI: load_mjcf() failed\n";
+            return 1;
+        }
+        mj_kdl::State s;
+        if (!mj_kdl::init_from_mjcf(&s, model, data, "base_link", "bracelet_link")) {
+            std::cerr << "GUI: init_from_mjcf() failed\n";
             mj_kdl::destroy_scene(model, data);
             return 1;
         }
-        TEST_PASS("Test 4: cube lifted to " << std::fixed << std::setprecision(3)
-                  << cube_final_z << " m (> " << kLiftThreshold << " m)");
+        unsigned n = s.chain.getNrOfJoints();
+
+        KDL::ChainFkSolverPos_recursive fk(s.chain);
+        KDL::JntArray q_min(n), q_max(n);
+        for (unsigned i = 0; i < n; ++i) {
+            int jid = model->dof_jntid[s.kdl_to_mj_dof[i]];
+            if (model->jnt_limited[jid]) {
+                q_min(i) = model->jnt_range[2 * jid];
+                q_max(i) = model->jnt_range[2 * jid + 1];
+            } else {
+                q_min(i) = -2 * M_PI;
+                q_max(i) =  2 * M_PI;
+            }
+        }
+        KDL::ChainIkSolverVel_pinv  ik_vel(s.chain);
+        KDL::ChainIkSolverPos_NR_JL ik(s.chain, q_min, q_max, fk, ik_vel, 500, 1e-5);
+
+        int fingers_act = mj_name2id(model, mjOBJ_ACTUATOR, "g_fingers_actuator");
+        int cube_jnt    = mj_name2id(model, mjOBJ_JOINT, "cube_joint");
+        int key_id      = mj_name2id(model, mjOBJ_KEY, "home");
+
+        const double kGraspZ    = kCubeZ + kGripperReach + 0.02;
+        const double kPreGraspZ = kGraspZ + 0.20;
+        const double kLiftZ     = kGraspZ + 0.30;
+        const KDL::Rotation kDownRot = KDL::Rotation::Identity();
+
+        KDL::JntArray q_home_kdl(n), q_pregrasp(n), q_grasp(n), q_lift(n);
+        for (unsigned i = 0; i < n; ++i) q_home_kdl(i) = kHomePose[i];
+
+        struct WP { double z; KDL::JntArray *out; const KDL::JntArray *seed; };
+        WP wps[] = {
+            { kPreGraspZ, &q_pregrasp, &q_home_kdl },
+            { kGraspZ,    &q_grasp,    &q_pregrasp  },
+            { kLiftZ,     &q_lift,     &q_grasp     },
+        };
+        for (auto &wp : wps) {
+            KDL::Frame tgt(kDownRot, KDL::Vector(kCubeX, kCubeY, wp.z));
+            ik.CartToJnt(*wp.seed, tgt, *wp.out);
+        }
+
+        run_gui(model, data, s, n, fingers_act, cube_jnt, key_id,
+                q_home_kdl, q_pregrasp, q_grasp, q_lift, combined);
+        mj_kdl::cleanup(&s);
+        mj_kdl::destroy_scene(model, data);
     }
 
-    // GUI
-    if (gui) {
-        int key_id = mj_name2id(model, mjOBJ_KEY, "home");
-        if (key_id >= 0)
-            mj_resetDataKeyframe(model, data, key_id);
-        else
-            mj_kdl::sync_from_kdl(&s, q_home_kdl);
-        reset_cube(data);
-        mj_forward(model, data);
-
-        std::cout << "GUI: pick demo — close window to exit\n";
-        mj_kdl::run_simulate_ui(
-          model, data, combined.c_str(), [&](mjModel *m, mjData *d) { apply_control(m, d); });
-    }
-
-    mj_kdl::cleanup(&s);
-    mj_kdl::destroy_scene(model, data);
-    return 0;
+    return RUN_ALL_TESTS();
 }
