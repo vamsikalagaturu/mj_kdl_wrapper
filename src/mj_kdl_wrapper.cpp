@@ -415,18 +415,10 @@ static bool
 /* KDL helpers */
 
 /* Convert a MuJoCo quaternion [w x y z] to a KDL::Rotation. */
+/* MuJoCo quaternion layout: [w, x, y, z]; KDL::Rotation::Quaternion takes (x, y, z, w). */
 static KDL::Rotation mj_quat_to_kdl_rot(const double *q)
 {
-    double w = q[0], x = q[1], y = q[2], z = q[3];
-    return KDL::Rotation(1 - 2 * (y * y + z * z),
-      2 * (x * y - w * z),
-      2 * (x * z + w * y),
-      2 * (x * y + w * z),
-      1 - 2 * (x * x + z * z),
-      2 * (y * z - w * x),
-      2 * (x * z - w * y),
-      2 * (y * z + w * x),
-      1 - 2 * (x * x + y * y));
+    return KDL::Rotation::Quaternion(q[1], q[2], q[3], q[0]);
 }
 
 /* Extract the full rigid-body inertia for body bid from a compiled mjModel. */
