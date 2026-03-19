@@ -59,13 +59,8 @@ int main(int argc, char *argv[])
     gs.mjcf_path = grp_mjcf.c_str();
     gs.attach_to = "bracelet_link";
     gs.prefix    = "g_";
-    gs.pos[0]    = 0.0;
-    gs.pos[1]    = 0.0;
     gs.pos[2]    = -0.061525;
-    gs.quat[0]   = 0.0;
-    gs.quat[1]   = 1.0;
-    gs.quat[2]   = 0.0;
-    gs.quat[3]   = 0.0;
+    gs.euler[0]  = 180.0; // 180 deg around X to flip gripper
 
     if (!mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, a1.c_str())
         || !mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, a2.c_str())) {
@@ -108,24 +103,6 @@ int main(int argc, char *argv[])
     int       fing1 = mj_name2id(model, mjOBJ_ACTUATOR, "g_fingers_actuator");
     int       fing2 = mj_name2id(model, mjOBJ_ACTUATOR, "r2_g_fingers_actuator");
 
-    /* Build joint -> ctrl-index map via MuJoCo's actuator_trnid table. */
-    auto build_ctrl_map = [&](const mj_kdl::Robot *arm) {
-        std::vector<int> ctrl(arm->n_joints, -1);
-        for (int i = 0; i < arm->n_joints; ++i) {
-            int jid = model->dof_jntid[arm->kdl_to_mj_dof[i]];
-            for (int ai = 0; ai < model->nu; ++ai) {
-                if (model->actuator_trntype[ai] == mjTRN_JOINT
-                    && model->actuator_trnid[2 * ai] == jid) {
-                    ctrl[i] = ai;
-                    break;
-                }
-            }
-        }
-        return ctrl;
-    };
-    const auto ctrl1 = build_ctrl_map(&arm1);
-    const auto ctrl2 = build_ctrl_map(&arm2);
-
     KDL::JntArray q_home(n);
     for (int i = 0; i < n; ++i) q_home(i) = kHomePose[i];
     mj_kdl::set_joint_pos(&arm1, q_home);
@@ -133,19 +110,17 @@ int main(int argc, char *argv[])
     mj_forward(model, data);
 
     /* Hold position + feed-forward gravity via qfrc_bias (includes gripper mass). */
-    auto apply_ctrl = [&](const mj_kdl::Robot *arm, const std::vector<int> &ctrl_idx) {
-        for (int i = 0; i < arm->n_joints; ++i) {
-            int dof = arm->kdl_to_mj_dof[i];
-            int jid = model->dof_jntid[dof];
-            if (ctrl_idx[i] >= 0) data->ctrl[ctrl_idx[i]] = data->qpos[model->jnt_qposadr[jid]];
-            data->qfrc_applied[dof] = data->qfrc_bias[dof];
+    auto apply_ctrl = [&](mj_kdl::Robot &arm) {
+        for (int i = 0; i < arm.n_joints; ++i) {
+            if (arm.kdl_to_mj_ctrl[i] >= 0) arm.cmd(i) = arm.pos(i);
+            data->qfrc_applied[arm.kdl_to_mj_dof[i]] = arm.frc(i);
         }
     };
 
     if (headless) {
         for (int step = 0; step < 600; ++step) {
-            apply_ctrl(&arm1, ctrl1);
-            apply_ctrl(&arm2, ctrl2);
+            apply_ctrl(arm1);
+            apply_ctrl(arm2);
             if (fing1 >= 0) data->ctrl[fing1] = (std::fmod(data->time, 6.0) < 3.0) ? 255.0 : 0.0;
             if (fing2 >= 0) data->ctrl[fing2] = (std::fmod(data->time, 6.0) < 3.0) ? 255.0 : 0.0;
             mj_kdl::step(&arm1);
@@ -163,8 +138,8 @@ int main(int argc, char *argv[])
     } else {
         mj_kdl::run_simulate_ui(
           model, data, combined.c_str(), [&](mjModel * /*m*/, mjData * /*d*/) {
-              apply_ctrl(&arm1, ctrl1);
-              apply_ctrl(&arm2, ctrl2);
+              apply_ctrl(arm1);
+              apply_ctrl(arm2);
               if (fing1 >= 0) data->ctrl[fing1] = (std::fmod(data->time, 6.0) < 3.0) ? 255.0 : 0.0;
               if (fing2 >= 0) data->ctrl[fing2] = (std::fmod(data->time, 6.0) < 3.0) ? 255.0 : 0.0;
           });

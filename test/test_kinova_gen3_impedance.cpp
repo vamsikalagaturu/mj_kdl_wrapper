@@ -81,13 +81,8 @@ class ImpedanceTest : public ::testing::Test
         gs.mjcf_path = grp_mjcf.c_str();
         gs.attach_to = "bracelet_link";
         gs.prefix    = "g_";
-        gs.pos[0]    = 0.0;
-        gs.pos[1]    = 0.0;
         gs.pos[2]    = -0.061525;
-        gs.quat[0]   = 0.0;
-        gs.quat[1]   = 1.0;
-        gs.quat[2]   = 0.0;
-        gs.quat[3]   = 0.0;
+        gs.euler[0]  = 180.0; // 180 deg around X to flip gripper
 
         ASSERT_TRUE(mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined_.c_str()))
           << "attach_gripper() returned false";

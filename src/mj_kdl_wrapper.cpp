@@ -497,6 +497,7 @@ static bool build_index_map(Robot *s, const std::string &pfx = "")
 {
     s->kdl_to_mj_qpos.clear();
     s->kdl_to_mj_dof.clear();
+    s->kdl_to_mj_ctrl.clear();
     if (!s->model) return false;
     for (const auto &name : s->joint_names) {
         int id = mj_name2id(s->model, mjOBJ_JOINT, (pfx + name).c_str());
@@ -507,7 +508,18 @@ static bool build_index_map(Robot *s, const std::string &pfx = "")
             return false;
         }
         s->kdl_to_mj_qpos.push_back(s->model->jnt_qposadr[id]);
-        s->kdl_to_mj_dof.push_back(s->model->jnt_dofadr[id]);
+        int dof = s->model->jnt_dofadr[id];
+        s->kdl_to_mj_dof.push_back(dof);
+        /* Find the actuator that drives this joint (mjTRN_JOINT type). */
+        int ctrl_idx = -1;
+        for (int ai = 0; ai < s->model->nu; ++ai) {
+            if (s->model->actuator_trntype[ai] == mjTRN_JOINT
+                && s->model->actuator_trnid[2 * ai] == id) {
+                ctrl_idx = ai;
+                break;
+            }
+        }
+        s->kdl_to_mj_ctrl.push_back(ctrl_idx);
     }
     return true;
 }
@@ -1015,17 +1027,11 @@ bool attach_gripper(const char *arm_mjcf, const GripperSpec *g, const char *out_
             std::snprintf(
               pos_str, sizeof(pos_str), "%.6f %.6f %.6f", g->pos[0], g->pos[1], g->pos[2]);
             if (g->pos[0] || g->pos[1] || g->pos[2]) cl->SetAttribute("pos", pos_str);
-            bool non_identity = g->quat[0] != 1 || g->quat[1] || g->quat[2] || g->quat[3];
-            if (non_identity) {
-                char q_str[64];
-                std::snprintf(q_str,
-                  sizeof(q_str),
-                  "%.6f %.6f %.6f %.6f",
-                  g->quat[0],
-                  g->quat[1],
-                  g->quat[2],
-                  g->quat[3]);
-                cl->SetAttribute("quat", q_str);
+            if (g->euler[0] || g->euler[1] || g->euler[2]) {
+                char e_str[64];
+                std::snprintf(
+                  e_str, sizeof(e_str), "%.6g %.6g %.6g", g->euler[0], g->euler[1], g->euler[2]);
+                cl->SetAttribute("euler", e_str);
             }
             attach_el->InsertEndChild(cl);
         }
@@ -1335,6 +1341,7 @@ void cleanup(Robot *s)
 {
     s->model = nullptr;
     s->data  = nullptr;
+    s->kdl_to_mj_ctrl.clear();
     if (g_robot == s) g_robot = nullptr;
 }
 

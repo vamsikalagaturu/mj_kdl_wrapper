@@ -49,13 +49,8 @@ int main(int argc, char *argv[])
     gs.mjcf_path = grp_mjcf.c_str();
     gs.attach_to = "bracelet_link";
     gs.prefix    = "g_";
-    gs.pos[0]    = 0.0;
-    gs.pos[1]    = 0.0;
     gs.pos[2]    = -0.061525;
-    gs.quat[0]   = 0.0;
-    gs.quat[1]   = 1.0;
-    gs.quat[2]   = 0.0;
-    gs.quat[3]   = 0.0;
+    gs.euler[0]  = 180.0; // 180 deg around X to flip gripper
 
     if (!mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined.c_str())) {
         std::cerr << "attach_gripper() failed\n";
@@ -98,30 +93,25 @@ int main(int argc, char *argv[])
     }
     mj_forward(model, data);
 
+    /* Pure gravity compensation: hold position + cancel gravity via qfrc_bias.
+     * qfrc_bias includes gripper mass - KDL alone would miss ~1.7 kg. */
+    auto ctrl_step = [&]() {
+        for (unsigned i = 0; i < n; ++i) {
+            robot.cmd(i)                               = robot.pos(i);
+            data->qfrc_applied[robot.kdl_to_mj_dof[i]] = robot.frc(i);
+        }
+        data->ctrl[fingers_act] = (std::fmod(data->time, 6.0) < 3.0) ? 255.0 : 0.0;
+    };
+
     if (headless) {
         for (int step = 0; step < 300; ++step) {
-            for (unsigned i = 0; i < n; ++i) {
-                int dof                 = robot.kdl_to_mj_dof[i];
-                int jid                 = model->dof_jntid[dof];
-                data->ctrl[i]           = data->qpos[model->jnt_qposadr[jid]];
-                data->qfrc_applied[dof] = data->qfrc_bias[dof];
-            }
-            data->ctrl[fingers_act] = (std::fmod(data->time, 6.0) < 3.0) ? 255.0 : 0.0;
+            ctrl_step();
             mj_kdl::step(&robot);
         }
         std::cout << "sim_time=" << data->time << " s\n";
     } else {
-        mj_kdl::run_simulate_ui(model, data, combined.c_str(), [&](mjModel *m, mjData *d) {
-            /* Pure gravity compensation: zero P-term + cancel gravity via qfrc_bias.
-             * qfrc_bias includes gripper mass  - KDL alone would miss ~1.7 kg. */
-            for (unsigned i = 0; i < n; ++i) {
-                int dof              = robot.kdl_to_mj_dof[i];
-                int jid              = m->dof_jntid[dof];
-                d->ctrl[i]           = d->qpos[m->jnt_qposadr[jid]];
-                d->qfrc_applied[dof] = d->qfrc_bias[dof];
-            }
-            d->ctrl[fingers_act] = (std::fmod(d->time, 6.0) < 3.0) ? 255.0 : 0.0;
-        });
+        mj_kdl::run_simulate_ui(
+          model, data, combined.c_str(), [&](mjModel * /*m*/, mjData * /*d*/) { ctrl_step(); });
     }
 
     mj_kdl::cleanup(&robot);
