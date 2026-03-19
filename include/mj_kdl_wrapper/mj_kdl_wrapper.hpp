@@ -232,7 +232,7 @@ struct MjcfArmSpec
     const char *mjcf_path = nullptr;     // path to arm (or arm+gripper) MJCF
     const char *prefix    = "";          // prefix applied to all named elements; "" = no prefix
     double      pos[3]    = { 0, 0, 0 }; // placement position in world [m]
-    double      euler_z   = 0.0;         // yaw angle in degrees
+    double      euler[3]  = { 0, 0, 0 }; // extrinsic XYZ Euler angles in degrees
 };
 
 /*

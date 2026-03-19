@@ -1146,9 +1146,14 @@ bool build_scene_from_mjcfs(const char *out_mjcf,
           pos_s, sizeof(pos_s), "%.6g %.6g %.6g", spec.pos[0], spec.pos[1], spec.pos[2]);
         auto *wrap = doc.NewElement("body");
         wrap->SetAttribute("pos", pos_s);
-        if (std::abs(spec.euler_z) > 0.01) {
-            char euler_s[32];
-            std::snprintf(euler_s, sizeof(euler_s), "0 0 %.6g", spec.euler_z);
+        if (spec.euler[0] || spec.euler[1] || spec.euler[2]) {
+            char euler_s[64];
+            std::snprintf(euler_s,
+              sizeof(euler_s),
+              "%.6g %.6g %.6g",
+              spec.euler[0],
+              spec.euler[1],
+              spec.euler[2]);
             wrap->SetAttribute("euler", euler_s);
         }
         worldbody->InsertEndChild(wrap);

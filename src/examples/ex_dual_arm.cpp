@@ -108,11 +108,11 @@ int main(int argc, char *argv[])
     arms[0].mjcf_path = a1.c_str();
     arms[0].prefix    = "";
     arms[0].pos[0]    = -0.5;
-    arms[0].euler_z   = 0.0;
+    arms[0].euler[2]  = 0.0;
     arms[1].mjcf_path = a2.c_str();
     arms[1].prefix    = "r2_";
     arms[1].pos[0]    = 0.5;
-    arms[1].euler_z   = 180.0;
+    arms[1].euler[2]  = 180.0;
 
     if (!mj_kdl::build_scene_from_mjcfs(combined.c_str(), arms, 2)) {
         std::cerr << "build_scene_from_mjcfs() failed\n";
