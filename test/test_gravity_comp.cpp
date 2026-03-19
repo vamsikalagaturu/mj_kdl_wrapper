@@ -76,7 +76,7 @@ class GravityCompTest : public ::testing::Test
 
 TEST_F(GravityCompTest, GravityAccuracy)
 {
-    mj_kdl::sync_from_kdl(&s, q_home);
+    mj_kdl::set_joint_pos(&s, q_home);
     mj_forward(s.model, s.data);
 
     KDL::JntArray g(n);
@@ -94,7 +94,7 @@ TEST_F(GravityCompTest, GravityAccuracy)
 TEST_F(GravityCompTest, GravityCompDrift)
 {
     /* Sync to home pose and record initial FK frame. */
-    mj_kdl::sync_from_kdl(&s, q_home);
+    mj_kdl::set_joint_pos(&s, q_home);
     mj_forward(s.model, s.data);
 
     KDL::Frame fk_initial;
@@ -102,14 +102,14 @@ TEST_F(GravityCompTest, GravityCompDrift)
 
     for (int i = 0; i < 500; ++i) {
         KDL::JntArray q, g(n);
-        mj_kdl::sync_to_kdl(&s, q);
+        mj_kdl::get_joint_pos(&s, q);
         dyn->JntToGravity(q, g);
         mj_kdl::set_torques(&s, g);
         mj_kdl::step(&s);
     }
 
     KDL::JntArray q_end;
-    mj_kdl::sync_to_kdl(&s, q_end);
+    mj_kdl::get_joint_pos(&s, q_end);
     KDL::Frame fk_end;
     fk->JntToCart(q_end, fk_end);
     double drift = (fk_initial.p - fk_end.p).Norm();

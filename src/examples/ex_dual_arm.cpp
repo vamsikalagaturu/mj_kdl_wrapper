@@ -17,8 +17,6 @@
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 
-#include <tinyxml2.h>
-
 #include <kdl/chainfksolverpos_recursive.hpp>
 
 #include <cmath>
@@ -32,36 +30,12 @@ static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.95
 namespace fs = std::filesystem;
 static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path().parent_path(); }
 
-/* Add bracelet_link <-> g_* contact exclusions to the MJCF at path. */
-static bool patch_contact_exclusions(const std::string &path)
-{
-    tinyxml2::XMLDocument doc;
-    if (doc.LoadFile(path.c_str()) != tinyxml2::XML_SUCCESS) return false;
-    auto *root = doc.FirstChildElement("mujoco");
-    if (!root) return false;
-    auto *ct = root->FirstChildElement("contact");
-    if (!ct) {
-        ct = doc.NewElement("contact");
-        root->InsertEndChild(ct);
-    }
-    struct Pair
-    {
-        const char *b1, *b2;
-    };
-    static const Pair kExclude[] = {
-        { "bracelet_link", "g_base" },
-        { "bracelet_link", "g_left_pad" },
-        { "bracelet_link", "g_right_pad" },
-        { "half_arm_2_link", "g_base" },
-    };
-    for (const auto &p : kExclude) {
-        auto *ex = doc.NewElement("exclude");
-        ex->SetAttribute("body1", p.b1);
-        ex->SetAttribute("body2", p.b2);
-        ct->InsertEndChild(ex);
-    }
-    return doc.SaveFile(path.c_str()) == tinyxml2::XML_SUCCESS;
-}
+static const std::vector<std::pair<std::string, std::string>> kGripperExclusions = {
+    { "bracelet_link", "g_base" },
+    { "bracelet_link", "g_left_pad" },
+    { "bracelet_link", "g_right_pad" },
+    { "half_arm_2_link", "g_base" },
+};
 
 int main(int argc, char *argv[])
 {
@@ -98,12 +72,12 @@ int main(int argc, char *argv[])
         std::cerr << "attach_gripper() failed\n";
         return 1;
     }
-    if (!patch_contact_exclusions(a1) || !patch_contact_exclusions(a2)) {
-        std::cerr << "patch_contact_exclusions() failed\n";
+    if (!mj_kdl::patch_mjcf_contact_exclusions(a1.c_str(), kGripperExclusions)
+        || !mj_kdl::patch_mjcf_contact_exclusions(a2.c_str(), kGripperExclusions)) {
+        std::cerr << "patch_mjcf_contact_exclusions() failed\n";
         return 1;
     }
 
-    const std::string combined = "/tmp/ex_dual_arm.xml";
     mj_kdl::RobotSpec arms[2];
     arms[0].path     = a1.c_str();
     arms[0].prefix   = "";
@@ -114,15 +88,11 @@ int main(int argc, char *argv[])
     arms[1].pos[0]   = 0.5;
     arms[1].euler[2] = 180.0;
 
-    if (!mj_kdl::build_scene_from_mjcfs(combined.c_str(), arms, 2)) {
+    const std::string combined = "/tmp/ex_dual_arm.xml";
+    mjModel          *model    = nullptr;
+    mjData           *data     = nullptr;
+    if (!mj_kdl::build_scene_from_mjcfs(&model, &data, arms, 2, true, true, combined.c_str())) {
         std::cerr << "build_scene_from_mjcfs() failed\n";
-        return 1;
-    }
-
-    mjModel *model = nullptr;
-    mjData  *data  = nullptr;
-    if (!mj_kdl::load_mjcf(&model, &data, combined.c_str())) {
-        std::cerr << "load_mjcf() failed\n";
         return 1;
     }
 
@@ -158,8 +128,8 @@ int main(int argc, char *argv[])
 
     KDL::JntArray q_home(n);
     for (int i = 0; i < n; ++i) q_home(i) = kHomePose[i];
-    mj_kdl::sync_from_kdl(&arm1, q_home);
-    mj_kdl::sync_from_kdl(&arm2, q_home);
+    mj_kdl::set_joint_pos(&arm1, q_home);
+    mj_kdl::set_joint_pos(&arm2, q_home);
     mj_forward(model, data);
 
     /* Hold position + feed-forward gravity via qfrc_bias (includes gripper mass). */
@@ -184,8 +154,8 @@ int main(int argc, char *argv[])
         KDL::ChainFkSolverPos_recursive fk1(arm1.chain), fk2(arm2.chain);
         KDL::JntArray                   q1, q2;
         KDL::Frame                      ee1, ee2;
-        mj_kdl::sync_to_kdl(&arm1, q1);
-        mj_kdl::sync_to_kdl(&arm2, q2);
+        mj_kdl::get_joint_pos(&arm1, q1);
+        mj_kdl::get_joint_pos(&arm2, q2);
         fk1.JntToCart(q1, ee1);
         fk2.JntToCart(q2, ee2);
         std::cout << "arm1 EE: [" << ee1.p.x() << ", " << ee1.p.y() << ", " << ee1.p.z() << "]\n";

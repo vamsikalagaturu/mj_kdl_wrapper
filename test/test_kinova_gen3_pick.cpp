@@ -19,8 +19,6 @@
 
 #include <gtest/gtest.h>
 
-#include <tinyxml2.h>
-
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chainiksolverpos_nr_jl.hpp>
 #include <kdl/chainiksolvervel_pinv.hpp>
@@ -50,42 +48,22 @@ static constexpr double kCubeHS = 0.02; // half-size: 4 cm cube
 
 static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
 
-/* Add contact exclusions between bracelet_link and all g_* gripper bodies. */
-static bool patch_contact_exclusions(const std::string &path)
-{
-    tinyxml2::XMLDocument doc;
-    if (doc.LoadFile(path.c_str()) != tinyxml2::XML_SUCCESS) return false;
-    auto *root = doc.FirstChildElement("mujoco");
-    if (!root) return false;
-
-    auto *contact = root->FirstChildElement("contact");
-    if (!contact) {
-        contact = doc.NewElement("contact");
-        root->InsertEndChild(contact);
-    }
-
-    const char *gripper_bodies[] = { "g_base_mount",
-        "g_base",
-        "g_left_driver",
-        "g_right_driver",
-        "g_left_spring_link",
-        "g_right_spring_link",
-        "g_left_follower",
-        "g_right_follower",
-        "g_left_coupler",
-        "g_right_coupler",
-        "g_left_pad",
-        "g_right_pad",
-        "g_left_silicone_pad",
-        "g_right_silicone_pad" };
-    for (const char *gb : gripper_bodies) {
-        auto *exc = doc.NewElement("exclude");
-        exc->SetAttribute("body1", "bracelet_link");
-        exc->SetAttribute("body2", gb);
-        contact->InsertEndChild(exc);
-    }
-    return doc.SaveFile(path.c_str()) == tinyxml2::XML_SUCCESS;
-}
+static const std::vector<std::pair<std::string, std::string>> kGripperExclusions = {
+    { "bracelet_link", "g_base_mount" },
+    { "bracelet_link", "g_base" },
+    { "bracelet_link", "g_left_driver" },
+    { "bracelet_link", "g_right_driver" },
+    { "bracelet_link", "g_left_spring_link" },
+    { "bracelet_link", "g_right_spring_link" },
+    { "bracelet_link", "g_left_follower" },
+    { "bracelet_link", "g_right_follower" },
+    { "bracelet_link", "g_left_coupler" },
+    { "bracelet_link", "g_right_coupler" },
+    { "bracelet_link", "g_left_pad" },
+    { "bracelet_link", "g_right_pad" },
+    { "bracelet_link", "g_left_silicone_pad" },
+    { "bracelet_link", "g_right_silicone_pad" },
+};
 
 static double clamp01(double t) { return t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t); }
 
@@ -156,12 +134,12 @@ class PickTest : public ::testing::Test
           << "patch_mjcf_add_skybox() returned false";
         ASSERT_TRUE(mj_kdl::patch_mjcf_add_floor(combined_.c_str()))
           << "patch_mjcf_add_floor() returned false";
-        ASSERT_TRUE(patch_contact_exclusions(combined_))
-          << "patch_contact_exclusions() returned false";
+        ASSERT_TRUE(mj_kdl::patch_mjcf_contact_exclusions(combined_.c_str(), kGripperExclusions))
+          << "patch_mjcf_contact_exclusions() returned false";
 
         mj_kdl::SceneObject cube_obj;
         cube_obj.name        = "cube";
-        cube_obj.shape       = mj_kdl::ObjShape::BOX;
+        cube_obj.shape       = mj_kdl::Shape::BOX;
         cube_obj.size[0]     = kCubeHS;
         cube_obj.size[1]     = kCubeHS;
         cube_obj.size[2]     = kCubeHS;
@@ -361,7 +339,7 @@ TEST_F(PickTest, CubeLifted)
     if (key_id_ >= 0)
         mj_resetDataKeyframe(model_, data_, key_id_);
     else
-        mj_kdl::sync_from_kdl(&s_, q_home_kdl_);
+        mj_kdl::set_joint_pos(&s_, q_home_kdl_);
     reset_cube(data_);
     mj_forward(model_, data_);
 

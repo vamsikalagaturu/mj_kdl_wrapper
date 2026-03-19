@@ -11,8 +11,6 @@
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 
-#include <tinyxml2.h>
-
 #include <cmath>
 #include <filesystem>
 #include <iostream>
@@ -20,42 +18,15 @@
 
 static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
 
+static const std::vector<std::pair<std::string, std::string>> kGripperExclusions = {
+    { "bracelet_link", "g_base" },
+    { "bracelet_link", "g_left_pad" },
+    { "bracelet_link", "g_right_pad" },
+    { "half_arm_2_link", "g_base" },
+};
+
 namespace fs = std::filesystem;
 static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path().parent_path(); }
-
-/* Add contact exclusions between arm and gripper bodies. */
-static bool patch_contact_exclusions(const std::string &path)
-{
-    tinyxml2::XMLDocument doc;
-    if (doc.LoadFile(path.c_str()) != tinyxml2::XML_SUCCESS) return false;
-    auto *root = doc.FirstChildElement("mujoco");
-    if (!root) return false;
-
-    auto *contact = root->FirstChildElement("contact");
-    if (!contact) {
-        contact = doc.NewElement("contact");
-        root->InsertFirstChild(contact);
-    }
-
-    struct Pair
-    {
-        const char *body1;
-        const char *body2;
-    };
-    static const Pair kExclude[] = {
-        { "bracelet_link", "g_base" },
-        { "bracelet_link", "g_left_pad" },
-        { "bracelet_link", "g_right_pad" },
-        { "half_arm_2_link", "g_base" },
-    };
-    for (const auto &p : kExclude) {
-        auto *ex = doc.NewElement("exclude");
-        ex->SetAttribute("body1", p.body1);
-        ex->SetAttribute("body2", p.body2);
-        contact->InsertEndChild(ex);
-    }
-    return doc.SaveFile(path.c_str()) == tinyxml2::XML_SUCCESS;
-}
 
 int main(int argc, char *argv[])
 {
@@ -95,8 +66,8 @@ int main(int argc, char *argv[])
         std::cerr << "patch_mjcf visuals failed\n";
         return 1;
     }
-    if (!patch_contact_exclusions(combined)) {
-        std::cerr << "patch_contact_exclusions() failed\n";
+    if (!mj_kdl::patch_mjcf_contact_exclusions(combined.c_str(), kGripperExclusions)) {
+        std::cerr << "patch_mjcf_contact_exclusions() failed\n";
         return 1;
     }
 
@@ -123,7 +94,7 @@ int main(int argc, char *argv[])
     } else {
         KDL::JntArray q_home(n);
         for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
-        mj_kdl::sync_from_kdl(&robot, q_home);
+        mj_kdl::set_joint_pos(&robot, q_home);
     }
     mj_forward(model, data);
 

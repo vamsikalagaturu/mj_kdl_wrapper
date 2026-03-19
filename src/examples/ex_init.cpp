@@ -58,7 +58,7 @@ int main(int argc, char *argv[])
     KDL::JntArray q_home(n);
     for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
 
-    mj_kdl::sync_from_kdl(&robot, q_home);
+    mj_kdl::set_joint_pos(&robot, q_home);
     mj_forward(model, data);
     for (unsigned i = 0; i < n; ++i) data->ctrl[i] = data->qpos[robot.kdl_to_mj_qpos[i]];
 

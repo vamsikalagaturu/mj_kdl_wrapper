@@ -63,7 +63,7 @@ int main(int argc, char *argv[])
     KDL::JntArray q_home(n);
     for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
 
-    mj_kdl::sync_from_kdl(&robot, q_home);
+    mj_kdl::set_joint_pos(&robot, q_home);
     mj_forward(model, data);
     for (unsigned i = 0; i < n; ++i) data->ctrl[i] = data->qpos[robot.kdl_to_mj_qpos[i]];
 
@@ -73,14 +73,14 @@ int main(int argc, char *argv[])
 
         for (int step = 0; step < 500; ++step) {
             KDL::JntArray q(n), g(n);
-            mj_kdl::sync_to_kdl(&robot, q);
+            mj_kdl::get_joint_pos(&robot, q);
             dyn.JntToGravity(q, g);
             mj_kdl::set_torques(&robot, g);
             mj_kdl::step(&robot);
         }
 
         KDL::JntArray q_end(n);
-        mj_kdl::sync_to_kdl(&robot, q_end);
+        mj_kdl::get_joint_pos(&robot, q_end);
         KDL::Frame ee_end;
         fk.JntToCart(q_end, ee_end);
         double drift = (ee_start.p - ee_end.p).Norm();
@@ -90,7 +90,7 @@ int main(int argc, char *argv[])
         mj_kdl::run_simulate_ui(model, data, urdf.c_str(), [&](mjModel *, mjData *d) {
             for (unsigned i = 0; i < n; ++i) d->ctrl[i] = d->qpos[robot.kdl_to_mj_qpos[i]];
             KDL::JntArray q(n), g(n);
-            mj_kdl::sync_to_kdl(&robot, q);
+            mj_kdl::get_joint_pos(&robot, q);
             dyn.JntToGravity(q, g);
             mj_kdl::set_torques(&robot, g);
         });

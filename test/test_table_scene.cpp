@@ -35,7 +35,7 @@ static mj_kdl::SceneObject make_box(const char *name,
 {
     mj_kdl::SceneObject o;
     o.name    = name;
-    o.shape   = mj_kdl::ObjShape::BOX;
+    o.shape   = mj_kdl::Shape::BOX;
     o.size[0] = hx;
     o.size[1] = hy;
     o.size[2] = hz;
@@ -60,7 +60,7 @@ static mj_kdl::SceneObject make_sphere(const char *name,
 {
     mj_kdl::SceneObject o;
     o.name    = name;
-    o.shape   = mj_kdl::ObjShape::SPHERE;
+    o.shape   = mj_kdl::Shape::SPHERE;
     o.size[0] = radius;
     o.pos[0]  = x;
     o.pos[1]  = y;
@@ -144,7 +144,7 @@ class TableSceneTest : public ::testing::Test
 
         q_home_.resize(n_);
         for (unsigned i = 0; i < n_; ++i) q_home_(i) = kHomePose[i];
-        mj_kdl::sync_from_kdl(&s_, q_home_);
+        mj_kdl::set_joint_pos(&s_, q_home_);
         mj_forward(model_, data_);
     }
 
@@ -162,7 +162,7 @@ TEST_F(TableSceneTest, GravityCompDrift)
 
     for (int i = 0; i < 500; ++i) {
         KDL::JntArray q, g(n_);
-        mj_kdl::sync_to_kdl(&s_, q);
+        mj_kdl::get_joint_pos(&s_, q);
         dyn_->JntToGravity(q, g);
         mj_kdl::set_torques(&s_, g);
         mj_kdl::step(&s_);
@@ -170,7 +170,7 @@ TEST_F(TableSceneTest, GravityCompDrift)
 
     KDL::JntArray q_end;
     KDL::Frame    ee_end;
-    mj_kdl::sync_to_kdl(&s_, q_end);
+    mj_kdl::get_joint_pos(&s_, q_end);
     fk_->JntToCart(q_end, ee_end);
     double drift = (ee_init.p - ee_end.p).Norm();
 

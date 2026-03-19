@@ -49,7 +49,7 @@ int main(int argc, char *argv[])
                      float         b) {
         mj_kdl::SceneObject o;
         o.name    = name;
-        o.shape   = mj_kdl::ObjShape::BOX;
+        o.shape   = mj_kdl::Shape::BOX;
         o.size[0] = hx;
         o.size[1] = hy;
         o.size[2] = hz;
@@ -66,7 +66,7 @@ int main(int argc, char *argv[])
       [&](const char *name, double x, double y, double radius, float r, float g, float b) {
           mj_kdl::SceneObject o;
           o.name    = name;
-          o.shape   = mj_kdl::ObjShape::SPHERE;
+          o.shape   = mj_kdl::Shape::SPHERE;
           o.size[0] = radius;
           o.pos[0]  = x;
           o.pos[1]  = y;

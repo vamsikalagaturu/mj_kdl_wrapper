@@ -78,12 +78,12 @@ class MenagerieTest : public ::testing::Test
         } else {
             KDL::JntArray q_home(n_);
             for (unsigned i = 0; i < n_; ++i) q_home(i) = kHomePose[i];
-            mj_kdl::sync_from_kdl(&s_, q_home);
+            mj_kdl::set_joint_pos(&s_, q_home);
         }
         mj_forward(model_, data_);
 
         q_home_kdl_.resize(n_);
-        mj_kdl::sync_to_kdl(&s_, q_home_kdl_);
+        mj_kdl::get_joint_pos(&s_, q_home_kdl_);
     }
 
     void TearDown() override
@@ -120,7 +120,7 @@ TEST_F(MenagerieTest, GravityCompDrift)
 
     for (int i = 0; i < 500; ++i) {
         KDL::JntArray q(n_), g(n_);
-        mj_kdl::sync_to_kdl(&s_, q);
+        mj_kdl::get_joint_pos(&s_, q);
         dyn_->JntToGravity(q, g);
         mj_kdl::set_torques(&s_, g);
         mj_kdl::step(&s_);
@@ -129,7 +129,7 @@ TEST_F(MenagerieTest, GravityCompDrift)
     model_->opt.disableflags = saved_flags;
 
     KDL::JntArray q_end(n_);
-    mj_kdl::sync_to_kdl(&s_, q_end);
+    mj_kdl::get_joint_pos(&s_, q_end);
     KDL::Frame fk_end;
     fk_->JntToCart(q_end, fk_end);
     double drift = (fk_initial.p - fk_end.p).Norm();

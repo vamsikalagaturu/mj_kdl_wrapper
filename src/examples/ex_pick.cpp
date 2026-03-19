@@ -16,8 +16,6 @@
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 
-#include <tinyxml2.h>
-
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chainiksolverpos_nr_jl.hpp>
 #include <kdl/chainiksolvervel_pinv.hpp>
@@ -46,38 +44,12 @@ static void lerp_q(const KDL::JntArray &a, const KDL::JntArray &b, double t, KDL
     for (unsigned i = 0; i < a.rows(); ++i) out(i) = a(i) + t * (b(i) - a(i));
 }
 
-static bool patch_contact_exclusions(const std::string &path)
-{
-    tinyxml2::XMLDocument doc;
-    if (doc.LoadFile(path.c_str()) != tinyxml2::XML_SUCCESS) return false;
-    auto *root = doc.FirstChildElement("mujoco");
-    if (!root) return false;
-
-    auto *contact = root->FirstChildElement("contact");
-    if (!contact) {
-        contact = doc.NewElement("contact");
-        root->InsertFirstChild(contact);
-    }
-
-    struct Pair
-    {
-        const char *body1;
-        const char *body2;
-    };
-    static const Pair kExclude[] = {
-        { "bracelet_link", "g_base" },
-        { "bracelet_link", "g_left_pad" },
-        { "bracelet_link", "g_right_pad" },
-        { "half_arm_2_link", "g_base" },
-    };
-    for (const auto &p : kExclude) {
-        auto *ex = doc.NewElement("exclude");
-        ex->SetAttribute("body1", p.body1);
-        ex->SetAttribute("body2", p.body2);
-        contact->InsertEndChild(ex);
-    }
-    return doc.SaveFile(path.c_str()) == tinyxml2::XML_SUCCESS;
-}
+static const std::vector<std::pair<std::string, std::string>> kGripperExclusions = {
+    { "bracelet_link", "g_base" },
+    { "bracelet_link", "g_left_pad" },
+    { "bracelet_link", "g_right_pad" },
+    { "half_arm_2_link", "g_base" },
+};
 
 struct Phase
 {
@@ -126,14 +98,14 @@ int main(int argc, char *argv[])
         std::cerr << "patch_mjcf visuals failed\n";
         return 1;
     }
-    if (!patch_contact_exclusions(combined)) {
-        std::cerr << "patch_contact_exclusions() failed\n";
+    if (!mj_kdl::patch_mjcf_contact_exclusions(combined.c_str(), kGripperExclusions)) {
+        std::cerr << "patch_mjcf_contact_exclusions() failed\n";
         return 1;
     }
 
     mj_kdl::SceneObject cube;
     cube.name    = "cube";
-    cube.shape   = mj_kdl::ObjShape::BOX;
+    cube.shape   = mj_kdl::Shape::BOX;
     cube.size[0] = cube.size[1] = cube.size[2] = kCubeHS;
     cube.pos[0]                                = kCubeX;
     cube.pos[1]                                = kCubeY;
@@ -235,7 +207,7 @@ int main(int argc, char *argv[])
     if (key_id >= 0)
         mj_resetDataKeyframe(model, data, key_id);
     else
-        mj_kdl::sync_from_kdl(&robot, q_home);
+        mj_kdl::set_joint_pos(&robot, q_home);
     reset_cube(data);
     mj_forward(model, data);
 

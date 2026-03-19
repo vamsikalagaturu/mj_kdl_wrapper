@@ -14,8 +14,6 @@
 
 #include <gtest/gtest.h>
 
-#include <tinyxml2.h>
-
 #include <kdl/chainfksolverpos_recursive.hpp>
 
 #include <cmath>
@@ -36,42 +34,22 @@ static constexpr double kKd[7] = { 10, 20, 10, 20, 10, 20, 10 };
 
 static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
 
-static bool patch_contact_exclusions(const std::string &path)
-{
-    tinyxml2::XMLDocument doc;
-    if (doc.LoadFile(path.c_str()) != tinyxml2::XML_SUCCESS) return false;
-    auto *root = doc.FirstChildElement("mujoco");
-    if (!root) return false;
-
-    auto *contact = root->FirstChildElement("contact");
-    if (!contact) {
-        contact = doc.NewElement("contact");
-        root->InsertEndChild(contact);
-    }
-
-    const char *gripper_bodies[] = { "g_base_mount",
-        "g_base",
-        "g_left_driver",
-        "g_right_driver",
-        "g_left_spring_link",
-        "g_right_spring_link",
-        "g_left_follower",
-        "g_right_follower",
-        "g_left_coupler",
-        "g_right_coupler",
-        "g_left_pad",
-        "g_right_pad",
-        "g_left_silicone_pad",
-        "g_right_silicone_pad" };
-    for (const char *gb : gripper_bodies) {
-        auto *exc = doc.NewElement("exclude");
-        exc->SetAttribute("body1", "bracelet_link");
-        exc->SetAttribute("body2", gb);
-        contact->InsertEndChild(exc);
-    }
-
-    return doc.SaveFile(path.c_str()) == tinyxml2::XML_SUCCESS;
-}
+static const std::vector<std::pair<std::string, std::string>> kGripperExclusions = {
+    { "bracelet_link", "g_base_mount" },
+    { "bracelet_link", "g_base" },
+    { "bracelet_link", "g_left_driver" },
+    { "bracelet_link", "g_right_driver" },
+    { "bracelet_link", "g_left_spring_link" },
+    { "bracelet_link", "g_right_spring_link" },
+    { "bracelet_link", "g_left_follower" },
+    { "bracelet_link", "g_right_follower" },
+    { "bracelet_link", "g_left_coupler" },
+    { "bracelet_link", "g_right_coupler" },
+    { "bracelet_link", "g_left_pad" },
+    { "bracelet_link", "g_right_pad" },
+    { "bracelet_link", "g_left_silicone_pad" },
+    { "bracelet_link", "g_right_silicone_pad" },
+};
 
 class ImpedanceTest : public ::testing::Test
 {
@@ -117,8 +95,8 @@ class ImpedanceTest : public ::testing::Test
           << "patch_mjcf_add_skybox() returned false";
         ASSERT_TRUE(mj_kdl::patch_mjcf_add_floor(combined_.c_str()))
           << "patch_mjcf_add_floor() returned false";
-        ASSERT_TRUE(patch_contact_exclusions(combined_))
-          << "patch_contact_exclusions() returned false";
+        ASSERT_TRUE(mj_kdl::patch_mjcf_contact_exclusions(combined_.c_str(), kGripperExclusions))
+          << "patch_mjcf_contact_exclusions() returned false";
 
         ASSERT_TRUE(mj_kdl::load_mjcf(&model_, &data_, combined_.c_str()))
           << "load_mjcf() returned false for combined MJCF";
@@ -169,7 +147,7 @@ TEST_F(ImpedanceTest, ImpedanceDrift)
 {
     KDL::JntArray q_home_kdl(n_);
     for (unsigned i = 0; i < n_; ++i) q_home_kdl(i) = kHomePose[i];
-    mj_kdl::sync_from_kdl(&s_, q_home_kdl);
+    mj_kdl::set_joint_pos(&s_, q_home_kdl);
     mj_forward(model_, data_);
 
     KDL::Frame ee_init;
@@ -178,7 +156,7 @@ TEST_F(ImpedanceTest, ImpedanceDrift)
     for (int step = 0; step < 200; ++step) step_impedance(model_, data_, kHomePose);
 
     KDL::JntArray q_now(n_);
-    mj_kdl::sync_to_kdl(&s_, q_now);
+    mj_kdl::get_joint_pos(&s_, q_now);
     KDL::Frame ee_now;
     fk_->JntToCart(q_now, ee_now);
     double drift = (ee_now.p - ee_init.p).Norm() * 1000.0;

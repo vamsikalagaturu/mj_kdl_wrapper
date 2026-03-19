@@ -30,7 +30,7 @@ static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.95
 static void apply_grav_comp(mj_kdl::Robot *s, KDL::ChainDynParam &dyn)
 {
     KDL::JntArray q;
-    mj_kdl::sync_to_kdl(s, q);
+    mj_kdl::get_joint_pos(s, q);
     KDL::JntArray g(s->n_joints);
     dyn.JntToGravity(q, g);
     mj_kdl::set_torques(s, g);
@@ -117,8 +117,8 @@ class DualArmTest : public ::testing::Test
 
 TEST_F(DualArmTest, GravityInformational)
 {
-    mj_kdl::sync_from_kdl(&arm1, q_home);
-    mj_kdl::sync_from_kdl(&arm2, q_home);
+    mj_kdl::set_joint_pos(&arm1, q_home);
+    mj_kdl::set_joint_pos(&arm2, q_home);
     mj_forward(model, data);
 
     KDL::JntArray g1(n), g2(n);
@@ -137,8 +137,8 @@ TEST_F(DualArmTest, GravityInformational)
 TEST_F(DualArmTest, DualArmDrift)
 {
     /* Sync both arms to home pose and record initial EE frames. */
-    mj_kdl::sync_from_kdl(&arm1, q_home);
-    mj_kdl::sync_from_kdl(&arm2, q_home);
+    mj_kdl::set_joint_pos(&arm1, q_home);
+    mj_kdl::set_joint_pos(&arm2, q_home);
     mj_forward(model, data);
 
     KDL::Frame ee1_init, ee2_init;
@@ -159,8 +159,8 @@ TEST_F(DualArmTest, DualArmDrift)
     }
 
     KDL::JntArray q1_end, q2_end;
-    mj_kdl::sync_to_kdl(&arm1, q1_end);
-    mj_kdl::sync_to_kdl(&arm2, q2_end);
+    mj_kdl::get_joint_pos(&arm1, q1_end);
+    mj_kdl::get_joint_pos(&arm2, q2_end);
     KDL::Frame ee1_end, ee2_end;
     fk1->JntToCart(q1_end, ee1_end);
     fk2->JntToCart(q2_end, ee2_end);

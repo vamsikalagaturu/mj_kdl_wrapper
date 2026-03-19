@@ -60,7 +60,7 @@ struct TableSpec
 };
 
 /* Shape type for scene objects. */
-enum class ObjShape { BOX, SPHERE, CYLINDER };
+enum class Shape { BOX, SPHERE, CYLINDER };
 
 /*
  * A free-floating or fixed rigid body to place in the scene.
@@ -81,7 +81,7 @@ enum class ObjShape { BOX, SPHERE, CYLINDER };
 struct SceneObject
 {
     std::string name;
-    ObjShape    shape       = ObjShape::BOX;
+    Shape       shape       = Shape::BOX;
     double      size[3]     = { 0.03, 0.03, 0.03 };
     double      pos[3]      = { 0.0, 0.0, 0.0 };
     float       rgba[4]     = { 1.0f, 0.0f, 0.0f, 1.0f };
@@ -105,8 +105,9 @@ struct SceneSpec
 
 /*
  * Runtime handle for one KDL-tracked articulation inside a MuJoCo scene.
- * Holds the scene model/data reference, the KDL chain with joint index maps.
- * Fields are public.  Do not free model/data directly; use destroy_scene() or cleanup().
+ * Holds borrowed pointers to the scene model/data plus the KDL chain and
+ * joint index maps.  model/data are never freed by cleanup(); call
+ * destroy_scene() separately when the scene is no longer needed.
  */
 struct Robot
 {
@@ -118,8 +119,7 @@ struct Robot
     std::vector<std::pair<double, double>> joint_limits;
     std::vector<int>                       kdl_to_mj_qpos; // KDL index -> MuJoCo qpos address
     std::vector<int>                       kdl_to_mj_dof;  // KDL index -> MuJoCo dof address
-    bool _owns_model = true;                               // if true, cleanup() frees model/data
-    bool paused      = false; // set true to pause simulation (step() becomes a no-op)
+    bool paused = false; // set true to pause simulation (step() becomes a no-op)
 };
 
 /*
@@ -170,6 +170,18 @@ bool patch_mjcf_add_floor(const char *mjcf_path);
  * @return true on success.
  */
 bool patch_mjcf_add_objects(const char *mjcf_path, const std::vector<SceneObject> &objects);
+
+/*
+ * Add contact exclusion pairs to an existing MJCF file in-place.
+ * Each entry in exclusions is a (body1, body2) pair; MuJoCo will not generate
+ * contacts between them.  Typical use: prevent spurious contacts between an arm
+ * link and the gripper bodies after attach_gripper().
+ * @param mjcf_path   Path to the MJCF file to patch.
+ * @param exclusions  Pairs of body names to exclude from contact.
+ * @return true on success.
+ */
+bool patch_mjcf_contact_exclusions(const char            *mjcf_path,
+  const std::vector<std::pair<std::string, std::string>> &exclusions);
 
 /*
  * Save the compiled model to an MJCF XML file for later reloading with load_mjcf().
@@ -238,11 +250,17 @@ bool attach_gripper(const char *arm_mjcf, const GripperSpec *g, const char *out_
  * @param[in]  add_skybox Insert a skybox texture.
  * @return true on success.
  */
-bool build_scene_from_mjcfs(const char *out_mjcf,
-  const RobotSpec                      *arms,
-  int                                   n_arms,
-  bool                                  add_floor  = true,
-  bool                                  add_skybox = true);
+/*
+ * @param[out] out_model  Newly allocated MuJoCo model; caller must free via destroy_scene().
+ * @param[out] out_data   Newly allocated MuJoCo data; caller must free via destroy_scene().
+ */
+bool build_scene_from_mjcfs(mjModel **out_model,
+  mjData                            **out_data,
+  const RobotSpec                    *arms,
+  int                                 n_arms,
+  bool                                add_floor  = true,
+  bool                                add_skybox = true,
+  const char                         *out_path   = nullptr);
 
 /*
  * Build a MuJoCo world from one or more URDF robots into a single mjModel/mjData.
@@ -299,7 +317,7 @@ bool init_window(Viewer *v,
   int                    height = 720);
 
 /*
- * Release model/data if _owns_model and zero all Robot fields.
+ * Zero all Robot fields.  Does not free model or data; call destroy_scene() for that.
  * @param[in,out] r  Robot to tear down.
  */
 void cleanup(Robot *r);
@@ -344,20 +362,20 @@ bool is_running(const Viewer *v);
 bool render(Viewer *v, const Robot *r);
 
 /*
- * Copy MuJoCo qpos into q, reordered to match KDL chain joint order.
+ * Read MuJoCo qpos into q, reordered to match KDL chain joint order.
  * Resizes q to s->n_joints if needed.
- * @param[in]  s  Simulation state with a valid data pointer.
+ * @param[in]  s  Robot with a valid data pointer.
  * @param[out] q  Joint positions in KDL chain order.
  * @return true on success, false if s->data is null.
  */
-bool sync_to_kdl(const Robot *s, KDL::JntArray &q);
+bool get_joint_pos(const Robot *s, KDL::JntArray &q);
 
 /*
  * Write KDL joint positions into MuJoCo qpos (KDL chain order -> MuJoCo addresses).
- * @param[in,out] s  Simulation state.
+ * @param[in,out] s  Robot with a valid data pointer.
  * @param[in]     q  Joint positions in KDL chain order; size must equal s->n_joints.
  */
-void sync_from_kdl(Robot *s, const KDL::JntArray &q);
+void set_joint_pos(Robot *s, const KDL::JntArray &q);
 
 /*
  * Apply joint torques by writing into s->data->qfrc_applied (KDL chain order).

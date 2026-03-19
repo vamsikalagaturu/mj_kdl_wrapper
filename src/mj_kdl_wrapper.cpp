@@ -244,13 +244,13 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
         mjsGeom *g = mjs_addGeom(ob, nullptr);
         mjs_setString(mjs_getName(g->element), (obj.name + "_geom").c_str());
         switch (obj.shape) {
-        case ObjShape::BOX:
+        case Shape::BOX:
             g->type = mjGEOM_BOX;
             break;
-        case ObjShape::SPHERE:
+        case Shape::SPHERE:
             g->type = mjGEOM_SPHERE;
             break;
-        case ObjShape::CYLINDER:
+        case Shape::CYLINDER:
             g->type = mjGEOM_CYLINDER;
             break;
         }
@@ -493,25 +493,23 @@ static void sync_chain_inertias(Robot *s, const std::string &pfx)
     s->chain = chain;
 }
 
-static void build_index_map(Robot *s, const std::string &pfx = "")
+static bool build_index_map(Robot *s, const std::string &pfx = "")
 {
     s->kdl_to_mj_qpos.clear();
     s->kdl_to_mj_dof.clear();
-    if (!s->model) return;
+    if (!s->model) return false;
     for (const auto &name : s->joint_names) {
         int id = mj_name2id(s->model, mjOBJ_JOINT, (pfx + name).c_str());
         if (id < 0) {
             LOG_ERROR(
               "joint '" << pfx << name
-                        << "' not found in MuJoCo model  - check robot prefix or URDF joint names");
-            int idx = (int)s->kdl_to_mj_qpos.size();
-            s->kdl_to_mj_qpos.push_back(idx);
-            s->kdl_to_mj_dof.push_back(idx);
-        } else {
-            s->kdl_to_mj_qpos.push_back(s->model->jnt_qposadr[id]);
-            s->kdl_to_mj_dof.push_back(s->model->jnt_dofadr[id]);
+                        << "' not found in MuJoCo model - check robot prefix or URDF joint names");
+            return false;
         }
+        s->kdl_to_mj_qpos.push_back(s->model->jnt_qposadr[id]);
+        s->kdl_to_mj_dof.push_back(s->model->jnt_dofadr[id]);
     }
+    return true;
 }
 
 /* Build KDL chain from compiled mjModel (no URDF needed) */
@@ -856,8 +854,8 @@ bool patch_mjcf_add_objects(const char *mjcf_path, const std::vector<SceneObject
         }
 
         const char *shape_str = "box";
-        if (obj.shape == ObjShape::SPHERE) shape_str = "sphere";
-        if (obj.shape == ObjShape::CYLINDER) shape_str = "cylinder";
+        if (obj.shape == Shape::SPHERE) shape_str = "sphere";
+        if (obj.shape == Shape::CYLINDER) shape_str = "cylinder";
 
         char size_str[64];
         std::snprintf(
@@ -892,6 +890,30 @@ bool patch_mjcf_add_objects(const char *mjcf_path, const std::vector<SceneObject
 
         wb->InsertEndChild(body);
     }
+    return doc.SaveFile(mjcf_path) == XML_SUCCESS;
+}
+
+bool patch_mjcf_contact_exclusions(const char            *mjcf_path,
+  const std::vector<std::pair<std::string, std::string>> &exclusions)
+{
+    using namespace tinyxml2;
+    XMLDocument doc;
+    XMLElement *root = nullptr;
+    if (!load_mjcf_doc(mjcf_path, doc, &root, "patch_mjcf_contact_exclusions")) return false;
+
+    XMLElement *contact = root->FirstChildElement("contact");
+    if (!contact) {
+        contact = doc.NewElement("contact");
+        root->InsertEndChild(contact);
+    }
+
+    for (const auto &p : exclusions) {
+        XMLElement *ex = doc.NewElement("exclude");
+        ex->SetAttribute("body1", p.first.c_str());
+        ex->SetAttribute("body2", p.second.c_str());
+        contact->InsertEndChild(ex);
+    }
+
     return doc.SaveFile(mjcf_path) == XML_SUCCESS;
 }
 
@@ -1088,14 +1110,16 @@ static void mjcf_prefix_names(tinyxml2::XMLElement *e, const std::string &pfx)
         mjcf_prefix_names(c, pfx);
 }
 
-bool build_scene_from_mjcfs(const char *out_mjcf,
-  const RobotSpec                      *arms,
-  int                                   n_arms,
-  bool                                  add_floor,
-  bool                                  add_skybox)
+bool build_scene_from_mjcfs(mjModel **out_model,
+  mjData                            **out_data,
+  const RobotSpec                    *arms,
+  int                                 n_arms,
+  bool                                add_floor,
+  bool                                add_skybox,
+  const char                         *out_path)
 {
     using namespace tinyxml2;
-    if (!out_mjcf || !arms || n_arms <= 0) return false;
+    if (!out_model || !out_data || !arms || n_arms <= 0) return false;
 
     XMLDocument doc;
     auto       *mj = doc.NewElement("mujoco");
@@ -1183,10 +1207,11 @@ bool build_scene_from_mjcfs(const char *out_mjcf,
             }
     }
 
-    if (doc.SaveFile(out_mjcf) != XML_SUCCESS) return false;
-    if (add_skybox && !patch_mjcf_add_skybox(out_mjcf)) return false;
-    if (add_floor && !patch_mjcf_add_floor(out_mjcf)) return false;
-    return true;
+    const char *tmp = out_path ? out_path : "/tmp/_mj_kdl_scene_from_mjcfs.xml";
+    if (doc.SaveFile(tmp) != XML_SUCCESS) return false;
+    if (add_skybox && !patch_mjcf_add_skybox(tmp)) return false;
+    if (add_floor && !patch_mjcf_add_floor(tmp)) return false;
+    return load_mjcf(out_model, out_data, tmp);
 }
 
 bool init_robot(Robot *s,
@@ -1199,13 +1224,12 @@ bool init_robot(Robot *s,
 {
     LOG_INFO("init_robot: '" << base_link << "' -> '" << tip_link << "' prefix='"
                              << (prefix ? prefix : "") << "' urdf='" << urdf << "'");
-    s->model       = model;
-    s->data        = data;
-    s->_owns_model = false;
+    s->model = model;
+    s->data  = data;
     if (!load_kdl_chain(s, urdf, base_link, tip_link)) return false;
     std::string pfx = prefix ? prefix : "";
     sync_chain_inertias(s, pfx);
-    build_index_map(s, pfx);
+    if (!build_index_map(s, pfx)) return false;
     LOG_INFO(
       "chain ready: " << s->n_joints << " joints [" << base_link << " -> " << tip_link << "]");
     return true;
@@ -1220,11 +1244,10 @@ bool init_from_mjcf(Robot *s,
 {
     LOG_INFO("init_from_mjcf: '" << base_body << "' -> '" << tip_body << "' prefix='"
                                  << (prefix ? prefix : "") << "'");
-    s->model       = model;
-    s->data        = data;
-    s->_owns_model = false;
+    s->model = model;
+    s->data  = data;
     if (!build_kdl_from_model(s, model, base_body, tip_body)) return false;
-    build_index_map(s, prefix ? prefix : "");
+    if (!build_index_map(s, prefix ? prefix : "")) return false;
     LOG_INFO(
       "chain ready: " << s->n_joints << " joints [" << base_body << " -> " << tip_body << "]");
     return true;
@@ -1310,19 +1333,8 @@ void cleanup(Viewer *v)
 
 void cleanup(Robot *s)
 {
-    if (s->_owns_model) {
-        if (s->data) {
-            mj_deleteData(s->data);
-            s->data = nullptr;
-        }
-        if (s->model) {
-            mj_deleteModel(s->model);
-            s->model = nullptr;
-        }
-    } else {
-        s->data  = nullptr;
-        s->model = nullptr;
-    }
+    s->model = nullptr;
+    s->data  = nullptr;
     if (g_robot == s) g_robot = nullptr;
 }
 
@@ -1405,7 +1417,7 @@ bool render(Viewer *v, const Robot *r)
     return true;
 }
 
-bool sync_to_kdl(const Robot *s, KDL::JntArray &q)
+bool get_joint_pos(const Robot *s, KDL::JntArray &q)
 {
     if (!s->data) return false;
     q.resize(s->n_joints);
@@ -1413,7 +1425,7 @@ bool sync_to_kdl(const Robot *s, KDL::JntArray &q)
     return true;
 }
 
-void sync_from_kdl(Robot *s, const KDL::JntArray &q)
+void set_joint_pos(Robot *s, const KDL::JntArray &q)
 {
     if (!s->data) return;
     int n = std::min((int)q.rows(), s->n_joints);

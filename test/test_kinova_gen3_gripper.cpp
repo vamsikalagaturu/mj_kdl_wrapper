@@ -14,8 +14,6 @@
 
 #include <gtest/gtest.h>
 
-#include <tinyxml2.h>
-
 #include <kdl/chaindynparam.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
 
@@ -32,44 +30,23 @@ static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.95
 
 static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
 
-/* Add contact exclusions between bracelet_link and all g_* gripper bodies.
- * Called after patch_mjcf_visuals() on the combined MJCF. */
-static bool patch_contact_exclusions(const std::string &path)
-{
-    tinyxml2::XMLDocument doc;
-    if (doc.LoadFile(path.c_str()) != tinyxml2::XML_SUCCESS) return false;
-    auto *root = doc.FirstChildElement("mujoco");
-    if (!root) return false;
-
-    auto *contact = root->FirstChildElement("contact");
-    if (!contact) {
-        contact = doc.NewElement("contact");
-        root->InsertEndChild(contact);
-    }
-
-    const char *gripper_bodies[] = { "g_base_mount",
-        "g_base",
-        "g_left_driver",
-        "g_right_driver",
-        "g_left_spring_link",
-        "g_right_spring_link",
-        "g_left_follower",
-        "g_right_follower",
-        "g_left_coupler",
-        "g_right_coupler",
-        "g_left_pad",
-        "g_right_pad",
-        "g_left_silicone_pad",
-        "g_right_silicone_pad" };
-    for (const char *gb : gripper_bodies) {
-        auto *exc = doc.NewElement("exclude");
-        exc->SetAttribute("body1", "bracelet_link");
-        exc->SetAttribute("body2", gb);
-        contact->InsertEndChild(exc);
-    }
-
-    return doc.SaveFile(path.c_str()) == tinyxml2::XML_SUCCESS;
-}
+/* bracelet_link excluded from all g_* gripper bodies to prevent spurious contacts. */
+static const std::vector<std::pair<std::string, std::string>> kGripperExclusions = {
+    { "bracelet_link", "g_base_mount" },
+    { "bracelet_link", "g_base" },
+    { "bracelet_link", "g_left_driver" },
+    { "bracelet_link", "g_right_driver" },
+    { "bracelet_link", "g_left_spring_link" },
+    { "bracelet_link", "g_right_spring_link" },
+    { "bracelet_link", "g_left_follower" },
+    { "bracelet_link", "g_right_follower" },
+    { "bracelet_link", "g_left_coupler" },
+    { "bracelet_link", "g_right_coupler" },
+    { "bracelet_link", "g_left_pad" },
+    { "bracelet_link", "g_right_pad" },
+    { "bracelet_link", "g_left_silicone_pad" },
+    { "bracelet_link", "g_right_silicone_pad" },
+};
 
 class GripperTest : public ::testing::Test
 {
@@ -116,8 +93,8 @@ class GripperTest : public ::testing::Test
           << "patch_mjcf_add_skybox() returned false";
         ASSERT_TRUE(mj_kdl::patch_mjcf_add_floor(combined_.c_str()))
           << "patch_mjcf_add_floor() returned false";
-        ASSERT_TRUE(patch_contact_exclusions(combined_))
-          << "patch_contact_exclusions() returned false";
+        ASSERT_TRUE(mj_kdl::patch_mjcf_contact_exclusions(combined_.c_str(), kGripperExclusions))
+          << "patch_mjcf_contact_exclusions() returned false";
 
         ASSERT_TRUE(mj_kdl::load_mjcf(&model_, &data_, combined_.c_str()))
           << "load_mjcf() returned false for combined MJCF";
@@ -167,7 +144,7 @@ TEST_F(GripperTest, GravityAccuracy)
     /* At q=0 the arm is upright and gripper weight contributes minimally,
      * keeping the KDL vs MuJoCo discrepancy within tolerance. */
     KDL::JntArray q_zero(n_);
-    mj_kdl::sync_from_kdl(&s_, q_zero);
+    mj_kdl::set_joint_pos(&s_, q_zero);
     mj_forward(model_, data_);
 
     KDL::JntArray g(n_);

@@ -60,7 +60,7 @@ TEST_F(InitTest, SimulationAdvance)
     unsigned      n = static_cast<unsigned>(s.n_joints);
     KDL::JntArray q_home(n);
     for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
-    mj_kdl::sync_from_kdl(&s, q_home);
+    mj_kdl::set_joint_pos(&s, q_home);
     mj_forward(s.model, s.data);
 
     const double t0 = s.data->time;

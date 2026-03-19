@@ -115,14 +115,14 @@ int main(int argc, char *argv[])
 
     /* Display IK solution (or home pose) with gravity compensation. */
     const KDL::JntArray &q_display = (ik_ret >= 0) ? q_ik : q_home;
-    mj_kdl::sync_from_kdl(&robot, q_display);
+    mj_kdl::set_joint_pos(&robot, q_display);
     mj_forward(model, data);
     for (unsigned i = 0; i < n; ++i) data->ctrl[i] = data->qpos[robot.kdl_to_mj_qpos[i]];
 
     mj_kdl::run_simulate_ui(model, data, urdf.c_str(), [&](mjModel *, mjData *d) {
         for (unsigned i = 0; i < n; ++i) d->ctrl[i] = d->qpos[robot.kdl_to_mj_qpos[i]];
         KDL::JntArray q(n), g(n);
-        mj_kdl::sync_to_kdl(&robot, q);
+        mj_kdl::get_joint_pos(&robot, q);
         dyn.JntToGravity(q, g);
         mj_kdl::set_torques(&robot, g);
     });
