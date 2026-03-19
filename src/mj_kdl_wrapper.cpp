@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2024 Vamsi Kalagaturu
+ * Copyright (c) 2026 Vamsi Kalagaturu
  * See LICENSE for details. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
@@ -589,7 +589,8 @@ static void   cb_keyboard(GLFWwindow *, int, int, int, int);
 static void   cb_mouse_button(GLFWwindow *, int, int, int);
 static void   cb_mouse_move(GLFWwindow *, double, double);
 static void   cb_scroll(GLFWwindow *, double, double);
-static Robot *g_state = nullptr;
+static Robot  *g_robot  = nullptr;
+static Viewer *g_viewer = nullptr;
 
 struct GLMouseState
 {
@@ -1102,9 +1103,9 @@ static void apply_glfw_platform_hints()
 #endif
 }
 
-bool init_window(Robot *s, const char *title, int width, int height)
+bool init_window(Viewer *v, Robot *r, const char *title, int width, int height)
 {
-    if (!s->model) return false;
+    if (!r->model) return false;
     if (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY")) return false;
     apply_glfw_platform_hints();
     if (!glfwInit()) return false;
@@ -1115,55 +1116,59 @@ bool init_window(Robot *s, const char *title, int width, int height)
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_FALSE);
     glfwWindowHint(GLFW_SAMPLES, 4);
 
-    s->window = glfwCreateWindow(width, height, title, nullptr, nullptr);
-    if (!s->window) {
+    v->window = glfwCreateWindow(width, height, title, nullptr, nullptr);
+    if (!v->window) {
         glfwTerminate();
         return false;
     }
 
     auto *ms = new GLMouseState();
-    glfwSetWindowUserPointer(s->window, ms);
-    glfwSetKeyCallback(s->window, cb_keyboard);
-    glfwSetMouseButtonCallback(s->window, cb_mouse_button);
-    glfwSetCursorPosCallback(s->window, cb_mouse_move);
-    glfwSetScrollCallback(s->window, cb_scroll);
+    glfwSetWindowUserPointer(v->window, ms);
+    glfwSetKeyCallback(v->window, cb_keyboard);
+    glfwSetMouseButtonCallback(v->window, cb_mouse_button);
+    glfwSetCursorPosCallback(v->window, cb_mouse_move);
+    glfwSetScrollCallback(v->window, cb_scroll);
     glfwSetWindowCloseCallback(
-      s->window, [](GLFWwindow *w) { glfwSetWindowShouldClose(w, GLFW_TRUE); });
-    glfwMakeContextCurrent(s->window);
+      v->window, [](GLFWwindow *w) { glfwSetWindowShouldClose(w, GLFW_TRUE); });
+    glfwMakeContextCurrent(v->window);
     glfwSwapInterval(1);
 
     if (!glfwGetProcAddress("glGenBuffers")) {
         delete ms;
-        glfwDestroyWindow(s->window);
-        s->window = nullptr;
+        glfwDestroyWindow(v->window);
+        v->window = nullptr;
         glfwTerminate();
         return false;
     }
 
-    mjv_defaultCamera(&s->cam);
-    mjv_defaultOption(&s->opt);
-    mjv_defaultPerturb(&s->pert);
-    mjv_makeScene(s->model, &s->scn, 2000);
-    mjr_makeContext(s->model, &s->con, mjFONTSCALE_150);
-    s->cam.type      = mjCAMERA_FREE;
-    s->cam.distance  = 2.5;
-    s->cam.azimuth   = 135.0;
-    s->cam.elevation = -20.0;
-    g_state          = s;
+    mjv_defaultCamera(&v->cam);
+    mjv_defaultOption(&v->opt);
+    mjv_defaultPerturb(&v->pert);
+    mjv_makeScene(r->model, &v->scn, 2000);
+    mjr_makeContext(r->model, &v->con, mjFONTSCALE_150);
+    v->cam.type      = mjCAMERA_FREE;
+    v->cam.distance  = 2.5;
+    v->cam.azimuth   = 135.0;
+    v->cam.elevation = -20.0;
+    g_robot  = r;
+    g_viewer = v;
     return true;
+}
+
+void cleanup(Viewer *v)
+{
+    if (!v->window) return;
+    mjv_freeScene(&v->scn);
+    mjr_freeContext(&v->con);
+    delete static_cast<GLMouseState *>(glfwGetWindowUserPointer(v->window));
+    glfwDestroyWindow(v->window);
+    v->window = nullptr;
+    glfwTerminate();
+    if (g_viewer == v) g_viewer = nullptr;
 }
 
 void cleanup(Robot *s)
 {
-    if (s->window) {
-        mjv_freeScene(&s->scn);
-        mjr_freeContext(&s->con);
-        delete static_cast<GLMouseState *>(glfwGetWindowUserPointer(s->window));
-        glfwDestroyWindow(s->window);
-        s->window = nullptr;
-        glfwTerminate();
-        if (g_state == s) g_state = nullptr;
-    }
     if (s->_owns_model) {
         if (s->data) {
             mj_deleteData(s->data);
@@ -1177,12 +1182,14 @@ void cleanup(Robot *s)
         s->data  = nullptr;
         s->model = nullptr;
     }
+    if (g_robot == s) g_robot = nullptr;
 }
 
 void step(Robot *s)
 {
     if (!s->model || !s->data || s->paused) return;
-    if (s->pert.active) mjv_applyPerturbForce(s->model, s->data, &s->pert);
+    if (g_viewer && g_viewer->pert.active)
+        mjv_applyPerturbForce(s->model, s->data, &g_viewer->pert);
     mj_step(s->model, s->data);
 }
 
@@ -1199,37 +1206,37 @@ void reset(Robot *s)
     }
 }
 
-bool is_running(const Robot *s)
+bool is_running(const Viewer *v)
 {
-    if (!s->window) return s->model != nullptr;
-    return !glfwWindowShouldClose(s->window);
+    if (!v->window) return false;
+    return !glfwWindowShouldClose(v->window);
 }
 
-bool render(Robot *s)
+bool render(Viewer *v, const Robot *r)
 {
-    if (!s->window) return is_running(s);
-    if (glfwWindowShouldClose(s->window)) return false;
+    if (!v->window) return false;
+    if (glfwWindowShouldClose(v->window)) return false;
     glfwPollEvents();
     int w, h;
-    glfwGetFramebufferSize(s->window, &w, &h);
+    glfwGetFramebufferSize(v->window, &w, &h);
     mjrRect vp = { 0, 0, w, h };
-    mjv_updateScene(s->model, s->data, &s->opt, &s->pert, &s->cam, mjCAT_ALL, &s->scn);
-    mjr_render(vp, &s->scn, &s->con);
+    mjv_updateScene(r->model, r->data, &v->opt, &v->pert, &v->cam, mjCAT_ALL, &v->scn);
+    mjr_render(vp, &v->scn, &v->con);
 
     char        top[256];
     const char *selname =
-      (s->pert.select > 0) ? mj_id2name(s->model, mjOBJ_BODY, s->pert.select) : nullptr;
+      (v->pert.select > 0) ? mj_id2name(r->model, mjOBJ_BODY, v->pert.select) : nullptr;
     if (selname)
         std::snprintf(top,
           sizeof(top),
           "t = %.3f s%s\nSelected: %s",
-          s->data->time,
-          s->paused ? "  [PAUSED]" : "",
+          r->data->time,
+          r->paused ? "  [PAUSED]" : "",
           selname);
     else
         std::snprintf(
-          top, sizeof(top), "t = %.3f s%s", s->data->time, s->paused ? "  [PAUSED]" : "");
-    mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, vp, top, nullptr, &s->con);
+          top, sizeof(top), "t = %.3f s%s", r->data->time, r->paused ? "  [PAUSED]" : "");
+    mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, vp, top, nullptr, &v->con);
 
     mjr_overlay(mjFONT_NORMAL,
       mjGRID_BOTTOMLEFT,
@@ -1239,21 +1246,21 @@ bool render(Robot *s)
       "No selection — Left drag: orbit   Right drag: pan   Scroll: zoom\n"
       "Space: pause/resume   R: reset   J: toggle joints   Q/Esc: quit",
       nullptr,
-      &s->con);
+      &v->con);
 
-    if (s->show_joints && s->n_joints > 0 && !s->kdl_to_mj_qpos.empty()) {
+    if (v->show_joints && r->n_joints > 0 && !r->kdl_to_mj_qpos.empty()) {
         char jvals[1024];
         int  off = std::snprintf(jvals, sizeof(jvals), "Joints (rad)\n");
-        for (int i = 0; i < s->n_joints && i < 16 && off < (int)sizeof(jvals) - 32; ++i)
+        for (int i = 0; i < r->n_joints && i < 16 && off < (int)sizeof(jvals) - 32; ++i)
             off += std::snprintf(jvals + off,
               sizeof(jvals) - off,
               "  %-20s %.3f\n",
-              s->joint_names[i].c_str(),
-              s->data->qpos[s->kdl_to_mj_qpos[i]]);
-        mjr_overlay(mjFONT_NORMAL, mjGRID_TOPRIGHT, vp, jvals, nullptr, &s->con);
+              r->joint_names[i].c_str(),
+              r->data->qpos[r->kdl_to_mj_qpos[i]]);
+        mjr_overlay(mjFONT_NORMAL, mjGRID_TOPRIGHT, vp, jvals, nullptr, &v->con);
     }
 
-    glfwSwapBuffers(s->window);
+    glfwSwapBuffers(v->window);
     return true;
 }
 
@@ -1285,13 +1292,13 @@ static void cb_keyboard(GLFWwindow *w, int key, int, int action, int)
 {
     if (action != GLFW_PRESS) return;
     if (key == GLFW_KEY_ESCAPE || key == GLFW_KEY_Q) glfwSetWindowShouldClose(w, GLFW_TRUE);
-    if (!g_state) return;
-    if (key == GLFW_KEY_SPACE) g_state->paused = !g_state->paused;
-    if (key == GLFW_KEY_R) reset(g_state);
-    if (key == GLFW_KEY_J) g_state->show_joints = !g_state->show_joints;
+    if (!g_robot || !g_viewer) return;
+    if (key == GLFW_KEY_SPACE) g_robot->paused = !g_robot->paused;
+    if (key == GLFW_KEY_R) reset(g_robot);
+    if (key == GLFW_KEY_J) g_viewer->show_joints = !g_viewer->show_joints;
     if (key == GLFW_KEY_D) {
-        g_state->pert.select = 0;
-        g_state->pert.active = 0;
+        g_viewer->pert.select = 0;
+        g_viewer->pert.active = 0;
     }
 }
 
@@ -1302,7 +1309,7 @@ static void cb_mouse_button(GLFWwindow *w, int btn, int act, int)
     ms->btn_right  = (glfwGetMouseButton(w, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS);
     ms->btn_middle = (glfwGetMouseButton(w, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS);
     glfwGetCursorPos(w, &ms->mouse_x, &ms->mouse_y);
-    if (!g_state) return;
+    if (!g_robot || !g_viewer) return;
 
     if (act == GLFW_PRESS) {
         double now          = glfwGetTime();
@@ -1315,42 +1322,42 @@ static void cb_mouse_button(GLFWwindow *w, int btn, int act, int)
             glfwGetWindowSize(w, &ww, &wh);
             mjtNum selpnt[3];
             int    geomid[1] = { -1 }, flexid[1] = { -1 }, skinid[1] = { -1 };
-            int    body = mjv_select(g_state->model,
-              g_state->data,
-              &g_state->opt,
+            int    body = mjv_select(g_robot->model,
+              g_robot->data,
+              &g_viewer->opt,
               (mjtNum)wh / ww,
               (mjtNum)ms->mouse_x / ww,
               (mjtNum)(wh - ms->mouse_y) / wh,
-              &g_state->scn,
+              &g_viewer->scn,
               selpnt,
               geomid,
               flexid,
               skinid);
             if (body > 0) {
-                g_state->pert.select     = body;
-                g_state->pert.skinselect = skinid[0];
-                mju_copy3(g_state->pert.localpos, selpnt);
-                mjv_initPerturb(g_state->model, g_state->data, &g_state->scn, &g_state->pert);
+                g_viewer->pert.select     = body;
+                g_viewer->pert.skinselect = skinid[0];
+                mju_copy3(g_viewer->pert.localpos, selpnt);
+                mjv_initPerturb(g_robot->model, g_robot->data, &g_viewer->scn, &g_viewer->pert);
             } else {
-                g_state->pert.select = 0;
-                g_state->pert.active = 0;
+                g_viewer->pert.select = 0;
+                g_viewer->pert.active = 0;
             }
         }
 
-        if (g_state->pert.select > 0) {
-            g_state->pert.active =
+        if (g_viewer->pert.select > 0) {
+            g_viewer->pert.active =
               (btn == GLFW_MOUSE_BUTTON_LEFT) ? mjPERT_TRANSLATE : mjPERT_ROTATE;
-            mjv_initPerturb(g_state->model, g_state->data, &g_state->scn, &g_state->pert);
+            mjv_initPerturb(g_robot->model, g_robot->data, &g_viewer->scn, &g_viewer->pert);
         }
     } else {
-        g_state->pert.active = 0;
+        g_viewer->pert.active = 0;
     }
 }
 
 static void cb_mouse_move(GLFWwindow *w, double x, double y)
 {
     auto *ms = static_cast<GLMouseState *>(glfwGetWindowUserPointer(w));
-    if (!g_state || (!ms->btn_left && !ms->btn_right && !ms->btn_middle)) return;
+    if (!g_robot || !g_viewer || (!ms->btn_left && !ms->btn_right && !ms->btn_middle)) return;
     double dx = x - ms->mouse_x, dy = y - ms->mouse_y;
     ms->mouse_x = x;
     ms->mouse_y = y;
@@ -1358,25 +1365,25 @@ static void cb_mouse_move(GLFWwindow *w, double x, double y)
     glfwGetWindowSize(w, &ww, &wh);
     bool shift = (glfwGetKey(w, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS
                   || glfwGetKey(w, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
-    if (g_state->pert.select > 0 && g_state->pert.active) {
+    if (g_viewer->pert.select > 0 && g_viewer->pert.active) {
         // Left drag = MOVE (translate body), Right drag = ROTATE (torque body)
         mjtMouse act = ms->btn_left    ? (shift ? mjMOUSE_MOVE_H : mjMOUSE_MOVE_V)
                        : ms->btn_right ? (shift ? mjMOUSE_ROTATE_H : mjMOUSE_ROTATE_V)
                                        : mjMOUSE_ZOOM;
         mjv_movePerturb(
-          g_state->model, g_state->data, act, dx / wh, dy / wh, &g_state->scn, &g_state->pert);
+          g_robot->model, g_robot->data, act, dx / wh, dy / wh, &g_viewer->scn, &g_viewer->pert);
     } else {
         mjtMouse act = ms->btn_left    ? (shift ? mjMOUSE_ROTATE_H : mjMOUSE_ROTATE_V)
                        : ms->btn_right ? (shift ? mjMOUSE_MOVE_H : mjMOUSE_MOVE_V)
                                        : mjMOUSE_ZOOM;
-        mjv_moveCamera(g_state->model, act, dx / wh, dy / wh, &g_state->scn, &g_state->cam);
+        mjv_moveCamera(g_robot->model, act, dx / wh, dy / wh, &g_viewer->scn, &g_viewer->cam);
     }
 }
 
 static void cb_scroll(GLFWwindow *, double, double yoff)
 {
-    if (g_state)
-        mjv_moveCamera(g_state->model, mjMOUSE_ZOOM, 0, -0.05 * yoff, &g_state->scn, &g_state->cam);
+    if (g_robot && g_viewer)
+        mjv_moveCamera(g_robot->model, mjMOUSE_ZOOM, 0, -0.05 * yoff, &g_viewer->scn, &g_viewer->cam);
 }
 
 namespace mj = ::mujoco;

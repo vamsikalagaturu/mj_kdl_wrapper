@@ -7,7 +7,7 @@
  *   (zero velocity, so qfrc_bias == gravity torques); logged only, no assertion.
  * DualArmDrift — 500-step closed-loop gravity comp; EE drift must be < 1 mm.
  *
- * Usage: test_dual_arm [urdf_path] [--gui] */
+ * Usage: test_dual_arm [urdf_path] */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "test_utils.hpp"
@@ -41,88 +41,6 @@ static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_pat
 
 /* g_urdf is set once from main() before RUN_ALL_TESTS(). */
 static std::string g_urdf;
-
-static void run_gui(const std::string &urdf)
-{
-    mj_kdl::SceneSpec scene;
-    scene.timestep  = 0.002;
-    scene.gravity_z = -9.81;
-    scene.add_floor = true;
-
-    mj_kdl::SceneRobot r1, r2;
-    r1.urdf_path = urdf.c_str();
-    r1.prefix    = "";
-    r1.pos[0]    = -0.5;
-    r1.pos[1]    = 0.0;
-    r1.pos[2]    = 0.0;
-
-    r2.urdf_path = urdf.c_str();
-    r2.prefix    = "r2_";
-    r2.pos[0]    = 0.5;
-    r2.pos[1]    = 0.0;
-    r2.pos[2]    = 0.0;
-    r2.euler[2]  = 180.0;
-
-    scene.robots = { r1, r2 };
-
-    mjModel *model = nullptr;
-    mjData  *data  = nullptr;
-    if (!mj_kdl::build_scene(&model, &data, &scene)) {
-        std::cerr << "GUI: build_scene() failed\n";
-        return;
-    }
-
-    mj_kdl::Robot arm1, arm2;
-    if (!mj_kdl::init_robot(&arm1, model, data, urdf.c_str(),
-                            "base_link", "EndEffector_Link", "")) {
-        std::cerr << "GUI: arm1 init_robot() failed\n";
-        mj_kdl::destroy_scene(model, data);
-        return;
-    }
-    if (!mj_kdl::init_robot(&arm2, model, data, urdf.c_str(),
-                            "base_link", "EndEffector_Link", "r2_")) {
-        std::cerr << "GUI: arm2 init_robot() failed\n";
-        mj_kdl::cleanup(&arm1);
-        mj_kdl::destroy_scene(model, data);
-        return;
-    }
-
-    int n = arm1.n_joints;
-    KDL::ChainDynParam dyn1(arm1.chain, KDL::Vector(0, 0, -9.81));
-    KDL::ChainDynParam dyn2(arm2.chain, KDL::Vector(0, 0, -9.81));
-
-    KDL::JntArray q_home(n);
-    for (int j = 0; j < n; ++j) q_home(j) = kHomePose[j];
-
-    mj_kdl::sync_from_kdl(&arm1, q_home);
-    mj_kdl::sync_from_kdl(&arm2, q_home);
-    mj_forward(model, data);
-
-    for (int i = 0; i < n; ++i) {
-        data->ctrl[arm1.kdl_to_mj_dof[i]] =
-            data->qpos[model->jnt_qposadr[model->dof_jntid[arm1.kdl_to_mj_dof[i]]]];
-        data->ctrl[arm2.kdl_to_mj_dof[i]] =
-            data->qpos[model->jnt_qposadr[model->dof_jntid[arm2.kdl_to_mj_dof[i]]]];
-    }
-
-    std::cout << "\nGUI: both arms in one scene.\n"
-              << "Ctrl+RightDrag to push a body.  Q/Esc to quit.\n";
-
-    mj_kdl::run_simulate_ui(model, data, urdf.c_str(), [&](mjModel *m, mjData *d) {
-        for (int i = 0; i < n; ++i) {
-            d->ctrl[arm1.kdl_to_mj_dof[i]] =
-                d->qpos[m->jnt_qposadr[m->dof_jntid[arm1.kdl_to_mj_dof[i]]]];
-            d->ctrl[arm2.kdl_to_mj_dof[i]] =
-                d->qpos[m->jnt_qposadr[m->dof_jntid[arm2.kdl_to_mj_dof[i]]]];
-        }
-        apply_grav_comp(&arm1, dyn1);
-        apply_grav_comp(&arm2, dyn2);
-    });
-
-    mj_kdl::cleanup(&arm1);
-    mj_kdl::cleanup(&arm2);
-    mj_kdl::destroy_scene(model, data);
-}
 
 class DualArmTest : public ::testing::Test {
 protected:
@@ -261,26 +179,9 @@ int main(int argc, char *argv[])
 {
     g_urdf = (repo_root() / "assets/gen3_urdf/GEN3_URDF_V12.urdf").string();
 
-    bool gui = false;
-    std::vector<char *> gtest_argv;
-    gtest_argv.push_back(argv[0]);
+    for (int i = 1; i < argc; ++i)
+        if (argv[i][0] != '-') g_urdf = argv[i];
 
-    for (int i = 1; i < argc; ++i) {
-        std::string a(argv[i]);
-        if (a == "--gui")
-            gui = true;
-        else if (a[0] != '-')
-            g_urdf = a;
-        else
-            gtest_argv.push_back(argv[i]);
-    }
-
-    if (gui) {
-        run_gui(g_urdf);
-        return 0;
-    }
-
-    int gtest_argc = static_cast<int>(gtest_argv.size());
-    ::testing::InitGoogleTest(&gtest_argc, gtest_argv.data());
+    ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }

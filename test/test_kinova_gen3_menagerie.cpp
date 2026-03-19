@@ -8,7 +8,7 @@
  *   3. KDL gravity torques agree with MuJoCo qfrc_bias at home pose within 1e-3 Nm.
  *   4. 500-step gravity-comp loop: EE drift < 1 mm.
  *
- * Usage: test_kinova_gen3_menagerie [--gui] */
+ */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "test_utils.hpp"
@@ -140,83 +140,8 @@ TEST_F(MenagerieTest, GravityCompDrift)
     EXPECT_LE(drift, 0.001) << "EE drift " << drift * 1000.0 << " mm exceeds 1 mm threshold";
 }
 
-static void run_gui(mjModel *model, mjData *data, mj_kdl::Robot &s, unsigned n,
-                    KDL::ChainDynParam &dyn, const std::string &mjcf,
-                    int key_id, const KDL::JntArray &q_home_kdl)
-{
-    if (key_id >= 0) {
-        mj_resetDataKeyframe(model, data, key_id);
-    } else {
-        mj_kdl::sync_from_kdl(&s, q_home_kdl);
-    }
-    mj_forward(model, data);
-    for (unsigned i = 0; i < n; ++i)
-        data->ctrl[i] = data->qpos[model->jnt_qposadr[model->dof_jntid[s.kdl_to_mj_dof[i]]]];
-
-    std::cout << "GUI: close window to exit\n";
-    mj_kdl::run_simulate_ui(model, data, mjcf.c_str(), [&](mjModel *m, mjData *d) {
-        for (unsigned i = 0; i < n; ++i)
-            d->ctrl[i] = d->qpos[m->jnt_qposadr[m->dof_jntid[s.kdl_to_mj_dof[i]]]];
-        KDL::JntArray q(n), g(n);
-        mj_kdl::sync_to_kdl(&s, q);
-        dyn.JntToGravity(q, g);
-        mj_kdl::set_torques(&s, g);
-    });
-}
-
 int main(int argc, char *argv[])
 {
-    bool gui = false;
-
-    /* Parse non-GTest arguments before handing off to GTest. */
-    std::vector<char *> remaining;
-    remaining.push_back(argv[0]);
-    for (int i = 1; i < argc; ++i) {
-        std::string a(argv[i]);
-        if (a == "--gui")
-            gui = true;
-        else
-            remaining.push_back(argv[i]);
-    }
-    int remaining_argc = static_cast<int>(remaining.size());
-
-    ::testing::InitGoogleTest(&remaining_argc, remaining.data());
-
-    if (gui) {
-        const fs::path root = repo_root();
-        if (!fs::exists(root / "third_party/menagerie")) {
-            std::cerr << "GUI: third_party/menagerie/ not found\n";
-            return 0;
-        }
-        const std::string mjcf = (root / "third_party/menagerie/kinova_gen3/scene.xml").string();
-        mjModel *model = nullptr;
-        mjData  *data  = nullptr;
-        if (!mj_kdl::load_mjcf(&model, &data, mjcf.c_str())) {
-            std::cerr << "GUI: load_mjcf() failed\n";
-            return 1;
-        }
-        mj_kdl::Robot s;
-        if (!mj_kdl::init_from_mjcf(&s, model, data, "base_link", "bracelet_link")) {
-            std::cerr << "GUI: init_from_mjcf() failed\n";
-            mj_kdl::destroy_scene(model, data);
-            return 1;
-        }
-        unsigned n = s.chain.getNrOfJoints();
-        KDL::ChainDynParam dyn(s.chain, KDL::Vector(0, 0, -9.81));
-        int key_id = mj_name2id(model, mjOBJ_KEY, "home");
-        KDL::JntArray q_home_kdl(n);
-        if (key_id >= 0) {
-            mj_resetDataKeyframe(model, data, key_id);
-        } else {
-            for (unsigned i = 0; i < n; ++i) q_home_kdl(i) = kHomePose[i];
-            mj_kdl::sync_from_kdl(&s, q_home_kdl);
-        }
-        mj_forward(model, data);
-        mj_kdl::sync_to_kdl(&s, q_home_kdl);
-        run_gui(model, data, s, n, dyn, mjcf, key_id, q_home_kdl);
-        mj_kdl::cleanup(&s);
-        mj_kdl::destroy_scene(model, data);
-    }
-
+    ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }

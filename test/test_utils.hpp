@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2024 Vamsi Kalagaturu
+ * Copyright (c) 2026 Vamsi Kalagaturu
  * See LICENSE for details. */
 
 #pragma once

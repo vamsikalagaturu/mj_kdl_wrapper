@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(mj_kdl_wrapper VERSION 1.0.0 LANGUAGES CXX)
+project(mj_kdl_wrapper VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -120,74 +120,18 @@ target_compile_options(mj_kdl_wrapper PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(mj_kdl_wrapper PRIVATE
   MUJOCO_PLUGIN_DIR="${MUJOCO_ROOT}/bin/mujoco_plugin")
 
-# Tests
-option(BUILD_TESTS "Build and register tests with CTest" ON)
-
-if(BUILD_TESTS)
-  include(FetchContent)
-  FetchContent_Declare(googletest
-    GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG        v1.15.2)
-  set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
-  set(BUILD_GMOCK   OFF CACHE BOOL "" FORCE)
-  FetchContent_MakeAvailable(googletest)
-
-  enable_testing()
-  include(GoogleTest)
-
-  set(CORE_TESTS
-    test_init
-    test_velocity
-    test_gravity_comp
-    test_dual_arm
-    test_table_scene
-  )
-
-  # Tests that require third_party/menagerie (MuJoCo Menagerie submodule).
-  # They self-skip at runtime via GTEST_SKIP() when the submodule is absent.
-  set(MENAGERIE_TESTS
-    test_kinova_gen3_menagerie
-    test_kinova_gen3_gripper
-    test_kinova_gen3_impedance
-    test_kinova_gen3_pick
-  )
-
-  foreach(test_name ${CORE_TESTS})
-    add_executable(${test_name} test/${test_name}.cpp)
-    target_link_libraries(${test_name} PRIVATE mj_kdl_wrapper GTest::gtest)
-    target_compile_options(${test_name} PRIVATE -Wall -Wextra)
-    # RUN_SERIAL avoids conflicts over shared temp files (e.g. _mj_kdl_r0_proc.urdf)
-    # when CTest runs individual GTest cases in parallel.
-    gtest_discover_tests(${test_name} PROPERTIES RUN_SERIAL TRUE)
-  endforeach()
-
-  foreach(test_name ${MENAGERIE_TESTS})
-    add_executable(${test_name} test/${test_name}.cpp)
-    target_link_libraries(${test_name} PRIVATE mj_kdl_wrapper GTest::gtest)
-    target_compile_options(${test_name} PRIVATE -Wall -Wextra)
-    # RUN_SERIAL also guards against MuJoCo global XML state conflicts in parallel.
-    gtest_discover_tests(${test_name} DISCOVERY_TIMEOUT 60 PROPERTIES RUN_SERIAL TRUE)
-  endforeach()
-endif()
-
 add_executable(export_table_scene tools/export_table_scene.cpp)
 target_link_libraries(export_table_scene PRIVATE mj_kdl_wrapper)
 target_compile_options(export_table_scene PRIVATE -Wall -Wextra)
 
 # Examples (GUI by default; pass --headless to skip the window)
-set(EXAMPLES
-  ex_init
-  ex_gravity_comp
-  ex_velocity
-  ex_gripper
-  ex_impedance
-  ex_pick
-)
-foreach(ex ${EXAMPLES})
-  add_executable(${ex} src/${ex}.cpp)
-  target_link_libraries(${ex} PRIVATE mj_kdl_wrapper)
-  target_compile_options(${ex} PRIVATE -Wall -Wextra)
-endforeach()
+add_subdirectory(src/examples)
+
+# Tests
+option(BUILD_TESTS "Build and register tests with CTest" ON)
+if(BUILD_TESTS)
+  add_subdirectory(test)
+endif()
 
 # Install
 include(GNUInstallDirs)
@@ -199,10 +143,6 @@ install(TARGETS mj_kdl_wrapper
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
-if(BUILD_TESTS)
-  install(TARGETS ${CORE_TESTS} ${MENAGERIE_TESTS}
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-endif()
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 install(EXPORT mj_kdl_wrapperTargets

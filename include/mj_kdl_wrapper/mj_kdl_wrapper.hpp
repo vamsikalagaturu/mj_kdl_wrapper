@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2024 Vamsi Kalagaturu
+ * Copyright (c) 2026 Vamsi Kalagaturu
  * See LICENSE for details. */
 
 #pragma once
@@ -104,29 +104,36 @@ struct SceneSpec
 
 /*
  * Runtime handle for one KDL-tracked articulation inside a MuJoCo scene.
- * Holds the scene model/data reference, the KDL chain with joint index maps,
- * and optional GLFW rendering state.  Fields are public.
- * Do not free model/data directly; use destroy_scene() or cleanup().
+ * Holds the scene model/data reference, the KDL chain with joint index maps.
+ * Fields are public.  Do not free model/data directly; use destroy_scene() or cleanup().
  */
 struct Robot
 {
-    mjModel                               *model = nullptr;
-    mjData                                *data  = nullptr;
+    mjModel                               *model    = nullptr;
+    mjData                                *data     = nullptr;
     KDL::Chain                             chain;
     int                                    n_joints = 0;
     std::vector<std::string>               joint_names;
     std::vector<std::pair<double, double>> joint_limits;
     std::vector<int>                       kdl_to_mj_qpos; // KDL index → MuJoCo qpos address
     std::vector<int>                       kdl_to_mj_dof;  // KDL index → MuJoCo dof address
-    GLFWwindow                            *window = nullptr;
-    mjvScene                               scn{};
-    mjvCamera                              cam{};
-    mjvOption                              opt{};
-    mjvPerturb                             pert{};
-    mjrContext                             con{};
     bool _owns_model = true;  // if true, cleanup() frees model/data
     bool paused      = false; // set true to pause simulation (step() becomes a no-op)
-    bool show_joints = true;  // show joint value overlay in the viewer
+};
+
+/*
+ * GLFW window and MuJoCo visualization state for the manual render loop.
+ * Created by init_window(); freed by cleanup(Viewer *).
+ */
+struct Viewer
+{
+    GLFWwindow *window      = nullptr;
+    mjvScene    scn{};
+    mjvCamera   cam{};
+    mjvOption   opt{};
+    mjvPerturb  pert{};
+    mjrContext  con{};
+    bool        show_joints = true; // toggle joint value overlay (key J)
 };
 
 /*
@@ -178,7 +185,7 @@ bool save_model_xml(const mjModel *model, const char *path);
 /*
  * Build KDL chain from a compiled MuJoCo model (no URDF required).
  * Traverses the body tree from base_body to tip_body.
- * @param[out] s          State populated with chain, joint_names, joint_limits, index maps.
+ * @param[out] s          Robot populated with chain, joint_names, joint_limits, index maps.
  * @param[in]  model      Compiled MuJoCo model.
  * @param[in]  data       MuJoCo data pointer.
  * @param[in]  base_body  Name of the chain root body (not included as a segment).
@@ -236,7 +243,7 @@ void destroy_scene(mjModel *model, mjData *data);
 /*
  * Attach a KDL chain to an already-loaded scene (shared model/data — not owned).
  * Resolves joint names using `prefix` to disambiguate robots in multi-robot scenes.
- * @param[out] s          State to populate (chain, joint maps, window fields zeroed).
+ * @param[out] s          Robot to populate (chain, joint maps, index maps).
  * @param[in]  model      MuJoCo model from build_scene(); not freed by cleanup().
  * @param[in]  data       MuJoCo data from build_scene(); not freed by cleanup().
  * @param[in]  urdf_path  Path to the robot URDF (used to build the KDL chain).
@@ -255,21 +262,29 @@ bool init_robot(Robot *s,
   const char          *prefix = "");
 
 /*
- * Open a GLFW window and initialise MuJoCo rendering contexts in s.
- * Must be called after init_robot() or init().
- * @param[in,out] s      State whose window/scn/cam/opt/con fields are filled.
- * @param[in]     title  Window title string.
- * @param[in]     width  Window width in pixels.
- * @param[in]     height Window height in pixels.
+ * Open a GLFW window and initialise MuJoCo visualization contexts.
+ * Must be called after init_robot() or init_from_mjcf().
+ * @param[out] v      Viewer to initialise; must be zero-initialised before call.
+ * @param[in]  r      Robot whose model drives the rendering context.
+ * @param[in]  title  Window title string.
+ * @param[in]  width  Window width in pixels.
+ * @param[in]  height Window height in pixels.
  * @return true on success, false if GLFW or MuJoCo context creation fails.
  */
-bool init_window(Robot *s, const char *title = "MuJoCo", int width = 1280, int height = 720);
+bool init_window(Viewer *v, Robot *r,
+                 const char *title = "MuJoCo", int width = 1280, int height = 720);
 
 /*
- * Release all resources owned by s (model/data if _owns_model, GLFW window, GL context).
- * @param[in,out] s  State to tear down; all pointers set to null afterwards.
+ * Release model/data if _owns_model and zero all Robot fields.
+ * @param[in,out] r  Robot to tear down.
  */
-void cleanup(Robot *s);
+void cleanup(Robot *r);
+
+/*
+ * Release the GLFW window and MuJoCo visualization contexts owned by v.
+ * @param[in,out] v  Viewer to tear down; all pointers set to null afterwards.
+ */
+void cleanup(Viewer *v);
 
 /*
  * Advance the simulation by one timestep and call mj_forward().
@@ -291,18 +306,18 @@ void step_n(Robot *s, int n);
 void reset(Robot *s);
 
 /*
- * Returns true if the GLFW window is open and not scheduled for closing.
- * Always returns true in headless mode.
- * @param[in] s  Simulation state.
+ * Returns true if the viewer window is open and not scheduled for closing.
+ * @param[in] v  Viewer created by init_window().
  */
-bool is_running(const Robot *s);
+bool is_running(const Viewer *v);
 
 /*
- * Render the current simulation frame to the window (no-op in headless mode).
- * @param[in,out] s  Simulation state.
+ * Render the current simulation frame to the viewer window.
+ * @param[in,out] v  Viewer created by init_window().
+ * @param[in]     r  Robot whose model and data are rendered.
  * @return true if the window is still open after rendering.
  */
-bool render(Robot *s);
+bool render(Viewer *v, const Robot *r);
 
 /*
  * Copy MuJoCo qpos into q, reordered to match KDL chain joint order.
@@ -330,7 +345,7 @@ void set_torques(Robot *s, const KDL::JntArray &tau);
 /*
  * Add an object to the scene by appending it to spec->objects and rebuilding
  * the model. The old model/data are freed; new ones replace them.
- * Any State objects sharing the old model/data become stale — call init_robot()
+ * Any Robot handles sharing the old model/data become stale — call init_robot()
  * again on the new model/data after this call.
  * @param[in,out] model  Current model pointer; updated to new model on success.
  * @param[in,out] data   Current data pointer; updated to new data on success.
@@ -343,7 +358,7 @@ bool scene_add_object(mjModel **model, mjData **data, SceneSpec *spec, const Sce
 /*
  * Remove a named object from the scene by erasing it from spec->objects and
  * rebuilding the model. The old model/data are freed; new ones replace them.
- * Any State objects sharing the old model/data become stale — call init_robot()
+ * Any Robot handles sharing the old model/data become stale — call init_robot()
  * again on the new model/data after this call.
  * @param[in,out] model  Current model pointer; updated to new model on success.
  * @param[in,out] data   Current data pointer; updated to new data on success.

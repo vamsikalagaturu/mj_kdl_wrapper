@@ -1,7 +1,7 @@
 /* test_init.cpp
  * Loads the Kinova GEN3 URDF, runs 100 simulation steps, and verifies basic
  * model properties are consistent.
- * Usage: test_init [urdf_path] [--gui] */
+ * Usage: test_init [urdf_path] */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "test_utils.hpp"
