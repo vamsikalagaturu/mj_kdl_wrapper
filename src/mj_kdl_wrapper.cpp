@@ -366,7 +366,7 @@ static bool
     XMLElement *bas = xml_get_or_create(bmj, "asset", base);
 
     auto wrap_robot =
-      [&](XMLElement *parent, const std::vector<XMLElement *> &kids, const SceneRobot &r, int idx) {
+      [&](XMLElement *parent, const std::vector<XMLElement *> &kids, const RobotSpec &r, int idx) {
           char name[128];
           std::snprintf(name, sizeof(name), "%srobot_%d_base", r.prefix, idx);
           XMLElement *w = base.NewElement("body");
@@ -648,14 +648,14 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
                                 << ", table=" << (sc->table.enabled ? "yes" : "no")
                                 << ", objects=" << sc->objects.size());
 
-    fs::path tmp = fs::absolute(fs::path(sc->robots[0].urdf_path).parent_path());
+    fs::path tmp = fs::absolute(fs::path(sc->robots[0].path).parent_path());
 
     /* Single robot: use spec API (avoids mj_saveLastXML which is unstable for
      * URDF-sourced models on some MuJoCo versions). */
     if (sc->robots.size() == 1) {
-        const SceneRobot &r    = sc->robots[0];
-        fs::path          proc = tmp / "_mj_kdl_r0_proc.urdf";
-        if (!preprocess_urdf(r.urdf_path, proc.string())) return false;
+        const RobotSpec &r    = sc->robots[0];
+        fs::path         proc = tmp / "_mj_kdl_r0_proc.urdf";
+        if (!preprocess_urdf(r.path, proc.string())) return false;
 
         char    err[2048] = {};
         mjSpec *spec      = mj_parseXML(proc.c_str(), nullptr, err, sizeof(err));
@@ -693,7 +693,7 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     for (int i = 0; i < (int)sc->robots.size(); ++i) {
         fs::path proc = tmp / ("_mj_kdl_r" + std::to_string(i) + "_proc.urdf");
         fs::path raw  = tmp / ("_mj_kdl_r" + std::to_string(i) + "_raw.xml");
-        if (!preprocess_urdf(sc->robots[i].urdf_path, proc.string())) return false;
+        if (!preprocess_urdf(sc->robots[i].path, proc.string())) return false;
         if (!urdf_to_raw_mjcf(proc.string(), raw.string())) return false;
         raws.push_back(raw.string());
     }
@@ -1089,7 +1089,7 @@ static void mjcf_prefix_names(tinyxml2::XMLElement *e, const std::string &pfx)
 }
 
 bool build_scene_from_mjcfs(const char *out_mjcf,
-  const MjcfArmSpec                    *arms,
+  const RobotSpec                      *arms,
   int                                   n_arms,
   bool                                  add_floor,
   bool                                  add_skybox)
@@ -1119,12 +1119,12 @@ bool build_scene_from_mjcfs(const char *out_mjcf,
     mj->InsertEndChild(contact);
 
     for (int ai = 0; ai < n_arms; ++ai) {
-        const MjcfArmSpec &spec = arms[ai];
-        if (!spec.mjcf_path) return false;
+        const RobotSpec &spec = arms[ai];
+        if (!spec.path) return false;
 
         XMLDocument src;
-        if (src.LoadFile(spec.mjcf_path) != XML_SUCCESS) {
-            LOG_ERROR("build_scene_from_mjcfs: failed to load '" << spec.mjcf_path << "'");
+        if (src.LoadFile(spec.path) != XML_SUCCESS) {
+            LOG_ERROR("build_scene_from_mjcfs: failed to load '" << spec.path << "'");
             return false;
         }
         auto *src_root = src.FirstChildElement("mujoco");

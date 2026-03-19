@@ -122,12 +122,12 @@ class TableSceneTest : public ::testing::Test
         spec_.add_floor = true;
         spec_.gravity_z = -9.81;
 
-        mj_kdl::SceneRobot robot;
-        robot.urdf_path = urdf_.c_str();
-        robot.prefix    = "";
-        robot.pos[0]    = 0.0;
-        robot.pos[1]    = 0.0;
-        robot.pos[2]    = surface_z;
+        mj_kdl::RobotSpec robot;
+        robot.path   = urdf_.c_str();
+        robot.prefix = "";
+        robot.pos[0] = 0.0;
+        robot.pos[1] = 0.0;
+        robot.pos[2] = surface_z;
         spec_.robots.push_back(robot);
 
         ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &spec_));

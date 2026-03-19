@@ -48,9 +48,9 @@ class GravityCompTest : public ::testing::Test
 
     void SetUp() override
     {
-        mj_kdl::SceneSpec  sc;
-        mj_kdl::SceneRobot r;
-        r.urdf_path = g_urdf.c_str();
+        mj_kdl::SceneSpec sc;
+        mj_kdl::RobotSpec r;
+        r.path = g_urdf.c_str();
         sc.robots.push_back(r);
 
         ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc)) << "build_scene() returned false";

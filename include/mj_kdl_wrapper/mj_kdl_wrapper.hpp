@@ -31,16 +31,17 @@ void set_log_level(LogLevel level);
 LogLevel get_log_level();
 
 /*
- * One robot's placement in a multi-robot scene.
+ * Placement specification for one robot in a scene.
+ * path is interpreted as URDF by build_scene() and as MJCF by build_scene_from_mjcfs().
  * All joint/body names in MuJoCo are prefixed with `prefix`; must be unique
  * per robot (e.g. "" for arm 0, "r2_" for arm 1).
  */
-struct SceneRobot
+struct RobotSpec
 {
-    const char *urdf_path = nullptr;
-    const char *prefix    = "";
-    double      pos[3]    = { 0, 0, 0 };
-    double      euler[3]  = { 0, 0, 0 }; // degrees, extrinsic XYZ
+    const char *path     = nullptr;     // URDF or MJCF path (context-dependent)
+    const char *prefix   = "";          // name prefix for multi-robot disambiguation
+    double      pos[3]   = { 0, 0, 0 }; // world-frame position [m]
+    double      euler[3] = { 0, 0, 0 }; // extrinsic XYZ Euler angles [degrees]
 };
 
 /*
@@ -93,7 +94,7 @@ struct SceneObject
 /* Full scene description passed to build_scene(). */
 struct SceneSpec
 {
-    std::vector<SceneRobot>  robots;
+    std::vector<RobotSpec>   robots;
     double                   timestep   = 0.002;
     double                   gravity_z  = -9.81;
     bool                     add_floor  = true; // checker groundplane geom
@@ -224,33 +225,21 @@ struct GripperSpec
 bool attach_gripper(const char *arm_mjcf, const GripperSpec *g, const char *out_path);
 
 /*
- * Placement specification for one arm MJCF in a multi-arm scene.
- * Used with build_scene_from_mjcfs().
- */
-struct MjcfArmSpec
-{
-    const char *mjcf_path = nullptr;     // path to arm (or arm+gripper) MJCF
-    const char *prefix    = "";          // prefix applied to all named elements; "" = no prefix
-    double      pos[3]    = { 0, 0, 0 }; // placement position in world [m]
-    double      euler[3]  = { 0, 0, 0 }; // extrinsic XYZ Euler angles in degrees
-};
-
-/*
  * Merge one or more arm MJCFs into a single world MJCF file.
- * Each arm is placed at the given position/yaw.  All element names (bodies,
- * joints, actuators, geoms, sites) are prefixed with MjcfArmSpec::prefix so
+ * Each arm is placed at the given position/orientation.  All element names (bodies,
+ * joints, actuators, geoms, sites) are prefixed with RobotSpec::prefix so
  * multiple instances of the same robot can coexist without name conflicts.
  * Shared assets (meshes, materials, textures) are copied from the first arm
  * only; subsequent arms reuse them.
  * @param[in]  out_mjcf   Output path for the merged MJCF.
- * @param[in]  arms       Array of arm specs.
+ * @param[in]  arms       Array of robot specs; RobotSpec::path is the MJCF file.
  * @param[in]  n_arms     Number of entries in arms[].
  * @param[in]  add_floor  Insert a ground-plane geom.
  * @param[in]  add_skybox Insert a skybox texture.
  * @return true on success.
  */
 bool build_scene_from_mjcfs(const char *out_mjcf,
-  const MjcfArmSpec                    *arms,
+  const RobotSpec                      *arms,
   int                                   n_arms,
   bool                                  add_floor  = true,
   bool                                  add_skybox = true);
@@ -282,7 +271,7 @@ void destroy_scene(mjModel *model, mjData *data);
  * @param[in]  base_link  Name of the chain's root link in the URDF.
  * @param[in]  tip_link   Name of the chain's end-effector link in the URDF.
  * @param[in]  prefix     Optional MuJoCo joint-name prefix (default ""); must match
- * SceneRobot::prefix.
+ * RobotSpec::prefix.
  * @return true on success, false if the chain or any joint cannot be found.
  */
 bool init_robot(Robot *s,

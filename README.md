@@ -123,8 +123,8 @@ mj_kdl::SceneSpec spec;
 spec.table.enabled = true;
 spec.table.pos[2]  = 0.7;
 
-mj_kdl::SceneRobot robot;
-robot.urdf_path = "assets/gen3_urdf/GEN3_URDF_V12.urdf";
+mj_kdl::RobotSpec robot;
+robot.path   = "assets/gen3_urdf/GEN3_URDF_V12.urdf";
 robot.pos[2]    = 0.7;
 spec.robots.push_back(robot);
 

@@ -30,12 +30,12 @@ int main(int argc, char *argv[])
     spec.table.thickness   = 0.04;
     spec.table.leg_radius  = 0.03;
 
-    mj_kdl::SceneRobot robot;
-    robot.urdf_path = argv[1];
-    robot.prefix    = "";
-    robot.pos[0]    = 0.0;
-    robot.pos[1]    = 0.0;
-    robot.pos[2]    = surface_z;
+    mj_kdl::RobotSpec robot;
+    robot.path   = argv[1];
+    robot.prefix = "";
+    robot.pos[0] = 0.0;
+    robot.pos[1] = 0.0;
+    robot.pos[2] = surface_z;
     spec.robots.push_back(robot);
 
     auto add_box = [&](const char *name,

@@ -69,19 +69,19 @@ class DualArmTest : public ::testing::Test
         scene.gravity_z = -9.81;
         scene.add_floor = true;
 
-        mj_kdl::SceneRobot r1, r2;
-        r1.urdf_path = urdf_.c_str();
-        r1.prefix    = "";
-        r1.pos[0]    = -0.5;
-        r1.pos[1]    = 0.0;
-        r1.pos[2]    = 0.0;
+        mj_kdl::RobotSpec r1, r2;
+        r1.path   = urdf_.c_str();
+        r1.prefix = "";
+        r1.pos[0] = -0.5;
+        r1.pos[1] = 0.0;
+        r1.pos[2] = 0.0;
 
-        r2.urdf_path = urdf_.c_str();
-        r2.prefix    = "r2_";
-        r2.pos[0]    = 0.5;
-        r2.pos[1]    = 0.0;
-        r2.pos[2]    = 0.0;
-        r2.euler[2]  = 180.0;
+        r2.path     = urdf_.c_str();
+        r2.prefix   = "r2_";
+        r2.pos[0]   = 0.5;
+        r2.pos[1]   = 0.0;
+        r2.pos[2]   = 0.0;
+        r2.euler[2] = 180.0;
 
         scene.robots = { r1, r2 };
 
