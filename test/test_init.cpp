@@ -28,7 +28,6 @@ protected:
         cfg.urdf_path  = g_urdf_path.c_str();
         cfg.base_link  = "base_link";
         cfg.tip_link   = "EndEffector_Link";
-        cfg.robot_name = "kinova_gen3";
         cfg.headless   = true;
 
         ASSERT_TRUE(mj_kdl::init(&s, &cfg)) << "init() returned false";
@@ -67,9 +66,8 @@ static void run_gui(const std::string &urdf)
     mj_kdl::Config cfg;
     cfg.urdf_path  = urdf.c_str();
     cfg.base_link  = "base_link";
-    cfg.tip_link   = "EndEffector_Link";
-    cfg.robot_name = "kinova_gen3";
-    cfg.headless   = true;
+    cfg.tip_link = "EndEffector_Link";
+    cfg.headless = true;
 
     mj_kdl::State s;
     if (!mj_kdl::init(&s, &cfg)) {

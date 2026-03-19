@@ -109,11 +109,10 @@ static bool preprocess_urdf(const std::string &in, const std::string &out)
 
 /* Spec-API helpers (single-robot path) */
 
-static void add_floor_to_spec(mjSpec *spec)
+void add_skybox_to_spec(mjSpec *spec)
 {
     mjsBody *wb = mjs_findBody(spec, "world");
 
-    // Skybox gradient texture
     mjsTexture *sky = mjs_addTexture(spec);
     mjs_setString(mjs_getName(sky->element), "skybox");
     sky->type    = mjTEXTURE_SKYBOX;
@@ -126,6 +125,17 @@ static void add_floor_to_spec(mjSpec *spec)
     sky->rgb2[2] = 0.95f; // bottom: pale blue
     sky->width   = 200;
     sky->height  = 200;
+
+    mjsLight *sun = mjs_addLight(wb, nullptr);
+    sun->type     = mjLIGHT_DIRECTIONAL;
+    sun->pos[0]   = 0;
+    sun->pos[1]   = 0;
+    sun->pos[2]   = 4;
+}
+
+void add_floor_to_spec(mjSpec *spec)
+{
+    mjsBody *wb = mjs_findBody(spec, "world");
 
     mjsTexture *tex = mjs_addTexture(spec);
     mjs_setString(mjs_getName(tex->element), "groundplane");
@@ -158,16 +168,9 @@ static void add_floor_to_spec(mjSpec *spec)
     floor->contype     = 1;
     floor->conaffinity = 1;
     floor->condim      = 3;
-
-    // Directional light overhead
-    mjsLight *sun = mjs_addLight(wb, nullptr);
-    sun->type     = mjLIGHT_DIRECTIONAL;
-    sun->pos[0]   = 0;
-    sun->pos[1]   = 0;
-    sun->pos[2]   = 4;
 }
 
-static void add_table_to_spec(mjSpec *spec, const TableSpec &t)
+void add_table_to_spec(mjSpec *spec, const TableSpec &t)
 {
     mjsBody *wb         = mjs_findBody(spec, "world");
     double   sz         = t.pos[2]; // surface z
@@ -219,7 +222,7 @@ static void add_table_to_spec(mjSpec *spec, const TableSpec &t)
     }
 }
 
-static void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
+void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
 {
     mjsBody *wb = mjs_findBody(spec, "world");
     for (const auto &obj : objects) {
@@ -598,19 +601,20 @@ struct GLMouseState
 
 /* Public API */
 
-static void configure_spec(mjSpec *spec, const SceneSpec *sc)
+void configure_spec(mjSpec *spec, const SceneSpec *sc)
 {
     spec->option.timestep         = sc->timestep;
     spec->option.gravity[2]       = sc->gravity_z;
     spec->compiler.balanceinertia = 1;
     spec->compiler.discardvisual  = 0;
+    if (sc->add_skybox) add_skybox_to_spec(spec);
     if (sc->add_floor) add_floor_to_spec(spec);
     if (sc->table.enabled) add_table_to_spec(spec, sc->table);
     if (!sc->objects.empty()) add_objects_to_spec(spec, sc->objects);
 }
 
 /* Compile spec into a model and data; spec is always deleted. */
-static bool compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data)
+bool compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data)
 {
     *out_model = mj_compile(spec, nullptr);
     if (!*out_model) {
@@ -730,21 +734,14 @@ bool save_model_xml(const mjModel *model, const char *path)
     return ok != 0;
 }
 
-bool patch_mjcf_visuals(const char *mjcf_path)
+/* XML-level helpers shared by the patch_mjcf_* functions. */
+
+static void xml_inject_skybox(tinyxml2::XMLDocument &doc, tinyxml2::XMLElement *root)
 {
     using namespace tinyxml2;
-    XMLDocument doc;
-    if (doc.LoadFile(mjcf_path) != XML_SUCCESS) {
-        LOG_ERROR("patch_mjcf_visuals: failed to load '" << mjcf_path << "'");
-        return false;
-    }
-    XMLElement *root = doc.FirstChildElement("mujoco");
-    if (!root) return false;
-
     XMLElement *asset = xml_get_or_create(root, "asset", doc);
     XMLElement *wb    = xml_get_or_create(root, "worldbody", doc);
 
-    /* Skybox gradient texture */
     XMLElement *sky = doc.NewElement("texture");
     sky->SetAttribute("name",    "skybox");
     sky->SetAttribute("type",    "skybox");
@@ -755,7 +752,18 @@ bool patch_mjcf_visuals(const char *mjcf_path)
     sky->SetAttribute("height",  "200");
     asset->InsertEndChild(sky);
 
-    /* Checker groundplane texture */
+    XMLElement *light = doc.NewElement("light");
+    light->SetAttribute("directional", "true");
+    light->SetAttribute("pos",         "0 0 4");
+    wb->InsertFirstChild(light);
+}
+
+static void xml_inject_floor(tinyxml2::XMLDocument &doc, tinyxml2::XMLElement *root)
+{
+    using namespace tinyxml2;
+    XMLElement *asset = xml_get_or_create(root, "asset", doc);
+    XMLElement *wb    = xml_get_or_create(root, "worldbody", doc);
+
     XMLElement *tex = doc.NewElement("texture");
     tex->SetAttribute("name",    "groundplane");
     tex->SetAttribute("type",    "2d");
@@ -766,7 +774,6 @@ bool patch_mjcf_visuals(const char *mjcf_path)
     tex->SetAttribute("height",  "300");
     asset->InsertEndChild(tex);
 
-    /* Groundplane material */
     XMLElement *mat = doc.NewElement("material");
     mat->SetAttribute("name",        "groundplane");
     mat->SetAttribute("texture",     "groundplane");
@@ -774,7 +781,6 @@ bool patch_mjcf_visuals(const char *mjcf_path)
     mat->SetAttribute("reflectance", "0.2");
     asset->InsertEndChild(mat);
 
-    /* Floor plane geom */
     XMLElement *floor = doc.NewElement("geom");
     floor->SetAttribute("name",        "floor");
     floor->SetAttribute("type",        "plane");
@@ -784,14 +790,46 @@ bool patch_mjcf_visuals(const char *mjcf_path)
     floor->SetAttribute("conaffinity", "1");
     floor->SetAttribute("condim",      "3");
     wb->InsertFirstChild(floor);
+}
 
-    /* Directional light */
-    XMLElement *light = doc.NewElement("light");
-    light->SetAttribute("directional", "true");
-    light->SetAttribute("pos",         "0 0 4");
-    wb->InsertFirstChild(light);
+static bool load_mjcf_doc(const char *path, tinyxml2::XMLDocument &doc, tinyxml2::XMLElement **root,
+  const char *caller)
+{
+    if (doc.LoadFile(path) != tinyxml2::XML_SUCCESS) {
+        LOG_ERROR(caller << ": failed to load '" << path << "'");
+        return false;
+    }
+    *root = doc.FirstChildElement("mujoco");
+    return *root != nullptr;
+}
 
-    return doc.SaveFile(mjcf_path) == XML_SUCCESS;
+bool patch_mjcf_add_skybox(const char *mjcf_path)
+{
+    tinyxml2::XMLDocument doc;
+    tinyxml2::XMLElement *root = nullptr;
+    if (!load_mjcf_doc(mjcf_path, doc, &root, "patch_mjcf_add_skybox")) return false;
+    xml_inject_skybox(doc, root);
+    return doc.SaveFile(mjcf_path) == tinyxml2::XML_SUCCESS;
+}
+
+bool patch_mjcf_add_floor(const char *mjcf_path)
+{
+    tinyxml2::XMLDocument doc;
+    tinyxml2::XMLElement *root = nullptr;
+    if (!load_mjcf_doc(mjcf_path, doc, &root, "patch_mjcf_add_floor")) return false;
+    xml_inject_floor(doc, root);
+    return doc.SaveFile(mjcf_path) == tinyxml2::XML_SUCCESS;
+}
+
+/* Convenience: adds skybox and floor in a single file load+save. */
+bool patch_mjcf_visuals(const char *mjcf_path)
+{
+    tinyxml2::XMLDocument doc;
+    tinyxml2::XMLElement *root = nullptr;
+    if (!load_mjcf_doc(mjcf_path, doc, &root, "patch_mjcf_visuals")) return false;
+    xml_inject_skybox(doc, root);
+    xml_inject_floor(doc, root);
+    return doc.SaveFile(mjcf_path) == tinyxml2::XML_SUCCESS;
 }
 
 bool patch_mjcf_add_objects(const char *mjcf_path, const std::vector<SceneObject> &objects)
@@ -1118,9 +1156,10 @@ bool init(State *s, const Config *cfg)
     r.urdf_path = cfg->urdf_path;
     r.prefix    = "";
     sc.robots.push_back(r);
-    sc.timestep  = cfg->timestep;
-    sc.gravity_z = cfg->gravity_z;
-    sc.add_floor = cfg->add_floor;
+    sc.timestep   = cfg->timestep;
+    sc.gravity_z  = cfg->gravity_z;
+    sc.add_floor  = cfg->add_floor;
+    sc.add_skybox = cfg->add_skybox;
 
     mjModel *model = nullptr;
     mjData  *data  = nullptr;

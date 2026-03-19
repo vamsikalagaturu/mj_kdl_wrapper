@@ -36,13 +36,13 @@ struct Config
     const char *urdf_path  = nullptr;
     const char *base_link  = nullptr;
     const char *tip_link   = nullptr;
-    const char *robot_name = "robot";
     int         win_width  = 1280;
     int         win_height = 720;
     const char *win_title  = "MuJoCo";
     double      timestep   = 0.002;
     double      gravity_z  = -9.81;
     bool        add_floor  = true;
+    bool        add_skybox = true;
     bool        headless   = false;
 };
 
@@ -110,9 +110,10 @@ struct SceneObject
 struct SceneSpec
 {
     std::vector<SceneRobot>  robots;
-    double                   timestep  = 0.002;
-    double                   gravity_z = -9.81;
-    bool                     add_floor = true;
+    double                   timestep   = 0.002;
+    double                   gravity_z  = -9.81;
+    bool                     add_floor  = true;  // checker groundplane geom
+    bool                     add_skybox = true;  // gradient sky texture + directional light
     TableSpec                table;
     std::vector<SceneObject> objects;
 };
@@ -152,9 +153,24 @@ struct State
 bool load_mjcf(mjModel **out_model, mjData **out_data, const char *path);
 
 /*
- * Add floor, sky gradient, and directional light to an existing MJCF file in-place.
- * Use this after load_mjcf() or attach_gripper() to add consistent visuals to
- * MJCF-only workflows (models not built via build_scene() already have these).
+ * Add a sky gradient texture and directional light to an existing MJCF file in-place.
+ * @param mjcf_path  Path to the MJCF file to patch.
+ * @return true on success.
+ */
+bool patch_mjcf_add_skybox(const char *mjcf_path);
+
+/*
+ * Add a checker groundplane texture, material, and floor geom to an existing MJCF
+ * file in-place.
+ * @param mjcf_path  Path to the MJCF file to patch.
+ * @return true on success.
+ */
+bool patch_mjcf_add_floor(const char *mjcf_path);
+
+/*
+ * Convenience: add sky gradient, directional light, and checker floor to an existing
+ * MJCF file in a single file load+save.  Equivalent to calling patch_mjcf_add_skybox()
+ * then patch_mjcf_add_floor() but with one I/O pass.
  * @param mjcf_path  Path to the MJCF file to patch.
  * @return true on success.
  */
@@ -382,5 +398,53 @@ using ControlCb = std::function<void(mjModel *m, mjData *d)>;
  * @param path        Filename shown in the title bar (pass "" if not applicable).
  * @param physics_cb  Called each physics step; may be nullptr. */
 void run_simulate_ui(mjModel *m, mjData *d, const char *path, ControlCb physics_cb = nullptr);
+
+/*
+ * Internal spec-building helpers.
+ *
+ * These are used internally by build_scene() and configure_spec(), but are
+ * exposed here for advanced callers that construct mjSpec objects directly.
+ * They are not part of the stable public API and may change between releases.
+ */
+
+/*
+ * Add a sky gradient texture and overhead directional light to spec.
+ * Corresponds to SceneSpec::add_skybox.
+ */
+void add_skybox_to_spec(mjSpec *spec);
+
+/*
+ * Add a checker groundplane texture, material, and floor plane geom to spec.
+ * Corresponds to SceneSpec::add_floor.
+ */
+void add_floor_to_spec(mjSpec *spec);
+
+/*
+ * Add a table (tabletop + four legs) to the world body of spec.
+ * @param t  Table geometry, size, and colour.
+ */
+void add_table_to_spec(mjSpec *spec, const TableSpec &t);
+
+/*
+ * Add free-floating or fixed rigid bodies to the world body of spec.
+ * @param objects  List of objects to add.
+ */
+void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects);
+
+/*
+ * Apply all SceneSpec settings to a parsed mjSpec:
+ * physics options (timestep, gravity), compiler flags, and scene decorations
+ * (skybox, floor, table, objects) according to the flags in sc.
+ */
+void configure_spec(mjSpec *spec, const SceneSpec *sc);
+
+/*
+ * Compile spec into a model and create its data buffer.
+ * spec is always deleted (on success and failure).
+ * @param[out] out_model  Newly allocated model on success; null on failure.
+ * @param[out] out_data   Newly allocated data on success; null on failure.
+ * @return true on success.
+ */
+bool compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data);
 
 } // namespace mj_kdl
