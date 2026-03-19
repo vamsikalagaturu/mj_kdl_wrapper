@@ -440,7 +440,7 @@ static KDL::RigidBodyInertia mj_body_inertia(const mjModel *model, int bid)
 }
 
 static bool
-  load_kdl_chain(State *s, const std::string &urdf, const char *base_link, const char *tip_link)
+  load_kdl_chain(Robot *s, const std::string &urdf, const char *base_link, const char *tip_link)
 {
     KDL::Tree tree;
     if (!kdl_parser::treeFromFile(urdf, tree)) {
@@ -474,7 +474,7 @@ static bool
     return true;
 }
 
-static void sync_chain_inertias(State *s, const std::string &pfx)
+static void sync_chain_inertias(Robot *s, const std::string &pfx)
 {
     if (!s->model) return;
     KDL::Chain chain;
@@ -489,7 +489,7 @@ static void sync_chain_inertias(State *s, const std::string &pfx)
     s->chain = chain;
 }
 
-static void build_index_map(State *s, const std::string &pfx = "")
+static void build_index_map(Robot *s, const std::string &pfx = "")
 {
     s->kdl_to_mj_qpos.clear();
     s->kdl_to_mj_dof.clear();
@@ -512,7 +512,7 @@ static void build_index_map(State *s, const std::string &pfx = "")
 /* Build KDL chain from compiled mjModel (no URDF needed) */
 
 static bool
-  build_kdl_from_model(State *s, mjModel *model, const char *base_body, const char *tip_body)
+  build_kdl_from_model(Robot *s, mjModel *model, const char *base_body, const char *tip_body)
 {
     int base_bid = mj_name2id(model, mjOBJ_BODY, base_body);
     int tip_bid  = mj_name2id(model, mjOBJ_BODY, tip_body);
@@ -589,7 +589,7 @@ static void   cb_keyboard(GLFWwindow *, int, int, int, int);
 static void   cb_mouse_button(GLFWwindow *, int, int, int);
 static void   cb_mouse_move(GLFWwindow *, double, double);
 static void   cb_scroll(GLFWwindow *, double, double);
-static State *g_state = nullptr;
+static Robot *g_state = nullptr;
 
 struct GLMouseState
 {
@@ -1049,7 +1049,7 @@ bool scene_remove_object(mjModel **model, mjData **data, SceneSpec *spec, const 
     return true;
 }
 
-bool init_robot(State *s,
+bool init_robot(Robot *s,
   mjModel             *model,
   mjData              *data,
   const char          *urdf,
@@ -1070,7 +1070,7 @@ bool init_robot(State *s,
     return true;
 }
 
-bool init_from_mjcf(State *s,
+bool init_from_mjcf(Robot *s,
   mjModel                 *model,
   mjData                  *data,
   const char              *base_body,
@@ -1088,10 +1088,25 @@ bool init_from_mjcf(State *s,
     return true;
 }
 
-bool init_window(State *s, const char *title, int width, int height)
+/* Hint GLFW to use the Wayland backend on pure Wayland sessions.
+ * On GLFW < 3.4 the platform select API does not exist; GLFW 3.3 auto-detects
+ * via WAYLAND_DISPLAY, so this is a no-op for older installs.
+ * Must be called before the first glfwInit(). */
+static void apply_glfw_platform_hints()
+{
+#if defined(__linux__) && GLFW_VERSION_MAJOR * 100 + GLFW_VERSION_MINOR >= 304
+    if (!getenv("DISPLAY") && getenv("WAYLAND_DISPLAY"))
+        glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_WAYLAND);
+    else
+        glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_ANY);
+#endif
+}
+
+bool init_window(Robot *s, const char *title, int width, int height)
 {
     if (!s->model) return false;
     if (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY")) return false;
+    apply_glfw_platform_hints();
     if (!glfwInit()) return false;
 
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -1138,7 +1153,7 @@ bool init_window(State *s, const char *title, int width, int height)
     return true;
 }
 
-void cleanup(State *s)
+void cleanup(Robot *s)
 {
     if (s->window) {
         mjv_freeScene(&s->scn);
@@ -1164,19 +1179,19 @@ void cleanup(State *s)
     }
 }
 
-void step(State *s)
+void step(Robot *s)
 {
     if (!s->model || !s->data || s->paused) return;
     if (s->pert.active) mjv_applyPerturbForce(s->model, s->data, &s->pert);
     mj_step(s->model, s->data);
 }
 
-void step_n(State *s, int n)
+void step_n(Robot *s, int n)
 {
     for (int i = 0; i < n; ++i) step(s);
 }
 
-void reset(State *s)
+void reset(Robot *s)
 {
     if (s->model && s->data) {
         mj_resetData(s->model, s->data);
@@ -1184,13 +1199,13 @@ void reset(State *s)
     }
 }
 
-bool is_running(const State *s)
+bool is_running(const Robot *s)
 {
     if (!s->window) return s->model != nullptr;
     return !glfwWindowShouldClose(s->window);
 }
 
-bool render(State *s)
+bool render(Robot *s)
 {
     if (!s->window) return is_running(s);
     if (glfwWindowShouldClose(s->window)) return false;
@@ -1242,7 +1257,7 @@ bool render(State *s)
     return true;
 }
 
-bool sync_to_kdl(const State *s, KDL::JntArray &q)
+bool sync_to_kdl(const Robot *s, KDL::JntArray &q)
 {
     if (!s->data) return false;
     q.resize(s->n_joints);
@@ -1250,14 +1265,14 @@ bool sync_to_kdl(const State *s, KDL::JntArray &q)
     return true;
 }
 
-void sync_from_kdl(State *s, const KDL::JntArray &q)
+void sync_from_kdl(Robot *s, const KDL::JntArray &q)
 {
     if (!s->data) return;
     int n = std::min((int)q.rows(), s->n_joints);
     for (int i = 0; i < n; ++i) s->data->qpos[s->kdl_to_mj_qpos[i]] = q(i);
 }
 
-void set_torques(State *s, const KDL::JntArray &tau)
+void set_torques(Robot *s, const KDL::JntArray &tau)
 {
     if (!s->data) return;
     int n = std::min((int)tau.rows(), s->n_joints);
@@ -1373,6 +1388,8 @@ static constexpr double kSimRefreshFraction = 0.7; // fraction of refresh budget
 
 void run_simulate_ui(mjModel *m, mjData *d, const char *path, ControlCb physics_cb)
 {
+    apply_glfw_platform_hints();
+
     mjvCamera cam;
     mjv_defaultCamera(&cam);
     mjvOption opt;

@@ -174,6 +174,21 @@ add_executable(export_table_scene tools/export_table_scene.cpp)
 target_link_libraries(export_table_scene PRIVATE mj_kdl_wrapper)
 target_compile_options(export_table_scene PRIVATE -Wall -Wextra)
 
+# Examples (GUI by default; pass --headless to skip the window)
+set(EXAMPLES
+  ex_init
+  ex_gravity_comp
+  ex_velocity
+  ex_gripper
+  ex_impedance
+  ex_pick
+)
+foreach(ex ${EXAMPLES})
+  add_executable(${ex} src/${ex}.cpp)
+  target_link_libraries(${ex} PRIVATE mj_kdl_wrapper)
+  target_compile_options(${ex} PRIVATE -Wall -Wextra)
+endforeach()
+
 # Install
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)

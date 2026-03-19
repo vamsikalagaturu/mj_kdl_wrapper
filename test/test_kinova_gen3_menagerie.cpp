@@ -37,7 +37,7 @@ protected:
     std::string mjcf_;
     mjModel  *model_ = nullptr;
     mjData   *data_  = nullptr;
-    mj_kdl::State s_;
+    mj_kdl::Robot s_;
     int  key_id_ = -1;
     unsigned n_  = 0;
     std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_;
@@ -140,7 +140,7 @@ TEST_F(MenagerieTest, GravityCompDrift)
     EXPECT_LE(drift, 0.001) << "EE drift " << drift * 1000.0 << " mm exceeds 1 mm threshold";
 }
 
-static void run_gui(mjModel *model, mjData *data, mj_kdl::State &s, unsigned n,
+static void run_gui(mjModel *model, mjData *data, mj_kdl::Robot &s, unsigned n,
                     KDL::ChainDynParam &dyn, const std::string &mjcf,
                     int key_id, const KDL::JntArray &q_home_kdl)
 {
@@ -195,7 +195,7 @@ int main(int argc, char *argv[])
             std::cerr << "GUI: load_mjcf() failed\n";
             return 1;
         }
-        mj_kdl::State s;
+        mj_kdl::Robot s;
         if (!mj_kdl::init_from_mjcf(&s, model, data, "base_link", "bracelet_link")) {
             std::cerr << "GUI: init_from_mjcf() failed\n";
             mj_kdl::destroy_scene(model, data);

@@ -23,7 +23,7 @@ class InitTest : public ::testing::Test {
 protected:
     mjModel       *model_ = nullptr;
     mjData        *data_  = nullptr;
-    mj_kdl::State  s;
+    mj_kdl::Robot  s;
 
     void SetUp() override {
         mj_kdl::SceneSpec sc;
@@ -65,66 +65,13 @@ TEST_F(InitTest, SimulationAdvance)
     TEST_INFO("sim_time=" << s.data->time);
 }
 
-static void run_gui(const std::string &urdf)
-{
-    mj_kdl::SceneSpec sc;
-    mj_kdl::SceneRobot r;
-    r.urdf_path = urdf.c_str();
-    sc.robots.push_back(r);
-
-    mjModel       *model = nullptr;
-    mjData        *data  = nullptr;
-    mj_kdl::State  s;
-    if (!mj_kdl::build_scene(&model, &data, &sc)) {
-        std::cerr << "GUI: build_scene() failed\n";
-        return;
-    }
-    if (!mj_kdl::init_robot(&s, model, data, urdf.c_str(), "base_link", "EndEffector_Link")) {
-        std::cerr << "GUI: init_robot() failed\n";
-        mj_kdl::destroy_scene(model, data);
-        return;
-    }
-
-    unsigned n = static_cast<unsigned>(s.n_joints);
-    KDL::JntArray q_home(n);
-    for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
-
-    /* Reset to home pose before opening UI. */
-    mj_kdl::sync_from_kdl(&s, q_home);
-    mj_forward(s.model, s.data);
-    for (unsigned i = 0; i < n; ++i) s.data->ctrl[i] = s.data->qpos[s.kdl_to_mj_qpos[i]];
-
-    std::cout << "GUI mode — close window to exit\n";
-    mj_kdl::run_simulate_ui(s.model, s.data, urdf.c_str());
-
-    mj_kdl::cleanup(&s);
-    mj_kdl::destroy_scene(model, data);
-}
-
 int main(int argc, char *argv[])
 {
     g_urdf_path = (repo_root() / "assets/gen3_urdf/GEN3_URDF_V12.urdf").string();
-    bool gui = false;
 
-    /* Parse non-GTest arguments before handing off to GTest. */
-    std::vector<char *> remaining;
-    remaining.push_back(argv[0]);
-    for (int i = 1; i < argc; ++i) {
-        std::string a(argv[i]);
-        if (a == "--gui")
-            gui = true;
-        else if (a[0] != '-')
-            g_urdf_path = a;
-        else
-            remaining.push_back(argv[i]);
-    }
-    int remaining_argc = static_cast<int>(remaining.size());
+    for (int i = 1; i < argc; ++i)
+        if (argv[i][0] != '-') g_urdf_path = argv[i];
 
-    ::testing::InitGoogleTest(&remaining_argc, remaining.data());
-
-    if (gui) {
-        run_gui(g_urdf_path);
-    }
-
+    ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }

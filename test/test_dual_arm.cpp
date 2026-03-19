@@ -1,6 +1,6 @@
 /* test_dual_arm.cpp
  * Two Kinova GEN3 arms in one shared MuJoCo scene, facing each other.
- * Each arm is its own mj_kdl::State (sharing model/data).
+ * Each arm is its own mj_kdl::Robot (sharing model/data).
  * Gravity compensation uses KDL::ChainDynParam::JntToGravity — not qfrc_bias.
  *
  * GravityInformational — KDL vs MuJoCo gravity comparison at home pose
@@ -27,7 +27,7 @@
 static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
 
 /* Apply KDL gravity compensation torques to one arm. */
-static void apply_grav_comp(mj_kdl::State *s, KDL::ChainDynParam &dyn)
+static void apply_grav_comp(mj_kdl::Robot *s, KDL::ChainDynParam &dyn)
 {
     KDL::JntArray q;
     mj_kdl::sync_to_kdl(s, q);
@@ -72,7 +72,7 @@ static void run_gui(const std::string &urdf)
         return;
     }
 
-    mj_kdl::State arm1, arm2;
+    mj_kdl::Robot arm1, arm2;
     if (!mj_kdl::init_robot(&arm1, model, data, urdf.c_str(),
                             "base_link", "EndEffector_Link", "")) {
         std::cerr << "GUI: arm1 init_robot() failed\n";
@@ -129,7 +129,7 @@ protected:
     std::string  urdf_;
     mjModel     *model = nullptr;
     mjData      *data  = nullptr;
-    mj_kdl::State arm1, arm2;
+    mj_kdl::Robot arm1, arm2;
     std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk1;
     std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk2;
     std::unique_ptr<KDL::ChainDynParam>              dyn1;

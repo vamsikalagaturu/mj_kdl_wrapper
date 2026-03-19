@@ -9,7 +9,7 @@
  *   Sets arm to home pose, then runs 500 steps applying KDL-computed gravity
  *   torques via ChainDynParam::JntToGravity each step.  EE drift must stay < 1 mm.
  *
- * Usage: test_gravity_comp [urdf_path] [--gui] */
+ * Usage: test_gravity_comp [urdf_path] */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "test_utils.hpp"
@@ -34,62 +34,12 @@ static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_pat
 /* urdf_ is set once from main() before RUN_ALL_TESTS(). */
 static std::string g_urdf;
 
-static void run_gui(const std::string &urdf)
-{
-    mj_kdl::SceneSpec sc;
-    mj_kdl::SceneRobot r;
-    r.urdf_path = urdf.c_str();
-    sc.robots.push_back(r);
-
-    mjModel       *model = nullptr;
-    mjData        *data  = nullptr;
-    mj_kdl::State  s;
-    if (!mj_kdl::build_scene(&model, &data, &sc)) {
-        std::cerr << "GUI: build_scene() failed\n";
-        return;
-    }
-    if (!mj_kdl::init_robot(&s, model, data, urdf.c_str(), "base_link", "EndEffector_Link")) {
-        std::cerr << "GUI: init_robot() failed\n";
-        mj_kdl::destroy_scene(model, data);
-        return;
-    }
-    if (!mj_kdl::init_window(&s)) {
-        std::cerr << "GUI: init_window() failed\n";
-        mj_kdl::destroy_scene(model, data);
-        return;
-    }
-
-    unsigned n = static_cast<unsigned>(s.n_joints);
-    KDL::ChainFkSolverPos_recursive fk(s.chain);
-    KDL::ChainDynParam              dyn(s.chain, KDL::Vector(0.0, 0.0, -9.81));
-
-    KDL::JntArray q_home(n);
-    for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
-
-    mj_kdl::sync_from_kdl(&s, q_home);
-    mj_forward(s.model, s.data);
-    for (unsigned i = 0; i < n; ++i)
-        s.data->ctrl[i] = s.data->qpos[s.kdl_to_mj_qpos[i]];
-
-    std::cout << "GUI mode — close window to exit\n";
-    mj_kdl::run_simulate_ui(s.model, s.data, urdf.c_str(), [&](mjModel *, mjData *d) {
-        for (unsigned i = 0; i < n; ++i)
-            d->ctrl[i] = d->qpos[s.kdl_to_mj_qpos[i]];
-        KDL::JntArray q, g(n);
-        mj_kdl::sync_to_kdl(&s, q);
-        dyn.JntToGravity(q, g);
-        mj_kdl::set_torques(&s, g);
-    });
-
-    mj_kdl::cleanup(&s);
-    mj_kdl::destroy_scene(model, data);
-}
 
 class GravityCompTest : public ::testing::Test {
 protected:
     mjModel       *model_ = nullptr;
     mjData        *data_  = nullptr;
-    mj_kdl::State  s;
+    mj_kdl::Robot  s;
     std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk;
     std::unique_ptr<KDL::ChainDynParam>              dyn;
     KDL::JntArray                                    q_home;
@@ -172,26 +122,9 @@ int main(int argc, char *argv[])
 {
     g_urdf = (repo_root() / "assets/gen3_urdf/GEN3_URDF_V12.urdf").string();
 
-    bool gui = false;
-    std::vector<char *> gtest_argv;
-    gtest_argv.push_back(argv[0]);
+    for (int i = 1; i < argc; ++i)
+        if (argv[i][0] != '-') g_urdf = argv[i];
 
-    for (int i = 1; i < argc; ++i) {
-        std::string a(argv[i]);
-        if (a == "--gui")
-            gui = true;
-        else if (a[0] != '-')
-            g_urdf = a;
-        else
-            gtest_argv.push_back(argv[i]);
-    }
-
-    if (gui) {
-        run_gui(g_urdf);
-        return 0;
-    }
-
-    int gtest_argc = static_cast<int>(gtest_argv.size());
-    ::testing::InitGoogleTest(&gtest_argc, gtest_argv.data());
+    ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }

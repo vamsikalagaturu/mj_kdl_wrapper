@@ -1,7 +1,6 @@
 /* test_velocity.cpp
  * Tests velocity-level kinematics: FK, IK, and Jacobian on the Kinova GEN3.
- * Usage: test_velocity [urdf_path] [--gui]
- * With --gui: displays the robot at the home pose / IK solution. */
+ * Usage: test_velocity [urdf_path] */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "test_utils.hpp"
@@ -31,7 +30,7 @@ class VelocityTest : public ::testing::Test {
 protected:
     mjModel       *model_ = nullptr;
     mjData        *data_  = nullptr;
-    mj_kdl::State  s;
+    mj_kdl::Robot  s;
     unsigned       n = 0;
 
     KDL::JntArray q_home;
@@ -125,94 +124,13 @@ TEST_F(VelocityTest, JacobianDimensions)
     EXPECT_EQ(jac.columns(), n) << "unexpected Jacobian column count (expected " << n << ")";
 }
 
-static void run_gui(const std::string &urdf)
-{
-    mj_kdl::SceneSpec sc;
-    mj_kdl::SceneRobot r;
-    r.urdf_path = urdf.c_str();
-    sc.robots.push_back(r);
-
-    mjModel       *model = nullptr;
-    mjData        *data  = nullptr;
-    mj_kdl::State  s;
-    if (!mj_kdl::build_scene(&model, &data, &sc)) {
-        std::cerr << "GUI: build_scene() failed\n";
-        return;
-    }
-    if (!mj_kdl::init_robot(&s, model, data, urdf.c_str(), "base_link", "EndEffector_Link")) {
-        std::cerr << "GUI: init_robot() failed\n";
-        mj_kdl::destroy_scene(model, data);
-        return;
-    }
-
-    unsigned n = s.chain.getNrOfJoints();
-
-    KDL::JntArray q_min(n), q_max(n);
-    for (unsigned i = 0; i < n; ++i) {
-        q_min(i) = s.joint_limits[i].first;
-        q_max(i) = s.joint_limits[i].second;
-    }
-
-    KDL::ChainFkSolverPos_recursive fk(s.chain);
-    KDL::ChainIkSolverVel_pinv      ik_vel(s.chain);
-    KDL::ChainIkSolverPos_NR_JL     ik(s.chain, q_min, q_max, fk, ik_vel, 500, 1e-5);
-
-    KDL::JntArray q_home(n);
-    for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
-
-    KDL::JntArray q_test(n);
-    for (unsigned i = 0; i < n; ++i)
-        q_test(i) = (i % 2 == 0 ? 1.0 : -1.0) * 30.0 * M_PI / 180.0;
-
-    KDL::Frame    fk_test;
-    KDL::JntArray q_ik(n);
-    fk.JntToCart(q_test, fk_test);
-    int ik_ret = ik.CartToJnt(q_home, fk_test, q_ik);
-
-    /* Show IK solution (or home pose if IK failed) statically with gravity comp. */
-    KDL::JntArray q_display = (ik_ret >= 0) ? q_ik : q_home;
-    mj_kdl::sync_from_kdl(&s, q_display);
-    mj_forward(s.model, s.data);
-    for (unsigned i = 0; i < n; ++i) s.data->ctrl[i] = s.data->qpos[s.kdl_to_mj_qpos[i]];
-
-    KDL::ChainDynParam dyn(s.chain, KDL::Vector(0, 0, -9.81));
-    std::cout << "GUI mode — close window to exit\n";
-    mj_kdl::run_simulate_ui(s.model, s.data, urdf.c_str(), [&](mjModel *, mjData *d) {
-        for (unsigned i = 0; i < n; ++i) d->ctrl[i] = d->qpos[s.kdl_to_mj_qpos[i]];
-        KDL::JntArray q(n), g(n);
-        mj_kdl::sync_to_kdl(&s, q);
-        dyn.JntToGravity(q, g);
-        mj_kdl::set_torques(&s, g);
-    });
-
-    mj_kdl::cleanup(&s);
-    mj_kdl::destroy_scene(model, data);
-}
-
 int main(int argc, char *argv[])
 {
     g_urdf_path = (repo_root() / "assets/gen3_urdf/GEN3_URDF_V12.urdf").string();
-    bool gui = false;
 
-    /* Parse non-GTest arguments before handing off to GTest. */
-    std::vector<char *> remaining;
-    remaining.push_back(argv[0]);
-    for (int i = 1; i < argc; ++i) {
-        std::string a(argv[i]);
-        if (a == "--gui")
-            gui = true;
-        else if (a[0] != '-')
-            g_urdf_path = a;
-        else
-            remaining.push_back(argv[i]);
-    }
-    int remaining_argc = static_cast<int>(remaining.size());
+    for (int i = 1; i < argc; ++i)
+        if (argv[i][0] != '-') g_urdf_path = argv[i];
 
-    ::testing::InitGoogleTest(&remaining_argc, remaining.data());
-
-    if (gui) {
-        run_gui(g_urdf_path);
-    }
-
+    ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }

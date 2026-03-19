@@ -85,7 +85,7 @@ protected:
     mj_kdl::SceneSpec spec_;
     mjModel *model_     = nullptr;
     mjData  *data_      = nullptr;
-    mj_kdl::State s_;
+    mj_kdl::Robot s_;
     bool s_cleaned_     = false;
 
     std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_;
@@ -205,7 +205,7 @@ static void run_gui(const std::string &urdf,
                     mj_kdl::SceneSpec &spec,
                     mjModel           *model,
                     mjData            *data,
-                    mj_kdl::State     &s,
+                    mj_kdl::Robot     &s,
                     unsigned           n,
                     KDL::ChainFkSolverPos_recursive &fk,
                     KDL::ChainDynParam              &dyn,
@@ -278,7 +278,7 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        mj_kdl::State s;
+        mj_kdl::Robot s;
         if (!mj_kdl::init_robot(&s, model, data, urdf.c_str(), "base_link", "EndEffector_Link")) {
             std::cerr << "init_robot() failed\n";
             mj_kdl::destroy_scene(model, data);

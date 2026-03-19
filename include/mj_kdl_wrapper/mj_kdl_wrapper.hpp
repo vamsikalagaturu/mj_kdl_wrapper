@@ -103,10 +103,12 @@ struct SceneSpec
 };
 
 /*
- * All runtime state for one articulation. Fields are public.
+ * Runtime handle for one KDL-tracked articulation inside a MuJoCo scene.
+ * Holds the scene model/data reference, the KDL chain with joint index maps,
+ * and optional GLFW rendering state.  Fields are public.
  * Do not free model/data directly; use destroy_scene() or cleanup().
  */
-struct State
+struct Robot
 {
     mjModel                               *model = nullptr;
     mjData                                *data  = nullptr;
@@ -184,7 +186,7 @@ bool save_model_xml(const mjModel *model, const char *path);
  * @param[in]  prefix     Optional body/joint name prefix for multi-robot disambiguation.
  * @return true on success.
  */
-bool init_from_mjcf(State *s,
+bool init_from_mjcf(Robot *s,
   mjModel                 *model,
   mjData                  *data,
   const char              *base_body,
@@ -244,7 +246,7 @@ void destroy_scene(mjModel *model, mjData *data);
  * SceneRobot::prefix.
  * @return true on success, false if the chain or any joint cannot be found.
  */
-bool init_robot(State *s,
+bool init_robot(Robot *s,
   mjModel             *model,
   mjData              *data,
   const char          *urdf_path,
@@ -261,46 +263,46 @@ bool init_robot(State *s,
  * @param[in]     height Window height in pixels.
  * @return true on success, false if GLFW or MuJoCo context creation fails.
  */
-bool init_window(State *s, const char *title = "MuJoCo", int width = 1280, int height = 720);
+bool init_window(Robot *s, const char *title = "MuJoCo", int width = 1280, int height = 720);
 
 /*
  * Release all resources owned by s (model/data if _owns_model, GLFW window, GL context).
  * @param[in,out] s  State to tear down; all pointers set to null afterwards.
  */
-void cleanup(State *s);
+void cleanup(Robot *s);
 
 /*
  * Advance the simulation by one timestep and call mj_forward().
  * @param[in,out] s  Simulation state.
  */
-void step(State *s);
+void step(Robot *s);
 
 /*
  * Advance the simulation by n timesteps.
  * @param[in,out] s  Simulation state.
  * @param[in]     n  Number of steps.
  */
-void step_n(State *s, int n);
+void step_n(Robot *s, int n);
 
 /*
  * Reset simulation to the model's keyframe 0 (or default pose).
  * @param[in,out] s  Simulation state.
  */
-void reset(State *s);
+void reset(Robot *s);
 
 /*
  * Returns true if the GLFW window is open and not scheduled for closing.
  * Always returns true in headless mode.
  * @param[in] s  Simulation state.
  */
-bool is_running(const State *s);
+bool is_running(const Robot *s);
 
 /*
  * Render the current simulation frame to the window (no-op in headless mode).
  * @param[in,out] s  Simulation state.
  * @return true if the window is still open after rendering.
  */
-bool render(State *s);
+bool render(Robot *s);
 
 /*
  * Copy MuJoCo qpos into q, reordered to match KDL chain joint order.
@@ -309,21 +311,21 @@ bool render(State *s);
  * @param[out] q  Joint positions in KDL chain order.
  * @return true on success, false if s->data is null.
  */
-bool sync_to_kdl(const State *s, KDL::JntArray &q);
+bool sync_to_kdl(const Robot *s, KDL::JntArray &q);
 
 /*
  * Write KDL joint positions into MuJoCo qpos (KDL chain order → MuJoCo addresses).
  * @param[in,out] s  Simulation state.
  * @param[in]     q  Joint positions in KDL chain order; size must equal s->n_joints.
  */
-void sync_from_kdl(State *s, const KDL::JntArray &q);
+void sync_from_kdl(Robot *s, const KDL::JntArray &q);
 
 /*
  * Apply joint torques by writing into s->data->qfrc_applied (KDL chain order).
  * @param[in,out] s    Simulation state.
  * @param[in]     tau  Torques in KDL chain order; size must equal s->n_joints.
  */
-void set_torques(State *s, const KDL::JntArray &tau);
+void set_torques(Robot *s, const KDL::JntArray &tau);
 
 /*
  * Add an object to the scene by appending it to spec->objects and rebuilding
