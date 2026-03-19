@@ -26,14 +26,14 @@
 
 static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
 
-/* Apply KDL gravity compensation torques to one arm. */
+/* Read state, compute KDL gravity torques, store in jnt_trq_cmd. */
 static void apply_grav_comp(mj_kdl::Robot *s, KDL::ChainDynParam &dyn)
 {
-    KDL::JntArray q;
-    mj_kdl::get_joint_pos(s, q);
-    KDL::JntArray g(s->n_joints);
+    mj_kdl::update(s);
+    KDL::JntArray q(s->n_joints), g(s->n_joints);
+    for (int i = 0; i < s->n_joints; ++i) q(i) = s->jnt_pos_msr[i];
     dyn.JntToGravity(q, g);
-    mj_kdl::set_torques(s, g);
+    for (int i = 0; i < s->n_joints; ++i) s->jnt_trq_cmd[i] = g(i);
 }
 
 namespace fs = std::filesystem;
@@ -140,6 +140,8 @@ TEST_F(DualArmTest, DualArmDrift)
     mj_kdl::set_joint_pos(&arm1, q_home);
     mj_kdl::set_joint_pos(&arm2, q_home);
     mj_forward(model, data);
+    arm1.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
+    arm2.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
 
     KDL::Frame ee1_init, ee2_init;
     fk1->JntToCart(q_home, ee1_init);
@@ -158,9 +160,11 @@ TEST_F(DualArmTest, DualArmDrift)
         mj_kdl::step(&arm1);
     }
 
-    KDL::JntArray q1_end, q2_end;
-    mj_kdl::get_joint_pos(&arm1, q1_end);
-    mj_kdl::get_joint_pos(&arm2, q2_end);
+    KDL::JntArray q1_end(n), q2_end(n);
+    for (int j = 0; j < n; ++j) {
+        q1_end(j) = arm1.jnt_pos_msr[j];
+        q2_end(j) = arm2.jnt_pos_msr[j];
+    }
     KDL::Frame ee1_end, ee2_end;
     fk1->JntToCart(q1_end, ee1_end);
     fk2->JntToCart(q2_end, ee2_end);

@@ -60,7 +60,10 @@ int main(int argc, char *argv[])
 
     mj_kdl::set_joint_pos(&robot, q_home);
     mj_forward(model, data);
-    for (unsigned i = 0; i < n; ++i) data->ctrl[i] = data->qpos[robot.kdl_to_mj_qpos[i]];
+    robot.ctrl_mode = mj_kdl::CtrlMode::POSITION;
+    mj_kdl::update(&robot);                // read state into _msr
+    robot.jnt_pos_cmd = robot.jnt_pos_msr; // hold home pose
+    mj_kdl::update(&robot);                // apply home pos to ctrl
 
     KDL::ChainFkSolverPos_recursive fk(robot.chain);
     KDL::Frame                      ee;

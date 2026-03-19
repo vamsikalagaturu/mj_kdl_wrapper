@@ -206,6 +206,9 @@ int main(int argc, char *argv[])
     reset_cube(data);
     mj_forward(model, data);
 
+    robot.ctrl_mode = mj_kdl::CtrlMode::POSITION;
+    for (unsigned i = 0; i < n; ++i) robot.jnt_pos_cmd[i] = data->qpos[robot.kdl_to_mj_qpos[i]];
+
     auto control = [&](mjModel * /*m*/, mjData *d) {
         double       t  = d->time;
         const Phase *ph = &phases[kNPhases - 1];
@@ -219,11 +222,10 @@ int main(int argc, char *argv[])
         KDL::JntArray q_target(n);
         lerp_q(*ph->q_from, *ph->q_to, alpha, q_target);
 
-        for (unsigned i = 0; i < n; ++i) {
-            int dof              = robot.kdl_to_mj_dof[i];
-            d->ctrl[i]           = q_target(i);
-            d->qfrc_applied[dof] = d->qfrc_bias[dof];
-        }
+        for (unsigned i = 0; i < n; ++i) robot.jnt_pos_cmd[i] = q_target(i);
+        mj_kdl::update(&robot); // ctrl = q_target, reads _msr
+        for (unsigned i = 0; i < n; ++i)
+            d->qfrc_applied[robot.kdl_to_mj_dof[i]] = robot.jnt_trq_msr[i];
         d->ctrl[fingers_act] = ph->gripper;
     };
 

@@ -117,14 +117,14 @@ int main(int argc, char *argv[])
     const KDL::JntArray &q_display = (ik_ret >= 0) ? q_ik : q_home;
     mj_kdl::set_joint_pos(&robot, q_display);
     mj_forward(model, data);
-    for (unsigned i = 0; i < n; ++i) data->ctrl[i] = data->qpos[robot.kdl_to_mj_qpos[i]];
+    robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
 
-    mj_kdl::run_simulate_ui(model, data, urdf.c_str(), [&](mjModel *, mjData *d) {
-        for (unsigned i = 0; i < n; ++i) d->ctrl[i] = d->qpos[robot.kdl_to_mj_qpos[i]];
-        KDL::JntArray q(n), g(n);
-        mj_kdl::get_joint_pos(&robot, q);
+    KDL::JntArray q(n), g(n);
+    mj_kdl::run_simulate_ui(model, data, urdf.c_str(), [&](mjModel * /*m*/, mjData * /*d*/) {
+        mj_kdl::update(&robot);
+        for (unsigned i = 0; i < n; ++i) q(i) = robot.jnt_pos_msr[i];
         dyn.JntToGravity(q, g);
-        mj_kdl::set_torques(&robot, g);
+        for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = g(i);
     });
 
     mj_kdl::cleanup(&robot);

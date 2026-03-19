@@ -3,7 +3,7 @@
  *
  * Control law (per joint):
  *   tau[i] = Kp[i]*(q_home[i] - q[i]) - Kd[i]*qdot[i] + qfrc_bias[dof_i]
- * Applied via qfrc_applied; position actuators track current qpos (zero effort).
+ * Applied via qfrc_applied; POSITION mode keeps ctrl = current qpos (zero effort).
  * The gripper cycles open and closed every 3 s.
  *
  * Requires third_party/menagerie (MuJoCo Menagerie submodule).
@@ -104,22 +104,26 @@ int main(int argc, char *argv[])
     }
     mj_forward(model, data);
 
-    auto step_impedance = [&](mjModel *m, mjData *d) {
+    /* POSITION mode: ctrl = jnt_pos_cmd each step (neutralizes position actuators).
+     * Initialize pos cmd from actual state so first update() writes correct ctrl. */
+    robot.ctrl_mode = mj_kdl::CtrlMode::POSITION;
+    for (unsigned i = 0; i < n; ++i) robot.jnt_pos_cmd[i] = data->qpos[robot.kdl_to_mj_qpos[i]];
+
+    auto step_impedance = [&](mjModel * /*m*/, mjData *d) {
+        mj_kdl::update(&robot); // ctrl = jnt_pos_cmd (neutralize), reads _msr
         for (unsigned i = 0; i < n; ++i) {
-            int    dof           = robot.kdl_to_mj_dof[i];
-            int    jid           = m->dof_jntid[dof];
-            double q             = d->qpos[m->jnt_qposadr[jid]];
-            double qdot          = d->qvel[dof];
-            d->ctrl[i]           = q;
-            d->qfrc_applied[dof] = kKp[i] * (kHomePose[i] - q) - kKd[i] * qdot + d->qfrc_bias[dof];
+            int dof              = robot.kdl_to_mj_dof[i];
+            d->qfrc_applied[dof] = kKp[i] * (kHomePose[i] - robot.jnt_pos_msr[i])
+                                   - kKd[i] * robot.jnt_vel_msr[i] + robot.jnt_trq_msr[i];
         }
+        robot.jnt_pos_cmd    = robot.jnt_pos_msr; // next step: ctrl = current pos
         d->ctrl[fingers_act] = (std::fmod(d->time, 6.0) < 3.0) ? 255.0 : 0.0;
     };
 
     if (headless) {
         KDL::ChainFkSolverPos_recursive fk(robot.chain);
         KDL::JntArray                   q0(n);
-        mj_kdl::get_joint_pos(&robot, q0);
+        for (unsigned i = 0; i < n; ++i) q0(i) = robot.jnt_pos_cmd[i];
         KDL::Frame ee_start;
         fk.JntToCart(q0, ee_start);
 
@@ -129,7 +133,7 @@ int main(int argc, char *argv[])
         }
 
         KDL::JntArray q_end(n);
-        mj_kdl::get_joint_pos(&robot, q_end);
+        for (unsigned i = 0; i < n; ++i) q_end(i) = robot.jnt_pos_msr[i];
         KDL::Frame ee_end;
         fk.JntToCart(q_end, ee_end);
         double drift = (ee_start.p - ee_end.p).Norm();

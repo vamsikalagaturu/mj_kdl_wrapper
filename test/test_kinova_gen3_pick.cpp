@@ -263,14 +263,9 @@ class PickTest : public ::testing::Test
         KDL::JntArray q_target(n_);
         lerp_q(*ph->q_from, *ph->q_to, alpha, q_target);
 
-        for (unsigned i = 0; i < n_; ++i) {
-            int dof = s_.kdl_to_mj_dof[i];
-            /* Position actuators track q_target (stable: force clamped to forcerange).
-             * qfrc_applied adds gravity compensation so the actuator P-term
-             * only needs to handle tracking error, not fight gravity. */
-            d->ctrl[i]           = q_target(i);
-            d->qfrc_applied[dof] = d->qfrc_bias[dof];
-        }
+        for (unsigned i = 0; i < n_; ++i) s_.jnt_pos_cmd[i] = q_target(i);
+        mj_kdl::update(&s_); // ctrl = q_target, reads _msr
+        for (unsigned i = 0; i < n_; ++i) d->qfrc_applied[s_.kdl_to_mj_dof[i]] = s_.jnt_trq_msr[i];
         d->ctrl[fingers_act_] = ph->gripper;
     }
 };
@@ -337,6 +332,8 @@ TEST_F(PickTest, CubeLifted)
         mj_kdl::set_joint_pos(&s_, q_home_kdl_);
     reset_cube(data_);
     mj_forward(model_, data_);
+    s_.ctrl_mode = mj_kdl::CtrlMode::POSITION;
+    for (unsigned i = 0; i < n_; ++i) s_.jnt_pos_cmd[i] = data_->qpos[s_.kdl_to_mj_qpos[i]];
 
     const int kSteps = static_cast<int>(10.5 / model_->opt.timestep);
     for (int step = 0; step < kSteps; ++step) {

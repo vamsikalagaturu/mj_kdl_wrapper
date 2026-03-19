@@ -118,18 +118,20 @@ TEST_F(MenagerieTest, GravityCompDrift)
     int saved_flags = model_->opt.disableflags;
     model_->opt.disableflags |= mjDSBL_ACTUATION;
 
+    s_.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
+    KDL::JntArray q(n_), g(n_);
     for (int i = 0; i < 500; ++i) {
-        KDL::JntArray q(n_), g(n_);
-        mj_kdl::get_joint_pos(&s_, q);
+        mj_kdl::update(&s_);
+        for (unsigned j = 0; j < n_; ++j) q(j) = s_.jnt_pos_msr[j];
         dyn_->JntToGravity(q, g);
-        mj_kdl::set_torques(&s_, g);
+        for (unsigned j = 0; j < n_; ++j) s_.jnt_trq_cmd[j] = g(j);
         mj_kdl::step(&s_);
     }
 
     model_->opt.disableflags = saved_flags;
 
     KDL::JntArray q_end(n_);
-    mj_kdl::get_joint_pos(&s_, q_end);
+    for (unsigned j = 0; j < n_; ++j) q_end(j) = s_.jnt_pos_msr[j];
     KDL::Frame fk_end;
     fk_->JntToCart(q_end, fk_end);
     double drift = (fk_initial.p - fk_end.p).Norm();

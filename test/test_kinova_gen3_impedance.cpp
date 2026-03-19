@@ -120,14 +120,13 @@ class ImpedanceTest : public ::testing::Test
     /* Apply one impedance step targeting q_target and advance the simulation. */
     void step_impedance(mjModel *m, mjData *d, const double q_target[7])
     {
+        mj_kdl::update(&s_); // ctrl = jnt_pos_cmd (neutralize), reads _msr
         for (unsigned i = 0; i < n_; ++i) {
-            int    dof           = s_.kdl_to_mj_dof[i];
-            int    jid           = m->dof_jntid[dof];
-            double q             = d->qpos[m->jnt_qposadr[jid]];
-            double qdot          = d->qvel[dof];
-            d->ctrl[i]           = q; // zero P-error
-            d->qfrc_applied[dof] = kKp[i] * (q_target[i] - q) - kKd[i] * qdot + d->qfrc_bias[dof];
+            int dof              = s_.kdl_to_mj_dof[i];
+            d->qfrc_applied[dof] = kKp[i] * (q_target[i] - s_.jnt_pos_msr[i])
+                                   - kKd[i] * s_.jnt_vel_msr[i] + s_.jnt_trq_msr[i];
         }
+        s_.jnt_pos_cmd = s_.jnt_pos_msr; // next step: ctrl = current pos (zero P-error)
         mj_step(m, d);
     }
 };
@@ -144,6 +143,8 @@ TEST_F(ImpedanceTest, ImpedanceDrift)
     for (unsigned i = 0; i < n_; ++i) q_home_kdl(i) = kHomePose[i];
     mj_kdl::set_joint_pos(&s_, q_home_kdl);
     mj_forward(model_, data_);
+    s_.ctrl_mode = mj_kdl::CtrlMode::POSITION;
+    for (unsigned i = 0; i < n_; ++i) s_.jnt_pos_cmd[i] = data_->qpos[s_.kdl_to_mj_qpos[i]];
 
     KDL::Frame ee_init;
     fk_->JntToCart(q_home_kdl, ee_init);
@@ -151,7 +152,7 @@ TEST_F(ImpedanceTest, ImpedanceDrift)
     for (int step = 0; step < 200; ++step) step_impedance(model_, data_, kHomePose);
 
     KDL::JntArray q_now(n_);
-    mj_kdl::get_joint_pos(&s_, q_now);
+    for (unsigned i = 0; i < n_; ++i) q_now(i) = s_.jnt_pos_msr[i];
     KDL::Frame ee_now;
     fk_->JntToCart(q_now, ee_now);
     double drift = (ee_now.p - ee_init.p).Norm() * 1000.0;

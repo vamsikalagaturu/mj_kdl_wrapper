@@ -100,16 +100,18 @@ TEST_F(GravityCompTest, GravityCompDrift)
     KDL::Frame fk_initial;
     fk->JntToCart(q_home, fk_initial);
 
+    s.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
+    KDL::JntArray q(n), g(n);
     for (int i = 0; i < 500; ++i) {
-        KDL::JntArray q, g(n);
-        mj_kdl::get_joint_pos(&s, q);
+        mj_kdl::update(&s);
+        for (unsigned j = 0; j < n; ++j) q(j) = s.jnt_pos_msr[j];
         dyn->JntToGravity(q, g);
-        mj_kdl::set_torques(&s, g);
+        for (unsigned j = 0; j < n; ++j) s.jnt_trq_cmd[j] = g(j);
         mj_kdl::step(&s);
     }
 
-    KDL::JntArray q_end;
-    mj_kdl::get_joint_pos(&s, q_end);
+    KDL::JntArray q_end(n);
+    for (unsigned j = 0; j < n; ++j) q_end(j) = s.jnt_pos_msr[j];
     KDL::Frame fk_end;
     fk->JntToCart(q_end, fk_end);
     double drift = (fk_initial.p - fk_end.p).Norm();
