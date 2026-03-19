@@ -1437,17 +1437,7 @@ bool render(Viewer *v, const Robot *r)
     return true;
 }
 
-void update_state(Robot *r)
-{
-    if (!r->data) return;
-    for (int i = 0; i < r->n_joints; ++i) {
-        r->jnt_pos_msr[i] = r->data->qpos[r->kdl_to_mj_qpos[i]];
-        r->jnt_vel_msr[i] = r->data->qvel[r->kdl_to_mj_dof[i]];
-        r->jnt_trq_msr[i] = r->data->qfrc_bias[r->kdl_to_mj_dof[i]];
-    }
-}
-
-void apply_cmd(Robot *r)
+void update(Robot *r)
 {
     if (!r->data) return;
     for (int i = 0; i < r->n_joints; ++i) {
@@ -1462,6 +1452,9 @@ void apply_cmd(Robot *r)
             r->data->qfrc_applied[r->kdl_to_mj_dof[i]] = r->jnt_trq_cmd[i];
             break;
         }
+        r->jnt_pos_msr[i] = r->data->qpos[r->kdl_to_mj_qpos[i]];
+        r->jnt_vel_msr[i] = r->data->qvel[r->kdl_to_mj_dof[i]];
+        r->jnt_trq_msr[i] = r->data->qfrc_bias[r->kdl_to_mj_dof[i]];
     }
 }
 

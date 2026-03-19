@@ -114,12 +114,10 @@ int main(int argc, char *argv[])
     arm2.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
 
     auto ctrl_step = [&]() {
-        mj_kdl::update_state(&arm1);
-        mj_kdl::update_state(&arm2);
+        mj_kdl::update(&arm1);
+        mj_kdl::update(&arm2);
         arm1.jnt_trq_cmd = arm1.jnt_trq_msr;
         arm2.jnt_trq_cmd = arm2.jnt_trq_msr;
-        mj_kdl::apply_cmd(&arm1);
-        mj_kdl::apply_cmd(&arm2);
         if (fing1 >= 0) data->ctrl[fing1] = (std::fmod(data->time, 6.0) < 3.0) ? 255.0 : 0.0;
         if (fing2 >= 0) data->ctrl[fing2] = (std::fmod(data->time, 6.0) < 3.0) ? 255.0 : 0.0;
     };

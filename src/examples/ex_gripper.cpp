@@ -97,9 +97,8 @@ int main(int argc, char *argv[])
     robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
 
     auto ctrl_step = [&]() {
-        mj_kdl::update_state(&robot);
-        robot.jnt_trq_cmd = robot.jnt_trq_msr;
-        mj_kdl::apply_cmd(&robot);
+        mj_kdl::update(&robot);
+        robot.jnt_trq_cmd       = robot.jnt_trq_msr;
         data->ctrl[fingers_act] = (std::fmod(data->time, 6.0) < 3.0) ? 255.0 : 0.0;
     };
 

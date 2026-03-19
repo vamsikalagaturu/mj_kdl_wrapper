@@ -104,7 +104,7 @@ struct SceneSpec
 };
 
 /*
- * Joint-space control mode for apply_cmd().
+ * Joint-space control mode for update().
  *   POSITION - writes jnt_pos_cmd to actuator ctrl inputs.
  *   VELOCITY - writes jnt_vel_cmd to actuator ctrl inputs.
  *   TORQUE   - writes jnt_trq_cmd to qfrc_applied (generalized forces).
@@ -120,8 +120,8 @@ enum class CtrlMode { POSITION, VELOCITY, TORQUE };
  * Workflow:
  *   1. Call init_robot() or init_from_mjcf() - populates index maps and
  *      sizes all state/command vectors to n_joints.
- *   2. Each control step: call update_state() to read MuJoCo -> *_msr,
- *      fill *_cmd fields, then call apply_cmd() to write *_cmd -> MuJoCo.
+ *   2. Each control step: fill *_cmd, then call update() which applies
+ *      *_cmd -> MuJoCo and reads MuJoCo -> *_msr (one-step delay).
  */
 struct Robot
 {
@@ -138,12 +138,12 @@ struct Robot
 
     CtrlMode ctrl_mode = CtrlMode::POSITION;
 
-    /* Measured state - populated by update_state(). */
+    /* Measured state - populated by update(). */
     std::vector<double> jnt_pos_msr; // [rad]   - joint positions
     std::vector<double> jnt_vel_msr; // [rad/s] - joint velocities
     std::vector<double> jnt_trq_msr; // [Nm]    - bias torques (gravity + Coriolis)
 
-    /* Commanded values - read by apply_cmd(). */
+    /* Commanded values - applied to MuJoCo by update(). */
     std::vector<double> jnt_pos_cmd; // [rad]   - position setpoints  (POSITION mode)
     std::vector<double> jnt_vel_cmd; // [rad/s] - velocity setpoints  (VELOCITY mode)
     std::vector<double> jnt_trq_cmd; // [Nm]    - torque commands     (TORQUE mode)
@@ -389,20 +389,12 @@ bool is_running(const Viewer *v);
 bool render(Viewer *v, const Robot *r);
 
 /*
- * Read MuJoCo state into r->jnt_pos_msr, r->jnt_vel_msr, r->jnt_trq_msr.
- * jnt_trq_msr is the bias torque (gravity + Coriolis) from qfrc_bias.
- * Must be called after init_robot() or init_from_mjcf().
- */
-void update_state(Robot *r);
-
-/*
- * Apply r->jnt_*_cmd to MuJoCo based on r->ctrl_mode:
- *   POSITION - writes jnt_pos_cmd[i] to data->ctrl[kdl_to_mj_ctrl[i]].
- *   VELOCITY - writes jnt_vel_cmd[i] to data->ctrl[kdl_to_mj_ctrl[i]].
- *   TORQUE   - writes jnt_trq_cmd[i] to data->qfrc_applied[kdl_to_mj_dof[i]].
+ * One control cycle: apply *_cmd to MuJoCo, then read MuJoCo into *_msr.
+ * Apply step: POSITION -> data->ctrl, VELOCITY -> data->ctrl, TORQUE -> qfrc_applied.
+ * Read step: qpos -> jnt_pos_msr, qvel -> jnt_vel_msr, qfrc_bias -> jnt_trq_msr.
  * Joints with kdl_to_mj_ctrl[i] == -1 are skipped in POSITION/VELOCITY mode.
  */
-void apply_cmd(Robot *r);
+void update(Robot *r);
 
 /*
  * Read MuJoCo qpos into q, reordered to match KDL chain joint order.
