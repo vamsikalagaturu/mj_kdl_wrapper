@@ -27,7 +27,7 @@
 
 static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
 
-/* Impedance gains — tuned for Gen3 joint sizes. */
+/* Impedance gains  - tuned for Gen3 joint sizes. */
 static constexpr double kKp[7] = { 100, 200, 100, 200, 100, 200, 100 };
 static constexpr double kKd[7] = { 10, 20, 10, 20, 10, 20, 10 };
 
@@ -75,7 +75,7 @@ int main(int argc, char *argv[])
 
     const fs::path root = repo_root();
     if (!fs::exists(root / "third_party/menagerie")) {
-        std::cerr << "third_party/menagerie/ not found — run: "
+        std::cerr << "third_party/menagerie/ not found  - run: "
                      "git submodule update --init third_party/menagerie\n";
         return 1;
     }

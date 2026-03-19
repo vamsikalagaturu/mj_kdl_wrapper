@@ -7,7 +7,7 @@
  *
  * Tests:
  *   1. KDL chain: 7 arm joints.
- *   2. 200-step impedance hold at home pose — EE drift < 1 mm. */
+ *   2. 200-step impedance hold at home pose  - EE drift < 1 mm. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "test_utils.hpp"
@@ -29,7 +29,7 @@ namespace fs = std::filesystem;
 
 static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
 
-/* Impedance gains — tuned for Gen3 joint sizes.
+/* Impedance gains  - tuned for Gen3 joint sizes.
  * Large joints (2,4,6): higher stiffness; small joints (1,3,5,7): lower. */
 static constexpr double kKp[7] = { 100, 200, 100, 200, 100, 200, 100 };
 static constexpr double kKd[7] = { 10, 20, 10, 20, 10, 20, 10 };
@@ -89,7 +89,7 @@ class ImpedanceTest : public ::testing::Test
     {
         root_ = repo_root();
         if (!fs::exists(root_ / "third_party/menagerie")) {
-            GTEST_SKIP() << "third_party/menagerie/ not found — run locally with the submodule";
+            GTEST_SKIP() << "third_party/menagerie/ not found  - run locally with the submodule";
             return;
         }
 

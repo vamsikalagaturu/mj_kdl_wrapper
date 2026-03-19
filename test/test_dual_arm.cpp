@@ -1,11 +1,11 @@
 /* test_dual_arm.cpp
  * Two Kinova GEN3 arms in one shared MuJoCo scene, facing each other.
  * Each arm is its own mj_kdl::Robot (sharing model/data).
- * Gravity compensation uses KDL::ChainDynParam::JntToGravity — not qfrc_bias.
+ * Gravity compensation uses KDL::ChainDynParam::JntToGravity  - not qfrc_bias.
  *
- * GravityInformational — KDL vs MuJoCo gravity comparison at home pose
+ * GravityInformational  - KDL vs MuJoCo gravity comparison at home pose
  *   (zero velocity, so qfrc_bias == gravity torques); logged only, no assertion.
- * DualArmDrift — 500-step closed-loop gravity comp; EE drift must be < 1 mm.
+ * DualArmDrift  - 500-step closed-loop gravity comp; EE drift must be < 1 mm.
  *
  * Usage: test_dual_arm [urdf_path] */
 

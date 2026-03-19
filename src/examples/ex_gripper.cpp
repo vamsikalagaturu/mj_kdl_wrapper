@@ -65,7 +65,7 @@ int main(int argc, char *argv[])
 
     const fs::path root = repo_root();
     if (!fs::exists(root / "third_party/menagerie")) {
-        std::cerr << "third_party/menagerie/ not found — run: "
+        std::cerr << "third_party/menagerie/ not found  - run: "
                      "git submodule update --init third_party/menagerie\n";
         return 1;
     }
@@ -142,7 +142,7 @@ int main(int argc, char *argv[])
     } else {
         mj_kdl::run_simulate_ui(model, data, combined.c_str(), [&](mjModel *m, mjData *d) {
             /* Pure gravity compensation: zero P-term + cancel gravity via qfrc_bias.
-             * qfrc_bias includes gripper mass — KDL alone would miss ~1.7 kg. */
+             * qfrc_bias includes gripper mass  - KDL alone would miss ~1.7 kg. */
             for (unsigned i = 0; i < n; ++i) {
                 int dof              = robot.kdl_to_mj_dof[i];
                 int jid              = m->dof_jntid[dof];

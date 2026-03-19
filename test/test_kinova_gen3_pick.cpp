@@ -37,7 +37,7 @@ namespace fs = std::filesystem;
 
 static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
 
-/* Bracelet_link → finger pad offset along gripper Z (measured from 2F-85 geometry):
+/* Bracelet_link -> finger pad offset along gripper Z (measured from 2F-85 geometry):
  *   gs_offset(0.0615) + base_mount(0.007) + base(0.0038) +
  *   spring_link_z(0.0609) + follower_z(0.0375) + pad_z(0.01352) = 0.18422 m */
 static constexpr double kGripperReach = 0.18422;
@@ -128,7 +128,7 @@ class PickTest : public ::testing::Test
     {
         root_ = repo_root();
         if (!fs::exists(root_ / "third_party/menagerie")) {
-            GTEST_SKIP() << "third_party/menagerie/ not found — run locally with the submodule";
+            GTEST_SKIP() << "third_party/menagerie/ not found  - run locally with the submodule";
             return;
         }
 
@@ -350,7 +350,7 @@ TEST_F(PickTest, CubeLifted)
 {
     Phase phases[] = {
         { 0.0, 1.0, &q_home_kdl_, &q_home_kdl_, 0.0 }, // hold home
-        { 1.0, 2.0, &q_home_kdl_, &q_pregrasp_, 0.0 }, // → pre-grasp
+        { 1.0, 2.0, &q_home_kdl_, &q_pregrasp_, 0.0 }, // -> pre-grasp
         { 3.0, 2.0, &q_pregrasp_, &q_grasp_, 0.0 },    // descend
         { 5.0, 1.5, &q_grasp_, &q_grasp_, 255.0 },     // close gripper
         { 6.5, 3.0, &q_grasp_, &q_lift_, 255.0 },      // lift

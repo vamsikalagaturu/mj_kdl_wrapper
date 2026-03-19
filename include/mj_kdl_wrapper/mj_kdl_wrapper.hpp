@@ -16,10 +16,10 @@ namespace mj_kdl {
 
 /*
  * Log verbosity level.  Each level includes all levels below it:
- *   NONE  — nothing printed.
- *   INFO  — informational messages only (scene/chain construction progress).
- *   WARN  — INFO + recoverable warnings (e.g. fallback to headless mode).
- *   ERROR — all messages, including errors that cause functions to fail.  Default.
+ *   NONE   - nothing printed.
+ *   INFO   - informational messages only (scene/chain construction progress).
+ *   WARN   - INFO + recoverable warnings (e.g. fallback to headless mode).
+ *   ERROR  - all messages, including errors that cause functions to fail.  Default.
  */
 enum class LogLevel { NONE = 0, INFO = 1, WARN = 2, ERROR = 3 };
 
@@ -65,9 +65,9 @@ enum class ObjShape { BOX, SPHERE, CYLINDER };
  * A free-floating or fixed rigid body to place in the scene.
  *
  * size:
- *   BOX      — half-extents (x, y, z)
- *   SPHERE   — {radius, 0, 0}
- *   CYLINDER — {radius, half-length, 0}
+ *   BOX       - half-extents (x, y, z)
+ *   SPHERE    - {radius, 0, 0}
+ *   CYLINDER  - {radius, half-length, 0}
  *
  * pos:
  *   World-frame position. To rest on the table set
@@ -115,8 +115,8 @@ struct Robot
     int                                    n_joints = 0;
     std::vector<std::string>               joint_names;
     std::vector<std::pair<double, double>> joint_limits;
-    std::vector<int>                       kdl_to_mj_qpos; // KDL index → MuJoCo qpos address
-    std::vector<int>                       kdl_to_mj_dof;  // KDL index → MuJoCo dof address
+    std::vector<int>                       kdl_to_mj_qpos; // KDL index -> MuJoCo qpos address
+    std::vector<int>                       kdl_to_mj_dof;  // KDL index -> MuJoCo dof address
     bool _owns_model = true;                               // if true, cleanup() frees model/data
     bool paused      = false; // set true to pause simulation (step() becomes a no-op)
 };
@@ -173,8 +173,8 @@ bool patch_mjcf_add_objects(const char *mjcf_path, const std::vector<SceneObject
 /*
  * Save the compiled model to an MJCF XML file for later reloading with load_mjcf().
  * Must be called with the model returned by the most recent build_scene() or
- * load_mjcf() call — MuJoCo only retains the last compiled model's XML internally.
- * Typical use: build a combined scene (dual-arm, arm+gripper, …) once, save it,
+ * load_mjcf() call  - MuJoCo only retains the last compiled model's XML internally.
+ * Typical use: build a combined scene (dual-arm, arm+gripper, ...) once, save it,
  * then reload with load_mjcf() in subsequent runs to skip all build/patch steps.
  * @param model  Model to save; must be the most recently compiled model.
  * @param path   Output path for the MJCF XML file.
@@ -224,6 +224,38 @@ struct GripperSpec
 bool attach_gripper(const char *arm_mjcf, const GripperSpec *g, const char *out_path);
 
 /*
+ * Placement specification for one arm MJCF in a multi-arm scene.
+ * Used with build_scene_from_mjcfs().
+ */
+struct MjcfArmSpec
+{
+    const char *mjcf_path = nullptr;     // path to arm (or arm+gripper) MJCF
+    const char *prefix    = "";          // prefix applied to all named elements; "" = no prefix
+    double      pos[3]    = { 0, 0, 0 }; // placement position in world [m]
+    double      euler_z   = 0.0;         // yaw angle in degrees
+};
+
+/*
+ * Merge one or more arm MJCFs into a single world MJCF file.
+ * Each arm is placed at the given position/yaw.  All element names (bodies,
+ * joints, actuators, geoms, sites) are prefixed with MjcfArmSpec::prefix so
+ * multiple instances of the same robot can coexist without name conflicts.
+ * Shared assets (meshes, materials, textures) are copied from the first arm
+ * only; subsequent arms reuse them.
+ * @param[in]  out_mjcf   Output path for the merged MJCF.
+ * @param[in]  arms       Array of arm specs.
+ * @param[in]  n_arms     Number of entries in arms[].
+ * @param[in]  add_floor  Insert a ground-plane geom.
+ * @param[in]  add_skybox Insert a skybox texture.
+ * @return true on success.
+ */
+bool build_scene_from_mjcfs(const char *out_mjcf,
+  const MjcfArmSpec                    *arms,
+  int                                   n_arms,
+  bool                                  add_floor  = true,
+  bool                                  add_skybox = true);
+
+/*
  * Build a MuJoCo world from one or more URDF robots into a single mjModel/mjData.
  * Also injects any table and objects declared in spec->table and spec->objects.
  * @param[out] out_model  Newly allocated MuJoCo model; caller must free via destroy_scene().
@@ -241,7 +273,7 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *spec);
 void destroy_scene(mjModel *model, mjData *data);
 
 /*
- * Attach a KDL chain to an already-loaded scene (shared model/data — not owned).
+ * Attach a KDL chain to an already-loaded scene (shared model/data  - not owned).
  * Resolves joint names using `prefix` to disambiguate robots in multi-robot scenes.
  * @param[out] s          Robot to populate (chain, joint maps, index maps).
  * @param[in]  model      MuJoCo model from build_scene(); not freed by cleanup().
@@ -332,7 +364,7 @@ bool render(Viewer *v, const Robot *r);
 bool sync_to_kdl(const Robot *s, KDL::JntArray &q);
 
 /*
- * Write KDL joint positions into MuJoCo qpos (KDL chain order → MuJoCo addresses).
+ * Write KDL joint positions into MuJoCo qpos (KDL chain order -> MuJoCo addresses).
  * @param[in,out] s  Simulation state.
  * @param[in]     q  Joint positions in KDL chain order; size must equal s->n_joints.
  */
@@ -348,7 +380,7 @@ void set_torques(Robot *s, const KDL::JntArray &tau);
 /*
  * Add an object to the scene by appending it to spec->objects and rebuilding
  * the model. The old model/data are freed; new ones replace them.
- * Any Robot handles sharing the old model/data become stale — call init_robot()
+ * Any Robot handles sharing the old model/data become stale  - call init_robot()
  * again on the new model/data after this call.
  * @param[in,out] model  Current model pointer; updated to new model on success.
  * @param[in,out] data   Current data pointer; updated to new data on success.
@@ -361,7 +393,7 @@ bool scene_add_object(mjModel **model, mjData **data, SceneSpec *spec, const Sce
 /*
  * Remove a named object from the scene by erasing it from spec->objects and
  * rebuilding the model. The old model/data are freed; new ones replace them.
- * Any Robot handles sharing the old model/data become stale — call init_robot()
+ * Any Robot handles sharing the old model/data become stale  - call init_robot()
  * again on the new model/data after this call.
  * @param[in,out] model  Current model pointer; updated to new model on success.
  * @param[in,out] data   Current data pointer; updated to new data on success.

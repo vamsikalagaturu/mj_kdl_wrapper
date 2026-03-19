@@ -49,11 +49,11 @@ class MenagerieTest : public ::testing::Test
     {
         root_ = repo_root();
         if (!fs::exists(root_ / "third_party/menagerie")) {
-            GTEST_SKIP() << "third_party/menagerie/ not found — run locally with the submodule";
+            GTEST_SKIP() << "third_party/menagerie/ not found  - run locally with the submodule";
             return;
         }
 
-        /* scene.xml includes gen3.xml and already has floor, lights, and skybox —
+        /* scene.xml includes gen3.xml and already has floor, lights, and skybox  -
          * no patching or temp file needed. */
         mjcf_ = (root_ / "third_party/menagerie/kinova_gen3/scene.xml").string();
 

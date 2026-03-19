@@ -6,7 +6,7 @@
  *   1. attach_gripper produces a valid MJCF that loads (nq >= 13, nu >= 8).
  *   2. KDL chain for arm (7 joints) built from combined model.
  *   3. KDL gravity torques agree with MuJoCo qfrc_bias[0..6] within 5e-2 Nm.
- *   4. FK sanity check — EE position within expected workspace.
+ *   4. FK sanity check  - EE position within expected workspace.
  *   5. Gripper open/close: driver joint range validated. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
@@ -88,7 +88,7 @@ class GripperTest : public ::testing::Test
     {
         root_ = repo_root();
         if (!fs::exists(root_ / "third_party/menagerie")) {
-            GTEST_SKIP() << "third_party/menagerie/ not found — run locally with the submodule";
+            GTEST_SKIP() << "third_party/menagerie/ not found  - run locally with the submodule";
             return;
         }
 

@@ -2,7 +2,7 @@
  * Scripted pick-and-place: Kinova GEN3 + Robotiq 2F-85 picks an orange cube
  * from the floor and lifts it.
  *
- * IK solves pre-grasp → grasp → lift waypoints from home pose.
+ * IK solves pre-grasp -> grasp -> lift waypoints from home pose.
  * Each phase is time-parameterised with linear joint interpolation and gravity
  * compensation via qfrc_bias.
  *
@@ -96,7 +96,7 @@ int main(int argc, char *argv[])
 
     const fs::path root = repo_root();
     if (!fs::exists(root / "third_party/menagerie")) {
-        std::cerr << "third_party/menagerie/ not found — run: "
+        std::cerr << "third_party/menagerie/ not found  - run: "
                      "git submodule update --init third_party/menagerie\n";
         return 1;
     }
