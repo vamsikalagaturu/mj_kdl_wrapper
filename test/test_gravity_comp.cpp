@@ -36,15 +36,26 @@ static std::string g_urdf;
 
 static void run_gui(const std::string &urdf)
 {
-    mj_kdl::Config cfg;
-    cfg.urdf_path = urdf.c_str();
-    cfg.base_link = "base_link";
-    cfg.tip_link  = "EndEffector_Link";
-    cfg.headless  = false;
+    mj_kdl::SceneSpec sc;
+    mj_kdl::SceneRobot r;
+    r.urdf_path = urdf.c_str();
+    sc.robots.push_back(r);
 
-    mj_kdl::State s;
-    if (!mj_kdl::init(&s, &cfg)) {
-        std::cerr << "GUI: init() failed\n";
+    mjModel       *model = nullptr;
+    mjData        *data  = nullptr;
+    mj_kdl::State  s;
+    if (!mj_kdl::build_scene(&model, &data, &sc)) {
+        std::cerr << "GUI: build_scene() failed\n";
+        return;
+    }
+    if (!mj_kdl::init_robot(&s, model, data, urdf.c_str(), "base_link", "EndEffector_Link")) {
+        std::cerr << "GUI: init_robot() failed\n";
+        mj_kdl::destroy_scene(model, data);
+        return;
+    }
+    if (!mj_kdl::init_window(&s)) {
+        std::cerr << "GUI: init_window() failed\n";
+        mj_kdl::destroy_scene(model, data);
         return;
     }
 
@@ -71,11 +82,14 @@ static void run_gui(const std::string &urdf)
     });
 
     mj_kdl::cleanup(&s);
+    mj_kdl::destroy_scene(model, data);
 }
 
 class GravityCompTest : public ::testing::Test {
 protected:
-    mj_kdl::State s;
+    mjModel       *model_ = nullptr;
+    mjData        *data_  = nullptr;
+    mj_kdl::State  s;
     std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk;
     std::unique_ptr<KDL::ChainDynParam>              dyn;
     KDL::JntArray                                    q_home;
@@ -83,13 +97,14 @@ protected:
 
     void SetUp() override
     {
-        mj_kdl::Config cfg;
-        cfg.urdf_path = g_urdf.c_str();
-        cfg.base_link = "base_link";
-        cfg.tip_link  = "EndEffector_Link";
-        cfg.headless  = true;
+        mj_kdl::SceneSpec sc;
+        mj_kdl::SceneRobot r;
+        r.urdf_path = g_urdf.c_str();
+        sc.robots.push_back(r);
 
-        ASSERT_TRUE(mj_kdl::init(&s, &cfg)) << "init() returned false";
+        ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc)) << "build_scene() returned false";
+        ASSERT_TRUE(mj_kdl::init_robot(&s, model_, data_, g_urdf.c_str(),
+            "base_link", "EndEffector_Link")) << "init_robot() returned false";
 
         n = static_cast<unsigned>(s.n_joints);
         fk  = std::make_unique<KDL::ChainFkSolverPos_recursive>(s.chain);
@@ -102,6 +117,7 @@ protected:
     void TearDown() override
     {
         mj_kdl::cleanup(&s);
+        mj_kdl::destroy_scene(model_, data_);
     }
 };
 

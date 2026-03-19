@@ -821,17 +821,6 @@ bool patch_mjcf_add_floor(const char *mjcf_path)
     return doc.SaveFile(mjcf_path) == tinyxml2::XML_SUCCESS;
 }
 
-/* Convenience: adds skybox and floor in a single file load+save. */
-bool patch_mjcf_visuals(const char *mjcf_path)
-{
-    tinyxml2::XMLDocument doc;
-    tinyxml2::XMLElement *root = nullptr;
-    if (!load_mjcf_doc(mjcf_path, doc, &root, "patch_mjcf_visuals")) return false;
-    xml_inject_skybox(doc, root);
-    xml_inject_floor(doc, root);
-    return doc.SaveFile(mjcf_path) == tinyxml2::XML_SUCCESS;
-}
-
 bool patch_mjcf_add_objects(const char *mjcf_path, const std::vector<SceneObject> &objects)
 {
     using namespace tinyxml2;
@@ -1146,39 +1135,6 @@ bool init_window(State *s, const char *title, int width, int height)
     s->cam.azimuth   = 135.0;
     s->cam.elevation = -20.0;
     g_state          = s;
-    return true;
-}
-
-bool init(State *s, const Config *cfg)
-{
-    SceneSpec  sc;
-    SceneRobot r;
-    r.urdf_path = cfg->urdf_path;
-    r.prefix    = "";
-    sc.robots.push_back(r);
-    sc.timestep   = cfg->timestep;
-    sc.gravity_z  = cfg->gravity_z;
-    sc.add_floor  = cfg->add_floor;
-    sc.add_skybox = cfg->add_skybox;
-
-    mjModel *model = nullptr;
-    mjData  *data  = nullptr;
-    if (!build_scene(&model, &data, &sc)) return false;
-    s->model       = model;
-    s->data        = data;
-    s->_owns_model = true;
-
-    if (!load_kdl_chain(s, cfg->urdf_path, cfg->base_link, cfg->tip_link)) {
-        destroy_scene(model, data);
-        s->model = nullptr;
-        s->data  = nullptr;
-        return false;
-    }
-    sync_chain_inertias(s, "");
-    build_index_map(s);
-
-    if (!cfg->headless && !init_window(s, cfg->win_title, cfg->win_width, cfg->win_height))
-        LOG_WARN("GLFW window creation failed — running headless");
     return true;
 }
 

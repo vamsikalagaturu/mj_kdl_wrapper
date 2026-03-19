@@ -29,7 +29,8 @@ static std::string g_urdf_path;
 
 class VelocityTest : public ::testing::Test {
 protected:
-    mj_kdl::Config cfg;
+    mjModel       *model_ = nullptr;
+    mjData        *data_  = nullptr;
     mj_kdl::State  s;
     unsigned       n = 0;
 
@@ -42,12 +43,14 @@ protected:
     std::unique_ptr<KDL::ChainJntToJacSolver>        jac_solver;
 
     void SetUp() override {
-        cfg.urdf_path = g_urdf_path.c_str();
-        cfg.base_link = "base_link";
-        cfg.tip_link  = "EndEffector_Link";
-        cfg.headless  = true;
+        mj_kdl::SceneSpec sc;
+        mj_kdl::SceneRobot r;
+        r.urdf_path = g_urdf_path.c_str();
+        sc.robots.push_back(r);
 
-        ASSERT_TRUE(mj_kdl::init(&s, &cfg)) << "init() returned false";
+        ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc)) << "build_scene() returned false";
+        ASSERT_TRUE(mj_kdl::init_robot(&s, model_, data_, g_urdf_path.c_str(),
+            "base_link", "EndEffector_Link")) << "init_robot() returned false";
 
         n = s.chain.getNrOfJoints();
 
@@ -73,6 +76,7 @@ protected:
 
     void TearDown() override {
         mj_kdl::cleanup(&s);
+        mj_kdl::destroy_scene(model_, data_);
     }
 };
 
@@ -123,15 +127,21 @@ TEST_F(VelocityTest, JacobianDimensions)
 
 static void run_gui(const std::string &urdf)
 {
-    mj_kdl::Config cfg;
-    cfg.urdf_path = urdf.c_str();
-    cfg.base_link = "base_link";
-    cfg.tip_link  = "EndEffector_Link";
-    cfg.headless  = true;
+    mj_kdl::SceneSpec sc;
+    mj_kdl::SceneRobot r;
+    r.urdf_path = urdf.c_str();
+    sc.robots.push_back(r);
 
-    mj_kdl::State s;
-    if (!mj_kdl::init(&s, &cfg)) {
-        std::cerr << "GUI: init() failed\n";
+    mjModel       *model = nullptr;
+    mjData        *data  = nullptr;
+    mj_kdl::State  s;
+    if (!mj_kdl::build_scene(&model, &data, &sc)) {
+        std::cerr << "GUI: build_scene() failed\n";
+        return;
+    }
+    if (!mj_kdl::init_robot(&s, model, data, urdf.c_str(), "base_link", "EndEffector_Link")) {
+        std::cerr << "GUI: init_robot() failed\n";
+        mj_kdl::destroy_scene(model, data);
         return;
     }
 
@@ -176,6 +186,7 @@ static void run_gui(const std::string &urdf)
     });
 
     mj_kdl::cleanup(&s);
+    mj_kdl::destroy_scene(model, data);
 }
 
 int main(int argc, char *argv[])

@@ -30,22 +30,6 @@ void set_log_level(LogLevel level);
 /* Return the current log verbosity level. */
 LogLevel get_log_level();
 
-/* Single-robot convenience config for init(). */
-struct Config
-{
-    const char *urdf_path  = nullptr;
-    const char *base_link  = nullptr;
-    const char *tip_link   = nullptr;
-    int         win_width  = 1280;
-    int         win_height = 720;
-    const char *win_title  = "MuJoCo";
-    double      timestep   = 0.002;
-    double      gravity_z  = -9.81;
-    bool        add_floor  = true;
-    bool        add_skybox = true;
-    bool        headless   = false;
-};
-
 /*
  * One robot's placement in a multi-robot scene.
  * All joint/body names in MuJoCo are prefixed with `prefix`; must be unique
@@ -168,15 +152,6 @@ bool patch_mjcf_add_skybox(const char *mjcf_path);
 bool patch_mjcf_add_floor(const char *mjcf_path);
 
 /*
- * Convenience: add sky gradient, directional light, and checker floor to an existing
- * MJCF file in a single file load+save.  Equivalent to calling patch_mjcf_add_skybox()
- * then patch_mjcf_add_floor() but with one I/O pass.
- * @param mjcf_path  Path to the MJCF file to patch.
- * @return true on success.
- */
-bool patch_mjcf_visuals(const char *mjcf_path);
-
-/*
  * Append SceneObjects to an existing MJCF file in-place.
  * Equivalent to add_objects_to_spec() for the load_mjcf() / attach_gripper() workflow.
  * Each object becomes a body under worldbody with a freejoint (unless fixed=true).
@@ -287,14 +262,6 @@ bool init_robot(State *s,
  * @return true on success, false if GLFW or MuJoCo context creation fails.
  */
 bool init_window(State *s, const char *title = "MuJoCo", int width = 1280, int height = 720);
-
-/*
- * Single-robot shortcut: runs build_scene + init_robot + (optionally) init_window.
- * @param[out] s    Fully initialised state on success.
- * @param[in]  cfg  Configuration struct; cfg->headless skips window creation.
- * @return true on success, false on any error.
- */
-bool init(State *s, const Config *cfg);
 
 /*
  * Release all resources owned by s (model/data if _owns_model, GLFW window, GL context).

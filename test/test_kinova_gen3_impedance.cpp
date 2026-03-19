@@ -115,8 +115,10 @@ protected:
 
         ASSERT_TRUE(mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined_.c_str()))
             << "attach_gripper() returned false";
-        ASSERT_TRUE(mj_kdl::patch_mjcf_visuals(combined_.c_str()))
-            << "patch_mjcf_visuals() returned false";
+        ASSERT_TRUE(mj_kdl::patch_mjcf_add_skybox(combined_.c_str()))
+            << "patch_mjcf_add_skybox() returned false";
+        ASSERT_TRUE(mj_kdl::patch_mjcf_add_floor(combined_.c_str()))
+            << "patch_mjcf_add_floor() returned false";
         ASSERT_TRUE(patch_contact_exclusions(combined_))
             << "patch_contact_exclusions() returned false";
 
@@ -254,7 +256,8 @@ int main(int argc, char *argv[])
         gs.quat[0] = 0.0; gs.quat[1] = 1.0; gs.quat[2] = 0.0; gs.quat[3] = 0.0;
 
         if (!mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined.c_str()) ||
-            !mj_kdl::patch_mjcf_visuals(combined.c_str()) ||
+            !mj_kdl::patch_mjcf_add_skybox(combined.c_str()) ||
+            !mj_kdl::patch_mjcf_add_floor(combined.c_str()) ||
             !patch_contact_exclusions(combined)) {
             std::cerr << "GUI: model preparation failed\n";
             return 1;
