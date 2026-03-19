@@ -93,13 +93,13 @@ int main(int argc, char *argv[])
     }
     mj_forward(model, data);
 
-    /* Pure gravity compensation: hold position + cancel gravity via qfrc_bias.
-     * qfrc_bias includes gripper mass - KDL alone would miss ~1.7 kg. */
+    /* Pure gravity compensation: jnt_trq_cmd = jnt_trq_msr (qfrc_bias includes gripper mass). */
+    robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
+
     auto ctrl_step = [&]() {
-        for (unsigned i = 0; i < n; ++i) {
-            robot.cmd(i)                               = robot.pos(i);
-            data->qfrc_applied[robot.kdl_to_mj_dof[i]] = robot.frc(i);
-        }
+        mj_kdl::update_state(&robot);
+        robot.jnt_trq_cmd = robot.jnt_trq_msr;
+        mj_kdl::apply_cmd(&robot);
         data->ctrl[fingers_act] = (std::fmod(data->time, 6.0) < 3.0) ? 255.0 : 0.0;
     };
 

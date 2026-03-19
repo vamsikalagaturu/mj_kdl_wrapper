@@ -104,10 +104,24 @@ struct SceneSpec
 };
 
 /*
+ * Joint-space control mode for apply_cmd().
+ *   POSITION - writes jnt_pos_cmd to actuator ctrl inputs.
+ *   VELOCITY - writes jnt_vel_cmd to actuator ctrl inputs.
+ *   TORQUE   - writes jnt_trq_cmd to qfrc_applied (generalized forces).
+ */
+enum class CtrlMode { POSITION, VELOCITY, TORQUE };
+
+/*
  * Runtime handle for one KDL-tracked articulation inside a MuJoCo scene.
- * Holds borrowed pointers to the scene model/data plus the KDL chain and
- * joint index maps.  model/data are never freed by cleanup(); call
- * destroy_scene() separately when the scene is no longer needed.
+ * Holds borrowed pointers to the scene model/data plus the KDL chain,
+ * joint index maps, measured state, and commanded values.
+ * model/data are never freed by cleanup(); call destroy_scene() separately.
+ *
+ * Workflow:
+ *   1. Call init_robot() or init_from_mjcf() - populates index maps and
+ *      sizes all state/command vectors to n_joints.
+ *   2. Each control step: call update_state() to read MuJoCo -> *_msr,
+ *      fill *_cmd fields, then call apply_cmd() to write *_cmd -> MuJoCo.
  */
 struct Robot
 {
@@ -119,14 +133,20 @@ struct Robot
     std::vector<std::pair<double, double>> joint_limits;
     std::vector<int>                       kdl_to_mj_qpos; // KDL index -> MuJoCo qpos address
     std::vector<int>                       kdl_to_mj_dof;  // KDL index -> MuJoCo dof address
-    std::vector<int>                       kdl_to_mj_ctrl; // KDL index -> MuJoCo ctrl index
-    bool paused = false; // set true to pause simulation (step() becomes a no-op)
+    std::vector<int> kdl_to_mj_ctrl; // KDL index -> MuJoCo ctrl index (-1 if none)
+    bool             paused = false;
 
-    /* Convenience accessors - read/write directly into MuJoCo data arrays. */
-    double  pos(int i) const { return data->qpos[kdl_to_mj_qpos[i]]; }
-    double  vel(int i) const { return data->qvel[kdl_to_mj_dof[i]]; }
-    double  frc(int i) const { return data->qfrc_bias[kdl_to_mj_dof[i]]; }
-    double &cmd(int i) const { return data->ctrl[kdl_to_mj_ctrl[i]]; }
+    CtrlMode ctrl_mode = CtrlMode::POSITION;
+
+    /* Measured state - populated by update_state(). */
+    std::vector<double> jnt_pos_msr; // [rad]   - joint positions
+    std::vector<double> jnt_vel_msr; // [rad/s] - joint velocities
+    std::vector<double> jnt_trq_msr; // [Nm]    - bias torques (gravity + Coriolis)
+
+    /* Commanded values - read by apply_cmd(). */
+    std::vector<double> jnt_pos_cmd; // [rad]   - position setpoints  (POSITION mode)
+    std::vector<double> jnt_vel_cmd; // [rad/s] - velocity setpoints  (VELOCITY mode)
+    std::vector<double> jnt_trq_cmd; // [Nm]    - torque commands     (TORQUE mode)
 };
 
 /*
@@ -367,6 +387,22 @@ bool is_running(const Viewer *v);
  * @return true if the window is still open after rendering.
  */
 bool render(Viewer *v, const Robot *r);
+
+/*
+ * Read MuJoCo state into r->jnt_pos_msr, r->jnt_vel_msr, r->jnt_trq_msr.
+ * jnt_trq_msr is the bias torque (gravity + Coriolis) from qfrc_bias.
+ * Must be called after init_robot() or init_from_mjcf().
+ */
+void update_state(Robot *r);
+
+/*
+ * Apply r->jnt_*_cmd to MuJoCo based on r->ctrl_mode:
+ *   POSITION - writes jnt_pos_cmd[i] to data->ctrl[kdl_to_mj_ctrl[i]].
+ *   VELOCITY - writes jnt_vel_cmd[i] to data->ctrl[kdl_to_mj_ctrl[i]].
+ *   TORQUE   - writes jnt_trq_cmd[i] to data->qfrc_applied[kdl_to_mj_dof[i]].
+ * Joints with kdl_to_mj_ctrl[i] == -1 are skipped in POSITION/VELOCITY mode.
+ */
+void apply_cmd(Robot *r);
 
 /*
  * Read MuJoCo qpos into q, reordered to match KDL chain joint order.

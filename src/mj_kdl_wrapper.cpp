@@ -521,6 +521,13 @@ static bool build_index_map(Robot *s, const std::string &pfx = "")
         }
         s->kdl_to_mj_ctrl.push_back(ctrl_idx);
     }
+    int n = s->n_joints;
+    s->jnt_pos_msr.assign(n, 0.0);
+    s->jnt_vel_msr.assign(n, 0.0);
+    s->jnt_trq_msr.assign(n, 0.0);
+    s->jnt_pos_cmd.assign(n, 0.0);
+    s->jnt_vel_cmd.assign(n, 0.0);
+    s->jnt_trq_cmd.assign(n, 0.0);
     return true;
 }
 
@@ -1342,6 +1349,12 @@ void cleanup(Robot *s)
     s->model = nullptr;
     s->data  = nullptr;
     s->kdl_to_mj_ctrl.clear();
+    s->jnt_pos_msr.clear();
+    s->jnt_vel_msr.clear();
+    s->jnt_trq_msr.clear();
+    s->jnt_pos_cmd.clear();
+    s->jnt_vel_cmd.clear();
+    s->jnt_trq_cmd.clear();
     if (g_robot == s) g_robot = nullptr;
 }
 
@@ -1422,6 +1435,34 @@ bool render(Viewer *v, const Robot *r)
 
     glfwSwapBuffers(v->window);
     return true;
+}
+
+void update_state(Robot *r)
+{
+    if (!r->data) return;
+    for (int i = 0; i < r->n_joints; ++i) {
+        r->jnt_pos_msr[i] = r->data->qpos[r->kdl_to_mj_qpos[i]];
+        r->jnt_vel_msr[i] = r->data->qvel[r->kdl_to_mj_dof[i]];
+        r->jnt_trq_msr[i] = r->data->qfrc_bias[r->kdl_to_mj_dof[i]];
+    }
+}
+
+void apply_cmd(Robot *r)
+{
+    if (!r->data) return;
+    for (int i = 0; i < r->n_joints; ++i) {
+        switch (r->ctrl_mode) {
+        case CtrlMode::POSITION:
+            if (r->kdl_to_mj_ctrl[i] >= 0) r->data->ctrl[r->kdl_to_mj_ctrl[i]] = r->jnt_pos_cmd[i];
+            break;
+        case CtrlMode::VELOCITY:
+            if (r->kdl_to_mj_ctrl[i] >= 0) r->data->ctrl[r->kdl_to_mj_ctrl[i]] = r->jnt_vel_cmd[i];
+            break;
+        case CtrlMode::TORQUE:
+            r->data->qfrc_applied[r->kdl_to_mj_dof[i]] = r->jnt_trq_cmd[i];
+            break;
+        }
+    }
 }
 
 bool get_joint_pos(const Robot *s, KDL::JntArray &q)

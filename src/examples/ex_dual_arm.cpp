@@ -109,40 +109,41 @@ int main(int argc, char *argv[])
     mj_kdl::set_joint_pos(&arm2, q_home);
     mj_forward(model, data);
 
-    /* Hold position + feed-forward gravity via qfrc_bias (includes gripper mass). */
-    auto apply_ctrl = [&](mj_kdl::Robot &arm) {
-        for (int i = 0; i < arm.n_joints; ++i) {
-            if (arm.kdl_to_mj_ctrl[i] >= 0) arm.cmd(i) = arm.pos(i);
-            data->qfrc_applied[arm.kdl_to_mj_dof[i]] = arm.frc(i);
-        }
+    /* Gravity compensation: jnt_trq_cmd = jnt_trq_msr (qfrc_bias includes gripper mass). */
+    arm1.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
+    arm2.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
+
+    auto ctrl_step = [&]() {
+        mj_kdl::update_state(&arm1);
+        mj_kdl::update_state(&arm2);
+        arm1.jnt_trq_cmd = arm1.jnt_trq_msr;
+        arm2.jnt_trq_cmd = arm2.jnt_trq_msr;
+        mj_kdl::apply_cmd(&arm1);
+        mj_kdl::apply_cmd(&arm2);
+        if (fing1 >= 0) data->ctrl[fing1] = (std::fmod(data->time, 6.0) < 3.0) ? 255.0 : 0.0;
+        if (fing2 >= 0) data->ctrl[fing2] = (std::fmod(data->time, 6.0) < 3.0) ? 255.0 : 0.0;
     };
 
     if (headless) {
         for (int step = 0; step < 600; ++step) {
-            apply_ctrl(arm1);
-            apply_ctrl(arm2);
-            if (fing1 >= 0) data->ctrl[fing1] = (std::fmod(data->time, 6.0) < 3.0) ? 255.0 : 0.0;
-            if (fing2 >= 0) data->ctrl[fing2] = (std::fmod(data->time, 6.0) < 3.0) ? 255.0 : 0.0;
+            ctrl_step();
             mj_kdl::step(&arm1);
         }
 
         KDL::ChainFkSolverPos_recursive fk1(arm1.chain), fk2(arm2.chain);
-        KDL::JntArray                   q1, q2;
+        KDL::JntArray                   q1(n), q2(n);
         KDL::Frame                      ee1, ee2;
-        mj_kdl::get_joint_pos(&arm1, q1);
-        mj_kdl::get_joint_pos(&arm2, q2);
+        for (int i = 0; i < n; ++i) {
+            q1(i) = arm1.jnt_pos_msr[i];
+            q2(i) = arm2.jnt_pos_msr[i];
+        }
         fk1.JntToCart(q1, ee1);
         fk2.JntToCart(q2, ee2);
         std::cout << "arm1 EE: [" << ee1.p.x() << ", " << ee1.p.y() << ", " << ee1.p.z() << "]\n";
         std::cout << "arm2 EE: [" << ee2.p.x() << ", " << ee2.p.y() << ", " << ee2.p.z() << "]\n";
     } else {
         mj_kdl::run_simulate_ui(
-          model, data, combined.c_str(), [&](mjModel * /*m*/, mjData * /*d*/) {
-              apply_ctrl(arm1);
-              apply_ctrl(arm2);
-              if (fing1 >= 0) data->ctrl[fing1] = (std::fmod(data->time, 6.0) < 3.0) ? 255.0 : 0.0;
-              if (fing2 >= 0) data->ctrl[fing2] = (std::fmod(data->time, 6.0) < 3.0) ? 255.0 : 0.0;
-          });
+          model, data, combined.c_str(), [&](mjModel * /*m*/, mjData * /*d*/) { ctrl_step(); });
     }
 
     mj_kdl::cleanup(&arm1);
