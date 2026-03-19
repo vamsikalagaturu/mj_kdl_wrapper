@@ -23,15 +23,15 @@ namespace fs = std::filesystem;
 static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
 
 static mj_kdl::SceneObject make_box(const char *name,
-                                     double       x,
-                                     double       y,
-                                     double       hx,
-                                     double       hy,
-                                     double       hz,
-                                     float        r,
-                                     float        g,
-                                     float        b,
-                                     double       surface_z)
+  double                                        x,
+  double                                        y,
+  double                                        hx,
+  double                                        hy,
+  double                                        hz,
+  float                                         r,
+  float                                         g,
+  float                                         b,
+  double                                        surface_z)
 {
     mj_kdl::SceneObject o;
     o.name    = name;
@@ -50,13 +50,13 @@ static mj_kdl::SceneObject make_box(const char *name,
 }
 
 static mj_kdl::SceneObject make_sphere(const char *name,
-                                        double       x,
-                                        double       y,
-                                        double       radius,
-                                        float        r,
-                                        float        g,
-                                        float        b,
-                                        double       surface_z)
+  double                                           x,
+  double                                           y,
+  double                                           radius,
+  float                                            r,
+  float                                            g,
+  float                                            b,
+  double                                           surface_z)
 {
     mj_kdl::SceneObject o;
     o.name    = name;
@@ -72,14 +72,15 @@ static mj_kdl::SceneObject make_sphere(const char *name,
     return o;
 }
 
-class TableSceneTest : public ::testing::Test {
-protected:
-    std::string urdf_;
+class TableSceneTest : public ::testing::Test
+{
+  protected:
+    std::string       urdf_;
     mj_kdl::SceneSpec spec_;
-    mjModel *model_     = nullptr;
-    mjData  *data_      = nullptr;
-    mj_kdl::Robot s_;
-    bool s_cleaned_     = false;
+    mjModel          *model_ = nullptr;
+    mjData           *data_  = nullptr;
+    mj_kdl::Robot     s_;
+    bool              s_cleaned_ = false;
 
     std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_;
     std::unique_ptr<KDL::ChainDynParam>              dyn_;
@@ -105,11 +106,16 @@ protected:
         double surface_z = table.pos[2];
 
         std::vector<mj_kdl::SceneObject> objects;
-        objects.push_back(make_box("red_cube",    0.35,  0.10, 0.03, 0.03, 0.03, 1.0f, 0.2f, 0.2f, surface_z));
-        objects.push_back(make_box("green_cube",  0.35, -0.10, 0.03, 0.03, 0.03, 0.2f, 1.0f, 0.2f, surface_z));
-        objects.push_back(make_box("blue_cube",   0.35,  0.30, 0.04, 0.04, 0.04, 0.2f, 0.2f, 1.0f, surface_z));
-        objects.push_back(make_sphere("orange_sphere", -0.20,  0.20, 0.035, 1.0f, 0.55f, 0.0f, surface_z));
-        objects.push_back(make_sphere("purple_sphere", -0.20, -0.20, 0.025, 0.7f, 0.0f,  0.9f, surface_z));
+        objects.push_back(
+          make_box("red_cube", 0.35, 0.10, 0.03, 0.03, 0.03, 1.0f, 0.2f, 0.2f, surface_z));
+        objects.push_back(
+          make_box("green_cube", 0.35, -0.10, 0.03, 0.03, 0.03, 0.2f, 1.0f, 0.2f, surface_z));
+        objects.push_back(
+          make_box("blue_cube", 0.35, 0.30, 0.04, 0.04, 0.04, 0.2f, 0.2f, 1.0f, surface_z));
+        objects.push_back(
+          make_sphere("orange_sphere", -0.20, 0.20, 0.035, 1.0f, 0.55f, 0.0f, surface_z));
+        objects.push_back(
+          make_sphere("purple_sphere", -0.20, -0.20, 0.025, 0.7f, 0.0f, 0.9f, surface_z));
 
         spec_.table     = table;
         spec_.objects   = objects;
@@ -127,8 +133,8 @@ protected:
         ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &spec_));
         TEST_INFO(model_->nbody << " bodies, " << model_->nq << " DOFs");
 
-        ASSERT_TRUE(mj_kdl::init_robot(&s_, model_, data_, urdf_.c_str(),
-                                        "base_link", "EndEffector_Link"));
+        ASSERT_TRUE(
+          mj_kdl::init_robot(&s_, model_, data_, urdf_.c_str(), "base_link", "EndEffector_Link"));
         TEST_INFO(s_.n_joints << " joints");
 
         n_ = static_cast<unsigned>(s_.n_joints);
@@ -168,8 +174,8 @@ TEST_F(TableSceneTest, GravityCompDrift)
     fk_->JntToCart(q_end, ee_end);
     double drift = (ee_init.p - ee_end.p).Norm();
 
-    TEST_INFO("EE drift after 500 steps: " << std::fixed << std::setprecision(3)
-              << drift * 1000.0 << " mm");
+    TEST_INFO("EE drift after 500 steps: " << std::fixed << std::setprecision(3) << drift * 1000.0
+                                           << " mm");
 
     ASSERT_LE(drift, 0.001) << "drift " << drift * 1000.0 << " mm exceeds 1 mm threshold";
 }
@@ -181,16 +187,16 @@ TEST_F(TableSceneTest, AddRemoveObject)
     mj_kdl::cleanup(&s_);
     s_cleaned_ = true;
 
-    double surface_z = spec_.table.pos[2];
+    double              surface_z = spec_.table.pos[2];
     mj_kdl::SceneObject extra =
-        make_box("yellow_cube", 0.0, 0.4, 0.03, 0.03, 0.03, 1.0f, 1.0f, 0.0f, surface_z);
+      make_box("yellow_cube", 0.0, 0.4, 0.03, 0.03, 0.03, 1.0f, 1.0f, 0.0f, surface_z);
 
     ASSERT_TRUE(mj_kdl::scene_add_object(&model_, &data_, &spec_, extra))
-        << "scene_add_object() returned false";
+      << "scene_add_object() returned false";
     TEST_INFO("bodies: " << nbody_before << " -> " << model_->nbody << " (after add)");
 
     ASSERT_TRUE(mj_kdl::scene_remove_object(&model_, &data_, &spec_, "yellow_cube"))
-        << "scene_remove_object() returned false";
+      << "scene_remove_object() returned false";
     TEST_INFO("bodies: " << model_->nbody << " (after remove)");
 }
 

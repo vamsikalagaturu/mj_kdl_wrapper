@@ -96,8 +96,8 @@ struct SceneSpec
     std::vector<SceneRobot>  robots;
     double                   timestep   = 0.002;
     double                   gravity_z  = -9.81;
-    bool                     add_floor  = true;  // checker groundplane geom
-    bool                     add_skybox = true;  // gradient sky texture + directional light
+    bool                     add_floor  = true; // checker groundplane geom
+    bool                     add_skybox = true; // gradient sky texture + directional light
     TableSpec                table;
     std::vector<SceneObject> objects;
 };
@@ -109,15 +109,15 @@ struct SceneSpec
  */
 struct Robot
 {
-    mjModel                               *model    = nullptr;
-    mjData                                *data     = nullptr;
+    mjModel                               *model = nullptr;
+    mjData                                *data  = nullptr;
     KDL::Chain                             chain;
     int                                    n_joints = 0;
     std::vector<std::string>               joint_names;
     std::vector<std::pair<double, double>> joint_limits;
     std::vector<int>                       kdl_to_mj_qpos; // KDL index → MuJoCo qpos address
     std::vector<int>                       kdl_to_mj_dof;  // KDL index → MuJoCo dof address
-    bool _owns_model = true;  // if true, cleanup() frees model/data
+    bool _owns_model = true;                               // if true, cleanup() frees model/data
     bool paused      = false; // set true to pause simulation (step() becomes a no-op)
 };
 
@@ -127,7 +127,7 @@ struct Robot
  */
 struct Viewer
 {
-    GLFWwindow *window      = nullptr;
+    GLFWwindow *window = nullptr;
     mjvScene    scn{};
     mjvCamera   cam{};
     mjvOption   opt{};
@@ -271,8 +271,11 @@ bool init_robot(Robot *s,
  * @param[in]  height Window height in pixels.
  * @return true on success, false if GLFW or MuJoCo context creation fails.
  */
-bool init_window(Viewer *v, Robot *r,
-                 const char *title = "MuJoCo", int width = 1280, int height = 720);
+bool init_window(Viewer *v,
+  Robot                 *r,
+  const char            *title  = "MuJoCo",
+  int                    width  = 1280,
+  int                    height = 720);
 
 /*
  * Release model/data if _owns_model and zero all Robot fields.

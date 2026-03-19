@@ -43,26 +43,29 @@ namespace mj_kdl {
 
 static LogLevel g_log_level = LogLevel::ERROR; // most verbose by default
 
-void set_log_level(LogLevel level) { g_log_level = level; }
+void     set_log_level(LogLevel level) { g_log_level = level; }
 LogLevel get_log_level() { return g_log_level; }
 
 /* Emit a log message to stderr with ANSI colour, location, and function name.
  * Only file basename is shown (not the full path). */
 #define MJ_FILENAME_ (::strrchr(__FILE__, '/') ? ::strrchr(__FILE__, '/') + 1 : __FILE__)
 
-#define MJ_LOG_(lvl_enum, color, label, expr)                                         \
-    do {                                                                               \
-        if (g_log_level >= mj_kdl::LogLevel::lvl_enum) {                              \
-            std::ostringstream _mj_oss;                                                \
-            _mj_oss << expr;                                                           \
-            std::fprintf(stderr,                                                       \
-                color "[mj_kdl " label "] %s:%d (%s): %s\033[0m\n",                   \
-                MJ_FILENAME_, __LINE__, __func__, _mj_oss.str().c_str());              \
-        }                                                                              \
+#define MJ_LOG_(lvl_enum, color, label, expr)                     \
+    do {                                                          \
+        if (g_log_level >= mj_kdl::LogLevel::lvl_enum) {          \
+            std::ostringstream _mj_oss;                           \
+            _mj_oss << expr;                                      \
+            std::fprintf(stderr,                                  \
+              color "[mj_kdl " label "] %s:%d (%s): %s\033[0m\n", \
+              MJ_FILENAME_,                                       \
+              __LINE__,                                           \
+              __func__,                                           \
+              _mj_oss.str().c_str());                             \
+        }                                                         \
     } while (0)
 
-#define LOG_INFO(expr)  MJ_LOG_(INFO,  "",         "INFO ", expr)
-#define LOG_WARN(expr)  MJ_LOG_(WARN,  "\033[33m", "WARN ", expr)
+#define LOG_INFO(expr) MJ_LOG_(INFO, "", "INFO ", expr)
+#define LOG_WARN(expr) MJ_LOG_(WARN, "\033[33m", "WARN ", expr)
 #define LOG_ERROR(expr) MJ_LOG_(ERROR, "\033[31m", "ERROR", expr)
 
 /* URDF preprocessing */
@@ -310,19 +313,21 @@ static void xml_prefix_names(tinyxml2::XMLElement *e, const std::string &pfx)
 }
 
 /* Returns the first child element named tag; creates and appends one if absent. */
-static tinyxml2::XMLElement *xml_get_or_create(tinyxml2::XMLElement *parent,
-  const char                                                         *tag,
-  tinyxml2::XMLDocument                                              &doc)
+static tinyxml2::XMLElement *
+  xml_get_or_create(tinyxml2::XMLElement *parent, const char *tag, tinyxml2::XMLDocument &doc)
 {
     tinyxml2::XMLElement *el = parent->FirstChildElement(tag);
-    if (!el) { el = doc.NewElement(tag); parent->InsertEndChild(el); }
+    if (!el) {
+        el = doc.NewElement(tag);
+        parent->InsertEndChild(el);
+    }
     return el;
 }
 
 /* Deep-clone src into dst's document, then prefix all name/ref attributes. */
 static tinyxml2::XMLElement *xml_clone_prefixed(const tinyxml2::XMLElement *src,
-  tinyxml2::XMLDocument                                                     *dst,
-  const std::string                                                         &pfx)
+  tinyxml2::XMLDocument                                                    *dst,
+  const std::string                                                        &pfx)
 {
     tinyxml2::XMLElement *cl = xml_deep_clone(src, dst);
     xml_prefix_names(cl, pfx);
@@ -426,10 +431,10 @@ static KDL::Rotation mj_quat_to_kdl_rot(const double *q)
 /* Extract the full rigid-body inertia for body bid from a compiled mjModel. */
 static KDL::RigidBodyInertia mj_body_inertia(const mjModel *model, int bid)
 {
-    double        mass = model->body_mass[bid];
-    const double *ip   = &model->body_ipos[3 * bid];
-    KDL::Rotation iR   = mj_quat_to_kdl_rot(&model->body_iquat[4 * bid]);
-    const double *id   = &model->body_inertia[3 * bid];
+    double        mass    = model->body_mass[bid];
+    const double *ip      = &model->body_ipos[3 * bid];
+    KDL::Rotation iR      = mj_quat_to_kdl_rot(&model->body_iquat[4 * bid]);
+    const double *id      = &model->body_inertia[3 * bid];
     double        I[3][3] = {};
     for (int a = 0; a < 3; a++)
         for (int b = 0; b < 3; b++)
@@ -482,8 +487,7 @@ static void sync_chain_inertias(Robot *s, const std::string &pfx)
         const KDL::Segment   &seg = s->chain.getSegment(si);
         int                   bid = mj_name2id(s->model, mjOBJ_BODY, (pfx + seg.getName()).c_str());
         KDL::RigidBodyInertia inertia;
-        if (bid >= 0)
-            inertia = mj_body_inertia(s->model, bid);
+        if (bid >= 0) inertia = mj_body_inertia(s->model, bid);
         chain.addSegment(KDL::Segment(seg.getName(), seg.getJoint(), seg.getFrameToTip(), inertia));
     }
     s->chain = chain;
@@ -497,8 +501,9 @@ static void build_index_map(Robot *s, const std::string &pfx = "")
     for (const auto &name : s->joint_names) {
         int id = mj_name2id(s->model, mjOBJ_JOINT, (pfx + name).c_str());
         if (id < 0) {
-            LOG_ERROR("joint '" << pfx << name
-                                << "' not found in MuJoCo model — check robot prefix or URDF joint names");
+            LOG_ERROR(
+              "joint '" << pfx << name
+                        << "' not found in MuJoCo model — check robot prefix or URDF joint names");
             int idx = (int)s->kdl_to_mj_qpos.size();
             s->kdl_to_mj_qpos.push_back(idx);
             s->kdl_to_mj_dof.push_back(idx);
@@ -529,7 +534,7 @@ static bool
     for (int b = tip_bid; b != base_bid; b = model->body_parentid[b]) {
         if (b == 0) {
             LOG_ERROR("'" << tip_body << "' is not a descendant of '" << base_body
-                         << "' — check body hierarchy in the model");
+                          << "' — check body hierarchy in the model");
             return false;
         }
         bids.push_back(b);
@@ -585,10 +590,10 @@ static bool
 
 /* GLFW */
 
-static void   cb_keyboard(GLFWwindow *, int, int, int, int);
-static void   cb_mouse_button(GLFWwindow *, int, int, int);
-static void   cb_mouse_move(GLFWwindow *, double, double);
-static void   cb_scroll(GLFWwindow *, double, double);
+static void    cb_keyboard(GLFWwindow *, int, int, int, int);
+static void    cb_mouse_button(GLFWwindow *, int, int, int);
+static void    cb_mouse_move(GLFWwindow *, double, double);
+static void    cb_scroll(GLFWwindow *, double, double);
 static Robot  *g_robot  = nullptr;
 static Viewer *g_viewer = nullptr;
 
@@ -624,7 +629,7 @@ bool compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data)
         return false;
     }
     LOG_INFO("scene compiled: nq=" << (*out_model)->nq << " nv=" << (*out_model)->nv
-             << " nbody=" << (*out_model)->nbody);
+                                   << " nbody=" << (*out_model)->nbody);
     mj_deleteSpec(spec);
     *out_data = mj_makeData(*out_model);
     if (!*out_data) {
@@ -640,8 +645,8 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     if (!sc || sc->robots.empty()) return false;
     ensure_plugins_loaded();
     LOG_INFO("building scene: " << sc->robots.size() << " robot(s)"
-             << ", table=" << (sc->table.enabled ? "yes" : "no")
-             << ", objects=" << sc->objects.size());
+                                << ", table=" << (sc->table.enabled ? "yes" : "no")
+                                << ", objects=" << sc->objects.size());
 
     fs::path tmp = fs::absolute(fs::path(sc->robots[0].urdf_path).parent_path());
 
@@ -709,7 +714,7 @@ bool load_mjcf(mjModel **out_model, mjData **out_data, const char *path)
     ensure_plugins_loaded();
     char err[2048] = {};
     LOG_INFO("loading MJCF: '" << path << "'");
-    *out_model     = mj_loadXML(path, nullptr, err, sizeof(err));
+    *out_model = mj_loadXML(path, nullptr, err, sizeof(err));
     if (!*out_model) {
         LOG_ERROR("mj_loadXML failed for '" << path << "': " << err);
         return false;
@@ -744,18 +749,18 @@ static void xml_inject_skybox(tinyxml2::XMLDocument &doc, tinyxml2::XMLElement *
     XMLElement *wb    = xml_get_or_create(root, "worldbody", doc);
 
     XMLElement *sky = doc.NewElement("texture");
-    sky->SetAttribute("name",    "skybox");
-    sky->SetAttribute("type",    "skybox");
+    sky->SetAttribute("name", "skybox");
+    sky->SetAttribute("type", "skybox");
     sky->SetAttribute("builtin", "gradient");
-    sky->SetAttribute("rgb1",    "0.3 0.45 0.65");
-    sky->SetAttribute("rgb2",    "0.65 0.8 0.95");
-    sky->SetAttribute("width",   "200");
-    sky->SetAttribute("height",  "200");
+    sky->SetAttribute("rgb1", "0.3 0.45 0.65");
+    sky->SetAttribute("rgb2", "0.65 0.8 0.95");
+    sky->SetAttribute("width", "200");
+    sky->SetAttribute("height", "200");
     asset->InsertEndChild(sky);
 
     XMLElement *light = doc.NewElement("light");
     light->SetAttribute("directional", "true");
-    light->SetAttribute("pos",         "0 0 4");
+    light->SetAttribute("pos", "0 0 4");
     wb->InsertFirstChild(light);
 }
 
@@ -766,35 +771,37 @@ static void xml_inject_floor(tinyxml2::XMLDocument &doc, tinyxml2::XMLElement *r
     XMLElement *wb    = xml_get_or_create(root, "worldbody", doc);
 
     XMLElement *tex = doc.NewElement("texture");
-    tex->SetAttribute("name",    "groundplane");
-    tex->SetAttribute("type",    "2d");
+    tex->SetAttribute("name", "groundplane");
+    tex->SetAttribute("type", "2d");
     tex->SetAttribute("builtin", "checker");
-    tex->SetAttribute("rgb1",    "0.2 0.3 0.4");
-    tex->SetAttribute("rgb2",    "0.1 0.2 0.3");
-    tex->SetAttribute("width",   "300");
-    tex->SetAttribute("height",  "300");
+    tex->SetAttribute("rgb1", "0.2 0.3 0.4");
+    tex->SetAttribute("rgb2", "0.1 0.2 0.3");
+    tex->SetAttribute("width", "300");
+    tex->SetAttribute("height", "300");
     asset->InsertEndChild(tex);
 
     XMLElement *mat = doc.NewElement("material");
-    mat->SetAttribute("name",        "groundplane");
-    mat->SetAttribute("texture",     "groundplane");
-    mat->SetAttribute("texrepeat",   "5 5");
+    mat->SetAttribute("name", "groundplane");
+    mat->SetAttribute("texture", "groundplane");
+    mat->SetAttribute("texrepeat", "5 5");
     mat->SetAttribute("reflectance", "0.2");
     asset->InsertEndChild(mat);
 
     XMLElement *floor = doc.NewElement("geom");
-    floor->SetAttribute("name",        "floor");
-    floor->SetAttribute("type",        "plane");
-    floor->SetAttribute("size",        "10 10 0.05");
-    floor->SetAttribute("material",    "groundplane");
-    floor->SetAttribute("contype",     "1");
+    floor->SetAttribute("name", "floor");
+    floor->SetAttribute("type", "plane");
+    floor->SetAttribute("size", "10 10 0.05");
+    floor->SetAttribute("material", "groundplane");
+    floor->SetAttribute("contype", "1");
     floor->SetAttribute("conaffinity", "1");
-    floor->SetAttribute("condim",      "3");
+    floor->SetAttribute("condim", "3");
     wb->InsertFirstChild(floor);
 }
 
-static bool load_mjcf_doc(const char *path, tinyxml2::XMLDocument &doc, tinyxml2::XMLElement **root,
-  const char *caller)
+static bool load_mjcf_doc(const char *path,
+  tinyxml2::XMLDocument              &doc,
+  tinyxml2::XMLElement              **root,
+  const char                         *caller)
 {
     if (doc.LoadFile(path) != tinyxml2::XML_SUCCESS) {
         LOG_ERROR(caller << ": failed to load '" << path << "'");
@@ -838,7 +845,8 @@ bool patch_mjcf_add_objects(const char *mjcf_path, const std::vector<SceneObject
         XMLElement *body = doc.NewElement("body");
         body->SetAttribute("name", obj.name.c_str());
         char pos_str[64];
-        std::snprintf(pos_str, sizeof(pos_str), "%.6f %.6f %.6f", obj.pos[0], obj.pos[1], obj.pos[2]);
+        std::snprintf(
+          pos_str, sizeof(pos_str), "%.6f %.6f %.6f", obj.pos[0], obj.pos[1], obj.pos[2]);
         body->SetAttribute("pos", pos_str);
 
         if (!obj.fixed) {
@@ -848,27 +856,37 @@ bool patch_mjcf_add_objects(const char *mjcf_path, const std::vector<SceneObject
         }
 
         const char *shape_str = "box";
-        if (obj.shape == ObjShape::SPHERE)   shape_str = "sphere";
+        if (obj.shape == ObjShape::SPHERE) shape_str = "sphere";
         if (obj.shape == ObjShape::CYLINDER) shape_str = "cylinder";
 
         char size_str[64];
-        std::snprintf(size_str, sizeof(size_str), "%.6f %.6f %.6f", obj.size[0], obj.size[1], obj.size[2]);
+        std::snprintf(
+          size_str, sizeof(size_str), "%.6f %.6f %.6f", obj.size[0], obj.size[1], obj.size[2]);
         char rgba_str[64];
-        std::snprintf(rgba_str, sizeof(rgba_str), "%.3f %.3f %.3f %.3f",
-                      obj.rgba[0], obj.rgba[1], obj.rgba[2], obj.rgba[3]);
+        std::snprintf(rgba_str,
+          sizeof(rgba_str),
+          "%.3f %.3f %.3f %.3f",
+          obj.rgba[0],
+          obj.rgba[1],
+          obj.rgba[2],
+          obj.rgba[3]);
         char fric_str[64];
-        std::snprintf(fric_str, sizeof(fric_str), "%.4f %.4f %.4f",
-                      obj.friction[0], obj.friction[1], obj.friction[2]);
+        std::snprintf(fric_str,
+          sizeof(fric_str),
+          "%.4f %.4f %.4f",
+          obj.friction[0],
+          obj.friction[1],
+          obj.friction[2]);
 
         XMLElement *geom = doc.NewElement("geom");
-        geom->SetAttribute("name",        (obj.name + "_geom").c_str());
-        geom->SetAttribute("type",        shape_str);
-        geom->SetAttribute("size",        size_str);
-        geom->SetAttribute("mass",        obj.mass);
-        geom->SetAttribute("rgba",        rgba_str);
-        geom->SetAttribute("condim",      obj.condim);
-        geom->SetAttribute("friction",    fric_str);
-        geom->SetAttribute("contype",     "1");
+        geom->SetAttribute("name", (obj.name + "_geom").c_str());
+        geom->SetAttribute("type", shape_str);
+        geom->SetAttribute("size", size_str);
+        geom->SetAttribute("mass", obj.mass);
+        geom->SetAttribute("rgba", rgba_str);
+        geom->SetAttribute("condim", obj.condim);
+        geom->SetAttribute("friction", fric_str);
+        geom->SetAttribute("contype", "1");
         geom->SetAttribute("conaffinity", "1");
         body->InsertEndChild(geom);
 
@@ -892,8 +910,8 @@ bool attach_gripper(const char *arm_mjcf, const GripperSpec *g, const char *out_
     using namespace tinyxml2;
 
     XMLDocument arm_doc, grp_doc;
-    LOG_INFO("attaching gripper (prefix='" << std::string(g->prefix ? g->prefix : "")
-             << "') from '" << g->mjcf_path << "' to body '" << g->attach_to << "'");
+    LOG_INFO("attaching gripper (prefix='" << std::string(g->prefix ? g->prefix : "") << "') from '"
+                                           << g->mjcf_path << "' to body '" << g->attach_to << "'");
     if (arm_doc.LoadFile(arm_mjcf) != XML_SUCCESS) {
         LOG_ERROR("failed to load arm MJCF '" << arm_mjcf << "'");
         return false;
@@ -960,8 +978,9 @@ bool attach_gripper(const char *arm_mjcf, const GripperSpec *g, const char *out_
     if (!arm_wb) return false;
     XMLElement *attach_el = find_body(arm_wb, g->attach_to);
     if (!attach_el) {
-        LOG_ERROR("attach body '" << g->attach_to
-                                  << "' not found in arm worldbody — check arm MJCF for correct body name");
+        LOG_ERROR(
+          "attach body '" << g->attach_to
+                          << "' not found in arm worldbody — check arm MJCF for correct body name");
         return false;
     }
 
@@ -1058,8 +1077,8 @@ bool init_robot(Robot *s,
   const char          *tip_link,
   const char          *prefix)
 {
-    LOG_INFO("init_robot: '" << base_link << "' -> '" << tip_link
-             << "' prefix='" << (prefix ? prefix : "") << "' urdf='" << urdf << "'");
+    LOG_INFO("init_robot: '" << base_link << "' -> '" << tip_link << "' prefix='"
+                             << (prefix ? prefix : "") << "' urdf='" << urdf << "'");
     s->model       = model;
     s->data        = data;
     s->_owns_model = false;
@@ -1067,7 +1086,8 @@ bool init_robot(Robot *s,
     std::string pfx = prefix ? prefix : "";
     sync_chain_inertias(s, pfx);
     build_index_map(s, pfx);
-    LOG_INFO("chain ready: " << s->n_joints << " joints [" << base_link << " -> " << tip_link << "]");
+    LOG_INFO(
+      "chain ready: " << s->n_joints << " joints [" << base_link << " -> " << tip_link << "]");
     return true;
 }
 
@@ -1078,14 +1098,15 @@ bool init_from_mjcf(Robot *s,
   const char              *tip_body,
   const char              *prefix)
 {
-    LOG_INFO("init_from_mjcf: '" << base_body << "' -> '" << tip_body
-             << "' prefix='" << (prefix ? prefix : "") << "'");
+    LOG_INFO("init_from_mjcf: '" << base_body << "' -> '" << tip_body << "' prefix='"
+                                 << (prefix ? prefix : "") << "'");
     s->model       = model;
     s->data        = data;
     s->_owns_model = false;
     if (!build_kdl_from_model(s, model, base_body, tip_body)) return false;
     build_index_map(s, prefix ? prefix : "");
-    LOG_INFO("chain ready: " << s->n_joints << " joints [" << base_body << " -> " << tip_body << "]");
+    LOG_INFO(
+      "chain ready: " << s->n_joints << " joints [" << base_body << " -> " << tip_body << "]");
     return true;
 }
 
@@ -1150,8 +1171,8 @@ bool init_window(Viewer *v, Robot *r, const char *title, int width, int height)
     v->cam.distance  = 2.5;
     v->cam.azimuth   = 135.0;
     v->cam.elevation = -20.0;
-    g_robot  = r;
-    g_viewer = v;
+    g_robot          = r;
+    g_viewer         = v;
     return true;
 }
 
@@ -1383,7 +1404,8 @@ static void cb_mouse_move(GLFWwindow *w, double x, double y)
 static void cb_scroll(GLFWwindow *, double, double yoff)
 {
     if (g_robot && g_viewer)
-        mjv_moveCamera(g_robot->model, mjMOUSE_ZOOM, 0, -0.05 * yoff, &g_viewer->scn, &g_viewer->cam);
+        mjv_moveCamera(
+          g_robot->model, mjMOUSE_ZOOM, 0, -0.05 * yoff, &g_viewer->scn, &g_viewer->cam);
 }
 
 namespace mj = ::mujoco;

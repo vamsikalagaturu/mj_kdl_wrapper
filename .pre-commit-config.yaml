@@ -1,0 +1,19 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+
+  - repo: local
+    hooks:
+      - id: clang-format
+        name: clang-format
+        language: system
+        entry: clang-format
+        args: [--style=file, -i]
+        types_or: [c++, c]
+        files: \.(cpp|hpp|cc|h)$

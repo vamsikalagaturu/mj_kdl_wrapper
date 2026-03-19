@@ -19,27 +19,29 @@
 static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
 
 namespace fs = std::filesystem;
-static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
+static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path().parent_path(); }
 
 int main(int argc, char *argv[])
 {
-    std::string urdf = (repo_root() / "assets/gen3_urdf/GEN3_URDF_V12.urdf").string();
-    bool headless    = false;
+    std::string urdf     = (repo_root() / "assets/gen3_urdf/GEN3_URDF_V12.urdf").string();
+    bool        headless = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string a(argv[i]);
-        if (a == "--headless") headless = true;
-        else if (a[0] != '-')  urdf = a;
+        if (a == "--headless")
+            headless = true;
+        else if (a[0] != '-')
+            urdf = a;
     }
 
-    mj_kdl::SceneSpec sc;
+    mj_kdl::SceneSpec  sc;
     mj_kdl::SceneRobot r;
     r.urdf_path = urdf.c_str();
     sc.robots.push_back(r);
 
-    mjModel       *model = nullptr;
-    mjData        *data  = nullptr;
-    mj_kdl::Robot  robot;
+    mjModel      *model = nullptr;
+    mjData       *data  = nullptr;
+    mj_kdl::Robot robot;
     if (!mj_kdl::build_scene(&model, &data, &sc)) {
         std::cerr << "build_scene() failed\n";
         return 1;
@@ -58,17 +60,14 @@ int main(int argc, char *argv[])
 
     mj_kdl::sync_from_kdl(&robot, q_home);
     mj_forward(model, data);
-    for (unsigned i = 0; i < n; ++i)
-        data->ctrl[i] = data->qpos[robot.kdl_to_mj_qpos[i]];
+    for (unsigned i = 0; i < n; ++i) data->ctrl[i] = data->qpos[robot.kdl_to_mj_qpos[i]];
 
     KDL::ChainFkSolverPos_recursive fk(robot.chain);
-    KDL::Frame ee;
+    KDL::Frame                      ee;
     fk.JntToCart(q_home, ee);
-    std::cout << "EE pos at home: ["
-              << ee.p.x() << ", " << ee.p.y() << ", " << ee.p.z() << "]\n";
+    std::cout << "EE pos at home: [" << ee.p.x() << ", " << ee.p.y() << ", " << ee.p.z() << "]\n";
 
-    if (!headless)
-        mj_kdl::run_simulate_ui(model, data, urdf.c_str());
+    if (!headless) mj_kdl::run_simulate_ui(model, data, urdf.c_str());
 
     mj_kdl::cleanup(&robot);
     mj_kdl::destroy_scene(model, data);

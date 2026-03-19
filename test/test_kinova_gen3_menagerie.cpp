@@ -31,18 +31,19 @@ static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.95
 
 static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
 
-class MenagerieTest : public ::testing::Test {
-protected:
-    fs::path  root_;
-    std::string mjcf_;
-    mjModel  *model_ = nullptr;
-    mjData   *data_  = nullptr;
-    mj_kdl::Robot s_;
-    int  key_id_ = -1;
-    unsigned n_  = 0;
+class MenagerieTest : public ::testing::Test
+{
+  protected:
+    fs::path                                         root_;
+    std::string                                      mjcf_;
+    mjModel                                         *model_ = nullptr;
+    mjData                                          *data_  = nullptr;
+    mj_kdl::Robot                                    s_;
+    int                                              key_id_ = -1;
+    unsigned                                         n_      = 0;
     std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_;
     std::unique_ptr<KDL::ChainDynParam>              dyn_;
-    KDL::JntArray q_home_kdl_;
+    KDL::JntArray                                    q_home_kdl_;
 
     void SetUp() override
     {
@@ -60,8 +61,8 @@ protected:
         ASSERT_EQ(model_->nv, 7) << "expected nv=7";
         ASSERT_GE(model_->nbody, 9) << "expected nbody>=9";
 
-        TEST_INFO("model: nq=" << model_->nq << " nv=" << model_->nv
-                  << " nbody=" << model_->nbody << " nu=" << model_->nu);
+        TEST_INFO("model: nq=" << model_->nq << " nv=" << model_->nv << " nbody=" << model_->nbody
+                               << " nu=" << model_->nu);
 
         ASSERT_TRUE(mj_kdl::init_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link"));
         n_ = s_.chain.getNrOfJoints();
@@ -101,8 +102,7 @@ TEST_F(MenagerieTest, GravityAccuracy)
 
     double max_err = 0.0;
     for (unsigned i = 0; i < n_; ++i)
-        max_err = std::max(max_err,
-                           std::abs(g(i) - data_->qfrc_bias[s_.kdl_to_mj_dof[i]]));
+        max_err = std::max(max_err, std::abs(g(i) - data_->qfrc_bias[s_.kdl_to_mj_dof[i]]));
 
     TEST_INFO("gravity accuracy at home pose: max|KDL - MuJoCo| = "
               << std::fixed << std::setprecision(6) << max_err << " Nm");
@@ -134,8 +134,8 @@ TEST_F(MenagerieTest, GravityCompDrift)
     fk_->JntToCart(q_end, fk_end);
     double drift = (fk_initial.p - fk_end.p).Norm();
 
-    TEST_INFO("gravity-comp drift after 500 steps: "
-              << std::fixed << std::setprecision(3) << drift * 1000.0 << " mm");
+    TEST_INFO("gravity-comp drift after 500 steps: " << std::fixed << std::setprecision(3)
+                                                     << drift * 1000.0 << " mm");
 
     EXPECT_LE(drift, 0.001) << "EE drift " << drift * 1000.0 << " mm exceeds 1 mm threshold";
 }

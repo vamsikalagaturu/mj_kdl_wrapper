@@ -29,10 +29,10 @@ static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.95
 
 /* Impedance gains — tuned for Gen3 joint sizes. */
 static constexpr double kKp[7] = { 100, 200, 100, 200, 100, 200, 100 };
-static constexpr double kKd[7] = {  10,  20,  10,  20,  10,  20,  10 };
+static constexpr double kKd[7] = { 10, 20, 10, 20, 10, 20, 10 };
 
 namespace fs = std::filesystem;
-static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
+static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path().parent_path(); }
 
 static bool patch_contact_exclusions(const std::string &path)
 {
@@ -47,12 +47,16 @@ static bool patch_contact_exclusions(const std::string &path)
         root->InsertFirstChild(contact);
     }
 
-    struct Pair { const char *body1; const char *body2; };
+    struct Pair
+    {
+        const char *body1;
+        const char *body2;
+    };
     static const Pair kExclude[] = {
-        { "bracelet_link",   "g_base"      },
-        { "bracelet_link",   "g_left_pad"  },
-        { "bracelet_link",   "g_right_pad" },
-        { "half_arm_2_link", "g_base"      },
+        { "bracelet_link", "g_base" },
+        { "bracelet_link", "g_left_pad" },
+        { "bracelet_link", "g_right_pad" },
+        { "half_arm_2_link", "g_base" },
     };
     for (const auto &p : kExclude) {
         auto *ex = doc.NewElement("exclude");
@@ -84,15 +88,20 @@ int main(int argc, char *argv[])
     gs.mjcf_path = grp_mjcf.c_str();
     gs.attach_to = "bracelet_link";
     gs.prefix    = "g_";
-    gs.pos[0] = 0.0; gs.pos[1] = 0.0; gs.pos[2] = -0.061525;
-    gs.quat[0] = 0.0; gs.quat[1] = 1.0; gs.quat[2] = 0.0; gs.quat[3] = 0.0;
+    gs.pos[0]    = 0.0;
+    gs.pos[1]    = 0.0;
+    gs.pos[2]    = -0.061525;
+    gs.quat[0]   = 0.0;
+    gs.quat[1]   = 1.0;
+    gs.quat[2]   = 0.0;
+    gs.quat[3]   = 0.0;
 
     if (!mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined.c_str())) {
         std::cerr << "attach_gripper() failed\n";
         return 1;
     }
-    if (!mj_kdl::patch_mjcf_add_skybox(combined.c_str()) ||
-        !mj_kdl::patch_mjcf_add_floor(combined.c_str())) {
+    if (!mj_kdl::patch_mjcf_add_skybox(combined.c_str())
+        || !mj_kdl::patch_mjcf_add_floor(combined.c_str())) {
         std::cerr << "patch_mjcf visuals failed\n";
         return 1;
     }
@@ -130,21 +139,19 @@ int main(int argc, char *argv[])
 
     auto step_impedance = [&](mjModel *m, mjData *d) {
         for (unsigned i = 0; i < n; ++i) {
-            int    dof  = robot.kdl_to_mj_dof[i];
-            int    jid  = m->dof_jntid[dof];
-            double q    = d->qpos[m->jnt_qposadr[jid]];
-            double qdot = d->qvel[dof];
+            int    dof           = robot.kdl_to_mj_dof[i];
+            int    jid           = m->dof_jntid[dof];
+            double q             = d->qpos[m->jnt_qposadr[jid]];
+            double qdot          = d->qvel[dof];
             d->ctrl[i]           = q;
-            d->qfrc_applied[dof] = kKp[i] * (kHomePose[i] - q)
-                                 - kKd[i] * qdot
-                                 + d->qfrc_bias[dof];
+            d->qfrc_applied[dof] = kKp[i] * (kHomePose[i] - q) - kKd[i] * qdot + d->qfrc_bias[dof];
         }
         d->ctrl[fingers_act] = (std::fmod(d->time, 6.0) < 3.0) ? 255.0 : 0.0;
     };
 
     if (headless) {
         KDL::ChainFkSolverPos_recursive fk(robot.chain);
-        KDL::JntArray q0(n);
+        KDL::JntArray                   q0(n);
         mj_kdl::sync_to_kdl(&robot, q0);
         KDL::Frame ee_start;
         fk.JntToCart(q0, ee_start);
@@ -159,8 +166,8 @@ int main(int argc, char *argv[])
         KDL::Frame ee_end;
         fk.JntToCart(q_end, ee_end);
         double drift = (ee_start.p - ee_end.p).Norm();
-        std::cout << "EE drift after 200 steps: "
-                  << std::fixed << std::setprecision(3) << drift * 1000.0 << " mm\n";
+        std::cout << "EE drift after 200 steps: " << std::fixed << std::setprecision(3)
+                  << drift * 1000.0 << " mm\n";
     } else {
         mj_kdl::run_simulate_ui(model, data, combined.c_str(), step_impedance);
     }

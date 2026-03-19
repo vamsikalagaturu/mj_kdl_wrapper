@@ -71,15 +71,16 @@ static bool patch_contact_exclusions(const std::string &path)
     return doc.SaveFile(path.c_str()) == tinyxml2::XML_SUCCESS;
 }
 
-class GripperTest : public ::testing::Test {
-protected:
-    fs::path    root_;
-    std::string combined_;
-    mjModel    *model_       = nullptr;
-    mjData     *data_        = nullptr;
-    mj_kdl::Robot s_;
-    int          fingers_act_ = -1;
-    unsigned     n_           = 0;
+class GripperTest : public ::testing::Test
+{
+  protected:
+    fs::path                                         root_;
+    std::string                                      combined_;
+    mjModel                                         *model_ = nullptr;
+    mjData                                          *data_  = nullptr;
+    mj_kdl::Robot                                    s_;
+    int                                              fingers_act_ = -1;
+    unsigned                                         n_           = 0;
     std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_;
     std::unique_ptr<KDL::ChainDynParam>              dyn_;
 
@@ -91,8 +92,10 @@ protected:
             return;
         }
 
-        const std::string arm_mjcf = (root_ / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-        const std::string grp_mjcf = (root_ / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+        const std::string arm_mjcf =
+          (root_ / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+        const std::string grp_mjcf =
+          (root_ / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
         combined_ = (root_ / "/tmp/gen3_with_2f85.xml").string();
 
         mj_kdl::GripperSpec gs;
@@ -108,25 +111,25 @@ protected:
         gs.quat[3]   = 0.0;
 
         ASSERT_TRUE(mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined_.c_str()))
-            << "attach_gripper() returned false";
+          << "attach_gripper() returned false";
         ASSERT_TRUE(mj_kdl::patch_mjcf_add_skybox(combined_.c_str()))
-            << "patch_mjcf_add_skybox() returned false";
+          << "patch_mjcf_add_skybox() returned false";
         ASSERT_TRUE(mj_kdl::patch_mjcf_add_floor(combined_.c_str()))
-            << "patch_mjcf_add_floor() returned false";
+          << "patch_mjcf_add_floor() returned false";
         ASSERT_TRUE(patch_contact_exclusions(combined_))
-            << "patch_contact_exclusions() returned false";
+          << "patch_contact_exclusions() returned false";
 
         ASSERT_TRUE(mj_kdl::load_mjcf(&model_, &data_, combined_.c_str()))
-            << "load_mjcf() returned false for combined MJCF";
+          << "load_mjcf() returned false for combined MJCF";
 
-        TEST_INFO("model: nq=" << model_->nq << " nv=" << model_->nv
-                  << " nbody=" << model_->nbody << " nu=" << model_->nu);
+        TEST_INFO("model: nq=" << model_->nq << " nv=" << model_->nv << " nbody=" << model_->nbody
+                               << " nu=" << model_->nu);
 
         ASSERT_GE(model_->nq, 13) << "expected nq >= 13 (7 arm + 6 gripper), got " << model_->nq;
-        ASSERT_GE(model_->nu, 8)  << "expected nu >= 8 (7 arm + 1 gripper), got " << model_->nu;
+        ASSERT_GE(model_->nu, 8) << "expected nu >= 8 (7 arm + 1 gripper), got " << model_->nu;
 
         ASSERT_TRUE(mj_kdl::init_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link"))
-            << "init_from_mjcf() returned false";
+          << "init_from_mjcf() returned false";
         n_ = s_.chain.getNrOfJoints();
         ASSERT_EQ(n_, 7u);
 
@@ -172,11 +175,10 @@ TEST_F(GripperTest, GravityAccuracy)
 
     double max_err = 0.0;
     for (unsigned i = 0; i < n_; ++i)
-        max_err = std::max(max_err,
-                           std::abs(g(i) - data_->qfrc_bias[s_.kdl_to_mj_dof[i]]));
+        max_err = std::max(max_err, std::abs(g(i) - data_->qfrc_bias[s_.kdl_to_mj_dof[i]]));
 
-    TEST_INFO("gravity accuracy at q=0: max|KDL - MuJoCo| = "
-              << std::fixed << std::setprecision(6) << max_err << " Nm");
+    TEST_INFO("gravity accuracy at q=0: max|KDL - MuJoCo| = " << std::fixed << std::setprecision(6)
+                                                              << max_err << " Nm");
 
     EXPECT_LE(max_err, 5e-2) << "gravity error " << max_err << " Nm exceeds 5e-2 Nm threshold";
 }
@@ -189,8 +191,8 @@ TEST_F(GripperTest, FKWorkspace)
     fk_->JntToCart(q_home, fk_pose);
     double ee_dist = fk_pose.p.Norm();
 
-    TEST_INFO("EE distance from base at home pose: "
-              << std::fixed << std::setprecision(3) << ee_dist * 1000.0 << " mm");
+    TEST_INFO("EE distance from base at home pose: " << std::fixed << std::setprecision(3)
+                                                     << ee_dist * 1000.0 << " mm");
 
     EXPECT_GE(ee_dist, 0.1) << "EE distance " << ee_dist << " m below workspace lower bound";
     EXPECT_LE(ee_dist, 1.1) << "EE distance " << ee_dist << " m above workspace upper bound";
@@ -205,13 +207,12 @@ TEST_F(GripperTest, GripperRange)
 
     double jrange_lo = model_->jnt_range[2 * rdriver_jnt];
     double jrange_hi = model_->jnt_range[2 * rdriver_jnt + 1];
-    TEST_INFO("gripper right_driver_joint range: ["
-              << std::fixed << std::setprecision(4) << jrange_lo << ", " << jrange_hi << "] rad");
+    TEST_INFO("gripper right_driver_joint range: [" << std::fixed << std::setprecision(4)
+                                                    << jrange_lo << ", " << jrange_hi << "] rad");
 
     EXPECT_LE(std::abs(jrange_hi - 0.8), 0.01)
-        << "driver joint hi range " << jrange_hi << " differs from expected ~0.8";
-    EXPECT_GE(jrange_lo, -0.01)
-        << "driver joint lo range " << jrange_lo << " below expected ~0";
+      << "driver joint hi range " << jrange_hi << " differs from expected ~0.8";
+    EXPECT_GE(jrange_lo, -0.01) << "driver joint lo range " << jrange_lo << " below expected ~0";
 }
 
 int main(int argc, char *argv[])

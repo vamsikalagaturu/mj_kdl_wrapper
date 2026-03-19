@@ -26,27 +26,29 @@
 static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
 
 namespace fs = std::filesystem;
-static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
+static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path().parent_path(); }
 
 int main(int argc, char *argv[])
 {
-    std::string urdf = (repo_root() / "assets/gen3_urdf/GEN3_URDF_V12.urdf").string();
-    bool headless    = false;
+    std::string urdf     = (repo_root() / "assets/gen3_urdf/GEN3_URDF_V12.urdf").string();
+    bool        headless = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string a(argv[i]);
-        if (a == "--headless") headless = true;
-        else if (a[0] != '-')  urdf = a;
+        if (a == "--headless")
+            headless = true;
+        else if (a[0] != '-')
+            urdf = a;
     }
 
-    mj_kdl::SceneSpec sc;
+    mj_kdl::SceneSpec  sc;
     mj_kdl::SceneRobot r;
     r.urdf_path = urdf.c_str();
     sc.robots.push_back(r);
 
-    mjModel       *model = nullptr;
-    mjData        *data  = nullptr;
-    mj_kdl::Robot  robot;
+    mjModel      *model = nullptr;
+    mjData       *data  = nullptr;
+    mj_kdl::Robot robot;
     if (!mj_kdl::build_scene(&model, &data, &sc)) {
         std::cerr << "build_scene() failed\n";
         return 1;
@@ -76,22 +78,21 @@ int main(int argc, char *argv[])
 
     /* Test config: alternate ±30° per joint. */
     KDL::JntArray q_test(n);
-    for (unsigned i = 0; i < n; ++i)
-        q_test(i) = (i % 2 == 0 ? 1.0 : -1.0) * 30.0 * M_PI / 180.0;
+    for (unsigned i = 0; i < n; ++i) q_test(i) = (i % 2 == 0 ? 1.0 : -1.0) * 30.0 * M_PI / 180.0;
 
     /* FK at home and test config. */
     KDL::Frame fk_home, fk_test;
     fk.JntToCart(q_home, fk_home);
     fk.JntToCart(q_test, fk_test);
     std::cout << std::fixed << std::setprecision(4);
-    std::cout << "FK home:  [" << fk_home.p.x() << ", " << fk_home.p.y()
-              << ", " << fk_home.p.z() << "]\n";
-    std::cout << "FK test:  [" << fk_test.p.x() << ", " << fk_test.p.y()
-              << ", " << fk_test.p.z() << "]\n";
+    std::cout << "FK home:  [" << fk_home.p.x() << ", " << fk_home.p.y() << ", " << fk_home.p.z()
+              << "]\n";
+    std::cout << "FK test:  [" << fk_test.p.x() << ", " << fk_test.p.y() << ", " << fk_test.p.z()
+              << "]\n";
 
     /* IK from home seed to test-config Cartesian target. */
     KDL::JntArray q_ik(n);
-    int ik_ret = ik.CartToJnt(q_home, fk_test, q_ik);
+    int           ik_ret = ik.CartToJnt(q_home, fk_test, q_ik);
     if (ik_ret >= 0) {
         KDL::Frame fk_ik;
         fk.JntToCart(q_ik, fk_ik);
@@ -116,12 +117,10 @@ int main(int argc, char *argv[])
     const KDL::JntArray &q_display = (ik_ret >= 0) ? q_ik : q_home;
     mj_kdl::sync_from_kdl(&robot, q_display);
     mj_forward(model, data);
-    for (unsigned i = 0; i < n; ++i)
-        data->ctrl[i] = data->qpos[robot.kdl_to_mj_qpos[i]];
+    for (unsigned i = 0; i < n; ++i) data->ctrl[i] = data->qpos[robot.kdl_to_mj_qpos[i]];
 
     mj_kdl::run_simulate_ui(model, data, urdf.c_str(), [&](mjModel *, mjData *d) {
-        for (unsigned i = 0; i < n; ++i)
-            d->ctrl[i] = d->qpos[robot.kdl_to_mj_qpos[i]];
+        for (unsigned i = 0; i < n; ++i) d->ctrl[i] = d->qpos[robot.kdl_to_mj_qpos[i]];
         KDL::JntArray q(n), g(n);
         mj_kdl::sync_to_kdl(&robot, q);
         dyn.JntToGravity(q, g);

@@ -21,7 +21,7 @@
 static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
 
 namespace fs = std::filesystem;
-static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
+static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path().parent_path(); }
 
 /* Add contact exclusions between arm and gripper bodies. */
 static bool patch_contact_exclusions(const std::string &path)
@@ -37,12 +37,16 @@ static bool patch_contact_exclusions(const std::string &path)
         root->InsertFirstChild(contact);
     }
 
-    struct Pair { const char *body1; const char *body2; };
+    struct Pair
+    {
+        const char *body1;
+        const char *body2;
+    };
     static const Pair kExclude[] = {
-        { "bracelet_link",       "g_base"          },
-        { "bracelet_link",       "g_left_pad"      },
-        { "bracelet_link",       "g_right_pad"     },
-        { "half_arm_2_link",     "g_base"          },
+        { "bracelet_link", "g_base" },
+        { "bracelet_link", "g_left_pad" },
+        { "bracelet_link", "g_right_pad" },
+        { "half_arm_2_link", "g_base" },
     };
     for (const auto &p : kExclude) {
         auto *ex = doc.NewElement("exclude");
@@ -74,15 +78,20 @@ int main(int argc, char *argv[])
     gs.mjcf_path = grp_mjcf.c_str();
     gs.attach_to = "bracelet_link";
     gs.prefix    = "g_";
-    gs.pos[0] = 0.0; gs.pos[1] = 0.0; gs.pos[2] = -0.061525;
-    gs.quat[0] = 0.0; gs.quat[1] = 1.0; gs.quat[2] = 0.0; gs.quat[3] = 0.0;
+    gs.pos[0]    = 0.0;
+    gs.pos[1]    = 0.0;
+    gs.pos[2]    = -0.061525;
+    gs.quat[0]   = 0.0;
+    gs.quat[1]   = 1.0;
+    gs.quat[2]   = 0.0;
+    gs.quat[3]   = 0.0;
 
     if (!mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined.c_str())) {
         std::cerr << "attach_gripper() failed\n";
         return 1;
     }
-    if (!mj_kdl::patch_mjcf_add_skybox(combined.c_str()) ||
-        !mj_kdl::patch_mjcf_add_floor(combined.c_str())) {
+    if (!mj_kdl::patch_mjcf_add_skybox(combined.c_str())
+        || !mj_kdl::patch_mjcf_add_floor(combined.c_str())) {
         std::cerr << "patch_mjcf visuals failed\n";
         return 1;
     }
@@ -121,9 +130,9 @@ int main(int argc, char *argv[])
     if (headless) {
         for (int step = 0; step < 300; ++step) {
             for (unsigned i = 0; i < n; ++i) {
-                int dof              = robot.kdl_to_mj_dof[i];
-                int jid              = model->dof_jntid[dof];
-                data->ctrl[i]        = data->qpos[model->jnt_qposadr[jid]];
+                int dof                 = robot.kdl_to_mj_dof[i];
+                int jid                 = model->dof_jntid[dof];
+                data->ctrl[i]           = data->qpos[model->jnt_qposadr[jid]];
                 data->qfrc_applied[dof] = data->qfrc_bias[dof];
             }
             data->ctrl[fingers_act] = (std::fmod(data->time, 6.0) < 3.0) ? 255.0 : 0.0;

@@ -42,18 +42,19 @@ static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_pat
 /* g_urdf is set once from main() before RUN_ALL_TESTS(). */
 static std::string g_urdf;
 
-class DualArmTest : public ::testing::Test {
-protected:
-    std::string  urdf_;
-    mjModel     *model = nullptr;
-    mjData      *data  = nullptr;
-    mj_kdl::Robot arm1, arm2;
+class DualArmTest : public ::testing::Test
+{
+  protected:
+    std::string                                      urdf_;
+    mjModel                                         *model = nullptr;
+    mjData                                          *data  = nullptr;
+    mj_kdl::Robot                                    arm1, arm2;
     std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk1;
     std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk2;
     std::unique_ptr<KDL::ChainDynParam>              dyn1;
     std::unique_ptr<KDL::ChainDynParam>              dyn2;
-    KDL::JntArray q_home;
-    int           n = 0;
+    KDL::JntArray                                    q_home;
+    int                                              n = 0;
 
     void SetUp() override
     {
@@ -84,19 +85,18 @@ protected:
 
         scene.robots = { r1, r2 };
 
-        ASSERT_TRUE(mj_kdl::build_scene(&model, &data, &scene))
-            << "build_scene() returned false";
+        ASSERT_TRUE(mj_kdl::build_scene(&model, &data, &scene)) << "build_scene() returned false";
         TEST_INFO(model->nbody << " bodies, " << model->nq << " DOFs");
 
         ASSERT_TRUE(mj_kdl::init_robot(
-            &arm1, model, data, urdf_.c_str(), "base_link", "EndEffector_Link", ""))
-            << "arm1 init_robot() returned false";
+          &arm1, model, data, urdf_.c_str(), "base_link", "EndEffector_Link", ""))
+          << "arm1 init_robot() returned false";
 
         ASSERT_TRUE(mj_kdl::init_robot(
-            &arm2, model, data, urdf_.c_str(), "base_link", "EndEffector_Link", "r2_"))
-            << "arm2 init_robot() returned false";
+          &arm2, model, data, urdf_.c_str(), "base_link", "EndEffector_Link", "r2_"))
+          << "arm2 init_robot() returned false";
 
-        n = arm1.n_joints;
+        n    = arm1.n_joints;
         fk1  = std::make_unique<KDL::ChainFkSolverPos_recursive>(arm1.chain);
         fk2  = std::make_unique<KDL::ChainFkSolverPos_recursive>(arm2.chain);
         dyn1 = std::make_unique<KDL::ChainDynParam>(arm1.chain, KDL::Vector(0, 0, -9.81));
@@ -110,8 +110,7 @@ protected:
     {
         mj_kdl::cleanup(&arm1);
         mj_kdl::cleanup(&arm2);
-        if (model)
-            mj_kdl::destroy_scene(model, data);
+        if (model) mj_kdl::destroy_scene(model, data);
     }
 };
 
@@ -145,10 +144,10 @@ TEST_F(DualArmTest, DualArmDrift)
     fk1->JntToCart(q_home, ee1_init);
     fk2->JntToCart(q_home, ee2_init);
 
-    TEST_INFO("Arm 1 initial EE: [" << std::fixed << std::setprecision(4)
-              << ee1_init.p.x() << ", " << ee1_init.p.y() << ", " << ee1_init.p.z() << "]");
+    TEST_INFO("Arm 1 initial EE: [" << std::fixed << std::setprecision(4) << ee1_init.p.x() << ", "
+                                    << ee1_init.p.y() << ", " << ee1_init.p.z() << "]");
     TEST_INFO("Arm 2 initial EE: [" << ee2_init.p.x() << ", " << ee2_init.p.y() << ", "
-              << ee2_init.p.z() << "]");
+                                    << ee2_init.p.z() << "]");
 
     /* Run 500-step closed-loop gravity compensation. Both arms share the same
      * model/data; step() on arm1 advances the entire world. */
@@ -168,8 +167,8 @@ TEST_F(DualArmTest, DualArmDrift)
     double drift1 = (ee1_init.p - ee1_end.p).Norm();
     double drift2 = (ee2_init.p - ee2_end.p).Norm();
 
-    TEST_INFO("EE drift after 500 steps: arm1=" << std::setprecision(3)
-              << drift1 * 1000.0 << " mm  arm2=" << drift2 * 1000.0 << " mm");
+    TEST_INFO("EE drift after 500 steps: arm1=" << std::setprecision(3) << drift1 * 1000.0
+                                                << " mm  arm2=" << drift2 * 1000.0 << " mm");
 
     ASSERT_LE(drift1, 0.001) << "arm1 drift " << drift1 * 1000.0 << " mm exceeds 1 mm threshold";
     ASSERT_LE(drift2, 0.001) << "arm2 drift " << drift2 * 1000.0 << " mm exceeds 1 mm threshold";

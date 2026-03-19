@@ -105,23 +105,24 @@ struct Phase
     double               gripper;
 };
 
-class PickTest : public ::testing::Test {
-protected:
-    fs::path    root_;
-    std::string combined_;
-    mjModel    *model_       = nullptr;
-    mjData     *data_        = nullptr;
-    mj_kdl::Robot s_;
-    int          fingers_act_ = -1;
-    int          cube_bid_    = -1;
-    int          cube_jnt_    = -1;
-    unsigned     n_           = 0;
+class PickTest : public ::testing::Test
+{
+  protected:
+    fs::path                                         root_;
+    std::string                                      combined_;
+    mjModel                                         *model_ = nullptr;
+    mjData                                          *data_  = nullptr;
+    mj_kdl::Robot                                    s_;
+    int                                              fingers_act_ = -1;
+    int                                              cube_bid_    = -1;
+    int                                              cube_jnt_    = -1;
+    unsigned                                         n_           = 0;
     std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_;
     std::unique_ptr<KDL::ChainIkSolverVel_pinv>      ik_vel_;
     std::unique_ptr<KDL::ChainIkSolverPos_NR_JL>     ik_;
-    KDL::JntArray q_home_kdl_;
-    KDL::JntArray q_pregrasp_, q_grasp_, q_lift_;
-    int key_id_ = -1;
+    KDL::JntArray                                    q_home_kdl_;
+    KDL::JntArray                                    q_pregrasp_, q_grasp_, q_lift_;
+    int                                              key_id_ = -1;
 
     void SetUp() override
     {
@@ -131,8 +132,10 @@ protected:
             return;
         }
 
-        const std::string arm_mjcf = (root_ / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-        const std::string grp_mjcf = (root_ / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+        const std::string arm_mjcf =
+          (root_ / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+        const std::string grp_mjcf =
+          (root_ / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
         combined_ = "/tmp/gen3_with_2f85_pick.xml";
 
         mj_kdl::GripperSpec gs;
@@ -148,13 +151,13 @@ protected:
         gs.quat[3]   = 0.0;
 
         ASSERT_TRUE(mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined_.c_str()))
-            << "attach_gripper() returned false";
+          << "attach_gripper() returned false";
         ASSERT_TRUE(mj_kdl::patch_mjcf_add_skybox(combined_.c_str()))
-            << "patch_mjcf_add_skybox() returned false";
+          << "patch_mjcf_add_skybox() returned false";
         ASSERT_TRUE(mj_kdl::patch_mjcf_add_floor(combined_.c_str()))
-            << "patch_mjcf_add_floor() returned false";
+          << "patch_mjcf_add_floor() returned false";
         ASSERT_TRUE(patch_contact_exclusions(combined_))
-            << "patch_contact_exclusions() returned false";
+          << "patch_contact_exclusions() returned false";
 
         mj_kdl::SceneObject cube_obj;
         cube_obj.name        = "cube";
@@ -176,12 +179,12 @@ protected:
         cube_obj.friction[2] = 0.001;
 
         ASSERT_TRUE(mj_kdl::patch_mjcf_add_objects(combined_.c_str(), { cube_obj }))
-            << "patch_mjcf_add_objects() returned false";
+          << "patch_mjcf_add_objects() returned false";
 
         ASSERT_TRUE(mj_kdl::load_mjcf(&model_, &data_, combined_.c_str()))
-            << "load_mjcf() returned false for combined MJCF";
+          << "load_mjcf() returned false for combined MJCF";
 
-        cube_bid_ = mj_name2id(model_, mjOBJ_BODY,  "cube");
+        cube_bid_ = mj_name2id(model_, mjOBJ_BODY, "cube");
         cube_jnt_ = mj_name2id(model_, mjOBJ_JOINT, "cube_joint");
         ASSERT_GE(cube_bid_, 0) << "cube body not found";
         ASSERT_GE(cube_jnt_, 0) << "cube_joint not found";
@@ -189,7 +192,7 @@ protected:
         TEST_INFO("model: nq=" << model_->nq << " nbody=" << model_->nbody);
 
         ASSERT_TRUE(mj_kdl::init_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link"))
-            << "init_from_mjcf() returned false";
+          << "init_from_mjcf() returned false";
         n_ = s_.chain.getNrOfJoints();
         ASSERT_EQ(n_, 7u);
 
@@ -203,12 +206,12 @@ protected:
                 q_max(i) = model_->jnt_range[2 * jid + 1];
             } else {
                 q_min(i) = -2 * M_PI;
-                q_max(i) =  2 * M_PI;
+                q_max(i) = 2 * M_PI;
             }
         }
         ik_vel_ = std::make_unique<KDL::ChainIkSolverVel_pinv>(s_.chain);
         ik_     = std::make_unique<KDL::ChainIkSolverPos_NR_JL>(
-                    s_.chain, q_min, q_max, *fk_, *ik_vel_, 500, 1e-5);
+          s_.chain, q_min, q_max, *fk_, *ik_vel_, 500, 1e-5);
 
         fingers_act_ = mj_name2id(model_, mjOBJ_ACTUATOR, "g_fingers_actuator");
         ASSERT_GE(fingers_act_, 0) << "g_fingers_actuator not found";
@@ -226,17 +229,25 @@ protected:
 
         const KDL::Rotation kDownRot = KDL::Rotation::Identity();
 
-        struct WP { const char *name; double z; KDL::JntArray *out; const KDL::JntArray *seed; };
-        q_pregrasp_.resize(n_); q_grasp_.resize(n_); q_lift_.resize(n_);
+        struct WP
+        {
+            const char          *name;
+            double               z;
+            KDL::JntArray       *out;
+            const KDL::JntArray *seed;
+        };
+        q_pregrasp_.resize(n_);
+        q_grasp_.resize(n_);
+        q_lift_.resize(n_);
         WP wps[] = {
             { "pre-grasp", kPreGraspZ, &q_pregrasp_, &q_home_kdl_ },
-            { "grasp",     kGraspZ,    &q_grasp_,    &q_pregrasp_ },
-            { "lift",      kLiftZ,     &q_lift_,     &q_grasp_    },
+            { "grasp", kGraspZ, &q_grasp_, &q_pregrasp_ },
+            { "lift", kLiftZ, &q_lift_, &q_grasp_ },
         };
 
         for (auto &wp : wps) {
             KDL::Frame target(kDownRot, KDL::Vector(kCubeX, kCubeY, wp.z));
-            int ret = ik_->CartToJnt(*wp.seed, target, *wp.out);
+            int        ret = ik_->CartToJnt(*wp.seed, target, *wp.out);
             KDL::Frame ik_frame;
             fk_->JntToCart(*wp.out, ik_frame);
             double err = (ik_frame.p - target.p).Norm() * 1000.0;
@@ -265,8 +276,7 @@ protected:
     }
 
     /* Apply scripted position+gravity-comp control for one simulation step. */
-    void apply_control(mjModel * /*m*/, mjData *d,
-                       const Phase *phases, int n_phases)
+    void apply_control(mjModel * /*m*/, mjData *d, const Phase *phases, int n_phases)
     {
         double       t  = d->time;
         const Phase *ph = &phases[n_phases - 1];
@@ -301,28 +311,32 @@ TEST_F(PickTest, KDLChain)
 TEST_F(PickTest, IKConvergence)
 {
     /* Waypoint Z targets */
-    const double kGraspZ    = kCubeZ + kGripperReach + 0.02;
-    const double kPreGraspZ = kGraspZ + 0.20;
-    const double kLiftZ     = kGraspZ + 0.30;
-    const KDL::Rotation kDownRot = KDL::Rotation::Identity();
+    const double        kGraspZ    = kCubeZ + kGripperReach + 0.02;
+    const double        kPreGraspZ = kGraspZ + 0.20;
+    const double        kLiftZ     = kGraspZ + 0.30;
+    const KDL::Rotation kDownRot   = KDL::Rotation::Identity();
 
-    struct WP { const char *name; double z; };
+    struct WP
+    {
+        const char *name;
+        double      z;
+    };
     WP wps[] = { { "pre-grasp", kPreGraspZ }, { "grasp", kGraspZ }, { "lift", kLiftZ } };
 
-    KDL::JntArray q_out(n_);
+    KDL::JntArray        q_out(n_);
     const KDL::JntArray *seed = &q_home_kdl_;
-    KDL::JntArray q_prev(n_);
+    KDL::JntArray        q_prev(n_);
 
     for (int wi = 0; wi < 3; ++wi) {
         KDL::Frame target(kDownRot, KDL::Vector(kCubeX, kCubeY, wps[wi].z));
-        int ret = ik_->CartToJnt(*seed, target, q_out);
+        int        ret = ik_->CartToJnt(*seed, target, q_out);
 
         KDL::Frame ik_frame;
         fk_->JntToCart(q_out, ik_frame);
         double err = (ik_frame.p - target.p).Norm() * 1000.0;
 
-        TEST_INFO("IK " << wps[wi].name << " z=" << wps[wi].z
-                  << " pos_err=" << std::fixed << std::setprecision(2) << err << " mm");
+        TEST_INFO("IK " << wps[wi].name << " z=" << wps[wi].z << " pos_err=" << std::fixed
+                        << std::setprecision(2) << err << " mm");
 
         EXPECT_GE(ret, 0) << "IK " << wps[wi].name << " solver returned error";
         EXPECT_LE(err, 2.0) << "IK " << wps[wi].name << " pos_err=" << err << " mm > 2 mm";
@@ -335,12 +349,12 @@ TEST_F(PickTest, IKConvergence)
 TEST_F(PickTest, CubeLifted)
 {
     Phase phases[] = {
-        { 0.0, 1.0, &q_home_kdl_,  &q_home_kdl_,  0.0 },   // hold home
-        { 1.0, 2.0, &q_home_kdl_,  &q_pregrasp_,  0.0 },   // → pre-grasp
-        { 3.0, 2.0, &q_pregrasp_,  &q_grasp_,     0.0 },   // descend
-        { 5.0, 1.5, &q_grasp_,     &q_grasp_,     255.0 }, // close gripper
-        { 6.5, 3.0, &q_grasp_,     &q_lift_,      255.0 }, // lift
-        { 9.5, 1e9, &q_lift_,      &q_lift_,      255.0 }, // hold
+        { 0.0, 1.0, &q_home_kdl_, &q_home_kdl_, 0.0 }, // hold home
+        { 1.0, 2.0, &q_home_kdl_, &q_pregrasp_, 0.0 }, // → pre-grasp
+        { 3.0, 2.0, &q_pregrasp_, &q_grasp_, 0.0 },    // descend
+        { 5.0, 1.5, &q_grasp_, &q_grasp_, 255.0 },     // close gripper
+        { 6.5, 3.0, &q_grasp_, &q_lift_, 255.0 },      // lift
+        { 9.5, 1e9, &q_lift_, &q_lift_, 255.0 },       // hold
     };
     constexpr int kNPhases = static_cast<int>(sizeof(phases) / sizeof(phases[0]));
 
@@ -360,11 +374,11 @@ TEST_F(PickTest, CubeLifted)
     int    qadr         = model_->jnt_qposadr[cube_jnt_];
     double cube_final_z = data_->qpos[qadr + 2];
 
-    TEST_INFO("cube Z after pick simulation: "
-              << std::fixed << std::setprecision(3) << cube_final_z << " m");
+    TEST_INFO("cube Z after pick simulation: " << std::fixed << std::setprecision(3) << cube_final_z
+                                               << " m");
 
-    EXPECT_GT(cube_final_z, 0.20)
-        << "cube Z " << cube_final_z << " m < 0.20 m threshold (cube not lifted)";
+    EXPECT_GT(cube_final_z, 0.20) << "cube Z " << cube_final_z
+                                  << " m < 0.20 m threshold (cube not lifted)";
 }
 
 int main(int argc, char *argv[])

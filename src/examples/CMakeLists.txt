@@ -5,6 +5,7 @@ set(EXAMPLES
   ex_gripper
   ex_impedance
   ex_pick
+  ex_dual_arm
 )
 
 foreach(ex ${EXAMPLES})

@@ -73,15 +73,16 @@ static bool patch_contact_exclusions(const std::string &path)
     return doc.SaveFile(path.c_str()) == tinyxml2::XML_SUCCESS;
 }
 
-class ImpedanceTest : public ::testing::Test {
-protected:
-    fs::path    root_;
-    std::string combined_;
-    mjModel    *model_       = nullptr;
-    mjData     *data_        = nullptr;
-    mj_kdl::Robot s_;
-    int          fingers_act_ = -1;
-    unsigned     n_           = 0;
+class ImpedanceTest : public ::testing::Test
+{
+  protected:
+    fs::path                                         root_;
+    std::string                                      combined_;
+    mjModel                                         *model_ = nullptr;
+    mjData                                          *data_  = nullptr;
+    mj_kdl::Robot                                    s_;
+    int                                              fingers_act_ = -1;
+    unsigned                                         n_           = 0;
     std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_;
 
     void SetUp() override
@@ -92,8 +93,10 @@ protected:
             return;
         }
 
-        const std::string arm_mjcf = (root_ / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-        const std::string grp_mjcf = (root_ / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+        const std::string arm_mjcf =
+          (root_ / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+        const std::string grp_mjcf =
+          (root_ / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
         combined_ = "/tmp/gen3_with_2f85_impedance.xml";
 
         mj_kdl::GripperSpec gs;
@@ -109,21 +112,21 @@ protected:
         gs.quat[3]   = 0.0;
 
         ASSERT_TRUE(mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined_.c_str()))
-            << "attach_gripper() returned false";
+          << "attach_gripper() returned false";
         ASSERT_TRUE(mj_kdl::patch_mjcf_add_skybox(combined_.c_str()))
-            << "patch_mjcf_add_skybox() returned false";
+          << "patch_mjcf_add_skybox() returned false";
         ASSERT_TRUE(mj_kdl::patch_mjcf_add_floor(combined_.c_str()))
-            << "patch_mjcf_add_floor() returned false";
+          << "patch_mjcf_add_floor() returned false";
         ASSERT_TRUE(patch_contact_exclusions(combined_))
-            << "patch_contact_exclusions() returned false";
+          << "patch_contact_exclusions() returned false";
 
         ASSERT_TRUE(mj_kdl::load_mjcf(&model_, &data_, combined_.c_str()))
-            << "load_mjcf() returned false for combined MJCF";
+          << "load_mjcf() returned false for combined MJCF";
         ASSERT_GE(model_->nq, 13) << "expected nq>=13, got " << model_->nq;
-        ASSERT_GE(model_->nu, 8)  << "expected nu>=8, got " << model_->nu;
+        ASSERT_GE(model_->nu, 8) << "expected nu>=8, got " << model_->nu;
 
         ASSERT_TRUE(mj_kdl::init_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link"))
-            << "init_from_mjcf() returned false";
+          << "init_from_mjcf() returned false";
         n_ = s_.chain.getNrOfJoints();
         ASSERT_EQ(n_, 7u);
 
@@ -172,8 +175,7 @@ TEST_F(ImpedanceTest, ImpedanceDrift)
     KDL::Frame ee_init;
     fk_->JntToCart(q_home_kdl, ee_init);
 
-    for (int step = 0; step < 200; ++step)
-        step_impedance(model_, data_, kHomePose);
+    for (int step = 0; step < 200; ++step) step_impedance(model_, data_, kHomePose);
 
     KDL::JntArray q_now(n_);
     mj_kdl::sync_to_kdl(&s_, q_now);
@@ -181,8 +183,8 @@ TEST_F(ImpedanceTest, ImpedanceDrift)
     fk_->JntToCart(q_now, ee_now);
     double drift = (ee_now.p - ee_init.p).Norm() * 1000.0;
 
-    TEST_INFO("impedance hold drift (200 steps): "
-              << std::fixed << std::setprecision(3) << drift << " mm");
+    TEST_INFO(
+      "impedance hold drift (200 steps): " << std::fixed << std::setprecision(3) << drift << " mm");
 
     EXPECT_LE(drift, 1.0) << "EE drift " << drift << " mm exceeds 1 mm threshold";
 }

@@ -38,8 +38,7 @@
 
 #include "kdl_parser/visibility_control.hpp"
 
-namespace kdl_parser
-{
+namespace kdl_parser {
 
 /** Constructs a KDL tree from a file, given the file name
  * \param file The filename from where to read the xml
@@ -47,7 +46,7 @@ namespace kdl_parser
  * returns true on success, false on failure
  */
 KDL_PARSER_PUBLIC
-bool treeFromFile(const std::string & file, KDL::Tree & tree);
+bool treeFromFile(const std::string &file, KDL::Tree &tree);
 
 /** Constructs a KDL tree from a string containing xml
  * \param xml A string containting the xml description of the robot
@@ -55,7 +54,7 @@ bool treeFromFile(const std::string & file, KDL::Tree & tree);
  * returns true on success, false on failure
  */
 KDL_PARSER_PUBLIC
-bool treeFromString(const std::string & xml, KDL::Tree & tree);
+bool treeFromString(const std::string &xml, KDL::Tree &tree);
 
 /** Constructs a KDL tree from a URDF robot model
  * \param robot_model The URDF robot model
@@ -63,7 +62,7 @@ bool treeFromString(const std::string & xml, KDL::Tree & tree);
  * returns true on success, false on failure
  */
 KDL_PARSER_PUBLIC
-bool treeFromUrdfModel(const urdf::ModelInterface & robot_model, KDL::Tree & tree);
-}  // namespace kdl_parser
+bool treeFromUrdfModel(const urdf::ModelInterface &robot_model, KDL::Tree &tree);
+} // namespace kdl_parser
 
-#endif  // KDL_PARSER__KDL_PARSER_HPP_
+#endif // KDL_PARSER__KDL_PARSER_HPP_

@@ -26,12 +26,13 @@ static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_pat
 
 static std::string g_urdf_path;
 
-class VelocityTest : public ::testing::Test {
-protected:
-    mjModel       *model_ = nullptr;
-    mjData        *data_  = nullptr;
-    mj_kdl::Robot  s;
-    unsigned       n = 0;
+class VelocityTest : public ::testing::Test
+{
+  protected:
+    mjModel      *model_ = nullptr;
+    mjData       *data_  = nullptr;
+    mj_kdl::Robot s;
+    unsigned      n = 0;
 
     KDL::JntArray q_home;
     KDL::JntArray q_test;
@@ -41,15 +42,17 @@ protected:
     std::unique_ptr<KDL::ChainIkSolverPos_NR_JL>     ik;
     std::unique_ptr<KDL::ChainJntToJacSolver>        jac_solver;
 
-    void SetUp() override {
-        mj_kdl::SceneSpec sc;
+    void SetUp() override
+    {
+        mj_kdl::SceneSpec  sc;
         mj_kdl::SceneRobot r;
         r.urdf_path = g_urdf_path.c_str();
         sc.robots.push_back(r);
 
         ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc)) << "build_scene() returned false";
-        ASSERT_TRUE(mj_kdl::init_robot(&s, model_, data_, g_urdf_path.c_str(),
-            "base_link", "EndEffector_Link")) << "init_robot() returned false";
+        ASSERT_TRUE(mj_kdl::init_robot(
+          &s, model_, data_, g_urdf_path.c_str(), "base_link", "EndEffector_Link"))
+          << "init_robot() returned false";
 
         n = s.chain.getNrOfJoints();
 
@@ -59,10 +62,10 @@ protected:
             q_max(i) = s.joint_limits[i].second;
         }
 
-        fk         = std::make_unique<KDL::ChainFkSolverPos_recursive>(s.chain);
-        ik_vel     = std::make_unique<KDL::ChainIkSolverVel_pinv>(s.chain);
-        ik         = std::make_unique<KDL::ChainIkSolverPos_NR_JL>(
-                         s.chain, q_min, q_max, *fk, *ik_vel, 500, 1e-5);
+        fk     = std::make_unique<KDL::ChainFkSolverPos_recursive>(s.chain);
+        ik_vel = std::make_unique<KDL::ChainIkSolverVel_pinv>(s.chain);
+        ik     = std::make_unique<KDL::ChainIkSolverPos_NR_JL>(
+          s.chain, q_min, q_max, *fk, *ik_vel, 500, 1e-5);
         jac_solver = std::make_unique<KDL::ChainJntToJacSolver>(s.chain);
 
         q_home.resize(n);
@@ -73,7 +76,8 @@ protected:
             q_test(i) = (i % 2 == 0 ? 1.0 : -1.0) * 30.0 * M_PI / 180.0;
     }
 
-    void TearDown() override {
+    void TearDown() override
+    {
         mj_kdl::cleanup(&s);
         mj_kdl::destroy_scene(model_, data_);
     }
@@ -83,16 +87,15 @@ TEST_F(VelocityTest, FKHomePose)
 {
     KDL::Frame fk_home;
     ASSERT_TRUE(fk->JntToCart(q_home, fk_home) >= 0) << "FK failed at home pose";
-    TEST_INFO("pos: [" << std::fixed << std::setprecision(4)
-              << fk_home.p.x() << ", " << fk_home.p.y() << ", " << fk_home.p.z() << "]");
+    TEST_INFO("pos: [" << std::fixed << std::setprecision(4) << fk_home.p.x() << ", "
+                       << fk_home.p.y() << ", " << fk_home.p.z() << "]");
 }
 
 TEST_F(VelocityTest, FKTestConfig)
 {
     KDL::Frame fk_test;
     ASSERT_TRUE(fk->JntToCart(q_test, fk_test) >= 0) << "FK failed at test config";
-    TEST_INFO("pos: [" << fk_test.p.x() << ", " << fk_test.p.y() << ", "
-              << fk_test.p.z() << "]");
+    TEST_INFO("pos: [" << fk_test.p.x() << ", " << fk_test.p.y() << ", " << fk_test.p.z() << "]");
 }
 
 TEST_F(VelocityTest, IKRoundTrip)
@@ -101,7 +104,7 @@ TEST_F(VelocityTest, IKRoundTrip)
     ASSERT_TRUE(fk->JntToCart(q_test, fk_test) >= 0) << "FK failed at test config";
 
     KDL::JntArray q_ik(n);
-    int ik_ret = ik->CartToJnt(q_home, fk_test, q_ik);
+    int           ik_ret = ik->CartToJnt(q_home, fk_test, q_ik);
     if (ik_ret < 0) {
         TEST_WARN("IK did not converge (ret=" << ik_ret << "), skipping position check");
         return;
@@ -112,7 +115,7 @@ TEST_F(VelocityTest, IKRoundTrip)
     double pos_err = (fk_test.p - fk_ik.p).Norm();
     TEST_INFO("pos error: " << pos_err * 1000.0 << " mm");
     EXPECT_LE(pos_err, 1e-3) << "IK position error " << pos_err * 1000.0
-                              << " mm exceeds 1 mm threshold";
+                             << " mm exceeds 1 mm threshold";
 }
 
 TEST_F(VelocityTest, JacobianDimensions)
