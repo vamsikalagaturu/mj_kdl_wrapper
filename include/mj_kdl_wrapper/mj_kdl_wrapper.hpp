@@ -32,7 +32,7 @@ LogLevel get_log_level();
 
 /*
  * Placement specification for one robot in a scene.
- * path is interpreted as URDF by build_scene() and as MJCF by build_scene_from_mjcfs().
+ * path is interpreted as URDF by build_scene_from_urdfs() and as MJCF by build_scene_from_mjcfs().
  * All joint/body names in MuJoCo are prefixed with `prefix`; must be unique
  * per robot (e.g. "" for arm 0, "r2_" for arm 1).
  */
@@ -91,7 +91,7 @@ struct SceneObject
     double      friction[3] = { 0.5, 0.005, 0.0001 }; // MuJoCo defaults
 };
 
-/* Full scene description passed to build_scene(). */
+/* Full scene description passed to build_scene_from_urdfs(). */
 struct SceneSpec
 {
     std::vector<RobotSpec>   robots;
@@ -173,7 +173,7 @@ bool patch_mjcf_add_objects(const char *mjcf_path, const std::vector<SceneObject
 
 /*
  * Save the compiled model to an MJCF XML file for later reloading with load_mjcf().
- * Must be called with the model returned by the most recent build_scene() or
+ * Must be called with the model returned by the most recent build_scene_from_urdfs() or
  * load_mjcf() call  - MuJoCo only retains the last compiled model's XML internally.
  * Typical use: build a combined scene (dual-arm, arm+gripper, ...) once, save it,
  * then reload with load_mjcf() in subsequent runs to skip all build/patch steps.
@@ -252,10 +252,10 @@ bool build_scene_from_mjcfs(const char *out_mjcf,
  * @param[in]  spec       Scene description: robots, table, objects, timestep, gravity, floor.
  * @return true on success, false on any load or compile error.
  */
-bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *spec);
+bool build_scene_from_urdfs(mjModel **out_model, mjData **out_data, const SceneSpec *spec);
 
 /*
- * Free a model/data pair allocated by build_scene().
+ * Free a model/data pair allocated by build_scene_from_urdfs().
  * @param[in] model  Model to free (may be null).
  * @param[in] data   Data to free (may be null).
  */
@@ -265,8 +265,8 @@ void destroy_scene(mjModel *model, mjData *data);
  * Attach a KDL chain to an already-loaded scene (shared model/data  - not owned).
  * Resolves joint names using `prefix` to disambiguate robots in multi-robot scenes.
  * @param[out] s          Robot to populate (chain, joint maps, index maps).
- * @param[in]  model      MuJoCo model from build_scene(); not freed by cleanup().
- * @param[in]  data       MuJoCo data from build_scene(); not freed by cleanup().
+ * @param[in]  model      MuJoCo model from build_scene_from_urdfs(); not freed by cleanup().
+ * @param[in]  data       MuJoCo data from build_scene_from_urdfs(); not freed by cleanup().
  * @param[in]  urdf_path  Path to the robot URDF (used to build the KDL chain).
  * @param[in]  base_link  Name of the chain's root link in the URDF.
  * @param[in]  tip_link   Name of the chain's end-effector link in the URDF.
@@ -410,7 +410,7 @@ void run_simulate_ui(mjModel *m, mjData *d, const char *path, ControlCb physics_
 /*
  * Internal spec-building helpers.
  *
- * These are used internally by build_scene() and configure_spec(), but are
+ * These are used internally by build_scene_from_urdfs() and configure_spec(), but are
  * exposed here for advanced callers that construct mjSpec objects directly.
  * They are not part of the stable public API and may change between releases.
  */

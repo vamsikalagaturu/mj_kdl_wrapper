@@ -42,8 +42,8 @@ int main(int argc, char *argv[])
     mjModel      *model = nullptr;
     mjData       *data  = nullptr;
     mj_kdl::Robot robot;
-    if (!mj_kdl::build_scene(&model, &data, &sc)) {
-        std::cerr << "build_scene() failed\n";
+    if (!mj_kdl::build_scene_from_urdfs(&model, &data, &sc)) {
+        std::cerr << "build_scene_from_urdfs() failed\n";
         return 1;
     }
     if (!mj_kdl::init_robot(&robot, model, data, urdf.c_str(), "base_link", "EndEffector_Link")) {

@@ -18,7 +18,7 @@ A C++ library bridging [MuJoCo 3.6](https://github.com/google-deepmind/mujoco) p
 - **URDF loading** — converts URDF to MJCF, auto-injects scene elements (floor, lights)
 - **KDL chain** — builds a KDL chain from URDF or MJCF; FK, IK, Jacobian, dynamics
 - **Gripper attachment** — combine arm + gripper MJCF with `attach_gripper`; handles name prefixing, mesh paths, connect constraints
-- **Multi-robot scenes** — place multiple robots in one shared simulation via `SceneSpec`/`build_scene`
+- **Multi-robot scenes** — place multiple robots in one shared simulation via `SceneSpec`/`build_scene_from_urdfs`
 - **Table + objects** — parametric table, boxes, spheres, cylinders; add/remove objects at runtime
 - **Interactive viewer** — GLFW window with joint value overlay, pause/resume, body selection for force perturbation
 
@@ -137,7 +137,7 @@ cube.rgba[0] = 1.0f; cube.rgba[1] = 0.2f; cube.rgba[2] = 0.2f; cube.rgba[3] = 1.
 spec.objects.push_back(cube);
 
 mjModel* model; mjData* data;
-mj_kdl::build_scene(&model, &data, &spec);
+mj_kdl::build_scene_from_urdfs(&model, &data, &spec);
 
 mj_kdl::State s;
 mj_kdl::init_robot(&s, model, data, "assets/gen3_urdf/GEN3_URDF_V12.urdf",

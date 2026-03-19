@@ -33,7 +33,8 @@ class InitTest : public ::testing::Test
         r.path = g_urdf_path.c_str();
         sc.robots.push_back(r);
 
-        ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc)) << "build_scene() returned false";
+        ASSERT_TRUE(mj_kdl::build_scene_from_urdfs(&model_, &data_, &sc))
+          << "build_scene_from_urdfs() returned false";
         ASSERT_TRUE(mj_kdl::init_robot(
           &s, model_, data_, g_urdf_path.c_str(), "base_link", "EndEffector_Link"))
           << "init_robot() returned false";

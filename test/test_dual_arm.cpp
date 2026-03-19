@@ -85,7 +85,8 @@ class DualArmTest : public ::testing::Test
 
         scene.robots = { r1, r2 };
 
-        ASSERT_TRUE(mj_kdl::build_scene(&model, &data, &scene)) << "build_scene() returned false";
+        ASSERT_TRUE(mj_kdl::build_scene_from_urdfs(&model, &data, &scene))
+          << "build_scene_from_urdfs() returned false";
         TEST_INFO(model->nbody << " bodies, " << model->nq << " DOFs");
 
         ASSERT_TRUE(mj_kdl::init_robot(

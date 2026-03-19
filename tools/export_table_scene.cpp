@@ -86,8 +86,8 @@ int main(int argc, char *argv[])
 
     mjModel *model = nullptr;
     mjData  *data  = nullptr;
-    if (!mj_kdl::build_scene(&model, &data, &spec)) {
-        std::cerr << "build_scene failed\n";
+    if (!mj_kdl::build_scene_from_urdfs(&model, &data, &spec)) {
+        std::cerr << "build_scene_from_urdfs failed\n";
         return 1;
     }
 

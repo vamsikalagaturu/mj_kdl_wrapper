@@ -130,7 +130,7 @@ class TableSceneTest : public ::testing::Test
         robot.pos[2] = surface_z;
         spec_.robots.push_back(robot);
 
-        ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &spec_));
+        ASSERT_TRUE(mj_kdl::build_scene_from_urdfs(&model_, &data_, &spec_));
         TEST_INFO(model_->nbody << " bodies, " << model_->nq << " DOFs");
 
         ASSERT_TRUE(

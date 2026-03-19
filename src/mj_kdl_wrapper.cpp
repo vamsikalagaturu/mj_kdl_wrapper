@@ -640,7 +640,7 @@ bool compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data)
     return true;
 }
 
-bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
+bool build_scene_from_urdfs(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
 {
     if (!sc || sc->robots.empty()) return false;
     ensure_plugins_loaded();
@@ -1039,7 +1039,7 @@ bool scene_add_object(mjModel **model, mjData **data, SceneSpec *spec, const Sce
     spec->objects.push_back(obj);
     mjModel *nm = nullptr;
     mjData  *nd = nullptr;
-    if (!build_scene(&nm, &nd, spec)) {
+    if (!build_scene_from_urdfs(&nm, &nd, spec)) {
         spec->objects.pop_back();
         return false;
     }
@@ -1059,7 +1059,7 @@ bool scene_remove_object(mjModel **model, mjData **data, SceneSpec *spec, const 
     spec->objects.erase(it);
     mjModel *nm = nullptr;
     mjData  *nd = nullptr;
-    if (!build_scene(&nm, &nd, spec)) {
+    if (!build_scene_from_urdfs(&nm, &nd, spec)) {
         spec->objects.push_back(removed);
         return false;
     }
