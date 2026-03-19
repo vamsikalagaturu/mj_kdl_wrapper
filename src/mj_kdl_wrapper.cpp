@@ -414,8 +414,7 @@ static bool
 
 /* KDL helpers */
 
-/* Convert a MuJoCo quaternion [w x y z] to a KDL::Rotation. */
-/* MuJoCo quaternion layout: [w, x, y, z]; KDL::Rotation::Quaternion takes (x, y, z, w). */
+/* Convert MuJoCo quaternion [w, x, y, z] to KDL::Rotation (KDL expects x, y, z, w). */
 static KDL::Rotation mj_quat_to_kdl_rot(const double *q)
 {
     return KDL::Rotation::Quaternion(q[1], q[2], q[3], q[0]);
@@ -599,13 +598,45 @@ struct GLMouseState
 
 /* Public API */
 
+static void configure_spec(mjSpec *spec, const SceneSpec *sc)
+{
+    spec->option.timestep         = sc->timestep;
+    spec->option.gravity[2]       = sc->gravity_z;
+    spec->compiler.balanceinertia = 1;
+    spec->compiler.discardvisual  = 0;
+    if (sc->add_floor) add_floor_to_spec(spec);
+    if (sc->table.enabled) add_table_to_spec(spec, sc->table);
+    if (!sc->objects.empty()) add_objects_to_spec(spec, sc->objects);
+}
+
+/* Compile spec into a model and data; spec is always deleted. */
+static bool compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data)
+{
+    *out_model = mj_compile(spec, nullptr);
+    if (!*out_model) {
+        LOG_ERROR("mj_compile failed: " << mjs_getError(spec));
+        mj_deleteSpec(spec);
+        return false;
+    }
+    LOG_INFO("scene compiled: nq=" << (*out_model)->nq << " nv=" << (*out_model)->nv
+             << " nbody=" << (*out_model)->nbody);
+    mj_deleteSpec(spec);
+    *out_data = mj_makeData(*out_model);
+    if (!*out_data) {
+        mj_deleteModel(*out_model);
+        *out_model = nullptr;
+        return false;
+    }
+    return true;
+}
+
 bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
 {
+    if (!sc || sc->robots.empty()) return false;
     ensure_plugins_loaded();
     LOG_INFO("building scene: " << sc->robots.size() << " robot(s)"
              << ", table=" << (sc->table.enabled ? "yes" : "no")
              << ", objects=" << sc->objects.size());
-    if (!sc || sc->robots.empty()) return false;
 
     fs::path tmp = fs::absolute(fs::path(sc->robots[0].urdf_path).parent_path());
 
@@ -643,26 +674,8 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
                 }
             }
         }
-        if (sc->add_floor) add_floor_to_spec(spec);
-        if (sc->table.enabled) add_table_to_spec(spec, sc->table);
-        if (!sc->objects.empty()) add_objects_to_spec(spec, sc->objects);
-
-        *out_model = mj_compile(spec, nullptr);
-        if (!*out_model) {
-            LOG_ERROR("mj_compile failed (single robot): " << mjs_getError(spec));
-            mj_deleteSpec(spec);
-            return false;
-        }
-        LOG_INFO("scene compiled: nq=" << (*out_model)->nq << " nv=" << (*out_model)->nv
-                 << " nbody=" << (*out_model)->nbody);
-        mj_deleteSpec(spec);
-        *out_data = mj_makeData(*out_model);
-        if (!*out_data) {
-            mj_deleteModel(*out_model);
-            *out_model = nullptr;
-            return false;
-        }
-        return true;
+        configure_spec(spec, sc);
+        return compile_and_make_data(spec, out_model, out_data);
     }
 
     // Multi-robot: URDF → raw MJCF → combine → inject scene → load.
@@ -682,29 +695,8 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
         LOG_ERROR("mj_parseXML failed for combined MJCF '" << combined.string() << "': " << err);
         return false;
     }
-    spec->option.timestep         = sc->timestep;
-    spec->option.gravity[2]       = sc->gravity_z;
-    spec->compiler.balanceinertia = 1;
-    spec->compiler.discardvisual  = 0;
-    if (sc->add_floor) add_floor_to_spec(spec);
-    if (sc->table.enabled) add_table_to_spec(spec, sc->table);
-    if (!sc->objects.empty()) add_objects_to_spec(spec, sc->objects);
-    *out_model = mj_compile(spec, nullptr);
-    if (!*out_model) {
-        LOG_ERROR("mj_compile failed (" << sc->robots.size() << " robots): " << mjs_getError(spec));
-        mj_deleteSpec(spec);
-        return false;
-    }
-    LOG_INFO("scene compiled: nq=" << (*out_model)->nq << " nv=" << (*out_model)->nv
-             << " nbody=" << (*out_model)->nbody);
-    mj_deleteSpec(spec);
-    *out_data = mj_makeData(*out_model);
-    if (!*out_data) {
-        mj_deleteModel(*out_model);
-        *out_model = nullptr;
-        return false;
-    }
-    return true;
+    configure_spec(spec, sc);
+    return compile_and_make_data(spec, out_model, out_data);
 }
 
 bool load_mjcf(mjModel **out_model, mjData **out_data, const char *path)
@@ -857,6 +849,16 @@ bool patch_mjcf_add_objects(const char *mjcf_path, const std::vector<SceneObject
     return doc.SaveFile(mjcf_path) == XML_SUCCESS;
 }
 
+/* Recursive depth-first search for the first <body name="..."> matching name. */
+static tinyxml2::XMLElement *find_body(tinyxml2::XMLElement *e, const char *name)
+{
+    if (!e || !name) return nullptr;
+    if (e->Attribute("name") && std::string(e->Attribute("name")) == name) return e;
+    for (auto *ch = e->FirstChildElement("body"); ch; ch = ch->NextSiblingElement("body"))
+        if (auto *found = find_body(ch, name)) return found;
+    return nullptr;
+}
+
 bool attach_gripper(const char *arm_mjcf, const GripperSpec *g, const char *out_path)
 {
     using namespace tinyxml2;
@@ -926,25 +928,6 @@ bool attach_gripper(const char *arm_mjcf, const GripperSpec *g, const char *out_
     }
 
     // Find attach body in arm worldbody and insert gripper worldbody children
-    auto find_body = [](XMLElement *root, const char *name) -> XMLElement * {
-        if (!root || !name) return nullptr;
-        if (root->Attribute("name") && std::string(root->Attribute("name")) == name) return root;
-        for (auto *c = root->FirstChildElement("body"); c; c = c->NextSiblingElement("body")) {
-            XMLElement                               *found  = nullptr;
-            std::function<XMLElement *(XMLElement *)> search = [&](XMLElement *e) -> XMLElement * {
-                if (e->Attribute("name") && std::string(e->Attribute("name")) == name) return e;
-                for (auto *ch = e->FirstChildElement("body"); ch;
-                     ch       = ch->NextSiblingElement("body")) {
-                    if (auto *r = search(ch)) return r;
-                }
-                return nullptr;
-            };
-            found = search(c);
-            if (found) return found;
-        }
-        return nullptr;
-    };
-
     XMLElement *arm_wb = arm_mj->FirstChildElement("worldbody");
     if (!arm_wb) return false;
     XMLElement *attach_el = find_body(arm_wb, g->attach_to);
