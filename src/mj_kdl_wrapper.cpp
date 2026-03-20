@@ -68,6 +68,10 @@ LogLevel get_log_level() { return g_log_level; }
 #define LOG_WARN(expr) MJ_LOG_(WARN, "\033[33m", "WARN ", expr)
 #define LOG_ERROR(expr) MJ_LOG_(ERROR, "\033[31m", "ERROR", expr)
 
+/* Global viewer/robot pointers - written by init_window / cleanup. */
+static Robot  *g_robot  = nullptr;
+static Viewer *g_viewer = nullptr;
+
 /* URDF preprocessing */
 
 static bool preprocess_urdf(const std::string &in, const std::string &out)
@@ -110,7 +114,7 @@ static bool preprocess_urdf(const std::string &in, const std::string &out)
     return doc.SaveFile(out.c_str()) == XML_SUCCESS;
 }
 
-/* Spec-API helpers (single-robot path) */
+/* Spec-API helpers */
 
 void add_skybox_to_spec(mjSpec *spec)
 {
@@ -266,7 +270,40 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
     }
 }
 
-/* Multi-robot XML helpers (N > 1 path) */
+void configure_spec(mjSpec *spec, const SceneSpec *sc)
+{
+    spec->option.timestep         = sc->timestep;
+    spec->option.gravity[2]       = sc->gravity_z;
+    spec->compiler.balanceinertia = 1;
+    spec->compiler.discardvisual  = 0;
+    if (sc->add_skybox) add_skybox_to_spec(spec);
+    if (sc->add_floor) add_floor_to_spec(spec);
+    if (sc->table.enabled) add_table_to_spec(spec, sc->table);
+    if (!sc->objects.empty()) add_objects_to_spec(spec, sc->objects);
+}
+
+/* Compile spec into a model and data; spec is always deleted. */
+bool compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data)
+{
+    *out_model = mj_compile(spec, nullptr);
+    if (!*out_model) {
+        LOG_ERROR("mj_compile failed: " << mjs_getError(spec));
+        mj_deleteSpec(spec);
+        return false;
+    }
+    LOG_INFO("scene compiled: nq=" << (*out_model)->nq << " nv=" << (*out_model)->nv
+                                   << " nbody=" << (*out_model)->nbody);
+    mj_deleteSpec(spec);
+    *out_data = mj_makeData(*out_model);
+    if (!*out_data) {
+        mj_deleteModel(*out_model);
+        *out_model = nullptr;
+        return false;
+    }
+    return true;
+}
+
+/* XML helpers */
 
 static tinyxml2::XMLElement *xml_deep_clone(const tinyxml2::XMLElement *src,
   tinyxml2::XMLDocument                                                *dst)
@@ -333,6 +370,96 @@ static tinyxml2::XMLElement *xml_clone_prefixed(const tinyxml2::XMLElement *src,
     xml_prefix_names(cl, pfx);
     return cl;
 }
+
+static void xml_inject_skybox(tinyxml2::XMLDocument &doc, tinyxml2::XMLElement *root)
+{
+    using namespace tinyxml2;
+    XMLElement *asset = xml_get_or_create(root, "asset", doc);
+    XMLElement *wb    = xml_get_or_create(root, "worldbody", doc);
+
+    XMLElement *sky = doc.NewElement("texture");
+    sky->SetAttribute("name", "skybox");
+    sky->SetAttribute("type", "skybox");
+    sky->SetAttribute("builtin", "gradient");
+    sky->SetAttribute("rgb1", "0.3 0.45 0.65");
+    sky->SetAttribute("rgb2", "0.65 0.8 0.95");
+    sky->SetAttribute("width", "200");
+    sky->SetAttribute("height", "200");
+    asset->InsertEndChild(sky);
+
+    XMLElement *light = doc.NewElement("light");
+    light->SetAttribute("directional", "true");
+    light->SetAttribute("pos", "0 0 4");
+    wb->InsertFirstChild(light);
+}
+
+static void xml_inject_floor(tinyxml2::XMLDocument &doc, tinyxml2::XMLElement *root)
+{
+    using namespace tinyxml2;
+    XMLElement *asset = xml_get_or_create(root, "asset", doc);
+    XMLElement *wb    = xml_get_or_create(root, "worldbody", doc);
+
+    XMLElement *tex = doc.NewElement("texture");
+    tex->SetAttribute("name", "groundplane");
+    tex->SetAttribute("type", "2d");
+    tex->SetAttribute("builtin", "checker");
+    tex->SetAttribute("rgb1", "0.2 0.3 0.4");
+    tex->SetAttribute("rgb2", "0.1 0.2 0.3");
+    tex->SetAttribute("width", "300");
+    tex->SetAttribute("height", "300");
+    asset->InsertEndChild(tex);
+
+    XMLElement *mat = doc.NewElement("material");
+    mat->SetAttribute("name", "groundplane");
+    mat->SetAttribute("texture", "groundplane");
+    mat->SetAttribute("texrepeat", "5 5");
+    mat->SetAttribute("reflectance", "0.2");
+    asset->InsertEndChild(mat);
+
+    XMLElement *floor = doc.NewElement("geom");
+    floor->SetAttribute("name", "floor");
+    floor->SetAttribute("type", "plane");
+    floor->SetAttribute("size", "10 10 0.05");
+    floor->SetAttribute("material", "groundplane");
+    floor->SetAttribute("contype", "1");
+    floor->SetAttribute("conaffinity", "1");
+    floor->SetAttribute("condim", "3");
+    wb->InsertFirstChild(floor);
+}
+
+static bool load_mjcf_doc(const char *path,
+  tinyxml2::XMLDocument              &doc,
+  tinyxml2::XMLElement              **root,
+  const char                         *caller)
+{
+    if (doc.LoadFile(path) != tinyxml2::XML_SUCCESS) {
+        LOG_ERROR(caller << ": failed to load '" << path << "'");
+        return false;
+    }
+    *root = doc.FirstChildElement("mujoco");
+    return *root != nullptr;
+}
+
+/* Recursively prefix all named elements in an MJCF subtree.
+ * Asset entries (mesh, material, texture, hfield) share names across arms
+ * and are left unchanged.  All other name/joint/body1/body2/site attributes
+ * receive pfx prepended so multiple robot instances do not conflict. */
+static void mjcf_prefix_names(tinyxml2::XMLElement *e, const std::string &pfx)
+{
+    if (!e) return;
+    const char *tag      = e->Name();
+    bool        is_asset = tag
+                    && (std::strcmp(tag, "mesh") == 0 || std::strcmp(tag, "texture") == 0
+                        || std::strcmp(tag, "material") == 0 || std::strcmp(tag, "hfield") == 0);
+    if (!is_asset)
+        if (const char *v = e->Attribute("name")) e->SetAttribute("name", (pfx + v).c_str());
+    for (const char *a : { "joint", "body1", "body2", "site" })
+        if (const char *v = e->Attribute(a)) e->SetAttribute(a, (pfx + v).c_str());
+    for (auto *c = e->FirstChildElement(); c; c = c->NextSiblingElement())
+        mjcf_prefix_names(c, pfx);
+}
+
+/* URDF-to-MJCF helpers */
 
 static bool urdf_to_raw_mjcf(const std::string &proc, const std::string &raw)
 {
@@ -605,57 +732,7 @@ static bool
     return true;
 }
 
-/* GLFW */
-
-static void    cb_keyboard(GLFWwindow *, int, int, int, int);
-static void    cb_mouse_button(GLFWwindow *, int, int, int);
-static void    cb_mouse_move(GLFWwindow *, double, double);
-static void    cb_scroll(GLFWwindow *, double, double);
-static Robot  *g_robot  = nullptr;
-static Viewer *g_viewer = nullptr;
-
-struct GLMouseState
-{
-    bool   btn_left = false, btn_right = false, btn_middle = false;
-    double mouse_x = 0, mouse_y = 0;
-    double last_click_time = -1.0;
-    int    last_click_btn  = -1;
-};
-
-/* Public API */
-
-void configure_spec(mjSpec *spec, const SceneSpec *sc)
-{
-    spec->option.timestep         = sc->timestep;
-    spec->option.gravity[2]       = sc->gravity_z;
-    spec->compiler.balanceinertia = 1;
-    spec->compiler.discardvisual  = 0;
-    if (sc->add_skybox) add_skybox_to_spec(spec);
-    if (sc->add_floor) add_floor_to_spec(spec);
-    if (sc->table.enabled) add_table_to_spec(spec, sc->table);
-    if (!sc->objects.empty()) add_objects_to_spec(spec, sc->objects);
-}
-
-/* Compile spec into a model and data; spec is always deleted. */
-bool compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data)
-{
-    *out_model = mj_compile(spec, nullptr);
-    if (!*out_model) {
-        LOG_ERROR("mj_compile failed: " << mjs_getError(spec));
-        mj_deleteSpec(spec);
-        return false;
-    }
-    LOG_INFO("scene compiled: nq=" << (*out_model)->nq << " nv=" << (*out_model)->nv
-                                   << " nbody=" << (*out_model)->nbody);
-    mj_deleteSpec(spec);
-    *out_data = mj_makeData(*out_model);
-    if (!*out_data) {
-        mj_deleteModel(*out_model);
-        *out_model = nullptr;
-        return false;
-    }
-    return true;
-}
+/* Scene API */
 
 bool build_scene_from_urdfs(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
 {
@@ -681,11 +758,6 @@ bool build_scene_from_urdfs(mjModel **out_model, mjData **out_data, const SceneS
             return false;
         }
 
-        spec->option.timestep         = sc->timestep;
-        spec->option.gravity[2]       = sc->gravity_z;
-        spec->compiler.balanceinertia = 1;
-        spec->compiler.discardvisual  = 0;
-
         if (r.pos[0] || r.pos[1] || r.pos[2] || r.euler[0] || r.euler[1] || r.euler[2]) {
             mjsBody *wb   = mjs_findBody(spec, "world");
             mjsBody *root = wb ? mjs_asBody(mjs_firstChild(wb, mjOBJ_BODY, 0)) : nullptr;
@@ -701,6 +773,7 @@ bool build_scene_from_urdfs(mjModel **out_model, mjData **out_data, const SceneS
                 }
             }
         }
+
         configure_spec(spec, sc);
         return compile_and_make_data(spec, out_model, out_data);
     }
@@ -724,6 +797,110 @@ bool build_scene_from_urdfs(mjModel **out_model, mjData **out_data, const SceneS
     }
     configure_spec(spec, sc);
     return compile_and_make_data(spec, out_model, out_data);
+}
+
+bool build_scene_from_mjcfs(mjModel **out_model,
+  mjData                            **out_data,
+  const RobotSpec                    *arms,
+  int                                 n_arms,
+  bool                                add_floor,
+  bool                                add_skybox,
+  const char                         *out_path)
+{
+    using namespace tinyxml2;
+    if (!out_model || !out_data || !arms || n_arms <= 0) return false;
+
+    XMLDocument doc;
+    auto       *mj = doc.NewElement("mujoco");
+    mj->SetAttribute("model", "scene");
+    doc.InsertFirstChild(mj);
+
+    {
+        auto *opt = doc.NewElement("option");
+        opt->SetAttribute("timestep", "0.002");
+        opt->SetAttribute("gravity", "0 0 -9.81");
+        mj->InsertEndChild(opt);
+    }
+
+    auto *asset     = doc.NewElement("asset");
+    auto *worldbody = doc.NewElement("worldbody");
+    auto *actuators = doc.NewElement("actuator");
+    auto *contact   = doc.NewElement("contact");
+    mj->InsertEndChild(asset);
+    mj->InsertEndChild(worldbody);
+    mj->InsertEndChild(actuators);
+    mj->InsertEndChild(contact);
+
+    for (int ai = 0; ai < n_arms; ++ai) {
+        const RobotSpec &spec = arms[ai];
+        if (!spec.path) return false;
+
+        XMLDocument src;
+        if (src.LoadFile(spec.path) != XML_SUCCESS) {
+            LOG_ERROR("build_scene_from_mjcfs: failed to load '" << spec.path << "'");
+            return false;
+        }
+        auto *src_root = src.FirstChildElement("mujoco");
+        if (!src_root) return false;
+
+        const std::string pfx = spec.prefix ? spec.prefix : "";
+
+        /* Copy assets from the first arm only; all arms share the same meshes. */
+        if (ai == 0) {
+            auto *sa = src_root->FirstChildElement("asset");
+            if (sa)
+                for (auto *c = sa->FirstChildElement(); c; c = c->NextSiblingElement())
+                    asset->InsertEndChild(c->DeepClone(&doc));
+        }
+
+        /* Placement wrapper body */
+        char pos_s[64];
+        std::snprintf(
+          pos_s, sizeof(pos_s), "%.6g %.6g %.6g", spec.pos[0], spec.pos[1], spec.pos[2]);
+        auto *wrap = doc.NewElement("body");
+        wrap->SetAttribute("pos", pos_s);
+        if (spec.euler[0] || spec.euler[1] || spec.euler[2]) {
+            char euler_s[64];
+            std::snprintf(euler_s,
+              sizeof(euler_s),
+              "%.6g %.6g %.6g",
+              spec.euler[0],
+              spec.euler[1],
+              spec.euler[2]);
+            wrap->SetAttribute("euler", euler_s);
+        }
+        worldbody->InsertEndChild(wrap);
+
+        auto *src_wb = src_root->FirstChildElement("worldbody");
+        if (src_wb)
+            for (auto *c = src_wb->FirstChildElement(); c; c = c->NextSiblingElement()) {
+                auto *copy = static_cast<XMLElement *>(c->DeepClone(&doc));
+                if (!pfx.empty()) mjcf_prefix_names(copy, pfx);
+                wrap->InsertEndChild(copy);
+            }
+
+        auto *src_act = src_root->FirstChildElement("actuator");
+        if (src_act)
+            for (auto *c = src_act->FirstChildElement(); c; c = c->NextSiblingElement()) {
+                auto *copy = static_cast<XMLElement *>(c->DeepClone(&doc));
+                if (!pfx.empty()) mjcf_prefix_names(copy, pfx);
+                actuators->InsertEndChild(copy);
+            }
+
+        auto *src_ct = src_root->FirstChildElement("contact");
+        if (src_ct)
+            for (auto *c = src_ct->FirstChildElement(); c; c = c->NextSiblingElement()) {
+                auto *copy = static_cast<XMLElement *>(c->DeepClone(&doc));
+                if (!pfx.empty()) mjcf_prefix_names(copy, pfx);
+                contact->InsertEndChild(copy);
+            }
+    }
+
+    if (add_skybox) xml_inject_skybox(doc, mj);
+    if (add_floor) xml_inject_floor(doc, mj);
+    const char *tmp = out_path ? out_path : "/tmp/_mj_kdl_scene_from_mjcfs.xml";
+    if (doc.SaveFile(tmp) != XML_SUCCESS) return false;
+    return load_mjcf(out_model, out_data, tmp);
 }
 
 bool load_mjcf(mjModel **out_model, mjData **out_data, const char *path)
@@ -757,77 +934,6 @@ bool save_model_xml(const mjModel *model, const char *path)
     return ok != 0;
 }
 
-/* XML-level helpers shared by the patch_mjcf_* functions. */
-
-static void xml_inject_skybox(tinyxml2::XMLDocument &doc, tinyxml2::XMLElement *root)
-{
-    using namespace tinyxml2;
-    XMLElement *asset = xml_get_or_create(root, "asset", doc);
-    XMLElement *wb    = xml_get_or_create(root, "worldbody", doc);
-
-    XMLElement *sky = doc.NewElement("texture");
-    sky->SetAttribute("name", "skybox");
-    sky->SetAttribute("type", "skybox");
-    sky->SetAttribute("builtin", "gradient");
-    sky->SetAttribute("rgb1", "0.3 0.45 0.65");
-    sky->SetAttribute("rgb2", "0.65 0.8 0.95");
-    sky->SetAttribute("width", "200");
-    sky->SetAttribute("height", "200");
-    asset->InsertEndChild(sky);
-
-    XMLElement *light = doc.NewElement("light");
-    light->SetAttribute("directional", "true");
-    light->SetAttribute("pos", "0 0 4");
-    wb->InsertFirstChild(light);
-}
-
-static void xml_inject_floor(tinyxml2::XMLDocument &doc, tinyxml2::XMLElement *root)
-{
-    using namespace tinyxml2;
-    XMLElement *asset = xml_get_or_create(root, "asset", doc);
-    XMLElement *wb    = xml_get_or_create(root, "worldbody", doc);
-
-    XMLElement *tex = doc.NewElement("texture");
-    tex->SetAttribute("name", "groundplane");
-    tex->SetAttribute("type", "2d");
-    tex->SetAttribute("builtin", "checker");
-    tex->SetAttribute("rgb1", "0.2 0.3 0.4");
-    tex->SetAttribute("rgb2", "0.1 0.2 0.3");
-    tex->SetAttribute("width", "300");
-    tex->SetAttribute("height", "300");
-    asset->InsertEndChild(tex);
-
-    XMLElement *mat = doc.NewElement("material");
-    mat->SetAttribute("name", "groundplane");
-    mat->SetAttribute("texture", "groundplane");
-    mat->SetAttribute("texrepeat", "5 5");
-    mat->SetAttribute("reflectance", "0.2");
-    asset->InsertEndChild(mat);
-
-    XMLElement *floor = doc.NewElement("geom");
-    floor->SetAttribute("name", "floor");
-    floor->SetAttribute("type", "plane");
-    floor->SetAttribute("size", "10 10 0.05");
-    floor->SetAttribute("material", "groundplane");
-    floor->SetAttribute("contype", "1");
-    floor->SetAttribute("conaffinity", "1");
-    floor->SetAttribute("condim", "3");
-    wb->InsertFirstChild(floor);
-}
-
-static bool load_mjcf_doc(const char *path,
-  tinyxml2::XMLDocument              &doc,
-  tinyxml2::XMLElement              **root,
-  const char                         *caller)
-{
-    if (doc.LoadFile(path) != tinyxml2::XML_SUCCESS) {
-        LOG_ERROR(caller << ": failed to load '" << path << "'");
-        return false;
-    }
-    *root = doc.FirstChildElement("mujoco");
-    return *root != nullptr;
-}
-
 bool patch_mjcf_add_skybox(const char *mjcf_path)
 {
     tinyxml2::XMLDocument doc;
@@ -850,12 +956,8 @@ bool patch_mjcf_add_objects(const char *mjcf_path, const std::vector<SceneObject
 {
     using namespace tinyxml2;
     XMLDocument doc;
-    if (doc.LoadFile(mjcf_path) != XML_SUCCESS) {
-        LOG_ERROR("patch_mjcf_add_objects: failed to load '" << mjcf_path << "'");
-        return false;
-    }
-    XMLElement *root = doc.FirstChildElement("mujoco");
-    if (!root) return false;
+    XMLElement *root = nullptr;
+    if (!load_mjcf_doc(mjcf_path, doc, &root, "patch_mjcf_add_objects")) return false;
     XMLElement *wb = xml_get_or_create(root, "worldbody", doc);
 
     for (const auto &obj : objects) {
@@ -920,11 +1022,7 @@ bool patch_mjcf_contact_exclusions(const char            *mjcf_path,
     XMLElement *root = nullptr;
     if (!load_mjcf_doc(mjcf_path, doc, &root, "patch_mjcf_contact_exclusions")) return false;
 
-    XMLElement *contact = root->FirstChildElement("contact");
-    if (!contact) {
-        contact = doc.NewElement("contact");
-        root->InsertEndChild(contact);
-    }
+    XMLElement *contact = xml_get_or_create(root, "contact", doc);
 
     for (const auto &p : exclusions) {
         XMLElement *ex = doc.NewElement("exclude");
@@ -1029,16 +1127,26 @@ bool attach_gripper(const char *arm_mjcf, const GripperSpec *g, const char *out_
     if (grp_wb) {
         for (auto *c = grp_wb->FirstChildElement(); c; c = c->NextSiblingElement()) {
             XMLElement *cl = xml_clone_prefixed(c, &arm_doc, pfx);
-            // Apply offset
-            char pos_str[64];
-            std::snprintf(
-              pos_str, sizeof(pos_str), "%.6f %.6f %.6f", g->pos[0], g->pos[1], g->pos[2]);
-            if (g->pos[0] || g->pos[1] || g->pos[2]) cl->SetAttribute("pos", pos_str);
-            if (g->euler[0] || g->euler[1] || g->euler[2]) {
-                char e_str[64];
+            if (g->pos[0] || g->pos[1] || g->pos[2]) {
+                char pos_str[64];
                 std::snprintf(
-                  e_str, sizeof(e_str), "%.6g %.6g %.6g", g->euler[0], g->euler[1], g->euler[2]);
-                cl->SetAttribute("euler", e_str);
+                  pos_str, sizeof(pos_str), "%.6f %.6f %.6f", g->pos[0], g->pos[1], g->pos[2]);
+                cl->SetAttribute("pos", pos_str);
+            }
+            if (g->euler[0] || g->euler[1] || g->euler[2]) {
+                /* Convert extrinsic XYZ euler (degrees) to quaternion so the result
+                 * is independent of the model's compiler angle setting (which may be
+                 * "radian", as in the MuJoCo Menagerie models). */
+                double deg2rad = M_PI / 180.0;
+                KDL::Rotation rot = KDL::Rotation::RPY(
+                  g->euler[0] * deg2rad, g->euler[1] * deg2rad, g->euler[2] * deg2rad);
+                double qx, qy, qz, qw;
+                rot.GetQuaternion(qx, qy, qz, qw);
+                for (const char *attr : { "euler", "axisangle", "xyaxes", "zaxis" })
+                    cl->DeleteAttribute(attr);
+                char q_str[64];
+                std::snprintf(q_str, sizeof(q_str), "%.6f %.6f %.6f %.6f", qw, qx, qy, qz);
+                cl->SetAttribute("quat", q_str);
             }
             attach_el->InsertEndChild(cl);
         }
@@ -1060,7 +1168,15 @@ bool attach_gripper(const char *arm_mjcf, const GripperSpec *g, const char *out_
     merge_section("equality");
     merge_section("actuator");
 
-    return arm_doc.SaveFile(out_path) == XML_SUCCESS;
+    if (arm_doc.SaveFile(out_path) != XML_SUCCESS) return false;
+
+    if (g->add_skybox && !patch_mjcf_add_skybox(out_path)) return false;
+    if (g->add_floor  && !patch_mjcf_add_floor(out_path))  return false;
+    if (!g->contact_exclusions.empty()
+        && !patch_mjcf_contact_exclusions(out_path, g->contact_exclusions))
+        return false;
+
+    return true;
 }
 
 void destroy_scene(mjModel *model, mjData *data)
@@ -1104,259 +1220,78 @@ bool scene_remove_object(mjModel **model, mjData **data, SceneSpec *spec, const 
     return true;
 }
 
-/* Recursively prefix all named elements in an MJCF subtree.
- * Asset entries (mesh, material, texture, hfield) share names across arms
- * and are left unchanged.  All other name/joint/body1/body2/site attributes
- * receive pfx prepended so multiple robot instances do not conflict. */
-static void mjcf_prefix_names(tinyxml2::XMLElement *e, const std::string &pfx)
+/* Robot API */
+
+bool init_robot_from_urdf(Robot *r,
+  mjModel               *model,
+  mjData                *data,
+  const char            *urdf,
+  const char            *base_link,
+  const char            *tip_link,
+  const char            *prefix)
 {
-    if (!e) return;
-    const char *tag      = e->Name();
-    bool        is_asset = tag
-                    && (std::strcmp(tag, "mesh") == 0 || std::strcmp(tag, "texture") == 0
-                        || std::strcmp(tag, "material") == 0 || std::strcmp(tag, "hfield") == 0);
-    if (!is_asset)
-        if (const char *v = e->Attribute("name")) e->SetAttribute("name", (pfx + v).c_str());
-    for (const char *a : { "joint", "body1", "body2", "site" })
-        if (const char *v = e->Attribute(a)) e->SetAttribute(a, (pfx + v).c_str());
-    for (auto *c = e->FirstChildElement(); c; c = c->NextSiblingElement())
-        mjcf_prefix_names(c, pfx);
-}
-
-bool build_scene_from_mjcfs(mjModel **out_model,
-  mjData                            **out_data,
-  const RobotSpec                    *arms,
-  int                                 n_arms,
-  bool                                add_floor,
-  bool                                add_skybox,
-  const char                         *out_path)
-{
-    using namespace tinyxml2;
-    if (!out_model || !out_data || !arms || n_arms <= 0) return false;
-
-    XMLDocument doc;
-    auto       *mj = doc.NewElement("mujoco");
-    mj->SetAttribute("model", "scene");
-    doc.InsertFirstChild(mj);
-
-    {
-        auto *opt = doc.NewElement("option");
-        opt->SetAttribute("timestep", "0.002");
-        opt->SetAttribute("gravity", "0 0 -9.81");
-        mj->InsertEndChild(opt);
-    }
-
-    auto *asset     = doc.NewElement("asset");
-    auto *worldbody = doc.NewElement("worldbody");
-    auto *actuators = doc.NewElement("actuator");
-    auto *contact   = doc.NewElement("contact");
-    mj->InsertEndChild(asset);
-    mj->InsertEndChild(worldbody);
-    mj->InsertEndChild(actuators);
-    mj->InsertEndChild(contact);
-
-    for (int ai = 0; ai < n_arms; ++ai) {
-        const RobotSpec &spec = arms[ai];
-        if (!spec.path) return false;
-
-        XMLDocument src;
-        if (src.LoadFile(spec.path) != XML_SUCCESS) {
-            LOG_ERROR("build_scene_from_mjcfs: failed to load '" << spec.path << "'");
-            return false;
-        }
-        auto *src_root = src.FirstChildElement("mujoco");
-        if (!src_root) return false;
-
-        const std::string pfx = spec.prefix ? spec.prefix : "";
-
-        /* Copy assets from the first arm only; all arms share the same meshes. */
-        if (ai == 0) {
-            auto *sa = src_root->FirstChildElement("asset");
-            if (sa)
-                for (auto *c = sa->FirstChildElement(); c; c = c->NextSiblingElement())
-                    asset->InsertEndChild(c->DeepClone(&doc));
-        }
-
-        /* Placement wrapper body */
-        char pos_s[64];
-        std::snprintf(
-          pos_s, sizeof(pos_s), "%.6g %.6g %.6g", spec.pos[0], spec.pos[1], spec.pos[2]);
-        auto *wrap = doc.NewElement("body");
-        wrap->SetAttribute("pos", pos_s);
-        if (spec.euler[0] || spec.euler[1] || spec.euler[2]) {
-            char euler_s[64];
-            std::snprintf(euler_s,
-              sizeof(euler_s),
-              "%.6g %.6g %.6g",
-              spec.euler[0],
-              spec.euler[1],
-              spec.euler[2]);
-            wrap->SetAttribute("euler", euler_s);
-        }
-        worldbody->InsertEndChild(wrap);
-
-        auto *src_wb = src_root->FirstChildElement("worldbody");
-        if (src_wb)
-            for (auto *c = src_wb->FirstChildElement(); c; c = c->NextSiblingElement()) {
-                auto *copy = static_cast<XMLElement *>(c->DeepClone(&doc));
-                if (!pfx.empty()) mjcf_prefix_names(copy, pfx);
-                wrap->InsertEndChild(copy);
-            }
-
-        auto *src_act = src_root->FirstChildElement("actuator");
-        if (src_act)
-            for (auto *c = src_act->FirstChildElement(); c; c = c->NextSiblingElement()) {
-                auto *copy = static_cast<XMLElement *>(c->DeepClone(&doc));
-                if (!pfx.empty()) mjcf_prefix_names(copy, pfx);
-                actuators->InsertEndChild(copy);
-            }
-
-        auto *src_ct = src_root->FirstChildElement("contact");
-        if (src_ct)
-            for (auto *c = src_ct->FirstChildElement(); c; c = c->NextSiblingElement()) {
-                auto *copy = static_cast<XMLElement *>(c->DeepClone(&doc));
-                if (!pfx.empty()) mjcf_prefix_names(copy, pfx);
-                contact->InsertEndChild(copy);
-            }
-    }
-
-    const char *tmp = out_path ? out_path : "/tmp/_mj_kdl_scene_from_mjcfs.xml";
-    if (doc.SaveFile(tmp) != XML_SUCCESS) return false;
-    if (add_skybox && !patch_mjcf_add_skybox(tmp)) return false;
-    if (add_floor && !patch_mjcf_add_floor(tmp)) return false;
-    return load_mjcf(out_model, out_data, tmp);
-}
-
-bool init_robot(Robot *s,
-  mjModel             *model,
-  mjData              *data,
-  const char          *urdf,
-  const char          *base_link,
-  const char          *tip_link,
-  const char          *prefix)
-{
-    LOG_INFO("init_robot: '" << base_link << "' -> '" << tip_link << "' prefix='"
-                             << (prefix ? prefix : "") << "' urdf='" << urdf << "'");
-    s->model = model;
-    s->data  = data;
-    if (!load_kdl_chain(s, urdf, base_link, tip_link)) return false;
+    LOG_INFO("init_robot_from_urdf: '" << base_link << "' -> '" << tip_link << "' prefix='"
+                                       << (prefix ? prefix : "") << "' urdf='" << urdf << "'");
+    r->model = model;
+    r->data  = data;
+    if (!load_kdl_chain(r, urdf, base_link, tip_link)) return false;
     std::string pfx = prefix ? prefix : "";
-    sync_chain_inertias(s, pfx);
-    if (!build_index_map(s, pfx)) return false;
+    sync_chain_inertias(r, pfx);
+    if (!build_index_map(r, pfx)) return false;
     LOG_INFO(
-      "chain ready: " << s->n_joints << " joints [" << base_link << " -> " << tip_link << "]");
+      "chain ready: " << r->n_joints << " joints [" << base_link << " -> " << tip_link << "]");
     return true;
 }
 
-bool init_from_mjcf(Robot *s,
-  mjModel                 *model,
-  mjData                  *data,
-  const char              *base_body,
-  const char              *tip_body,
-  const char              *prefix)
+bool init_robot_from_mjcf(Robot *r,
+  mjModel                       *model,
+  mjData                        *data,
+  const char                    *base_body,
+  const char                    *tip_body,
+  const char                    *prefix)
 {
-    LOG_INFO("init_from_mjcf: '" << base_body << "' -> '" << tip_body << "' prefix='"
-                                 << (prefix ? prefix : "") << "'");
-    s->model = model;
-    s->data  = data;
-    if (!build_kdl_from_model(s, model, base_body, tip_body)) return false;
-    if (!build_index_map(s, prefix ? prefix : "")) return false;
+    LOG_INFO("init_robot_from_mjcf: '" << base_body << "' -> '" << tip_body << "' prefix='"
+                                       << (prefix ? prefix : "") << "'");
+    r->model = model;
+    r->data  = data;
+    if (!build_kdl_from_model(r, model, base_body, tip_body)) return false;
+    if (!build_index_map(r, prefix ? prefix : "")) return false;
     LOG_INFO(
-      "chain ready: " << s->n_joints << " joints [" << base_body << " -> " << tip_body << "]");
+      "chain ready: " << r->n_joints << " joints [" << base_body << " -> " << tip_body << "]");
     return true;
 }
 
-/* Hint GLFW to use the Wayland backend on pure Wayland sessions.
- * On GLFW < 3.4 the platform select API does not exist; GLFW 3.3 auto-detects
- * via WAYLAND_DISPLAY, so this is a no-op for older installs.
- * Must be called before the first glfwInit(). */
-static void apply_glfw_platform_hints()
+void cleanup(Robot *r)
 {
-#if defined(__linux__) && GLFW_VERSION_MAJOR * 100 + GLFW_VERSION_MINOR >= 304
-    if (!getenv("DISPLAY") && getenv("WAYLAND_DISPLAY"))
-        glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_WAYLAND);
-    else
-        glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_ANY);
-#endif
+    r->model    = nullptr;
+    r->data     = nullptr;
+    r->chain    = KDL::Chain();
+    r->n_joints = 0;
+    r->joint_names.clear();
+    r->joint_limits.clear();
+    r->ctrl_mode = CtrlMode::POSITION;
+    r->paused    = false;
+    r->jnt_pos_msr.clear();
+    r->jnt_vel_msr.clear();
+    r->jnt_trq_msr.clear();
+    r->jnt_pos_cmd.clear();
+    r->jnt_vel_cmd.clear();
+    r->jnt_trq_cmd.clear();
+    r->kdl_to_mj_qpos.clear();
+    r->kdl_to_mj_dof.clear();
+    r->kdl_to_mj_ctrl.clear();
+    if (g_robot == r) g_robot = nullptr;
 }
 
-bool init_window(Viewer *v, Robot *r, const char *title, int width, int height)
+void set_joint_pos(Robot *r, const KDL::JntArray &q, bool call_forward)
 {
-    if (!r->model) return false;
-    if (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY")) return false;
-    apply_glfw_platform_hints();
-    if (!glfwInit()) return false;
-
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_FALSE);
-    glfwWindowHint(GLFW_SAMPLES, 4);
-
-    v->window = glfwCreateWindow(width, height, title, nullptr, nullptr);
-    if (!v->window) {
-        glfwTerminate();
-        return false;
-    }
-
-    auto *ms = new GLMouseState();
-    glfwSetWindowUserPointer(v->window, ms);
-    glfwSetKeyCallback(v->window, cb_keyboard);
-    glfwSetMouseButtonCallback(v->window, cb_mouse_button);
-    glfwSetCursorPosCallback(v->window, cb_mouse_move);
-    glfwSetScrollCallback(v->window, cb_scroll);
-    glfwSetWindowCloseCallback(
-      v->window, [](GLFWwindow *w) { glfwSetWindowShouldClose(w, GLFW_TRUE); });
-    glfwMakeContextCurrent(v->window);
-    glfwSwapInterval(1);
-
-    if (!glfwGetProcAddress("glGenBuffers")) {
-        delete ms;
-        glfwDestroyWindow(v->window);
-        v->window = nullptr;
-        glfwTerminate();
-        return false;
-    }
-
-    mjv_defaultCamera(&v->cam);
-    mjv_defaultOption(&v->opt);
-    mjv_defaultPerturb(&v->pert);
-    mjv_makeScene(r->model, &v->scn, 2000);
-    mjr_makeContext(r->model, &v->con, mjFONTSCALE_150);
-    v->cam.type      = mjCAMERA_FREE;
-    v->cam.distance  = 2.5;
-    v->cam.azimuth   = 135.0;
-    v->cam.elevation = -20.0;
-    g_robot          = r;
-    g_viewer         = v;
-    return true;
+    if (!r->data) return;
+    int n = std::min((int)q.rows(), r->n_joints);
+    for (int i = 0; i < n; ++i) r->data->qpos[r->kdl_to_mj_qpos[i]] = q(i);
+    if (call_forward) mj_forward(r->model, r->data);
 }
 
-void cleanup(Viewer *v)
-{
-    if (!v->window) return;
-    mjv_freeScene(&v->scn);
-    mjr_freeContext(&v->con);
-    delete static_cast<GLMouseState *>(glfwGetWindowUserPointer(v->window));
-    glfwDestroyWindow(v->window);
-    v->window = nullptr;
-    glfwTerminate();
-    if (g_viewer == v) g_viewer = nullptr;
-}
-
-void cleanup(Robot *s)
-{
-    s->model = nullptr;
-    s->data  = nullptr;
-    s->kdl_to_mj_ctrl.clear();
-    s->jnt_pos_msr.clear();
-    s->jnt_vel_msr.clear();
-    s->jnt_trq_msr.clear();
-    s->jnt_pos_cmd.clear();
-    s->jnt_vel_cmd.clear();
-    s->jnt_trq_cmd.clear();
-    if (g_robot == s) g_robot = nullptr;
-}
+/* Simulation API */
 
 void step(Robot *s)
 {
@@ -1379,68 +1314,13 @@ void reset(Robot *s)
     }
 }
 
-bool is_running(const Viewer *v)
-{
-    if (!v->window) return false;
-    return !glfwWindowShouldClose(v->window);
-}
-
-bool render(Viewer *v, const Robot *r)
-{
-    if (!v->window) return false;
-    if (glfwWindowShouldClose(v->window)) return false;
-    glfwPollEvents();
-    int w, h;
-    glfwGetFramebufferSize(v->window, &w, &h);
-    mjrRect vp = { 0, 0, w, h };
-    mjv_updateScene(r->model, r->data, &v->opt, &v->pert, &v->cam, mjCAT_ALL, &v->scn);
-    mjr_render(vp, &v->scn, &v->con);
-
-    char        top[256];
-    const char *selname =
-      (v->pert.select > 0) ? mj_id2name(r->model, mjOBJ_BODY, v->pert.select) : nullptr;
-    if (selname)
-        std::snprintf(top,
-          sizeof(top),
-          "t = %.3f s%s\nSelected: %s",
-          r->data->time,
-          r->paused ? "  [PAUSED]" : "",
-          selname);
-    else
-        std::snprintf(
-          top, sizeof(top), "t = %.3f s%s", r->data->time, r->paused ? "  [PAUSED]" : "");
-    mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, vp, top, nullptr, &v->con);
-
-    mjr_overlay(mjFONT_NORMAL,
-      mjGRID_BOTTOMLEFT,
-      vp,
-      "DblClick: select body   D: deselect\n"
-      "Left drag: push force   Right drag: apply torque\n"
-      "No selection  - Left drag: orbit   Right drag: pan   Scroll: zoom\n"
-      "Space: pause/resume   R: reset   J: toggle joints   Q/Esc: quit",
-      nullptr,
-      &v->con);
-
-    if (v->show_joints && r->n_joints > 0 && !r->kdl_to_mj_qpos.empty()) {
-        char jvals[1024];
-        int  off = std::snprintf(jvals, sizeof(jvals), "Joints (rad)\n");
-        for (int i = 0; i < r->n_joints && i < 16 && off < (int)sizeof(jvals) - 32; ++i)
-            off += std::snprintf(jvals + off,
-              sizeof(jvals) - off,
-              "  %-20s %.3f\n",
-              r->joint_names[i].c_str(),
-              r->data->qpos[r->kdl_to_mj_qpos[i]]);
-        mjr_overlay(mjFONT_NORMAL, mjGRID_TOPRIGHT, vp, jvals, nullptr, &v->con);
-    }
-
-    glfwSwapBuffers(v->window);
-    return true;
-}
-
 void update(Robot *r)
 {
     if (!r->data) return;
     for (int i = 0; i < r->n_joints; ++i) {
+        r->jnt_pos_msr[i] = r->data->qpos[r->kdl_to_mj_qpos[i]];
+        r->jnt_vel_msr[i] = r->data->qvel[r->kdl_to_mj_dof[i]];
+        r->jnt_trq_msr[i] = r->data->qfrc_bias[r->kdl_to_mj_dof[i]];
         switch (r->ctrl_mode) {
         case CtrlMode::POSITION:
             if (r->kdl_to_mj_ctrl[i] >= 0) r->data->ctrl[r->kdl_to_mj_ctrl[i]] = r->jnt_pos_cmd[i];
@@ -1452,35 +1332,18 @@ void update(Robot *r)
             r->data->qfrc_applied[r->kdl_to_mj_dof[i]] = r->jnt_trq_cmd[i];
             break;
         }
-        r->jnt_pos_msr[i] = r->data->qpos[r->kdl_to_mj_qpos[i]];
-        r->jnt_vel_msr[i] = r->data->qvel[r->kdl_to_mj_dof[i]];
-        r->jnt_trq_msr[i] = r->data->qfrc_bias[r->kdl_to_mj_dof[i]];
     }
 }
 
-bool get_joint_pos(const Robot *s, KDL::JntArray &q)
-{
-    if (!s->data) return false;
-    q.resize(s->n_joints);
-    for (int i = 0; i < s->n_joints; ++i) q(i) = s->data->qpos[s->kdl_to_mj_qpos[i]];
-    return true;
-}
+/* GLFW/UI */
 
-void set_joint_pos(Robot *s, const KDL::JntArray &q)
+struct GLMouseState
 {
-    if (!s->data) return;
-    int n = std::min((int)q.rows(), s->n_joints);
-    for (int i = 0; i < n; ++i) s->data->qpos[s->kdl_to_mj_qpos[i]] = q(i);
-}
-
-void set_torques(Robot *s, const KDL::JntArray &tau)
-{
-    if (!s->data) return;
-    int n = std::min((int)tau.rows(), s->n_joints);
-    for (int i = 0; i < n; ++i) s->data->qfrc_applied[s->kdl_to_mj_dof[i]] = tau(i);
-}
-
-/* GLFW callbacks */
+    bool   btn_left = false, btn_right = false, btn_middle = false;
+    double mouse_x = 0, mouse_y = 0;
+    double last_click_time = -1.0;
+    int    last_click_btn  = -1;
+};
 
 static void cb_keyboard(GLFWwindow *w, int key, int, int action, int)
 {
@@ -1581,7 +1444,141 @@ static void cb_scroll(GLFWwindow *, double, double yoff)
           g_robot->model, mjMOUSE_ZOOM, 0, -0.05 * yoff, &g_viewer->scn, &g_viewer->cam);
 }
 
-namespace mj = ::mujoco;
+/* Hint GLFW to use the Wayland backend on pure Wayland sessions.
+ * On GLFW < 3.4 the platform select API does not exist; GLFW 3.3 auto-detects
+ * via WAYLAND_DISPLAY, so this is a no-op for older installs.
+ * Must be called before the first glfwInit(). */
+static void apply_glfw_platform_hints()
+{
+#if defined(__linux__) && GLFW_VERSION_MAJOR * 100 + GLFW_VERSION_MINOR >= 304
+    if (!getenv("DISPLAY") && getenv("WAYLAND_DISPLAY"))
+        glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_WAYLAND);
+    else
+        glfwInitHint(GLFW_PLATFORM, GLFW_ANY_PLATFORM);
+#endif
+}
+
+bool init_window(Viewer *v, Robot *r, const char *title, int width, int height)
+{
+    if (!r->model) return false;
+    if (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY")) return false;
+    apply_glfw_platform_hints();
+    if (!glfwInit()) return false;
+
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_FALSE);
+    glfwWindowHint(GLFW_SAMPLES, 4);
+
+    v->window = glfwCreateWindow(width, height, title, nullptr, nullptr);
+    if (!v->window) {
+        glfwTerminate();
+        return false;
+    }
+
+    auto *ms = new GLMouseState();
+    glfwSetWindowUserPointer(v->window, ms);
+    glfwSetKeyCallback(v->window, cb_keyboard);
+    glfwSetMouseButtonCallback(v->window, cb_mouse_button);
+    glfwSetCursorPosCallback(v->window, cb_mouse_move);
+    glfwSetScrollCallback(v->window, cb_scroll);
+    glfwSetWindowCloseCallback(
+      v->window, [](GLFWwindow *w) { glfwSetWindowShouldClose(w, GLFW_TRUE); });
+    glfwMakeContextCurrent(v->window);
+    glfwSwapInterval(1);
+
+    if (!glfwGetProcAddress("glGenBuffers")) {
+        delete ms;
+        glfwDestroyWindow(v->window);
+        v->window = nullptr;
+        glfwTerminate();
+        return false;
+    }
+
+    mjv_defaultCamera(&v->cam);
+    mjv_defaultOption(&v->opt);
+    mjv_defaultPerturb(&v->pert);
+    mjv_makeScene(r->model, &v->scn, 2000);
+    mjr_makeContext(r->model, &v->con, mjFONTSCALE_150);
+    v->cam.type      = mjCAMERA_FREE;
+    v->cam.distance  = 2.5;
+    v->cam.azimuth   = 135.0;
+    v->cam.elevation = -20.0;
+    g_robot          = r;
+    g_viewer         = v;
+    return true;
+}
+
+void cleanup(Viewer *v)
+{
+    if (!v->window) return;
+    mjv_freeScene(&v->scn);
+    mjr_freeContext(&v->con);
+    delete static_cast<GLMouseState *>(glfwGetWindowUserPointer(v->window));
+    glfwDestroyWindow(v->window);
+    v->window = nullptr;
+    glfwTerminate();
+    if (g_viewer == v) g_viewer = nullptr;
+}
+
+bool is_running(const Viewer *v)
+{
+    if (!v->window) return false;
+    return !glfwWindowShouldClose(v->window);
+}
+
+bool render(Viewer *v, const Robot *r)
+{
+    if (!v->window) return false;
+    if (glfwWindowShouldClose(v->window)) return false;
+    glfwPollEvents();
+    int w, h;
+    glfwGetFramebufferSize(v->window, &w, &h);
+    mjrRect vp = { 0, 0, w, h };
+    mjv_updateScene(r->model, r->data, &v->opt, &v->pert, &v->cam, mjCAT_ALL, &v->scn);
+    mjr_render(vp, &v->scn, &v->con);
+
+    char        top[256];
+    const char *selname =
+      (v->pert.select > 0) ? mj_id2name(r->model, mjOBJ_BODY, v->pert.select) : nullptr;
+    if (selname)
+        std::snprintf(top,
+          sizeof(top),
+          "t = %.3f s%s\nSelected: %s",
+          r->data->time,
+          r->paused ? "  [PAUSED]" : "",
+          selname);
+    else
+        std::snprintf(
+          top, sizeof(top), "t = %.3f s%s", r->data->time, r->paused ? "  [PAUSED]" : "");
+    mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, vp, top, nullptr, &v->con);
+
+    mjr_overlay(mjFONT_NORMAL,
+      mjGRID_BOTTOMLEFT,
+      vp,
+      "DblClick: select body   D: deselect\n"
+      "Left drag: push force   Right drag: apply torque\n"
+      "No selection  - Left drag: orbit   Right drag: pan   Scroll: zoom\n"
+      "Space: pause/resume   R: reset   J: toggle joints   Q/Esc: quit",
+      nullptr,
+      &v->con);
+
+    if (v->show_joints && r->n_joints > 0 && !r->kdl_to_mj_qpos.empty()) {
+        char jvals[1024];
+        int  off = std::snprintf(jvals, sizeof(jvals), "Joints (rad)\n");
+        for (int i = 0; i < r->n_joints && i < 16 && off < (int)sizeof(jvals) - 32; ++i)
+            off += std::snprintf(jvals + off,
+              sizeof(jvals) - off,
+              "  %-20s %.3f\n",
+              r->joint_names[i].c_str(),
+              r->data->qpos[r->kdl_to_mj_qpos[i]]);
+        mjr_overlay(mjFONT_NORMAL, mjGRID_TOPRIGHT, vp, jvals, nullptr, &v->con);
+    }
+
+    glfwSwapBuffers(v->window);
+    return true;
+}
 
 using Seconds = std::chrono::duration<double>;
 
@@ -1590,6 +1587,7 @@ static constexpr double kSimRefreshFraction = 0.7; // fraction of refresh budget
 
 void run_simulate_ui(mjModel *m, mjData *d, const char *path, ControlCb physics_cb)
 {
+    namespace mj = ::mujoco;
     apply_glfw_platform_hints();
 
     mjvCamera cam;

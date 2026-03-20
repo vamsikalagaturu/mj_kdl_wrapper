@@ -56,8 +56,8 @@ class GravityCompTest : public ::testing::Test
         ASSERT_TRUE(mj_kdl::build_scene_from_urdfs(&model_, &data_, &sc))
           << "build_scene_from_urdfs() returned false";
         ASSERT_TRUE(
-          mj_kdl::init_robot(&s, model_, data_, g_urdf.c_str(), "base_link", "EndEffector_Link"))
-          << "init_robot() returned false";
+          mj_kdl::init_robot_from_urdf(&s, model_, data_, g_urdf.c_str(), "base_link", "EndEffector_Link"))
+          << "init_robot_from_urdf() returned false";
 
         n   = static_cast<unsigned>(s.n_joints);
         fk  = std::make_unique<KDL::ChainFkSolverPos_recursive>(s.chain);
@@ -102,6 +102,10 @@ TEST_F(GravityCompTest, GravityCompDrift)
 
     s.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
     KDL::JntArray q(n), g(n);
+    /* Prime jnt_trq_cmd so the first update() applies compensation immediately,
+     * not zero torques (which would impart velocity that gravity comp cannot damp). */
+    dyn->JntToGravity(q_home, g);
+    for (unsigned j = 0; j < n; ++j) s.jnt_trq_cmd[j] = g(j);
     for (int i = 0; i < 500; ++i) {
         mj_kdl::update(&s);
         for (unsigned j = 0; j < n; ++j) q(j) = s.jnt_pos_msr[j];

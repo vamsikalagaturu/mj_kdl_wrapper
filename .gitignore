@@ -17,6 +17,11 @@ urdf/
 assets/gen3_urdf/_mj_*.urdf
 assets/gen3_urdf/_mj_*.xml
 third_party/menagerie/
+MUJOCO_LOG.TXT
+
+# Third-party dependencies
+install/
+third_party/orocos_kinematics_dynamics/
 
 # IDE
 .vscode/

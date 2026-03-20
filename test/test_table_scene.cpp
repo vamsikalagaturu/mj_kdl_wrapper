@@ -134,7 +134,7 @@ class TableSceneTest : public ::testing::Test
         TEST_INFO(model_->nbody << " bodies, " << model_->nq << " DOFs");
 
         ASSERT_TRUE(
-          mj_kdl::init_robot(&s_, model_, data_, urdf_.c_str(), "base_link", "EndEffector_Link"));
+          mj_kdl::init_robot_from_urdf(&s_, model_, data_, urdf_.c_str(), "base_link", "EndEffector_Link"));
         TEST_INFO(s_.n_joints << " joints");
 
         n_ = static_cast<unsigned>(s_.n_joints);
@@ -162,6 +162,9 @@ TEST_F(TableSceneTest, GravityCompDrift)
 
     s_.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
     KDL::JntArray q(n_), g(n_);
+    /* Prime jnt_trq_cmd so the first update() applies compensation immediately. */
+    dyn_->JntToGravity(q_home_, g);
+    for (unsigned j = 0; j < n_; ++j) s_.jnt_trq_cmd[j] = g(j);
     for (int i = 0; i < 500; ++i) {
         mj_kdl::update(&s_);
         for (unsigned j = 0; j < n_; ++j) q(j) = s_.jnt_pos_msr[j];

@@ -80,7 +80,7 @@ class GripperTest : public ::testing::Test
         gs.attach_to = "bracelet_link";
         gs.prefix    = "g_";
         gs.pos[2]    = -0.061525;
-        gs.euler[0]  = 180.0; // 180 deg around X to flip gripper
+        gs.euler[0] = 180.0; // 180 deg around X to flip gripper
 
         ASSERT_TRUE(mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, combined_.c_str()))
           << "attach_gripper() returned false";
@@ -100,8 +100,8 @@ class GripperTest : public ::testing::Test
         ASSERT_GE(model_->nq, 13) << "expected nq >= 13 (7 arm + 6 gripper), got " << model_->nq;
         ASSERT_GE(model_->nu, 8) << "expected nu >= 8 (7 arm + 1 gripper), got " << model_->nu;
 
-        ASSERT_TRUE(mj_kdl::init_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link"))
-          << "init_from_mjcf() returned false";
+        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link"))
+          << "init_robot_from_mjcf() returned false";
         n_ = s_.chain.getNrOfJoints();
         ASSERT_EQ(n_, 7u);
 

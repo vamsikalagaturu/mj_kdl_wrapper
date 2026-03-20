@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(mj_kdl_wrapper VERSION 0.1.0 LANGUAGES CXX)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -25,9 +27,11 @@ message(STATUS "MuJoCo : ${MUJOCO_LIBRARY}")
 find_package(glfw3 REQUIRED)
 find_package(OpenGL REQUIRED)
 
-# orocos-kdl (apt: liborocos-kdl-dev)
+# orocos-kdl (apt: liborocos-kdl-dev, or build from source — see README)
 find_package(orocos_kdl REQUIRED)
 message(STATUS "KDL    : ${orocos_kdl_LIBRARIES}")
+message(STATUS "KDL inc: ${orocos_kdl_INCLUDE_DIRS}")
+message(STATUS "KDL cfg: ${orocos_kdl_DIR}")
 
 # urdfdom (apt: liburdfdom-dev)
 find_package(urdfdom REQUIRED)
@@ -118,7 +122,8 @@ target_link_libraries(mj_kdl_wrapper PRIVATE
 
 target_compile_options(mj_kdl_wrapper PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(mj_kdl_wrapper PRIVATE
-  MUJOCO_PLUGIN_DIR="${MUJOCO_ROOT}/bin/mujoco_plugin")
+  MUJOCO_PLUGIN_DIR="${MUJOCO_ROOT}/bin/mujoco_plugin"
+)
 
 add_executable(export_table_scene tools/export_table_scene.cpp)
 target_link_libraries(export_table_scene PRIVATE mj_kdl_wrapper)
@@ -130,7 +135,29 @@ add_subdirectory(src/examples)
 # Tests
 option(BUILD_TESTS "Build and register tests with CTest" ON)
 if(BUILD_TESTS)
+  enable_testing()
   add_subdirectory(test)
+endif()
+
+# MuJoCo Menagerie (robot model zoo - needed for test_kinova_gen3_menagerie)
+option(FETCH_MENAGERIE "Download MuJoCo Menagerie into third_party/menagerie" OFF)
+if(FETCH_MENAGERIE)
+  set(MENAGERIE_SOURCE_DIR ${CMAKE_SOURCE_DIR}/third_party/menagerie)
+  if(EXISTS ${MENAGERIE_SOURCE_DIR}/README.md)
+    message(STATUS "Menagerie: already present at ${MENAGERIE_SOURCE_DIR}")
+  else()
+    include(FetchContent)
+    message(STATUS "Menagerie: fetching into ${MENAGERIE_SOURCE_DIR}")
+    FetchContent_Declare(
+      mujoco_menagerie
+      GIT_REPOSITORY https://github.com/google-deepmind/mujoco_menagerie.git
+      GIT_TAG        main
+      GIT_SHALLOW    TRUE
+      SOURCE_DIR     ${MENAGERIE_SOURCE_DIR}
+    )
+    FetchContent_MakeAvailable(mujoco_menagerie)
+    message(STATUS "Menagerie: ready at ${MENAGERIE_SOURCE_DIR}")
+  endif()
 endif()
 
 # Install

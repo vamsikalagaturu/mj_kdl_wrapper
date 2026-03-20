@@ -51,9 +51,9 @@ class VelocityTest : public ::testing::Test
 
         ASSERT_TRUE(mj_kdl::build_scene_from_urdfs(&model_, &data_, &sc))
           << "build_scene_from_urdfs() returned false";
-        ASSERT_TRUE(mj_kdl::init_robot(
+        ASSERT_TRUE(mj_kdl::init_robot_from_urdf(
           &s, model_, data_, g_urdf_path.c_str(), "base_link", "EndEffector_Link"))
-          << "init_robot() returned false";
+          << "init_robot_from_urdf() returned false";
 
         n = s.chain.getNrOfJoints();
 

@@ -89,13 +89,13 @@ class DualArmTest : public ::testing::Test
           << "build_scene_from_urdfs() returned false";
         TEST_INFO(model->nbody << " bodies, " << model->nq << " DOFs");
 
-        ASSERT_TRUE(mj_kdl::init_robot(
+        ASSERT_TRUE(mj_kdl::init_robot_from_urdf(
           &arm1, model, data, urdf_.c_str(), "base_link", "EndEffector_Link", ""))
-          << "arm1 init_robot() returned false";
+          << "arm1 init_robot_from_urdf() returned false";
 
-        ASSERT_TRUE(mj_kdl::init_robot(
+        ASSERT_TRUE(mj_kdl::init_robot_from_urdf(
           &arm2, model, data, urdf_.c_str(), "base_link", "EndEffector_Link", "r2_"))
-          << "arm2 init_robot() returned false";
+          << "arm2 init_robot_from_urdf() returned false";
 
         n    = arm1.n_joints;
         fk1  = std::make_unique<KDL::ChainFkSolverPos_recursive>(arm1.chain);
@@ -151,6 +151,17 @@ TEST_F(DualArmTest, DualArmDrift)
                                     << ee1_init.p.y() << ", " << ee1_init.p.z() << "]");
     TEST_INFO("Arm 2 initial EE: [" << ee2_init.p.x() << ", " << ee2_init.p.y() << ", "
                                     << ee2_init.p.z() << "]");
+
+    /* Prime jnt_trq_cmd for both arms so the first update() applies compensation
+     * immediately, not zero torques (which would impart velocity that gravity comp
+     * cannot damp). */
+    {
+        KDL::JntArray g1(n), g2(n);
+        dyn1->JntToGravity(q_home, g1);
+        dyn2->JntToGravity(q_home, g2);
+        for (int j = 0; j < n; ++j) arm1.jnt_trq_cmd[j] = g1(j);
+        for (int j = 0; j < n; ++j) arm2.jnt_trq_cmd[j] = g2(j);
+    }
 
     /* Run 500-step closed-loop gravity compensation. Both arms share the same
      * model/data; step() on arm1 advances the entire world. */

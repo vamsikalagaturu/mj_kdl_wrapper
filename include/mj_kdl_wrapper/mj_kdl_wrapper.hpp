@@ -113,40 +113,38 @@ enum class CtrlMode { POSITION, VELOCITY, TORQUE };
 
 /*
  * Runtime handle for one KDL-tracked articulation inside a MuJoCo scene.
- * Holds borrowed pointers to the scene model/data plus the KDL chain,
- * joint index maps, measured state, and commanded values.
- * model/data are never freed by cleanup(); call destroy_scene() separately.
+ * model/data are borrowed (never freed by cleanup()); call destroy_scene() separately.
  *
  * Workflow:
- *   1. Call init_robot() or init_from_mjcf() - populates index maps and
- *      sizes all state/command vectors to n_joints.
- *   2. Each control step: fill *_cmd, then call update() which applies
- *      *_cmd -> MuJoCo and reads MuJoCo -> *_msr (one-step delay).
+ *   1. Call init_robot_from_urdf() or init_robot_from_mjcf() - populates configuration
+ *      and sizes port vectors to n_joints.
+ *   2. Each control step: read *_msr ports (updated by update()), fill *_cmd ports,
+ *      call update() to apply commands to MuJoCo and read back sensor state.
  */
 struct Robot
 {
-    mjModel                               *model = nullptr;
-    mjData                                *data  = nullptr;
+    /* Configuration - set once by init_robot() / init_from_mjcf(). */
+    mjModel                               *model    = nullptr;
+    mjData                                *data     = nullptr;
     KDL::Chain                             chain;
     int                                    n_joints = 0;
     std::vector<std::string>               joint_names;
     std::vector<std::pair<double, double>> joint_limits;
-    std::vector<int>                       kdl_to_mj_qpos; // KDL index -> MuJoCo qpos address
-    std::vector<int>                       kdl_to_mj_dof;  // KDL index -> MuJoCo dof address
-    std::vector<int> kdl_to_mj_ctrl; // KDL index -> MuJoCo ctrl index (-1 if none)
-    bool             paused = false;
 
-    CtrlMode ctrl_mode = CtrlMode::POSITION;
+    /* Ports - read/written each control cycle. */
+    CtrlMode            ctrl_mode    = CtrlMode::POSITION;
+    bool                paused       = false;
+    std::vector<double> jnt_pos_msr; // [rad]   - measured joint positions   (written by update())
+    std::vector<double> jnt_vel_msr; // [rad/s] - measured joint velocities  (written by update())
+    std::vector<double> jnt_trq_msr; // [Nm]    - bias torques (grav+Cor)    (written by update())
+    std::vector<double> jnt_pos_cmd; // [rad]   - position setpoints         (POSITION mode)
+    std::vector<double> jnt_vel_cmd; // [rad/s] - velocity setpoints         (VELOCITY mode)
+    std::vector<double> jnt_trq_cmd; // [Nm]    - torque commands            (TORQUE mode)
 
-    /* Measured state - populated by update(). */
-    std::vector<double> jnt_pos_msr; // [rad]   - joint positions
-    std::vector<double> jnt_vel_msr; // [rad/s] - joint velocities
-    std::vector<double> jnt_trq_msr; // [Nm]    - bias torques (gravity + Coriolis)
-
-    /* Commanded values - applied to MuJoCo by update(). */
-    std::vector<double> jnt_pos_cmd; // [rad]   - position setpoints  (POSITION mode)
-    std::vector<double> jnt_vel_cmd; // [rad/s] - velocity setpoints  (VELOCITY mode)
-    std::vector<double> jnt_trq_cmd; // [Nm]    - torque commands     (TORQUE mode)
+    /* Internal state - populated by init_robot() / init_from_mjcf(). */
+    std::vector<int>    kdl_to_mj_qpos; // KDL index -> MuJoCo qpos address
+    std::vector<int>    kdl_to_mj_dof;  // KDL index -> MuJoCo dof address
+    std::vector<int>    kdl_to_mj_ctrl; // KDL index -> MuJoCo ctrl index (-1 if none)
 };
 
 /*
@@ -225,7 +223,7 @@ bool save_model_xml(const mjModel *model, const char *path);
 /*
  * Build KDL chain from a compiled MuJoCo model (no URDF required).
  * Traverses the body tree from base_body to tip_body.
- * @param[out] s          Robot populated with chain, joint_names, joint_limits, index maps.
+ * @param[out] r          Robot populated with chain, joint_names, joint_limits, index maps.
  * @param[in]  model      Compiled MuJoCo model.
  * @param[in]  data       MuJoCo data pointer.
  * @param[in]  base_body  Name of the chain root body (not included as a segment).
@@ -233,12 +231,12 @@ bool save_model_xml(const mjModel *model, const char *path);
  * @param[in]  prefix     Optional body/joint name prefix for multi-robot disambiguation.
  * @return true on success.
  */
-bool init_from_mjcf(Robot *s,
-  mjModel                 *model,
-  mjData                  *data,
-  const char              *base_body,
-  const char              *tip_body,
-  const char              *prefix = "");
+bool init_robot_from_mjcf(Robot *r,
+  mjModel                       *model,
+  mjData                        *data,
+  const char                    *base_body,
+  const char                    *tip_body,
+  const char                    *prefix = "");
 
 /*
  * Gripper attachment spec.
@@ -247,9 +245,14 @@ struct GripperSpec
 {
     const char *mjcf_path = nullptr;     // gripper MJCF file path
     const char *attach_to = nullptr;     // body name in arm MJCF to attach gripper base to
-    double      pos[3]    = { 0, 0, 0 }; // position offset from attach_to body
-    double      euler[3]  = { 0, 0, 0 }; // orientation offset, extrinsic XYZ Euler angles [degrees]
+    double      pos[3]    = { 0, 0, 0 };   // position offset from attach_to body
+    double      euler[3]  = { 0, 0, 0 };   // orientation offset, extrinsic XYZ Euler angles [degrees]
     const char *prefix    = "";          // prefix for gripper names (avoids conflicts)
+
+    /* Optional post-attach patches applied inside attach_gripper(). */
+    bool                                                add_skybox   = false;
+    bool                                                add_floor    = false;
+    std::vector<std::pair<std::string, std::string>>    contact_exclusions; // (body1, body2) pairs
 };
 
 /*
@@ -270,16 +273,13 @@ bool attach_gripper(const char *arm_mjcf, const GripperSpec *g, const char *out_
  * multiple instances of the same robot can coexist without name conflicts.
  * Shared assets (meshes, materials, textures) are copied from the first arm
  * only; subsequent arms reuse them.
- * @param[in]  out_mjcf   Output path for the merged MJCF.
+ * @param[out] out_model  Newly allocated MuJoCo model; caller must free via destroy_scene().
+ * @param[out] out_data   Newly allocated MuJoCo data; caller must free via destroy_scene().
  * @param[in]  arms       Array of robot specs; RobotSpec::path is the MJCF file.
  * @param[in]  n_arms     Number of entries in arms[].
  * @param[in]  add_floor  Insert a ground-plane geom.
  * @param[in]  add_skybox Insert a skybox texture.
  * @return true on success.
- */
-/*
- * @param[out] out_model  Newly allocated MuJoCo model; caller must free via destroy_scene().
- * @param[out] out_data   Newly allocated MuJoCo data; caller must free via destroy_scene().
  */
 bool build_scene_from_mjcfs(mjModel **out_model,
   mjData                            **out_data,
@@ -309,7 +309,7 @@ void destroy_scene(mjModel *model, mjData *data);
 /*
  * Attach a KDL chain to an already-loaded scene (shared model/data  - not owned).
  * Resolves joint names using `prefix` to disambiguate robots in multi-robot scenes.
- * @param[out] s          Robot to populate (chain, joint maps, index maps).
+ * @param[out] r          Robot to populate (chain, joint maps, index maps).
  * @param[in]  model      MuJoCo model from build_scene_from_urdfs(); not freed by cleanup().
  * @param[in]  data       MuJoCo data from build_scene_from_urdfs(); not freed by cleanup().
  * @param[in]  urdf_path  Path to the robot URDF (used to build the KDL chain).
@@ -319,13 +319,13 @@ void destroy_scene(mjModel *model, mjData *data);
  * RobotSpec::prefix.
  * @return true on success, false if the chain or any joint cannot be found.
  */
-bool init_robot(Robot *s,
-  mjModel             *model,
-  mjData              *data,
-  const char          *urdf_path,
-  const char          *base_link,
-  const char          *tip_link,
-  const char          *prefix = "");
+bool init_robot_from_urdf(Robot *r,
+  mjModel               *model,
+  mjData                *data,
+  const char            *urdf_path,
+  const char            *base_link,
+  const char            *tip_link,
+  const char            *prefix = "");
 
 /*
  * Open a GLFW window and initialise MuJoCo visualization contexts.
@@ -389,35 +389,21 @@ bool is_running(const Viewer *v);
 bool render(Viewer *v, const Robot *r);
 
 /*
- * One control cycle: apply *_cmd to MuJoCo, then read MuJoCo into *_msr.
- * Apply step: POSITION -> data->ctrl, VELOCITY -> data->ctrl, TORQUE -> qfrc_applied.
+ * One control cycle: read MuJoCo into *_msr, then apply *_cmd to MuJoCo.
  * Read step: qpos -> jnt_pos_msr, qvel -> jnt_vel_msr, qfrc_bias -> jnt_trq_msr.
+ * Apply step: POSITION -> data->ctrl, VELOCITY -> data->ctrl, TORQUE -> qfrc_applied.
  * Joints with kdl_to_mj_ctrl[i] == -1 are skipped in POSITION/VELOCITY mode.
  */
 void update(Robot *r);
 
 /*
- * Read MuJoCo qpos into q, reordered to match KDL chain joint order.
- * Resizes q to s->n_joints if needed.
- * @param[in]  s  Robot with a valid data pointer.
- * @param[out] q  Joint positions in KDL chain order.
- * @return true on success, false if s->data is null.
- */
-bool get_joint_pos(const Robot *s, KDL::JntArray &q);
-
-/*
  * Write KDL joint positions into MuJoCo qpos (KDL chain order -> MuJoCo addresses).
- * @param[in,out] s  Robot with a valid data pointer.
- * @param[in]     q  Joint positions in KDL chain order; size must equal s->n_joints.
+ * @param[in,out] r            Robot with a valid data pointer.
+ * @param[in]     q            Joint positions in KDL chain order; size must equal r->n_joints.
+ * @param[in]     call_forward If true (default), calls mj_forward() after writing qpos
+ *                             so that body poses and sensor data are updated immediately.
  */
-void set_joint_pos(Robot *s, const KDL::JntArray &q);
-
-/*
- * Apply joint torques by writing into s->data->qfrc_applied (KDL chain order).
- * @param[in,out] s    Simulation state.
- * @param[in]     tau  Torques in KDL chain order; size must equal s->n_joints.
- */
-void set_torques(Robot *s, const KDL::JntArray &tau);
+void set_joint_pos(Robot *r, const KDL::JntArray &q, bool call_forward = true);
 
 /*
  * Add an object to the scene by appending it to spec->objects and rebuilding

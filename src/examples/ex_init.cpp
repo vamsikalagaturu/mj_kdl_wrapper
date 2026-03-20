@@ -46,8 +46,8 @@ int main(int argc, char *argv[])
         std::cerr << "build_scene_from_urdfs() failed\n";
         return 1;
     }
-    if (!mj_kdl::init_robot(&robot, model, data, urdf.c_str(), "base_link", "EndEffector_Link")) {
-        std::cerr << "init_robot() failed\n";
+    if (!mj_kdl::init_robot_from_urdf(&robot, model, data, urdf.c_str(), "base_link", "EndEffector_Link")) {
+        std::cerr << "init_robot_from_urdf() failed\n";
         mj_kdl::destroy_scene(model, data);
         return 1;
     }

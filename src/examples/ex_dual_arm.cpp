@@ -60,7 +60,7 @@ int main(int argc, char *argv[])
     gs.attach_to = "bracelet_link";
     gs.prefix    = "g_";
     gs.pos[2]    = -0.061525;
-    gs.euler[0]  = 180.0; // 180 deg around X to flip gripper
+    gs.euler[0] = 180.0; // 180 deg around X to flip gripper
 
     if (!mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, a1.c_str())
         || !mj_kdl::attach_gripper(arm_mjcf.c_str(), &gs, a2.c_str())) {
@@ -92,9 +92,9 @@ int main(int argc, char *argv[])
     }
 
     mj_kdl::Robot arm1, arm2;
-    if (!mj_kdl::init_from_mjcf(&arm1, model, data, "base_link", "bracelet_link")
-        || !mj_kdl::init_from_mjcf(&arm2, model, data, "r2_base_link", "r2_bracelet_link")) {
-        std::cerr << "init_from_mjcf() failed\n";
+    if (!mj_kdl::init_robot_from_mjcf(&arm1, model, data, "base_link", "bracelet_link")
+        || !mj_kdl::init_robot_from_mjcf(&arm2, model, data, "r2_base_link", "r2_bracelet_link")) {
+        std::cerr << "init_robot_from_mjcf() failed\n";
         mj_kdl::destroy_scene(model, data);
         return 1;
     }

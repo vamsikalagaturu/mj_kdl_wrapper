@@ -64,7 +64,7 @@ class MenagerieTest : public ::testing::Test
         TEST_INFO("model: nq=" << model_->nq << " nv=" << model_->nv << " nbody=" << model_->nbody
                                << " nu=" << model_->nu);
 
-        ASSERT_TRUE(mj_kdl::init_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link"));
+        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link"));
         n_ = s_.chain.getNrOfJoints();
         ASSERT_EQ(n_, 7u);
 
@@ -83,7 +83,8 @@ class MenagerieTest : public ::testing::Test
         mj_forward(model_, data_);
 
         q_home_kdl_.resize(n_);
-        mj_kdl::get_joint_pos(&s_, q_home_kdl_);
+        for (int i = 0; i < s_.n_joints; ++i)
+            q_home_kdl_(i) = s_.data->qpos[s_.kdl_to_mj_qpos[i]];
     }
 
     void TearDown() override
@@ -120,6 +121,8 @@ TEST_F(MenagerieTest, GravityCompDrift)
 
     s_.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
     KDL::JntArray q(n_), g(n_);
+    dyn_->JntToGravity(q_home_kdl_, g);
+    for (unsigned j = 0; j < n_; ++j) s_.jnt_trq_cmd[j] = g(j);
     for (int i = 0; i < 500; ++i) {
         mj_kdl::update(&s_);
         for (unsigned j = 0; j < n_; ++j) q(j) = s_.jnt_pos_msr[j];
