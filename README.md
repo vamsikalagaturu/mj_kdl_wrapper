@@ -196,9 +196,7 @@ mj_kdl::scene_remove_object(&model, &data, &sc, "red_cube");
 
 ## Viewer
 
-The viewer shows:
-- **Top-left**: simulation time, pause state, and selected body name
-- **Top-right**: live joint values (toggle with `J`)
+When a body is selected, its name is shown in the top-left corner of the viewport.
 
 ### Controls
 
@@ -213,10 +211,9 @@ The viewer shows:
 | `D` | Deselect body |
 | `Space` | Pause / resume |
 | `R` | Reset simulation |
-| `J` | Toggle joint value overlay |
 | `Q` / `Esc` | Quit |
 
-`Robot::paused` and `Viewer::show_joints` can also be set programmatically.
+`Robot::paused` can also be set programmatically.
 
 ## Tests
 

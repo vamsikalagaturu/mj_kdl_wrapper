@@ -159,7 +159,6 @@ struct Viewer
     mjvOption   opt{};
     mjvPerturb  pert{};
     mjrContext  con{};
-    bool        show_joints = true; // toggle joint value overlay (key J)
 };
 
 /*

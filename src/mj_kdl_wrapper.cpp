@@ -1352,7 +1352,6 @@ static void cb_keyboard(GLFWwindow *w, int key, int, int action, int)
     if (!g_robot || !g_viewer) return;
     if (key == GLFW_KEY_SPACE) g_robot->paused = !g_robot->paused;
     if (key == GLFW_KEY_R) reset(g_robot);
-    if (key == GLFW_KEY_J) g_viewer->show_joints = !g_viewer->show_joints;
     if (key == GLFW_KEY_D) {
         g_viewer->pert.select = 0;
         g_viewer->pert.active = 0;
@@ -1539,41 +1538,13 @@ bool render(Viewer *v, const Robot *r)
     mjv_updateScene(r->model, r->data, &v->opt, &v->pert, &v->cam, mjCAT_ALL, &v->scn);
     mjr_render(vp, &v->scn, &v->con);
 
-    char        top[256];
-    const char *selname =
-      (v->pert.select > 0) ? mj_id2name(r->model, mjOBJ_BODY, v->pert.select) : nullptr;
-    if (selname)
-        std::snprintf(top,
-          sizeof(top),
-          "t = %.3f s%s\nSelected: %s",
-          r->data->time,
-          r->paused ? "  [PAUSED]" : "",
-          selname);
-    else
-        std::snprintf(
-          top, sizeof(top), "t = %.3f s%s", r->data->time, r->paused ? "  [PAUSED]" : "");
-    mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, vp, top, nullptr, &v->con);
-
-    mjr_overlay(mjFONT_NORMAL,
-      mjGRID_BOTTOMLEFT,
-      vp,
-      "DblClick: select body   D: deselect\n"
-      "Left drag: push force   Right drag: apply torque\n"
-      "No selection  - Left drag: orbit   Right drag: pan   Scroll: zoom\n"
-      "Space: pause/resume   R: reset   J: toggle joints   Q/Esc: quit",
-      nullptr,
-      &v->con);
-
-    if (v->show_joints && r->n_joints > 0 && !r->kdl_to_mj_qpos.empty()) {
-        char jvals[1024];
-        int  off = std::snprintf(jvals, sizeof(jvals), "Joints (rad)\n");
-        for (int i = 0; i < r->n_joints && i < 16 && off < (int)sizeof(jvals) - 32; ++i)
-            off += std::snprintf(jvals + off,
-              sizeof(jvals) - off,
-              "  %-20s %.3f\n",
-              r->joint_names[i].c_str(),
-              r->data->qpos[r->kdl_to_mj_qpos[i]]);
-        mjr_overlay(mjFONT_NORMAL, mjGRID_TOPRIGHT, vp, jvals, nullptr, &v->con);
+    if (v->pert.select > 0) {
+        const char *selname = mj_id2name(r->model, mjOBJ_BODY, v->pert.select);
+        if (selname) {
+            char top[128];
+            std::snprintf(top, sizeof(top), "Selected: %s", selname);
+            mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, vp, top, nullptr, &v->con);
+        }
     }
 
     glfwSwapBuffers(v->window);
