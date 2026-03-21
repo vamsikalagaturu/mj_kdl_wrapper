@@ -1348,10 +1348,8 @@ struct GLMouseState
 static void cb_keyboard(GLFWwindow *w, int key, int, int action, int)
 {
     if (action != GLFW_PRESS) return;
-    if (key == GLFW_KEY_ESCAPE || key == GLFW_KEY_Q) glfwSetWindowShouldClose(w, GLFW_TRUE);
     if (!g_robot || !g_viewer) return;
     if (key == GLFW_KEY_SPACE) g_robot->paused = !g_robot->paused;
-    if (key == GLFW_KEY_R) reset(g_robot);
     if (key == GLFW_KEY_D) {
         g_viewer->pert.select = 0;
         g_viewer->pert.active = 0;
@@ -1537,15 +1535,6 @@ bool render(Viewer *v, const Robot *r)
     mjrRect vp = { 0, 0, w, h };
     mjv_updateScene(r->model, r->data, &v->opt, &v->pert, &v->cam, mjCAT_ALL, &v->scn);
     mjr_render(vp, &v->scn, &v->con);
-
-    if (v->pert.select > 0) {
-        const char *selname = mj_id2name(r->model, mjOBJ_BODY, v->pert.select);
-        if (selname) {
-            char top[128];
-            std::snprintf(top, sizeof(top), "Selected: %s", selname);
-            mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, vp, top, nullptr, &v->con);
-        }
-    }
 
     glfwSwapBuffers(v->window);
     return true;

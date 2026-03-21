@@ -196,8 +196,6 @@ mj_kdl::scene_remove_object(&model, &data, &sc, "red_cube");
 
 ## Viewer
 
-When a body is selected, its name is shown in the top-left corner of the viewport.
-
 ### Controls
 
 | Input | Action |
@@ -210,8 +208,8 @@ When a body is selected, its name is shown in the top-left corner of the viewpor
 | **Right drag** (selected) | **Apply torque** |
 | `D` | Deselect body |
 | `Space` | Pause / resume |
-| `R` | Reset simulation |
-| `Q` / `Esc` | Quit |
+
+Simulation reset, quit, and all other controls are in the MuJoCo left panel.
 
 `Robot::paused` can also be set programmatically.
 
