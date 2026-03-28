@@ -1,0 +1,52 @@
+/**
+ * @defgroup grp_types Data Types
+ * @brief Structs and enums that describe the scene, robot, and visualization state.
+ *
+ * These are the primary configuration and runtime handle types.
+ * Populate them before calling any scene-building or robot-init function.
+ */
+
+/**
+ * @defgroup grp_scene Scene Building
+ * @brief Build and modify MuJoCo scenes from MJCF specifications.
+ *
+ * The primary entry point is build_scene().  Use scene_add_object() and
+ * scene_remove_object() to dynamically modify a running scene.
+ */
+
+/**
+ * @defgroup grp_robot Robot Initialization and Control
+ * @brief Initialize KDL chains, read sensors, and apply joint commands.
+ *
+ * Call init_robot_from_mjcf() once after build_scene(),
+ * then call update() each control step to exchange data with MuJoCo.
+ */
+
+/**
+ * @defgroup grp_viewer Visualization
+ * @brief GLFW window management and the real-time render/tick loop.
+ *
+ * Use init_window_sim() + tick() for the full simulate UI with physics panels.
+ * Use init_window() + render() for a lightweight manual render loop.
+ */
+
+/**
+ * @defgroup grp_recorder Video Recording
+ * @brief Headless H.264 video recording via EGL offscreen rendering and ffmpeg.
+ *
+ * No display or GLFW window is needed.  Requires EGL (libegl-dev) and
+ * ffmpeg in PATH.  Enable with -DBUILD_RECORDER=ON (default).
+ */
+
+/**
+ * @defgroup grp_logging Logging
+ * @brief Control verbosity of library diagnostic messages.
+ */
+
+/**
+ * @defgroup grp_advanced Advanced / Internal Helpers
+ * @brief Low-level mjSpec helpers exposed for custom scene assembly.
+ *
+ * These are used internally by build_scene() and configure_spec().
+ * They are not part of the stable public API and may change between releases.
+ */

@@ -1,0 +1,35 @@
+# Build
+build/
+*.o
+*.so
+*.a
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+Makefile
+.cache/
+
+# Generated temp files from mj_kdl_wrapper
+third_party/menagerie/
+MUJOCO_LOG.TXT
+
+# Third-party dependencies (all fetched at build time)
+install/
+third_party/orocos_kinematics_dynamics/
+third_party/doxygen-awesome-css/
+third_party/lodepng/
+
+# MuJoCo screenshot output
+screenshot.png
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+docs/_tmp*.xml
+third_party/menagerie/**/_tmp*.xml
+docs/html/

@@ -1,0 +1,1545 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Vamsi Kalagaturu
+ * See LICENSE for details. */
+
+#include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+
+#include "simulate.h"
+#include "glfw_adapter.h"
+
+#ifdef MJ_KDL_HAS_EGL
+#include <EGL/egl.h>
+#endif
+
+#include <chrono>
+#include <cstdio>
+#include <cstring>
+#include <cmath>
+#include <iostream>
+#include <sstream>
+#include <filesystem>
+#include <memory>
+#include <mutex>
+#include <thread>
+
+namespace fs = std::filesystem;
+
+namespace mj_kdl {
+
+void ensure_plugins_loaded()
+{
+    static std::once_flag flag;
+    std::call_once(flag, []() {
+        const char *env = std::getenv("MUJOCO_PLUGIN_DIR");
+        const char *dir = env ? env : MUJOCO_PLUGIN_DIR;
+        mj_loadAllPluginLibraries(dir, nullptr);
+    });
+}
+
+// Global viewer/robot pointers - written by init_window / cleanup.
+static Robot  *g_robot  = nullptr;
+static Viewer *g_viewer = nullptr;
+
+
+// Spec-API helpers
+
+void add_skybox_to_spec(mjSpec *spec)
+{
+    mjsBody *wb = mjs_findBody(spec, "world");
+
+    mjsTexture *sky = mjs_addTexture(spec);
+    mjs_setString(mjs_getName(sky->element), "skybox");
+    sky->type    = mjTEXTURE_SKYBOX;
+    sky->builtin = mjBUILTIN_GRADIENT;
+    sky->rgb1[0] = 0.3f;
+    sky->rgb1[1] = 0.45f;
+    sky->rgb1[2] = 0.65f; // top: mid blue
+    sky->rgb2[0] = 0.65f;
+    sky->rgb2[1] = 0.80f;
+    sky->rgb2[2] = 0.95f; // bottom: pale blue
+    sky->width   = 200;
+    sky->height  = 200;
+
+    mjsLight *sun = mjs_addLight(wb, nullptr);
+    sun->type     = mjLIGHT_DIRECTIONAL;
+    sun->pos[0]   = 0;
+    sun->pos[1]   = 0;
+    sun->pos[2]   = 4;
+}
+
+void add_floor_to_spec(mjSpec *spec)
+{
+    mjsBody *wb = mjs_findBody(spec, "world");
+
+    mjsTexture *tex = mjs_addTexture(spec);
+    mjs_setString(mjs_getName(tex->element), "groundplane");
+    tex->type    = mjTEXTURE_2D;
+    tex->builtin = mjBUILTIN_CHECKER;
+    tex->rgb1[0] = 0.2;
+    tex->rgb1[1] = 0.3;
+    tex->rgb1[2] = 0.4;
+    tex->rgb2[0] = 0.1;
+    tex->rgb2[1] = 0.2;
+    tex->rgb2[2] = 0.3;
+    tex->width   = 300;
+    tex->height  = 300;
+
+    mjsMaterial *mat = mjs_addMaterial(spec, nullptr);
+    mjs_setString(mjs_getName(mat->element), "groundplane");
+    // Set texture at slot mjTEXROLE_RGB (1); vector is pre-initialised with 10 empty strings
+    mjs_setInStringVec(mat->textures, mjTEXROLE_RGB, "groundplane");
+    mat->texrepeat[0] = 5;
+    mat->texrepeat[1] = 5;
+    mat->reflectance  = 0.2f;
+
+    mjsGeom *floor = mjs_addGeom(wb, nullptr);
+    mjs_setString(mjs_getName(floor->element), "floor");
+    mjs_setString(floor->material, "groundplane");
+    floor->type        = mjGEOM_PLANE;
+    floor->size[0]     = 10;
+    floor->size[1]     = 10;
+    floor->size[2]     = 0.05;
+    floor->contype     = 1;
+    floor->conaffinity = 1;
+    floor->condim      = 3;
+}
+
+void add_table_to_spec(mjSpec *spec, const TableSpec &t)
+{
+    mjsBody *wb         = mjs_findBody(spec, "world");
+    double   sz         = t.pos[2]; // surface z
+    double   half_thick = t.thickness * 0.5;
+    double   top_cz     = sz - half_thick;  // tabletop centre in world
+    double   leg_h      = sz - t.thickness; // leg height (floor->bottom of top)
+
+    mjsBody *tb = mjs_addBody(wb, nullptr);
+    mjs_setString(mjs_getName(tb->element), "table");
+    tb->pos[0] = t.pos[0];
+    tb->pos[1] = t.pos[1];
+    tb->pos[2] = top_cz;
+
+    // tabletop
+    mjsGeom *top = mjs_addGeom(tb, nullptr);
+    mjs_setString(mjs_getName(top->element), "table_top");
+    top->type    = mjGEOM_BOX;
+    top->size[0] = t.top_size[0];
+    top->size[1] = t.top_size[1];
+    top->size[2] = half_thick;
+    for (int k = 0; k < 4; ++k) top->rgba[k] = t.rgba[k];
+    top->contype     = 1;
+    top->conaffinity = 1;
+    top->condim      = 3;
+
+    // 4 legs (only if there's room)
+    if (leg_h > 0.0) {
+        double       half_leg      = leg_h * 0.5;
+        double       leg_rel_z     = -(sz * 0.5); // relative to body = -half_thick - half_leg
+        double       lx            = t.top_size[0] - t.leg_radius;
+        double       ly            = t.top_size[1] - t.leg_radius;
+        const double corners[4][2] = { { lx, ly }, { -lx, ly }, { lx, -ly }, { -lx, -ly } };
+        for (int i = 0; i < 4; ++i) {
+            mjsGeom *leg = mjs_addGeom(tb, nullptr);
+            char     nm[32];
+            std::snprintf(nm, sizeof(nm), "table_leg%d", i);
+            mjs_setString(mjs_getName(leg->element), nm);
+            leg->type    = mjGEOM_CYLINDER;
+            leg->size[0] = t.leg_radius;
+            leg->size[1] = half_leg;
+            leg->pos[0]  = corners[i][0];
+            leg->pos[1]  = corners[i][1];
+            leg->pos[2]  = leg_rel_z;
+            for (int k = 0; k < 4; ++k) leg->rgba[k] = t.leg_rgba[k];
+            leg->contype     = 1;
+            leg->conaffinity = 1;
+            leg->condim      = 3;
+        }
+    }
+}
+
+void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
+{
+    mjsBody *wb = mjs_findBody(spec, "world");
+    for (const auto &obj : objects) {
+        mjsBody *ob = mjs_addBody(wb, nullptr);
+        mjs_setString(mjs_getName(ob->element), obj.name.c_str());
+        ob->pos[0] = obj.pos[0];
+        ob->pos[1] = obj.pos[1];
+        ob->pos[2] = obj.pos[2];
+
+        if (!obj.fixed) {
+            mjsJoint *fj = mjs_addJoint(ob, nullptr);
+            mjs_setString(mjs_getName(fj->element), (obj.name + "_joint").c_str());
+            fj->type = mjJNT_FREE;
+        }
+
+        mjsGeom *g = mjs_addGeom(ob, nullptr);
+        mjs_setString(mjs_getName(g->element), (obj.name + "_geom").c_str());
+        switch (obj.shape) {
+        case Shape::BOX:
+            g->type = mjGEOM_BOX;
+            break;
+        case Shape::SPHERE:
+            g->type = mjGEOM_SPHERE;
+            break;
+        case Shape::CYLINDER:
+            g->type = mjGEOM_CYLINDER;
+            break;
+        }
+        g->size[0] = obj.size[0];
+        g->size[1] = obj.size[1];
+        g->size[2] = obj.size[2];
+        g->mass    = obj.mass;
+        for (int k = 0; k < 4; ++k) g->rgba[k] = obj.rgba[k];
+        for (int k = 0; k < 3; ++k) g->friction[k] = obj.friction[k];
+        g->contype     = 1;
+        g->conaffinity = 1;
+        g->condim      = obj.condim;
+    }
+}
+
+void configure_spec(mjSpec *spec, const SceneSpec *sc)
+{
+    spec->option.timestep         = sc->timestep;
+    spec->option.gravity[2]       = sc->gravity_z;
+    spec->compiler.balanceinertia = 1;
+    spec->compiler.discardvisual  = 0;
+    if (sc->add_skybox) add_skybox_to_spec(spec);
+    if (sc->add_floor) add_floor_to_spec(spec);
+    if (sc->table.enabled) add_table_to_spec(spec, sc->table);
+    if (!sc->objects.empty()) add_objects_to_spec(spec, sc->objects);
+}
+
+// Compile spec into a model and data; spec is always deleted.
+bool compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data)
+{
+    *out_model = mj_compile(spec, nullptr);
+    if (!*out_model) {
+        LOG_ERROR("mj_compile failed: " << mjs_getError(spec));
+        mj_deleteSpec(spec);
+        return false;
+    }
+    LOG_INFO(
+      "scene compiled: nq=" << (*out_model)->nq << " nv=" << (*out_model)->nv
+                            << " nbody=" << (*out_model)->nbody
+    );
+    mj_deleteSpec(spec);
+    *out_data = mj_makeData(*out_model);
+    if (!*out_data) {
+        mj_deleteModel(*out_model);
+        *out_model = nullptr;
+        return false;
+    }
+    return true;
+}
+
+// KDL helpers
+
+// Convert MuJoCo quaternion [w, x, y, z] to KDL::Rotation (KDL expects x, y, z, w).
+static KDL::Rotation mj_quat_to_kdl_rot(const double *q)
+{ return KDL::Rotation::Quaternion(q[1], q[2], q[3], q[0]); }
+
+// Collect all body IDs in the subtree rooted at root_bid (inclusive).
+// MuJoCo stores bodies in topological order (parent always precedes children),
+// so a single forward pass is sufficient.
+static std::vector<int> collect_subtree(const mjModel *model, int root_bid)
+{
+    std::vector<bool> mark(model->nbody, false);
+    mark[root_bid] = true;
+    for (int b = root_bid + 1; b < model->nbody; ++b)
+        if (mark[model->body_parentid[b]]) mark[b] = true;
+    std::vector<int> result;
+    for (int b = root_bid; b < model->nbody; ++b)
+        if (mark[b]) result.push_back(b);
+    return result;
+}
+
+/*
+ * Compute the lumped KDL::RigidBodyInertia for a set of bodies, expressed
+ * in tip_body's local frame.
+ *
+ * Requires data->xpos and data->xmat to be valid (mj_forward must have been
+ * called beforehand).  xmat[9*b] is the body-to-world rotation matrix stored
+ * row-major, so:
+ *   v_world  = R * v_body   where R[r][c] = xmat[9*b + 3*r + c]
+ *   v_body   = R^T * v_world
+ */
+static KDL::RigidBodyInertia compute_tool_inertia(
+  const mjModel          *model,
+  const mjData           *data,
+  int                     tip_bid,
+  const std::vector<int> &tool_bodies
+)
+{
+    // Step 1: total mass and world-frame COM.
+    double total_mass = 0.0;
+    double com_w[3]   = {};
+    for (int b : tool_bodies) {
+        double m = model->body_mass[b];
+        total_mass += m;
+        const double *xp = &data->xpos[3 * b];
+        const double *xm = &data->xmat[9 * b];
+        const double *ip = &model->body_ipos[3 * b]; // COM in body frame
+        for (int a = 0; a < 3; ++a)
+            com_w[a] +=
+              m * (xp[a] + xm[3 * a] * ip[0] + xm[3 * a + 1] * ip[1] + xm[3 * a + 2] * ip[2]);
+    }
+    if (total_mass <= 0.0) return KDL::RigidBodyInertia::Zero();
+    for (int a = 0; a < 3; ++a) com_w[a] /= total_mass;
+
+    // Step 2: combined inertia about com_w, in world frame.
+    double I_w[3][3] = {};
+    for (int b : tool_bodies) {
+        double        m  = model->body_mass[b];
+        const double *xp = &data->xpos[3 * b];
+        const double *xm = &data->xmat[9 * b];
+        const double *ip = &model->body_ipos[3 * b];
+
+        // Body COM in world frame.
+        double r[3];
+        for (int a = 0; a < 3; ++a)
+            r[a] = xp[a] + xm[3 * a] * ip[0] + xm[3 * a + 1] * ip[1] + xm[3 * a + 2] * ip[2];
+
+        /*
+         * Body inertia in world frame: Rf * diag(id) * Rf^T
+         * where Rf = xmat * iquat_R maps from principal (inertia) axes to world.
+         */
+        KDL::Rotation iR = mj_quat_to_kdl_rot(&model->body_iquat[4 * b]);
+        const double *id = &model->body_inertia[3 * b];
+        double        Rf[3][3];
+        for (int row = 0; row < 3; ++row)
+            for (int col = 0; col < 3; ++col) {
+                Rf[row][col] = 0.0;
+                for (int k = 0; k < 3; ++k) Rf[row][col] += xm[3 * row + k] * iR(k, col);
+            }
+        double I_b[3][3] = {};
+        for (int row = 0; row < 3; ++row)
+            for (int col = 0; col < 3; ++col)
+                for (int k = 0; k < 3; ++k) I_b[row][col] += Rf[row][k] * id[k] * Rf[col][k];
+
+        // Parallel-axis theorem: d = body_com - total_com.
+        double d[3] = { r[0] - com_w[0], r[1] - com_w[1], r[2] - com_w[2] };
+        double d2   = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+        for (int a = 0; a < 3; ++a)
+            for (int c = 0; c < 3; ++c) {
+                I_w[a][c] += I_b[a][c];
+                I_w[a][c] += m * ((a == c ? d2 : 0.0) - d[a] * d[c]);
+            }
+    }
+
+    // Step 3: transform COM and inertia into tip_body's local frame.
+    const double *txm = &data->xmat[9 * tip_bid];
+    const double *txp = &data->xpos[3 * tip_bid];
+
+    // com_tip = R_tip^T * (com_w - tip_pos);   R_tip^T[a][j] = txm[3*j+a]
+    double      dv[3] = { com_w[0] - txp[0], com_w[1] - txp[1], com_w[2] - txp[2] };
+    KDL::Vector com_tip(
+      txm[0] * dv[0] + txm[3] * dv[1] + txm[6] * dv[2],
+      txm[1] * dv[0] + txm[4] * dv[1] + txm[7] * dv[2],
+      txm[2] * dv[0] + txm[5] * dv[1] + txm[8] * dv[2]
+    );
+
+    // I_tip = R_tip^T * I_w * R_tip;   I_tip[a][c] = sum_{j,k} txm[3j+a]*I_w[j][k]*txm[3k+c]
+    double I_t[3][3] = {};
+    for (int a = 0; a < 3; ++a)
+        for (int c = 0; c < 3; ++c)
+            for (int j = 0; j < 3; ++j)
+                for (int k = 0; k < 3; ++k)
+                    I_t[a][c] += txm[3 * j + a] * I_w[j][k] * txm[3 * k + c];
+
+    return KDL::RigidBodyInertia(
+      total_mass,
+      com_tip,
+      KDL::RotationalInertia(I_t[0][0], I_t[1][1], I_t[2][2], I_t[0][1], I_t[0][2], I_t[1][2])
+    );
+}
+
+// Extract the full rigid-body inertia for body bid from a compiled mjModel.
+static KDL::RigidBodyInertia mj_body_inertia(const mjModel *model, int bid)
+{
+    double        mass    = model->body_mass[bid];
+    const double *ip      = &model->body_ipos[3 * bid];
+    KDL::Rotation iR      = mj_quat_to_kdl_rot(&model->body_iquat[4 * bid]);
+    const double *id      = &model->body_inertia[3 * bid];
+    double        I[3][3] = {};
+    for (int a = 0; a < 3; a++)
+        for (int b = 0; b < 3; b++)
+            for (int c = 0; c < 3; c++) I[a][b] += iR(a, c) * id[c] * iR(b, c);
+    return KDL::RigidBodyInertia(
+      mass,
+      KDL::Vector(ip[0], ip[1], ip[2]),
+      KDL::RotationalInertia(I[0][0], I[1][1], I[2][2], I[0][1], I[0][2], I[1][2])
+    );
+}
+
+
+static bool build_index_map(Robot *s, const std::string &pfx = "")
+{
+    s->kdl_to_mj_qpos.clear();
+    s->kdl_to_mj_dof.clear();
+    s->kdl_to_mj_ctrl.clear();
+    if (!s->model) return false;
+    for (const auto &name : s->joint_names) {
+        int id = mj_name2id(s->model, mjOBJ_JOINT, (pfx + name).c_str());
+        if (id < 0) {
+            LOG_ERROR(
+              "joint '" << pfx << name
+                        << "' not found in MuJoCo model - check robot prefix or URDF joint names"
+            );
+            return false;
+        }
+        s->kdl_to_mj_qpos.push_back(s->model->jnt_qposadr[id]);
+        int dof = s->model->jnt_dofadr[id];
+        s->kdl_to_mj_dof.push_back(dof);
+        // Find the actuator that drives this joint (mjTRN_JOINT type).
+        int ctrl_idx = -1;
+        for (int ai = 0; ai < s->model->nu; ++ai) {
+            if (
+              s->model->actuator_trntype[ai] == mjTRN_JOINT
+              && s->model->actuator_trnid[2 * ai] == id
+            ) {
+                ctrl_idx = ai;
+                break;
+            }
+        }
+        s->kdl_to_mj_ctrl.push_back(ctrl_idx);
+    }
+    int n = s->n_joints;
+    s->jnt_pos_msr.assign(n, 0.0);
+    s->jnt_vel_msr.assign(n, 0.0);
+    s->jnt_trq_msr.assign(n, 0.0);
+    s->jnt_pos_cmd.assign(n, 0.0);
+    s->jnt_trq_cmd.assign(n, 0.0);
+    return true;
+}
+
+// Build KDL chain from compiled mjModel (no URDF needed)
+
+static bool
+  build_kdl_from_model(Robot *s, mjModel *model, const char *base_body, const char *tip_body)
+{
+    int base_bid = mj_name2id(model, mjOBJ_BODY, base_body);
+    int tip_bid  = mj_name2id(model, mjOBJ_BODY, tip_body);
+    if (base_bid < 0) {
+        LOG_ERROR("base body '" << base_body << "' not found in compiled model");
+        return false;
+    }
+    if (tip_bid < 0) {
+        LOG_ERROR("tip body '" << tip_body << "' not found in compiled model");
+        return false;
+    }
+
+    std::vector<int> bids;
+    for (int b = tip_bid; b != base_bid; b = model->body_parentid[b]) {
+        if (b == 0) {
+            LOG_ERROR(
+              "'" << tip_body << "' is not a descendant of '" << base_body
+                  << "'  - check body hierarchy in the model"
+            );
+            return false;
+        }
+        bids.push_back(b);
+    }
+    std::reverse(bids.begin(), bids.end());
+
+    s->chain = KDL::Chain();
+    s->joint_names.clear();
+    s->joint_limits.clear();
+
+    for (int bid : bids) {
+        const char   *bname = mj_id2name(model, mjOBJ_BODY, bid);
+        KDL::Rotation bR    = mj_quat_to_kdl_rot(&model->body_quat[4 * bid]);
+        KDL::Vector   bv(
+          model->body_pos[3 * bid], model->body_pos[3 * bid + 1], model->body_pos[3 * bid + 2]
+        );
+        KDL::Frame F(bR, bv);
+
+        KDL::Joint jnt(KDL::Joint::None);
+        for (int jid = model->body_jntadr[bid];
+             jid < model->body_jntadr[bid] + model->body_jntnum[bid];
+             ++jid) {
+            if (model->jnt_type[jid] != mjJNT_HINGE && model->jnt_type[jid] != mjJNT_SLIDE)
+                continue;
+            const char *jname = mj_id2name(model, mjOBJ_JOINT, jid);
+            KDL::Vector jp(
+              model->jnt_pos[3 * jid], model->jnt_pos[3 * jid + 1], model->jnt_pos[3 * jid + 2]
+            );
+            KDL::Vector ja(
+              model->jnt_axis[3 * jid], model->jnt_axis[3 * jid + 1], model->jnt_axis[3 * jid + 2]
+            );
+            KDL::Vector           origin = bv + bR * jp;
+            KDL::Vector           axis   = bR * ja;
+            KDL::Joint::JointType jtype =
+              (model->jnt_type[jid] == mjJNT_HINGE) ? KDL::Joint::RotAxis : KDL::Joint::TransAxis;
+            jnt = KDL::Joint(jname ? jname : "", origin, axis, jtype);
+            if (jname) {
+                s->joint_names.push_back(jname);
+                double lo = -M_PI, hi = M_PI;
+                if (model->jnt_limited[jid]) {
+                    lo = model->jnt_range[2 * jid];
+                    hi = model->jnt_range[2 * jid + 1];
+                }
+                s->joint_limits.emplace_back(lo, hi);
+            }
+            break;
+        }
+
+        KDL::RigidBodyInertia inertia = mj_body_inertia(model, bid);
+
+        s->chain.addSegment(KDL::Segment(bname ? bname : "", jnt, F, inertia));
+    }
+    s->n_joints = (int)s->chain.getNrOfJoints();
+    return true;
+}
+
+// Scene API
+
+bool save_model_xml(const mjModel *model, const char *path)
+{
+    char err[2048] = {};
+    int  ok        = mj_saveLastXML(path, model, err, sizeof(err));
+    if (!ok) {
+        LOG_ERROR("mj_saveLastXML failed for '" << path << "': " << err);
+    } else {
+        LOG_INFO("model saved to '" << path << "'");
+    }
+    return ok != 0;
+}
+
+void destroy_scene(mjModel *model, mjData *data)
+{
+    if (data) mj_deleteData(data);
+    if (model) mj_deleteModel(model);
+}
+
+bool attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
+{
+    if (!robot_spec || !a || !a->mjcf_path) return false;
+    ensure_plugins_loaded();
+    LOG_INFO(
+      "attach_to_spec: body='" << (a->attach_to ? a->attach_to : "(null)") << "' prefix='"
+                               << (a->prefix ? a->prefix : "") << "'"
+    );
+
+    char    err[2048] = {};
+    mjSpec *att       = mj_parseXML(a->mjcf_path, nullptr, err, sizeof(err));
+    if (!att) {
+        LOG_ERROR("mj_parseXML failed for attachment '" << a->mjcf_path << "': " << err);
+        return false;
+    }
+
+    mjsBody *attach_body = mjs_findBody(robot_spec, a->attach_to);
+    if (!attach_body) {
+        LOG_ERROR("attach body '" << a->attach_to << "' not found in robot spec");
+        mj_deleteSpec(att);
+        return false;
+    }
+
+    // Create an offset frame under the attach body.
+    mjsFrame *frame = mjs_addFrame(attach_body, nullptr);
+    frame->pos[0]   = a->pos[0];
+    frame->pos[1]   = a->pos[1];
+    frame->pos[2]   = a->pos[2];
+    if (a->euler[0] || a->euler[1] || a->euler[2]) {
+        double        d2r = M_PI / 180.0;
+        KDL::Rotation rot =
+          KDL::Rotation::RPY(a->euler[0] * d2r, a->euler[1] * d2r, a->euler[2] * d2r);
+        double qx, qy, qz, qw;
+        rot.GetQuaternion(qx, qy, qz, qw);
+        frame->quat[0] = qw;
+        frame->quat[1] = qx;
+        frame->quat[2] = qy;
+        frame->quat[3] = qz;
+    }
+
+    // Attach the first root body of the attachment (first body child of worldbody).
+    mjsBody    *att_world = mjs_findBody(att, "world");
+    mjsElement *first     = att_world ? mjs_firstChild(att_world, mjOBJ_BODY, 0) : nullptr;
+    mjsBody    *att_root  = first ? mjs_asBody(first) : nullptr;
+    if (!att_root) {
+        LOG_ERROR("no root body found in attachment spec '" << a->mjcf_path << "'");
+        mj_deleteSpec(att);
+        return false;
+    }
+
+    const char *pfx = a->prefix ? a->prefix : "";
+    if (!mjs_attach(frame->element, att_root->element, pfx, "")) {
+        LOG_ERROR("mjs_attach failed: " << mjs_getError(robot_spec));
+        mj_deleteSpec(att);
+        return false;
+    }
+    mj_deleteSpec(att); // deep-copied into robot_spec; source can be freed
+
+    // Register contact exclusions.
+    for (const auto &ex : a->contact_exclusions) {
+        mjsExclude *exc = mjs_addExclude(robot_spec);
+        mjs_setString(exc->bodyname1, ex.first.c_str());
+        mjs_setString(exc->bodyname2, ex.second.c_str());
+    }
+    return true;
+}
+
+bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
+{
+    if (!sc || sc->robots.empty()) return false;
+    ensure_plugins_loaded();
+    LOG_INFO(
+      "build_scene: " << sc->robots.size() << " robot(s)"
+                      << ", table=" << (sc->table.enabled ? "yes" : "no")
+                      << ", objects=" << sc->objects.size()
+    );
+
+    mjSpec *scene = mj_makeSpec();
+    if (!scene) {
+        LOG_ERROR("mj_makeSpec() failed");
+        return false;
+    }
+    mjsBody *world     = mjs_findBody(scene, "world");
+    bool     first_arm = true;
+
+    char err[2048] = {};
+    for (int ai = 0; ai < (int)sc->robots.size(); ++ai) {
+        const RobotSpec &rs = sc->robots[ai];
+        if (!rs.path) {
+            LOG_ERROR("robots[" << ai << "].path is null");
+            mj_deleteSpec(scene);
+            return false;
+        }
+
+        mjSpec *arm = mj_parseXML(rs.path, nullptr, err, sizeof(err));
+        if (!arm) {
+            LOG_ERROR("mj_parseXML failed for '" << rs.path << "': " << err);
+            mj_deleteSpec(scene);
+            return false;
+        }
+
+        // Inherit physics options (integrator, solver, etc.) from the first arm.
+        if (first_arm) {
+            scene->option = arm->option;
+            first_arm     = false;
+        }
+
+        // Apply attachment chain in order (mount, sensor, gripper, etc.).
+        for (const auto &att : rs.attachments) {
+            if (!attach_to_spec(arm, &att)) {
+                mj_deleteSpec(arm);
+                mj_deleteSpec(scene);
+                return false;
+            }
+        }
+
+        // Create a placement frame in the scene at the desired position/orientation.
+        mjsFrame *place = mjs_addFrame(world, nullptr);
+        place->pos[0]   = rs.pos[0];
+        place->pos[1]   = rs.pos[1];
+        place->pos[2]   = rs.pos[2];
+        if (rs.euler[0] || rs.euler[1] || rs.euler[2]) {
+            double        d2r = M_PI / 180.0;
+            KDL::Rotation rot =
+              KDL::Rotation::RPY(rs.euler[0] * d2r, rs.euler[1] * d2r, rs.euler[2] * d2r);
+            double qx, qy, qz, qw;
+            rot.GetQuaternion(qx, qy, qz, qw);
+            place->quat[0] = qw;
+            place->quat[1] = qx;
+            place->quat[2] = qy;
+            place->quat[3] = qz;
+        }
+
+        // Attach the arm's root body (first child of worldbody) into the scene.
+        mjsBody    *arm_world = mjs_findBody(arm, "world");
+        mjsElement *first     = arm_world ? mjs_firstChild(arm_world, mjOBJ_BODY, 0) : nullptr;
+        mjsBody    *arm_root  = first ? mjs_asBody(first) : nullptr;
+        if (!arm_root) {
+            LOG_ERROR("no root body found in arm spec '" << rs.path << "'");
+            mj_deleteSpec(arm);
+            mj_deleteSpec(scene);
+            return false;
+        }
+
+        const char *pfx = rs.prefix ? rs.prefix : "";
+        if (!mjs_attach(place->element, arm_root->element, pfx, "")) {
+            LOG_ERROR("mjs_attach failed for arm " << ai << ": " << mjs_getError(scene));
+            mj_deleteSpec(arm);
+            mj_deleteSpec(scene);
+            return false;
+        }
+        mj_deleteSpec(arm); // deep-copied into scene; source can be freed
+    }
+
+    // Apply SceneSpec settings: override timestep/gravity, add floor/skybox/table/objects.
+    configure_spec(scene, sc);
+    return compile_and_make_data(scene, out_model, out_data);
+}
+
+bool scene_add_object(mjModel **model, mjData **data, SceneSpec *spec, const SceneObject &obj)
+{
+    spec->objects.push_back(obj);
+    mjModel *nm = nullptr;
+    mjData  *nd = nullptr;
+    if (!build_scene(&nm, &nd, spec)) {
+        spec->objects.pop_back();
+        return false;
+    }
+    destroy_scene(*model, *data);
+    *model = nm;
+    *data  = nd;
+    return true;
+}
+
+bool scene_remove_object(mjModel **model, mjData **data, SceneSpec *spec, const std::string &name)
+{
+    auto it = std::find_if(spec->objects.begin(), spec->objects.end(), [&](const SceneObject &o) {
+        return o.name == name;
+    });
+    if (it == spec->objects.end()) return false;
+    SceneObject removed = *it;
+    spec->objects.erase(it);
+    mjModel *nm = nullptr;
+    mjData  *nd = nullptr;
+    if (!build_scene(&nm, &nd, spec)) {
+        spec->objects.push_back(removed);
+        return false;
+    }
+    destroy_scene(*model, *data);
+    *model = nm;
+    *data  = nd;
+    return true;
+}
+
+// Robot API
+
+bool init_robot_from_mjcf(
+  Robot      *r,
+  mjModel    *model,
+  mjData     *data,
+  const char *base_body,
+  const char *tip_body,
+  const char *prefix,
+  const char *tool_body
+)
+{
+    LOG_INFO(
+      "init_robot_from_mjcf: '" << base_body << "' -> '" << tip_body << "' prefix='"
+                                << (prefix ? prefix : "") << "'"
+                                << (tool_body ? std::string(" tool='") + tool_body + "'" : "")
+    );
+    r->model = model;
+    r->data  = data;
+    if (!build_kdl_from_model(r, model, base_body, tip_body)) return false;
+    if (!build_index_map(r, prefix ? prefix : "")) return false;
+
+    if (tool_body) {
+        int tool_bid = mj_name2id(model, mjOBJ_BODY, tool_body);
+        if (tool_bid < 0) {
+            LOG_ERROR("tool_body '" << tool_body << "' not found in model");
+            return false;
+        }
+        int tip_bid = mj_name2id(model, mjOBJ_BODY, tip_body);
+        // Ensure xpos/xmat are valid for inertia computation.
+        mj_forward(model, data);
+        std::vector<int> subtree = collect_subtree(model, tool_bid);
+        LOG_INFO(
+          "appending lumped tool inertia: " << subtree.size() << " bodies under '" << tool_body
+                                            << "'"
+        );
+        r->chain.addSegment(
+          KDL::Segment(
+            tool_body,
+            KDL::Joint(KDL::Joint::None),
+            KDL::Frame::Identity(),
+            compute_tool_inertia(model, data, tip_bid, subtree)
+          )
+        );
+        // Fixed joints do not count: n_joints remains the same after addSegment.
+    }
+
+    LOG_INFO(
+      "chain ready: " << r->n_joints << " joints [" << base_body << " -> " << tip_body << "]"
+                      << (tool_body ? std::string(" + tool '") + tool_body + "'" : "")
+    );
+    return true;
+}
+
+void cleanup(Robot *r)
+{
+    r->model    = nullptr;
+    r->data     = nullptr;
+    r->chain    = KDL::Chain();
+    r->n_joints = 0;
+    r->joint_names.clear();
+    r->joint_limits.clear();
+    r->ctrl_mode = CtrlMode::POSITION;
+    r->paused    = false;
+    r->jnt_pos_msr.clear();
+    r->jnt_vel_msr.clear();
+    r->jnt_trq_msr.clear();
+    r->jnt_pos_cmd.clear();
+    r->jnt_trq_cmd.clear();
+    r->kdl_to_mj_qpos.clear();
+    r->kdl_to_mj_dof.clear();
+    r->kdl_to_mj_ctrl.clear();
+    if (g_robot == r) g_robot = nullptr;
+}
+
+void set_joint_pos(Robot *r, const KDL::JntArray &q, bool call_forward)
+{
+    if (!r->data) return;
+    int n = std::min((int)q.rows(), r->n_joints);
+    for (int i = 0; i < n; ++i) r->data->qpos[r->kdl_to_mj_qpos[i]] = q(i);
+    if (call_forward) mj_forward(r->model, r->data);
+}
+
+// Simulation API
+
+void step(Robot *s)
+{
+    if (!s->model || !s->data || s->paused) return;
+    if (g_viewer && g_viewer->pert.active)
+        mjv_applyPerturbForce(s->model, s->data, &g_viewer->pert);
+    mj_step(s->model, s->data);
+}
+
+void step_n(Robot *s, int n)
+{
+    for (int i = 0; i < n; ++i) step(s);
+}
+
+void reset(Robot *s)
+{
+    if (s->model && s->data) {
+        mj_resetData(s->model, s->data);
+        mj_forward(s->model, s->data);
+    }
+}
+
+void update(Robot *r)
+{
+    if (!r->data) return;
+    for (int i = 0; i < r->n_joints; ++i) {
+        r->jnt_pos_msr[i] = r->data->qpos[r->kdl_to_mj_qpos[i]];
+        r->jnt_vel_msr[i] = r->data->qvel[r->kdl_to_mj_dof[i]];
+        r->jnt_trq_msr[i] = r->data->qfrc_bias[r->kdl_to_mj_dof[i]];
+        switch (r->ctrl_mode) {
+        case CtrlMode::POSITION:
+            if (r->kdl_to_mj_ctrl[i] >= 0) r->data->ctrl[r->kdl_to_mj_ctrl[i]] = r->jnt_pos_cmd[i];
+            break;
+        case CtrlMode::TORQUE:
+            r->data->qfrc_applied[r->kdl_to_mj_dof[i]] = r->jnt_trq_cmd[i];
+            /* Neutralize position actuators: setting ctrl = qpos zeroes the position
+             * error so they contribute only passive -kv*qvel damping, not the full
+             * kp*(ctrl-qpos) restoring force that would fight qfrc_applied. */
+            if (r->kdl_to_mj_ctrl[i] >= 0) r->data->ctrl[r->kdl_to_mj_ctrl[i]] = r->jnt_pos_msr[i];
+            break;
+        }
+    }
+}
+
+// GLFW/UI
+
+struct GLMouseState
+{
+    bool   btn_left = false, btn_right = false, btn_middle = false;
+    double mouse_x = 0, mouse_y = 0;
+    double last_click_time = -1.0;
+    int    last_click_btn  = -1;
+};
+
+static void cb_keyboard(GLFWwindow *w, int key, int, int action, int)
+{
+    if (action != GLFW_PRESS) return;
+    if (!g_robot || !g_viewer) return;
+    if (key == GLFW_KEY_SPACE) g_robot->paused = !g_robot->paused;
+    if (key == GLFW_KEY_D) {
+        g_viewer->pert.select = 0;
+        g_viewer->pert.active = 0;
+    }
+}
+
+static void cb_mouse_button(GLFWwindow *w, int btn, int act, int)
+{
+    auto *ms       = static_cast<GLMouseState *>(glfwGetWindowUserPointer(w));
+    ms->btn_left   = (glfwGetMouseButton(w, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS);
+    ms->btn_right  = (glfwGetMouseButton(w, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS);
+    ms->btn_middle = (glfwGetMouseButton(w, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS);
+    glfwGetCursorPos(w, &ms->mouse_x, &ms->mouse_y);
+    if (!g_robot || !g_viewer) return;
+
+    if (act == GLFW_PRESS) {
+        double now          = glfwGetTime();
+        bool   dbl          = (now - ms->last_click_time < 0.3) && (btn == ms->last_click_btn);
+        ms->last_click_time = dbl ? -1.0 : now;
+        ms->last_click_btn  = btn;
+
+        if (dbl) {
+            int ww, wh;
+            glfwGetWindowSize(w, &ww, &wh);
+            mjtNum selpnt[3];
+            int    geomid[1] = { -1 }, flexid[1] = { -1 }, skinid[1] = { -1 };
+            int    body = mjv_select(
+              g_robot->model,
+              g_robot->data,
+              &g_viewer->opt,
+              (mjtNum)wh / ww,
+              (mjtNum)ms->mouse_x / ww,
+              (mjtNum)(wh - ms->mouse_y) / wh,
+              &g_viewer->scn,
+              selpnt,
+              geomid,
+              flexid,
+              skinid
+            );
+            if (body > 0) {
+                g_viewer->pert.select     = body;
+                g_viewer->pert.skinselect = skinid[0];
+                mju_copy3(g_viewer->pert.localpos, selpnt);
+                mjv_initPerturb(g_robot->model, g_robot->data, &g_viewer->scn, &g_viewer->pert);
+            } else {
+                g_viewer->pert.select = 0;
+                g_viewer->pert.active = 0;
+            }
+        }
+
+        if (g_viewer->pert.select > 0) {
+            g_viewer->pert.active =
+              (btn == GLFW_MOUSE_BUTTON_LEFT) ? mjPERT_TRANSLATE : mjPERT_ROTATE;
+            mjv_initPerturb(g_robot->model, g_robot->data, &g_viewer->scn, &g_viewer->pert);
+        }
+    } else {
+        g_viewer->pert.active = 0;
+    }
+}
+
+static void cb_mouse_move(GLFWwindow *w, double x, double y)
+{
+    auto *ms = static_cast<GLMouseState *>(glfwGetWindowUserPointer(w));
+    if (!g_robot || !g_viewer || (!ms->btn_left && !ms->btn_right && !ms->btn_middle)) return;
+    double dx = x - ms->mouse_x, dy = y - ms->mouse_y;
+    ms->mouse_x = x;
+    ms->mouse_y = y;
+    int ww, wh;
+    glfwGetWindowSize(w, &ww, &wh);
+    bool shift =
+      (glfwGetKey(w, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS
+       || glfwGetKey(w, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
+    if (g_viewer->pert.select > 0 && g_viewer->pert.active) {
+        // Left drag = MOVE (translate body), Right drag = ROTATE (torque body)
+        mjtMouse act = ms->btn_left    ? (shift ? mjMOUSE_MOVE_H : mjMOUSE_MOVE_V)
+                       : ms->btn_right ? (shift ? mjMOUSE_ROTATE_H : mjMOUSE_ROTATE_V)
+                                       : mjMOUSE_ZOOM;
+        mjv_movePerturb(
+          g_robot->model, g_robot->data, act, dx / wh, dy / wh, &g_viewer->scn, &g_viewer->pert
+        );
+    } else {
+        mjtMouse act = ms->btn_left    ? (shift ? mjMOUSE_ROTATE_H : mjMOUSE_ROTATE_V)
+                       : ms->btn_right ? (shift ? mjMOUSE_MOVE_H : mjMOUSE_MOVE_V)
+                                       : mjMOUSE_ZOOM;
+        mjv_moveCamera(g_robot->model, act, dx / wh, dy / wh, &g_viewer->scn, &g_viewer->cam);
+    }
+}
+
+static void cb_scroll(GLFWwindow *, double, double yoff)
+{
+    if (g_robot && g_viewer)
+        mjv_moveCamera(
+          g_robot->model, mjMOUSE_ZOOM, 0, -0.05 * yoff, &g_viewer->scn, &g_viewer->cam
+        );
+}
+
+/* Hint GLFW to use the Wayland backend on pure Wayland sessions.
+ * On GLFW < 3.4 the platform select API does not exist; GLFW 3.3 auto-detects
+ * via WAYLAND_DISPLAY, so this is a no-op for older installs.
+ * Must be called before the first glfwInit(). */
+static void apply_glfw_platform_hints()
+{
+#if defined(__linux__) && GLFW_VERSION_MAJOR * 100 + GLFW_VERSION_MINOR >= 304
+    if (!getenv("DISPLAY") && getenv("WAYLAND_DISPLAY"))
+        glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_WAYLAND);
+    else
+        glfwInitHint(GLFW_PLATFORM, GLFW_ANY_PLATFORM);
+#endif
+}
+
+bool init_window(Viewer *v, Robot *r, const char *title, int width, int height)
+{
+    if (!r->model) return false;
+    if (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY")) return false;
+    apply_glfw_platform_hints();
+    if (!glfwInit()) return false;
+
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_FALSE);
+    glfwWindowHint(GLFW_SAMPLES, 4);
+
+    v->window = glfwCreateWindow(width, height, title, nullptr, nullptr);
+    if (!v->window) {
+        glfwTerminate();
+        return false;
+    }
+
+    auto *ms = new GLMouseState();
+    glfwSetWindowUserPointer(v->window, ms);
+    glfwSetKeyCallback(v->window, cb_keyboard);
+    glfwSetMouseButtonCallback(v->window, cb_mouse_button);
+    glfwSetCursorPosCallback(v->window, cb_mouse_move);
+    glfwSetScrollCallback(v->window, cb_scroll);
+    glfwSetWindowCloseCallback(v->window, [](GLFWwindow *w) {
+        glfwSetWindowShouldClose(w, GLFW_TRUE);
+    });
+    glfwMakeContextCurrent(v->window);
+    glfwSwapInterval(1);
+
+    if (!glfwGetProcAddress("glGenBuffers")) {
+        delete ms;
+        glfwDestroyWindow(v->window);
+        v->window = nullptr;
+        glfwTerminate();
+        return false;
+    }
+
+    mjv_defaultCamera(&v->cam);
+    mjv_defaultOption(&v->opt);
+    mjv_defaultPerturb(&v->pert);
+    mjv_makeScene(r->model, &v->scn, 2000);
+    mjr_makeContext(r->model, &v->con, mjFONTSCALE_150);
+    v->cam.type      = mjCAMERA_FREE;
+    v->cam.distance  = 2.5;
+    v->cam.azimuth   = 135.0;
+    v->cam.elevation = -20.0;
+    g_robot          = r;
+    g_viewer         = v;
+    return true;
+}
+
+/* Internal state for init_window_sim(): bundles the mj::Simulate object so it
+ * can be stored behind a void* in Viewer._sim_ui.
+ *
+ * Threading: GlfwAdapter (and therefore the GL context) is created INSIDE
+ * render_thread so that glfwMakeContextCurrent() is called on the thread that
+ * will own the context.  RenderLoop() runs on that same thread and processes
+ * Load() requests from the main thread.  tick() does physics only -- the
+ * render thread handles all calls to Render(). */
+struct SimUiState
+{
+    mjvCamera                         cam{};
+    mjvOption                         opt{};
+    mjvPerturb                        pert{};
+    std::unique_ptr<mujoco::Simulate> sim;
+    std::thread                       render_thread;
+    bool                              sim_ready = false;
+    std::mutex                        sim_ready_mtx;
+    std::condition_variable           sim_ready_cv;
+};
+
+void cleanup(Viewer *v)
+{
+    if (v->_sim_ui) {
+        auto *ss             = static_cast<SimUiState *>(v->_sim_ui);
+        ss->sim->exitrequest = 1;
+        if (ss->render_thread.joinable()) ss->render_thread.join();
+        delete ss;
+        v->_sim_ui = nullptr;
+        return;
+    }
+    if (!v->window) return;
+    mjv_freeScene(&v->scn);
+    mjr_freeContext(&v->con);
+    delete static_cast<GLMouseState *>(glfwGetWindowUserPointer(v->window));
+    glfwDestroyWindow(v->window);
+    v->window = nullptr;
+    glfwTerminate();
+    if (g_viewer == v) g_viewer = nullptr;
+}
+
+bool is_running(const Viewer *v)
+{
+    if (!v->window) return false;
+    return !glfwWindowShouldClose(v->window);
+}
+
+bool render(Viewer *v, mjModel *m, mjData *d)
+{
+    if (!v->window) return false;
+    if (glfwWindowShouldClose(v->window)) return false;
+    glfwPollEvents();
+    int w, h;
+    glfwGetFramebufferSize(v->window, &w, &h);
+    mjrRect vp = { 0, 0, w, h };
+    mjv_updateScene(m, d, &v->opt, &v->pert, &v->cam, mjCAT_ALL, &v->scn);
+    mjr_render(vp, &v->scn, &v->con);
+
+    glfwSwapBuffers(v->window);
+    return true;
+}
+
+bool render(Viewer *v, const Robot *r) { return render(v, r->model, r->data); }
+
+bool init_window_sim(Viewer *v, Robot *r, const char *title)
+{
+    if (!r->model) return false;
+    if (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY")) return false;
+
+    // glfwInitHint() is "main thread only" per GLFW docs -- call before spawning.
+    apply_glfw_platform_hints();
+
+    auto *ss = new SimUiState();
+    mjv_defaultCamera(&ss->cam);
+    mjv_defaultOption(&ss->opt);
+    mjv_defaultPerturb(&ss->pert);
+
+    /* Create GlfwAdapter INSIDE the render thread so glfwMakeContextCurrent() is
+     * called there and the GL context is owned by that thread.  RenderLoop() then
+     * runs correctly (gladLoadGL, mjr_makeContext, and all Render() calls stay on
+     * the same thread as the context). */
+    ss->render_thread = std::thread([ss]() {
+        namespace mj = mujoco;
+        ss->sim      = std::make_unique<mj::Simulate>(
+          std::make_unique<mj::GlfwAdapter>(), &ss->cam, &ss->opt, &ss->pert, false
+        );
+        ss->sim->font = 2; // preferred 150%; overwritten by RenderLoop HiDPI detection
+        {
+            std::lock_guard<std::mutex> lk(ss->sim_ready_mtx);
+            ss->sim_ready = true;
+        }
+        ss->sim_ready_cv.notify_one();
+        ss->sim->RenderLoop(); // blocks; GL context lives here
+    });
+
+    // Wait for render thread to construct the Simulate object.
+    {
+        std::unique_lock<std::mutex> lk(ss->sim_ready_mtx);
+        ss->sim_ready_cv.wait(lk, [ss] { return ss->sim_ready; });
+    }
+
+    /* Send load request from this thread; the render loop processes it.
+     * RenderLoop() runs ComputeFontScale() on HiDPI displays (200% on 2x),
+     * overriding the font we set above.  Load() calls RefreshMjrContext with
+     * the current font value, so we correct it here after the first load. */
+    ss->sim->LoadMessage(title);
+    ss->sim->Load(r->model, r->data, title);
+    if (ss->sim->font != 2) {
+        ss->sim->font = 2; // 150%: 0=50% 1=100% 2=150% 3=200%
+        ss->sim->Load(r->model, r->data, title);
+    }
+    {
+        std::unique_lock<std::recursive_mutex> lock(ss->sim->mtx);
+        mj_forward(r->model, r->data);
+    }
+
+    v->_sim_ui = ss;
+    return true;
+}
+
+static bool tick_impl(Viewer *v, mjModel *m, mjData *d, bool paused)
+{
+    using Clock = std::chrono::steady_clock;
+    using Dur   = std::chrono::duration<double>;
+
+    // sim UI path (init_window_sim)
+    if (v->_sim_ui) {
+        auto *ss  = static_cast<SimUiState *>(v->_sim_ui);
+        auto *sim = ss->sim.get();
+
+        if (sim->exitrequest.load()) return false;
+
+        // Real-time sync.
+        auto now = Clock::now();
+        if (v->_tick_t.time_since_epoch().count() != 0) {
+            auto next = v->_tick_t + Dur(m->opt.timestep);
+            if (now < next) std::this_thread::sleep_until(next);
+        }
+        v->_tick_t = Clock::now();
+
+        {
+            std::unique_lock<std::recursive_mutex> lock(sim->mtx);
+            if (sim->run) {
+                if (sim->pert.active) mjv_applyPerturbForce(m, d, &sim->pert);
+                mj_step(m, d);
+                sim->AddToHistory();
+            } else {
+                mj_forward(m, d);
+                sim->speed_changed = true;
+            }
+        }
+
+        // Selected body overlay (double-buffer pattern).
+        if (sim->newtextrequest.load() == 0) {
+            const int sel = sim->pert.select;
+            sim->user_texts_new_.clear();
+            if (sel > 0) {
+                const char *name = mj_id2name(m, mjOBJ_BODY, sel);
+                sim->user_texts_new_.emplace_back(
+                  (int)mjFONT_SHADOW,
+                  (int)mjGRID_TOPRIGHT,
+                  std::string("Selected"),
+                  name ? std::string(name) : std::string("?")
+                );
+            }
+            sim->newtextrequest = 1;
+        }
+
+        // Render is handled by the render thread inside RenderLoop().
+        return !sim->exitrequest.load();
+    }
+
+    // simple viewer path (init_window)
+    if (!v->window || glfwWindowShouldClose(v->window)) return false;
+
+    // Real-time sync: sleep until last tick time + one timestep.
+    auto now = Clock::now();
+    if (v->_tick_t.time_since_epoch().count() != 0) {
+        auto next = v->_tick_t + Dur(m->opt.timestep);
+        if (now < next) std::this_thread::sleep_until(next);
+    }
+    v->_tick_t = Clock::now();
+
+    if (!paused) {
+        if (v->pert.active) mjv_applyPerturbForce(m, d, &v->pert);
+        mj_step(m, d);
+    }
+
+    render(v, m, d); // includes glfwPollEvents + swap
+    return is_running(v);
+}
+
+bool tick(Viewer *v, Robot *r) { return tick_impl(v, r->model, r->data, r->paused); }
+
+bool tick(Viewer *v, mjModel *m, mjData *d) { return tick_impl(v, m, d, false); }
+
+using Seconds = std::chrono::duration<double>;
+
+static constexpr double kSyncMisalign       = 0.1; // max misalign before re-sync (sim seconds)
+static constexpr double kSimRefreshFraction = 0.7; // fraction of refresh budget for physics
+
+void run_simulate_ui(mjModel *m, mjData *d, const char *path, ControlCb physics_cb)
+{
+    namespace mj = mujoco;
+    apply_glfw_platform_hints();
+
+    mjvCamera cam;
+    mjv_defaultCamera(&cam);
+    mjvOption opt;
+    mjv_defaultOption(&opt);
+    mjvPerturb pert;
+    mjv_defaultPerturb(&pert);
+
+    auto sim = std::make_unique<mj::Simulate>(
+      std::make_unique<mj::GlfwAdapter>(), &cam, &opt, &pert, /*is_passive=*/false
+    );
+    sim->font = 2; // preferred 150%; overwritten by HiDPI detection in RenderLoop
+
+    /* Physics thread: real-time sync loop (mirrors PhysicsLoop from main.cc).
+     * Load must happen from this thread so that LoadOnRenderThread() on the
+     * render thread can acknowledge via cond_loadrequest. */
+    std::thread phys([&]() {
+        sim->LoadMessage(path);
+        sim->Load(m, d, path);
+        {
+            std::unique_lock<std::recursive_mutex> lock(sim->mtx);
+            mj_forward(m, d);
+        }
+
+        std::chrono::time_point<mj::Simulate::Clock> syncCPU;
+        mjtNum                                       syncSim = 0;
+
+        while (!sim->exitrequest.load()) {
+            if (sim->run && sim->busywait)
+                std::this_thread::yield();
+            else
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+            {
+                std::unique_lock<std::recursive_mutex> lock(sim->mtx);
+
+                if (sim->run) {
+                    const auto startCPU   = mj::Simulate::Clock::now();
+                    const auto elapsedCPU = startCPU - syncCPU;
+                    double     elapsedSim = d->time - syncSim;
+                    double     slowdown   = 100.0 / sim->percentRealTime[sim->real_time_index];
+                    bool       misaligned =
+                      std::abs(Seconds(elapsedCPU).count() / slowdown - elapsedSim) > kSyncMisalign;
+
+                    if (
+                      elapsedSim < 0 || elapsedCPU.count() < 0
+                      || syncCPU.time_since_epoch().count() == 0 || misaligned || sim->speed_changed
+                    ) {
+                        // Out-of-sync: resync clocks, take one step.
+                        syncCPU            = startCPU;
+                        syncSim            = d->time;
+                        sim->speed_changed = false;
+                        if (physics_cb) physics_cb(m, d);
+                        if (sim->pert.active) mjv_applyPerturbForce(m, d, &sim->pert);
+                        mj_step(m, d);
+                        sim->AddToHistory();
+                    } else {
+                        // In-sync: step until simulation is ahead of CPU or budget exhausted.
+                        double refreshTime = kSimRefreshFraction / sim->refresh_rate;
+                        mjtNum prevSim     = d->time;
+                        while (Seconds((d->time - syncSim) * slowdown)
+                                 < mj::Simulate::Clock::now() - syncCPU
+                               && mj::Simulate::Clock::now() - startCPU < Seconds(refreshTime)) {
+                            if (physics_cb) physics_cb(m, d);
+                            if (sim->pert.active) mjv_applyPerturbForce(m, d, &sim->pert);
+                            mj_step(m, d);
+                            sim->AddToHistory();
+                            if (d->time < prevSim) break; // guard against time reset
+                            prevSim = d->time;
+                        }
+                    }
+                } else {
+                    // Paused: keep rendering up to date.
+                    mj_forward(m, d);
+                    sim->speed_changed = true;
+                }
+            } // sim->mtx released
+
+            /* Update selected-body name overlay (double-buffer pattern).
+             * user_texts_new_ is only written when newtextrequest == 0, i.e.
+             * after the render thread has swapped the previous request. */
+            if (sim->newtextrequest.load() == 0) {
+                const int sel = sim->pert.select;
+                sim->user_texts_new_.clear();
+                if (sel > 0) {
+                    const char *name = mj_id2name(m, mjOBJ_BODY, sel);
+                    sim->user_texts_new_.emplace_back(
+                      (int)mjFONT_SHADOW,
+                      (int)mjGRID_TOPRIGHT,
+                      std::string("Selected"),
+                      name ? std::string(name) : std::string("?")
+                    );
+                }
+                sim->newtextrequest = 1;
+            }
+        }
+    });
+
+    sim->RenderLoop(); // blocks on main thread until window closes
+    phys.join();
+}
+
+// VideoRecorder -- EGL headless offscreen recording via ffmpeg pipe
+
+#ifdef MJ_KDL_HAS_EGL
+
+struct VideoRecorderImpl
+{
+    EGLDisplay           egl_dpy = EGL_NO_DISPLAY;
+    EGLContext           egl_ctx = EGL_NO_CONTEXT;
+    mjvScene             scn{};
+    mjrContext           con{};
+    FILE                *ffmpeg = nullptr;
+    int                  width  = 0;
+    int                  height = 0;
+    std::vector<uint8_t> rgb_buf;
+};
+
+static bool vr_egl_init(VideoRecorderImpl *impl)
+{
+    const EGLint attrs[] = { EGL_RED_SIZE,
+                             8,
+                             EGL_GREEN_SIZE,
+                             8,
+                             EGL_BLUE_SIZE,
+                             8,
+                             EGL_ALPHA_SIZE,
+                             8,
+                             EGL_DEPTH_SIZE,
+                             24,
+                             EGL_STENCIL_SIZE,
+                             8,
+                             EGL_COLOR_BUFFER_TYPE,
+                             EGL_RGB_BUFFER,
+                             EGL_SURFACE_TYPE,
+                             EGL_PBUFFER_BIT,
+                             EGL_RENDERABLE_TYPE,
+                             EGL_OPENGL_BIT,
+                             EGL_NONE };
+
+    impl->egl_dpy = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    if (impl->egl_dpy == EGL_NO_DISPLAY) {
+        LOG_ERROR("EGL: no display (error 0x" << std::hex << eglGetError() << ")");
+        return false;
+    }
+
+    EGLint major = 0, minor = 0;
+    if (!eglInitialize(impl->egl_dpy, &major, &minor)) {
+        LOG_ERROR("EGL: init failed (error 0x" << std::hex << eglGetError() << ")");
+        return false;
+    }
+
+    EGLConfig cfg;
+    EGLint    n = 0;
+    if (!eglChooseConfig(impl->egl_dpy, attrs, &cfg, 1, &n) || n == 0) {
+        LOG_ERROR("EGL: no suitable config");
+        return false;
+    }
+
+    if (!eglBindAPI(EGL_OPENGL_API)) {
+        LOG_ERROR("EGL: bind OpenGL API failed");
+        return false;
+    }
+
+    impl->egl_ctx = eglCreateContext(impl->egl_dpy, cfg, EGL_NO_CONTEXT, nullptr);
+    if (impl->egl_ctx == EGL_NO_CONTEXT) {
+        LOG_ERROR("EGL: context creation failed (error 0x" << std::hex << eglGetError() << ")");
+        return false;
+    }
+
+    if (!eglMakeCurrent(impl->egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, impl->egl_ctx)) {
+        LOG_ERROR("EGL: make current failed (error 0x" << std::hex << eglGetError() << ")");
+        return false;
+    }
+
+    LOG_INFO("EGL " << major << "." << minor << " headless context ready");
+    return true;
+}
+
+static void vr_egl_done(VideoRecorderImpl *impl)
+{
+    if (impl->egl_dpy == EGL_NO_DISPLAY) return;
+    eglMakeCurrent(impl->egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    if (impl->egl_ctx != EGL_NO_CONTEXT) {
+        eglDestroyContext(impl->egl_dpy, impl->egl_ctx);
+        impl->egl_ctx = EGL_NO_CONTEXT;
+    }
+    eglTerminate(impl->egl_dpy);
+    impl->egl_dpy = EGL_NO_DISPLAY;
+}
+
+bool init_video_recorder(
+  VideoRecorder *vr,
+  mjModel       *model,
+  const char    *out_path,
+  int            width,
+  int            height,
+  int            fps
+)
+{
+    if (!vr || !model || !out_path) return false;
+
+    // Set up default camera and options on the user-visible struct.
+    mjv_defaultCamera(&vr->cam);
+    mjv_defaultFreeCamera(model, &vr->cam);
+    mjv_defaultOption(&vr->opt);
+
+    auto *impl   = new VideoRecorderImpl();
+    impl->width  = width;
+    impl->height = height;
+    impl->rgb_buf.resize(static_cast<size_t>(3 * width * height));
+
+    if (!vr_egl_init(impl)) {
+        delete impl;
+        return false;
+    }
+
+    // MuJoCo rendering contexts.
+    mjv_defaultScene(&impl->scn);
+    mjr_defaultContext(&impl->con);
+    mjv_makeScene(model, &impl->scn, 4000);
+    // Shadows cause severe acne in EGL offscreen rendering due to shadow-map
+    // precision limits with no antialiasing; disabled by default.
+    impl->scn.flags[mjRND_SHADOW] = 0;
+    mjr_makeContext(model, &impl->con, mjFONTSCALE_150);
+    mjr_setBuffer(mjFB_OFFSCREEN, &impl->con);
+    mjr_resizeOffscreen(width, height, &impl->con);
+
+    // Launch ffmpeg: reads raw RGB24 frames from stdin, writes H.264 MP4.
+    char cmd[2048];
+    snprintf(
+      cmd,
+      sizeof(cmd),
+      "ffmpeg -y -f rawvideo -vcodec rawvideo -pix_fmt rgb24 -s %dx%d -r %d "
+      "-i pipe:0 -an -vcodec libx264 -pix_fmt yuv420p -preset medium -crf 18 \"%s\"",
+      width,
+      height,
+      fps,
+      out_path
+    );
+    impl->ffmpeg = popen(cmd, "w");
+    if (!impl->ffmpeg) {
+        LOG_ERROR("popen(ffmpeg) failed - is ffmpeg installed and in PATH?");
+        mjr_freeContext(&impl->con);
+        mjv_freeScene(&impl->scn);
+        vr_egl_done(impl);
+        delete impl;
+        return false;
+    }
+
+    vr->_impl = impl;
+    LOG_INFO("VideoRecorder: " << width << "x" << height << " @ " << fps << " fps -> " << out_path);
+    return true;
+}
+
+bool record_frame(VideoRecorder *vr, mjModel *model, mjData *data)
+{
+    if (!vr || !vr->_impl || !model || !data) return false;
+    auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
+
+    mjv_updateScene(model, data, &vr->opt, nullptr, &vr->cam, mjCAT_ALL, &impl->scn);
+
+    mjrRect vp = { 0, 0, impl->width, impl->height };
+    mjr_render(vp, &impl->scn, &impl->con);
+    mjr_readPixels(impl->rgb_buf.data(), nullptr, vp, &impl->con);
+
+    // MuJoCo fills the buffer bottom-to-top; flip before piping to ffmpeg.
+    const int            row_bytes = 3 * impl->width;
+    uint8_t             *buf       = impl->rgb_buf.data();
+    std::vector<uint8_t> tmp(static_cast<size_t>(row_bytes));
+    for (int top = 0, bot = impl->height - 1; top < bot; ++top, --bot) {
+        memcpy(tmp.data(), buf + top * row_bytes, row_bytes);
+        memcpy(buf + top * row_bytes, buf + bot * row_bytes, row_bytes);
+        memcpy(buf + bot * row_bytes, tmp.data(), row_bytes);
+    }
+
+    if (fwrite(buf, 1, impl->rgb_buf.size(), impl->ffmpeg) != impl->rgb_buf.size()) {
+        LOG_ERROR("fwrite to ffmpeg pipe failed");
+        return false;
+    }
+    return true;
+}
+
+bool init_video_recorder(
+  VideoRecorder  *vr,
+  mjModel        *model,
+  const char     *out_path,
+  VideoResolution resolution,
+  int             fps
+)
+{
+    /* 16:9 width for each named height. */
+    int h = static_cast<int>(resolution);
+    int w = h * 16 / 9;
+    return init_video_recorder(vr, model, out_path, w, h, fps);
+}
+
+void cleanup(VideoRecorder *vr)
+{
+    if (!vr || !vr->_impl) return;
+    auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
+    if (impl->ffmpeg) {
+        pclose(impl->ffmpeg);
+        impl->ffmpeg = nullptr;
+    }
+    mjr_freeContext(&impl->con);
+    mjv_freeScene(&impl->scn);
+    vr_egl_done(impl);
+    delete impl;
+    vr->_impl = nullptr;
+}
+
+#else // MJ_KDL_HAS_EGL not defined
+
+bool init_video_recorder(VideoRecorder *, mjModel *, const char *, int, int, int)
+{
+    LOG_ERROR("VideoRecorder requires EGL; rebuild with -DBUILD_RECORDER=ON");
+    return false;
+}
+bool record_frame(VideoRecorder *, mjModel *, mjData *) { return false; }
+void cleanup(VideoRecorder *vr)
+{
+    if (vr) vr->_impl = nullptr;
+}
+
+#endif // MJ_KDL_HAS_EGL
+
+} // namespace mj_kdl

@@ -1,0 +1,87 @@
+# Doxyfile.in -- CMake-configured Doxygen settings for mj-kdl-wrapper.
+# Processed by configure_file(); variables like @VAR@ are substituted.
+#
+# Generate docs:
+#   cmake -B build -DBUILD_DOCS=ON
+#   cmake --build build --target docs
+# Output: build/docs/html/index.html
+
+PROJECT_NAME           = "mj-kdl-wrapper"
+PROJECT_NUMBER         = @PROJECT_VERSION@
+PROJECT_BRIEF          = "MuJoCo + KDL bridge for robot kinematics and dynamics"
+PROJECT_LOGO           =
+
+OUTPUT_DIRECTORY       = @CMAKE_CURRENT_SOURCE_DIR@/docs
+CREATE_SUBDIRS         = NO
+OUTPUT_LANGUAGE        = English
+
+# --- Input ---
+INPUT                  = @CMAKE_CURRENT_SOURCE_DIR@/include \
+                         @CMAKE_CURRENT_SOURCE_DIR@/README.md \
+                         @CMAKE_CURRENT_SOURCE_DIR@/docs/groups.dox \
+                         @CMAKE_CURRENT_SOURCE_DIR@/docs/HOWTO_urdf_to_mjcf.md \
+                         @CMAKE_CURRENT_SOURCE_DIR@/docs/HOWTO_torque_control.md \
+                         @CMAKE_CURRENT_SOURCE_DIR@/src/examples \
+                         @CMAKE_CURRENT_SOURCE_DIR@/test
+RECURSIVE              = YES
+FILE_PATTERNS          = *.hpp *.h *.cpp *.md
+IMAGE_PATH             = @CMAKE_CURRENT_SOURCE_DIR@/docs/screenshots
+EXCLUDE_PATTERNS       = */third_party/* */build/*
+
+# Use README.md as the main page
+USE_MDFILE_AS_MAINPAGE = @CMAKE_CURRENT_SOURCE_DIR@/README.md
+
+# --- Extraction ---
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = NO
+HIDE_UNDOC_MEMBERS     = NO
+SHOW_FILES             = YES
+SHOW_NAMESPACES        = YES
+
+# --- Source browsing ---
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+STRIP_CODE_COMMENTS    = NO
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+
+# --- HTML output ---
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+HTML_FILE_EXTENSION    = .html
+
+# Doxygen Awesome CSS theme
+HTML_HEADER            = @CMAKE_CURRENT_SOURCE_DIR@/docs/doxygen-custom/header.html
+HTML_EXTRA_STYLESHEET  = @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome.css \
+                         @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome-sidebar-only.css
+HTML_EXTRA_FILES       = @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome-darkmode-toggle.js \
+                         @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome-paragraph-link.js \
+                         @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome-interactive-toc.js
+
+# Required by Doxygen Awesome
+GENERATE_TREEVIEW      = YES
+DISABLE_INDEX          = NO
+FULL_SIDEBAR           = NO
+HTML_COLORSTYLE        = LIGHT
+
+# --- LaTeX / other formats ---
+GENERATE_LATEX         = NO
+GENERATE_RTF           = NO
+GENERATE_MAN           = NO
+GENERATE_XML           = NO
+
+# --- Preprocessing ---
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = NO
+PREDEFINED             = MJ_KDL_HAS_EGL
+
+# --- Diagrams ---
+HAVE_DOT               = NO
+
+# --- Warnings ---
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = NO
+WARN_NO_PARAMDOC       = NO
+QUIET                  = NO

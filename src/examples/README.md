@@ -1,0 +1,236 @@
+# Examples
+
+All examples use the Kinova GEN3 7-DOF arm and Robotiq 2F-85 gripper from
+MuJoCo Menagerie.  Requires `-DFETCH_MENAGERIE=ON` at configure time.
+
+Build from the repo root:
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DFETCH_MENAGERIE=ON
+cmake --build build --parallel $(nproc)
+```
+
+Every example accepts `--headless` to skip the GLFW window and run a fixed
+number of physics steps, printing a brief result to stdout.
+
+---
+
+## ex_init
+
+**Scene:** Kinova GEN3 arm (arm only, no gripper).
+
+**What it does:**
+- Loads the arm from `kinova_gen3/gen3.xml` via `build_scene` + `init_robot_from_mjcf`.
+- Prints model dimensions (`nq`, `nu`, `nbody`, `n_joints`) and joint names.
+- Runs forward kinematics at home pose and prints end-effector (EE) position.
+- In GUI mode: sets the arm to the home pose and enters the control loop.
+
+**Control law:** `CtrlMode::TORQUE` — pure KDL gravity compensation.
+
+```
+tau[i] = JntToGravity(q)[i]
+```
+
+**Headless output:** EE position at home pose, then exits.
+
+---
+
+## ex_gravity_comp
+
+**Scene:** Kinova GEN3 arm (arm only, no gripper).
+
+**What it does:**
+- Holds the arm at the home pose using KDL gravity compensation.
+- In GUI mode: detects sim resets (time going backward) and re-seeds the state.
+- In headless mode: runs 500 steps, measures EE drift, and prints it.
+
+**Control law:** `CtrlMode::TORQUE` — KDL gravity compensation.
+
+```
+tau[i] = JntToGravity(q)[i]
+```
+
+**Headless output:** `EE drift after 500 steps: X.XXX mm`
+
+---
+
+## ex_pos_ctrl
+
+**Scene:** Kinova GEN3 arm (arm only, no gripper).
+
+**What it does:**
+- Moves the arm from the home pose to a target pose using a linearly
+  interpolated position setpoint over `kMotionDuration = 2.0 s`.
+- After the trajectory finishes, holds the final position indefinitely.
+
+**Control law:** `CtrlMode::POSITION` — MuJoCo's built-in position actuator.
+
+```
+alpha  = clamp((t - t_start) / kMotionDuration, 0, 1)
+cmd[i] = home[i] + alpha * (target[i] - home[i])
+```
+
+The wrapper's `update()` writes `jnt_pos_cmd` to MuJoCo `ctrl[]` each step;
+the actuator handles the PD tracking internally.
+
+**Headless output:** `max joint error at end: X.XXXX rad` (after motion + 1 s settle).
+
+---
+
+## ex_impedance
+
+**Scene:** Kinova GEN3 arm + Robotiq 2F-85 gripper attached at `bracelet_link`.
+
+**What it does:**
+- Holds the arm at the home pose using a joint-space impedance controller.
+- Gripper cycles fully closed and open every 3 s (`fmod(t, 6) < 3 ? 255 : 0`).
+- KDL chain is built with `tool_body = "g_base"` so gripper inertia is lumped
+  into the last segment — gravity compensation is correct for the full arm+gripper mass.
+
+**Control law:** `CtrlMode::TORQUE` — PD + KDL gravity.
+
+```
+tau[i] = Kp[i] * (home[i] - q[i]) - Kd[i] * dq[i] + JntToGravity(q)[i]
+Kp = [100, 200, 100, 200, 100, 200, 100]  Nm/rad
+Kd = [10,  20,  10,  20,  10,  20,  10 ]  Nm*s/rad
+```
+
+**Headless output:** `EE drift after 200 steps: X.XXX mm`
+
+---
+
+## ex_gripper
+
+**Scene:** Kinova GEN3 arm + Robotiq 2F-85 gripper.
+
+**What it does:**
+- Holds the arm at home via KDL gravity compensation (includes gripper mass).
+- Gripper cycles open/closed every 3 s.
+- Demonstrates the minimal arm+gripper scene setup and `g_base` tool_body usage.
+
+**Control law:** `CtrlMode::TORQUE` — KDL gravity compensation only (no PD restoring force).
+
+```
+tau[i] = JntToGravity(q)[i]
+gripper_ctrl = fmod(t, 6) < 3 ? 255.0 : 0.0
+```
+
+**Headless output:** `sim_time=X.XX s` after 300 steps.
+
+---
+
+## ex_table_scene
+
+**Scene:** Kinova GEN3 + 2F-85 gripper, mounted on a table (`z = 0.7 m` surface)
+with five free objects: 3 boxes (red, green, blue) and 2 spheres (orange, purple).
+
+**What it does:**
+- Builds the full scene via `SceneSpec` with `TableSpec` enabled and five
+  `SceneObject` entries using `Shape::BOX` and `Shape::SPHERE`.
+- Arm holds home pose via KDL gravity compensation; gripper cycles open/closed.
+- Objects sit on the table surface and respond to physics (can be knocked over).
+
+**Control law:** `CtrlMode::TORQUE` — KDL gravity compensation.
+
+```
+tau[i] = JntToGravity(q)[i]          // gravity from scene's gravity_z
+gripper_ctrl = fmod(t, 6) < 3 ? 255.0 : 0.0
+```
+
+**Headless output:** `EE drift after 500 steps: X.XXX mm`
+
+---
+
+## ex_pick
+
+**Scene:** Kinova GEN3 + 2F-85 gripper + orange cube (4 cm, mass 0.1 kg) on the floor.
+
+**What it does:**
+- Runs a scripted pick-and-place sequence via a 6-state machine:
+  `HOME -> PREGRASP -> GRASP -> CLOSE -> LIFT -> HOLD`
+- IK waypoints are solved offline using `KDL::ChainIkSolverPos_NR_JL` with
+  joint limits, seeded from each prior solution.
+- Each state linearly interpolates from the measured pose at state-entry
+  (`q_enter`) to the IK target over a nominal duration, transitioning when
+  both elapsed time and joint error criteria are met (or on timeout).
+
+**Control law:** `CtrlMode::TORQUE` — joint impedance (PD + KDL gravity) throughout all states.
+
+```
+tau[i] = g[i] + Kp[i] * (q_des[i] - q[i]) - Kd[i] * dq[i]
+q_des linearly interpolated: q_enter + alpha * (q_target - q_enter)
+alpha = clamp((t - t_enter) / duration, 0, 1)
+```
+
+State table (durations in seconds):
+
+| State    | Duration | Timeout | Settle tol | Gripper |
+|----------|----------|---------|------------|---------|
+| HOME     | 1.0      | 2.5     | 0.08 rad   | open    |
+| PREGRASP | 2.0      | 4.0     | 0.08 rad   | open    |
+| GRASP    | 2.0      | 4.0     | 0.06 rad   | open    |
+| CLOSE    | 1.5      | 2.5     | (none)     | closed  |
+| LIFT     | 3.0      | 5.0     | 0.08 rad   | closed  |
+| HOLD     | inf      | inf     | (none)     | closed  |
+
+**Headless output:** `cube Z after pick: X.XXX m`
+
+---
+
+## ex_dual_arm
+
+**Scene:** Two Kinova GEN3 arms with 2F-85 grippers in a shared simulation.
+`arm1` at `x = -1.0 m`, `arm2` at `x = +1.0 m` with prefix `r2_`.
+
+**What it does:**
+- Places both robots in one `SceneSpec` with different positions and prefixes.
+- Initialises two independent `Robot` handles and KDL chains from the same
+  compiled `mjModel` by passing matching `base_link`/`bracelet_link` names
+  with the correct prefix (`""` vs `"r2_"`).
+- Both arms hold home pose with PD + KDL gravity; grippers cycle open/closed.
+- `jnt_trq_cmd` is primed before the loop so the very first physics step
+  already gets correct gravity compensation.
+
+**Control law:** `CtrlMode::TORQUE` — PD + KDL gravity for both arms independently.
+
+```
+tau1[i] = Kp[i]*(home[i]-q1[i]) - Kd[i]*dq1[i] + g1[i]
+tau2[i] = Kp[i]*(home[i]-q2[i]) - Kd[i]*dq2[i] + g2[i]
+```
+
+Each arm calls `update()` and `JntToGravity` separately every step.
+
+**Headless output:** EE Cartesian positions for both arms after 600 steps.
+
+---
+
+## ex_record
+
+**Scene:** Kinova GEN3 arm (arm only).
+
+**What it does:**
+- Records a 5 s gravity-compensated simulation to an H.264 MP4 using
+  `VideoRecorder` (EGL offscreen rendering + ffmpeg pipe).
+- No GLFW window is needed.
+- Camera orbits 360 degrees around the arm over the recording duration.
+- Frames are captured at exactly `kFps = 60` Hz regardless of the physics
+  timestep (`steps_per_frame = floor(1 / (fps * dt))`).
+
+**Control law:** `CtrlMode::TORQUE` — KDL gravity compensation.
+
+```
+tau[i] = JntToGravity(q)[i]
+```
+
+**Usage:**
+
+```bash
+./build/ex_record [output.mp4] [360p|480p|720p|1080p|2k|4k]
+# e.g.
+./build/ex_record fly.mp4 720p
+```
+
+Resolution presets map to 16:9 dimensions (`R1080p` = 1920x1080, etc.).
+Default is `1080p`; output file defaults to `sim.mp4`.
+
+**Requires:** `BUILD_RECORDER=ON` (default) and `ffmpeg` in `PATH`.
