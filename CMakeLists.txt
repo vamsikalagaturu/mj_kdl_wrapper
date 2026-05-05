@@ -11,11 +11,20 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
-# MuJoCo — prefer /opt/mujoco-3.6.0, override with -DMUJOCO_ROOT=...
-set(MUJOCO_ROOT "/opt/mujoco-3.6.0" CACHE PATH "MuJoCo install root")
+# MuJoCo — prefer /opt/mujoco-3.8.0, override with -DMUJOCO_ROOT=...
+set(MUJOCO_ROOT "/opt/mujoco-3.8.0" CACHE PATH "MuJoCo install root")
 find_path(MUJOCO_INCLUDE_DIR mujoco/mujoco.h
           PATHS "${MUJOCO_ROOT}/include" /usr/local/include /usr/include
           NO_DEFAULT_PATH REQUIRED)
+file(STRINGS "${MUJOCO_INCLUDE_DIR}/mujoco/mujoco.h" MUJOCO_VERSION_HEADER_LINE
+     REGEX "^#define mjVERSION_HEADER ")
+string(REGEX REPLACE ".*mjVERSION_HEADER +([0-9]+).*" "\\1" MUJOCO_VERSION_HEADER
+       "${MUJOCO_VERSION_HEADER_LINE}")
+if(NOT MUJOCO_VERSION_HEADER STREQUAL "3008000")
+    message(FATAL_ERROR
+      "mj_kdl_wrapper requires MuJoCo 3.8.0 (mjVERSION_HEADER 3008000), "
+      "but found ${MUJOCO_VERSION_HEADER} at ${MUJOCO_INCLUDE_DIR}")
+endif()
 find_library(MUJOCO_LIBRARY mujoco
              PATHS "${MUJOCO_ROOT}/lib" /usr/local/lib /usr/lib /usr/lib/x86_64-linux-gnu
              NO_DEFAULT_PATH REQUIRED)

@@ -694,7 +694,7 @@ bool compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data)
 /**
  * @ingroup grp_advanced
  * Load MuJoCo decoder plugins (STL, OBJ, ...) once at first use.
- * Required since MuJoCo 3.6.0 moved mesh decoders to plugin libraries.
+ * Required for external mesh decoder plugin libraries.
  * Called automatically by all scene-building functions; call explicitly only
  * when building a scene via raw mjSpec APIs without going through the library.
  */

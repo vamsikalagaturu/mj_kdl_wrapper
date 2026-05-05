@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A C++ library bridging **MuJoCo 3.6** physics simulation with **KDL** (Kinematics and Dynamics Library) for robot kinematics/dynamics. The primary target is the Kinova GEN3 7-DOF arm with optional Robotiq 2F-85 gripper support.
+A C++ library bridging **MuJoCo 3.8** physics simulation with **KDL** (Kinematics and Dynamics Library) for robot kinematics/dynamics. The primary target is the Kinova GEN3 7-DOF arm with optional Robotiq 2F-85 gripper support.
 
 ## Build
 
-Requires: MuJoCo 3.6.0 at `/opt/mujoco-3.6.0` (override with `-DMUJOCO_ROOT=...`), and apt packages `liborocos-kdl-dev libglfw3-dev libgl-dev`.
+Requires: MuJoCo 3.8.0 at `/opt/mujoco-3.8.0` (override with `-DMUJOCO_ROOT=...`), and apt packages `liborocos-kdl-dev libglfw3-dev libgl-dev`. Older MuJoCo releases are not supported; CMake validates `mjVERSION_HEADER == 3008000`.
 
 **Always build with all flags and verify tests pass before considering any task complete:**
 

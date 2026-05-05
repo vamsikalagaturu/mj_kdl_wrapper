@@ -7,6 +7,11 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-24.04
+    env:
+      MUJOCO_VERSION: 3.8.0
+      MUJOCO_ROOT: /tmp/mujoco-3.8.0
+      FETCHCONTENT_BASE_DIR: ${{ github.workspace }}/.fetchcontent
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
       - uses: actions/checkout@v4
 
@@ -14,42 +19,73 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y \
+            ccache \
+            ninja-build \
             liborocos-kdl-dev \
             libglfw3-dev \
-            libgl1-mesa-dev \
-            libglu1-mesa-dev \
-            libegl-dev \
-            doxygen \
-            xvfb
+            libgl-dev \
+            libegl-dev
 
-      - name: Install MuJoCo 3.6.0
+      - name: Install docs dependencies
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
-          wget -q https://github.com/google-deepmind/mujoco/releases/download/3.6.0/mujoco-3.6.0-linux-x86_64.tar.gz
-          sudo tar xzf mujoco-3.6.0-linux-x86_64.tar.gz -C /opt
-          rm mujoco-3.6.0-linux-x86_64.tar.gz
+          sudo apt-get install -y \
+            doxygen
+
+      - name: Cache MuJoCo
+        id: cache-mujoco
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MUJOCO_ROOT }}
+          key: mujoco-${{ runner.os }}-${{ env.MUJOCO_VERSION }}
+
+      - name: Install MuJoCo 3.8.0
+        if: steps.cache-mujoco.outputs.cache-hit != 'true'
+        run: |
+          wget -q "https://github.com/google-deepmind/mujoco/releases/download/${MUJOCO_VERSION}/mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
+          tar xzf "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz" -C /tmp
+          rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ github.ref_name }}-
+            ccache-${{ runner.os }}-
 
       - name: Cache FetchContent deps
         uses: actions/cache@v4
         with:
-          path: build/_deps
-          key: fetchcontent-${{ hashFiles('CMakeLists.txt') }}
+          path: ${{ env.FETCHCONTENT_BASE_DIR }}
+          key: fetchcontent-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
 
       - name: Configure
         run: |
-          cmake -B build \
+          docs_flag=OFF
+          if [[ "${GITHUB_REF}" == "refs/heads/main" && "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            docs_flag=ON
+          fi
+          cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DMUJOCO_ROOT="${MUJOCO_ROOT}" \
             -DBUILD_TESTS=ON \
             -DFETCH_MENAGERIE=ON \
-            -DBUILD_DOCS=ON \
+            -DBUILD_DOCS="${docs_flag}" \
+            -DFETCHCONTENT_BASE_DIR="${FETCHCONTENT_BASE_DIR}" \
             -DFETCHCONTENT_UPDATES_DISCONNECTED=ON
 
       - name: Build
-        run: cmake --build build --parallel $(nproc)
+        run: cmake --build build
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
       - name: Build docs
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: cmake --build build --target docs
 
       - name: Upload Pages artifact

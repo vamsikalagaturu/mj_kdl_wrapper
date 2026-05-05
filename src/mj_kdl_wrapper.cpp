@@ -201,6 +201,7 @@ void configure_spec(mjSpec *spec, const SceneSpec *sc)
 {
     spec->option.timestep         = sc->timestep;
     spec->option.gravity[2]       = sc->gravity_z;
+    spec->option.disableflags |= mjDSBL_MULTICCD;
     spec->compiler.balanceinertia = 1;
     spec->compiler.discardvisual  = 0;
     if (sc->add_skybox) add_skybox_to_spec(spec);
