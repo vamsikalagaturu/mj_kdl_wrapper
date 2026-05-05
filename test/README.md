@@ -19,6 +19,17 @@ All tests self-skip if `third_party/menagerie/` is absent.  Fetch it with:
 cmake -B build -DFETCH_MENAGERIE=ON
 ```
 
+| Test | What it covers |
+|------|----------------|
+| `test_init` | `build_scene`, `init_robot_from_mjcf`, cleanup |
+| `test_dual_arm` | multi-robot scene, independent KDL chains |
+| `test_table_scene` | `TableSpec`, `SceneObject`, runtime add/remove |
+| `test_mjcf_load` | arm-only model (nv=7) + arm+gripper model (nq>=13) |
+| `test_mjcf_pos_ctrl` | position trajectory tracking |
+| `test_mjcf_vel_ctrl` | velocity-style convergence control |
+| `test_mjcf_trq_ctrl` | gravity accuracy with gripper mass, impedance drift |
+| `test_mjcf_pick` | full pick-and-place with gripper: cube lifted > 0.20 m |
+
 ---
 
 ### test_init
@@ -56,6 +67,12 @@ Two fixtures:
 
 `CtrlMode::POSITION`.  Linearly interpolates from home to a target pose over 5 s,
 settles 1 s.  Max joint error < 0.05 rad.
+
+### test_mjcf_vel_ctrl
+
+Velocity-style control implemented by integrating a proportional velocity command
+into the position command accepted by the Menagerie actuator model.  The arm
+converges from home to the target pose within the configured joint tolerance.
 
 ### test_mjcf_trq_ctrl
 

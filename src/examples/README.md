@@ -13,6 +13,20 @@ cmake --build build --parallel $(nproc)
 Every example accepts `--headless` to skip the GLFW window and run a fixed
 number of physics steps, printing a brief result to stdout.
 
+| Example | Scene | Main behavior |
+|---------|-------|---------------|
+| `ex_init` | arm only | load MJCF, build KDL chain, print FK |
+| `ex_gravity_comp` | arm only | hold home pose with KDL gravity compensation |
+| `ex_pos_ctrl` | arm only | position trajectory tracking |
+| `ex_vel_ctrl` | arm only | velocity-style convergence control |
+| `ex_gripper` | arm + gripper | gravity compensation with gripper cycling |
+| `ex_impedance` | arm + gripper | joint impedance with gripper inertia |
+| `ex_table_scene` | table + free objects | table/object scene construction |
+| `ex_pick` | floor cube | scripted pick and lift |
+| `ex_table_pick_place` | table + blue cube | scripted tabletop pick, transfer, release, and retreat |
+| `ex_dual_arm` | two arms + grippers | multi-robot scene with independent KDL chains |
+| `ex_record` | arm only | headless MP4 recording |
+
 ---
 
 ## ex_init
@@ -174,6 +188,27 @@ State table (durations in seconds):
 | HOLD     | inf      | inf     | (none)     | closed  |
 
 **Headless output:** `cube Z after pick: X.XXX m`
+
+---
+
+## ex_table_pick_place
+
+**Scene:** Kinova GEN3 + 2F-85 gripper mounted on a table, with a blue cube
+on the tabletop.
+
+**What it does:**
+- Builds a `TableSpec` scene and places the robot base on the tabletop surface.
+- Solves IK waypoints for a table pick, transfer, placement, release, and retreat.
+- Runs a scripted sequence:
+  `HOME -> PICK_ABOVE -> PICK -> CLOSE -> LIFT -> PLACE_ABOVE -> PLACE -> OPEN -> RETREAT -> HOLD`
+
+**Control law:** `CtrlMode::TORQUE` — joint impedance (PD + KDL gravity), matching `ex_pick`.
+
+```
+tau[i] = g[i] + Kp[i] * (q_des[i] - q[i]) - Kd[i] * dq[i]
+```
+
+**Headless output:** `cube final position: [x, y, z] target=[x, y, z] xy_error=X.XXX gripper=open`
 
 ---
 

@@ -257,17 +257,7 @@ All other controls (reset, quit, rendering flags) are in the MuJoCo left panel.
 ctest --test-dir build --output-on-failure
 ```
 
-All tests self-skip when `third_party/menagerie` is absent (requires `-DFETCH_MENAGERIE=ON`):
-
-| Test | What it covers |
-|------|----------------|
-| `test_init` | `build_scene`, `init_robot_from_mjcf`, cleanup |
-| `test_dual_arm` | multi-robot scene, independent KDL chains |
-| `test_table_scene` | `TableSpec`, `SceneObject`, runtime add/remove |
-| `test_mjcf_load` | arm-only model (nv=7) + arm+gripper model (nq>=13) |
-| `test_mjcf_pos_ctrl` | position trajectory tracking |
-| `test_mjcf_trq_ctrl` | gravity accuracy with gripper mass, impedance drift |
-| `test_mjcf_pick` | full pick-and-place with gripper: cube lifted > 0.20 m |
+See [test/README.md](test/README.md) for the full list of tests.
 
 ## Examples
 

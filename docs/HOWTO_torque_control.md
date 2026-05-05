@@ -202,6 +202,8 @@ mj_kdl::init_robot_from_mjcf(&arm2, model, data,
 - `init_robot_from_mjcf()` -- API doc in `mj_kdl_wrapper.hpp`
 - `KDL::ChainDynParam` -- orocos_kdl documentation
 - `test_mjcf_trq_ctrl.cpp` -- gravity accuracy and impedance drift tests
-- `src/examples/mjcf/ex_gripper.cpp` -- single arm + gripper torque control
-- `src/examples/mjcf/ex_impedance.cpp` -- Cartesian impedance with gripper
-- `src/examples/mjcf/ex_dual_arm.cpp` -- two arms, each with gripper
+- `src/examples/ex_gripper.cpp` -- single arm + gripper torque control
+- `src/examples/ex_impedance.cpp` -- joint impedance with gripper
+- `src/examples/ex_pick.cpp` -- scripted floor pick and lift
+- `src/examples/ex_table_pick_place.cpp` -- scripted tabletop pick, place, and retreat
+- `src/examples/ex_dual_arm.cpp` -- two arms, each with gripper
