@@ -31,7 +31,8 @@ static constexpr double kCubeX        = 0.4;
 static constexpr double kCubeY        = 0.0;
 static constexpr double kCubeHS       = 0.02; // cube half-size [m]
 static constexpr double kCubeZ        = kCubeHS;
-static constexpr double kGripperReach = 0.18422; // bracelet_link -> pad tip [m]
+static constexpr double kTcpClearance = 0.02;
+static constexpr double kIkTol        = 2e-3;
 
 static constexpr double kKp[7] = { 100, 200, 100, 200, 100, 200, 100 };
 static constexpr double kKd[7] = { 10, 20, 10, 20, 10, 20, 10 };
@@ -39,6 +40,17 @@ static constexpr double kKd[7] = { 10, 20, 10, 20, 10, 20, 10 };
 static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
 
 static double clamp01(double v) { return std::max(0.0, std::min(1.0, v)); }
+
+static double vertical_reach_to_geom(const mjModel *model, mjData *data, const char *tip_body, const char *geom)
+{
+    mj_forward(model, data);
+    int tip_id  = mj_name2id(model, mjOBJ_BODY, tip_body);
+    int geom_id = mj_name2id(model, mjOBJ_GEOM, geom);
+    if (tip_id < 0 || geom_id < 0) return -1.0;
+    const double *tip_pos  = data->xpos + 3 * tip_id;
+    const double *geom_pos = data->geom_xpos + 3 * geom_id;
+    return std::abs(geom_pos[2] - tip_pos[2]) - model->geom_size[3 * geom_id + 2];
+}
 
 static void lerp_q(const KDL::JntArray &a, const KDL::JntArray &b, double t, KDL::JntArray &out)
 {
@@ -68,6 +80,7 @@ class MjcfPickTest : public testing::Test
     int           fingers_act_ = -1;
     int           cube_jnt_    = -1;
     unsigned      n_           = 0;
+    double        tcp_reach_   = 0.0;
 
     std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_;
     std::unique_ptr<KDL::ChainDynParam>              dyn_;
@@ -135,6 +148,8 @@ class MjcfPickTest : public testing::Test
         ASSERT_GE(fingers_act_, 0) << "g_fingers_actuator not found";
         cube_jnt_ = mj_name2id(model_, mjOBJ_JOINT, "cube_joint");
         ASSERT_GE(cube_jnt_, 0) << "cube_joint not found";
+        tcp_reach_ = vertical_reach_to_geom(model_, data_, "bracelet_link", "g_right_pad2");
+        ASSERT_GT(tcp_reach_, 0.0) << "could not resolve gripper pad geometry g_right_pad2";
 
         // IK setup.
         KDL::JntArray q_min(n_), q_max(n_);
@@ -158,7 +173,7 @@ class MjcfPickTest : public testing::Test
         q_home_.resize(n_);
         for (unsigned i = 0; i < n_; ++i) q_home_(i) = kHomePose[i];
 
-        const double        kGraspZ    = kCubeZ + kGripperReach + 0.02;
+        const double        kGraspZ    = kCubeZ + tcp_reach_ + kTcpClearance;
         const double        kPreGraspZ = kGraspZ + 0.20;
         const double        kLiftZ     = kGraspZ + 0.30;
         const KDL::Rotation kDownRot   = KDL::Rotation::Identity();
@@ -181,8 +196,7 @@ class MjcfPickTest : public testing::Test
         for (auto &wp : wps) {
             KDL::Frame tgt(kDownRot, KDL::Vector(kCubeX, kCubeY, wp.z));
             int        ret = ik_->CartToJnt(*wp.seed, tgt, *wp.out);
-            if (ret < 0)
-                TEST_WARN("IK warning: did not converge for z=" << wp.z << " (ret=" << ret << ")");
+            ASSERT_GE(ret, 0) << "IK failed for z=" << wp.z << " (ret=" << ret << ")";
         }
     }
 
@@ -233,15 +247,13 @@ class MjcfPickTest : public testing::Test
         KDL::JntArray q_des(n_);
 
         while (true) {
-            mj_kdl::update(&s_); // TORQUE: applies old jnt_trq_cmd, reads sensors
+            mj_kdl::update(&s_); // read current sensors
             double alpha = clamp01((data_->time - t_enter) / duration);
             lerp_q(q_enter, q_target, alpha, q_des);
             impedance_ctrl(s_, q_des, n_, *dyn_); // writes jnt_trq_cmd
-            // Apply current torques immediately (same step, no delay).
-            for (unsigned i = 0; i < n_; ++i)
-                data_->qfrc_applied[s_.kdl_to_mj_dof[i]] = s_.jnt_trq_cmd[i];
             data_->ctrl[fingers_act_] = gripper_cmd;
-            mj_step(model_, data_);
+            mj_kdl::update(&s_); // apply current command through the wrapper
+            mj_kdl::step(&s_);
 
             double t_rel     = data_->time - t_enter;
             bool   done_time = t_rel >= duration;
@@ -265,10 +277,9 @@ TEST_F(MjcfPickTest, KDLChain)
 
 TEST_F(MjcfPickTest, IKConvergence)
 {
-    const double        kMaxPosErr = 2e-3; // 2 mm
-    const KDL::Rotation kDownRot   = KDL::Rotation::Identity();
+        const KDL::Rotation kDownRot   = KDL::Rotation::Identity();
 
-    const double kGraspZ    = kCubeZ + kGripperReach + 0.02;
+        const double kGraspZ    = kCubeZ + tcp_reach_ + kTcpClearance;
     const double kPreGraspZ = kGraspZ + 0.20;
     const double kLiftZ     = kGraspZ + 0.30;
 
@@ -292,7 +303,7 @@ TEST_F(MjcfPickTest, IKConvergence)
           "IK " << wp.label << " pos error: " << std::fixed << std::setprecision(3)
                 << pos_err * 1000.0 << " mm"
         );
-        EXPECT_LE(pos_err, kMaxPosErr) << wp.label << " IK error " << pos_err * 1000.0 << " mm";
+            EXPECT_LE(pos_err, kIkTol) << wp.label << " IK error " << pos_err * 1000.0 << " mm";
     }
 }
 

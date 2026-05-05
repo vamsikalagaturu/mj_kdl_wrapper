@@ -117,16 +117,14 @@ int main(int argc, char *argv[])
 
     /*
      * Per-step sequence:
-     *   1. update()  -- refresh *_msr from current state, write old jnt_trq_cmd to qfrc_applied
+     *   1. update()  -- refresh *_msr from current state and apply the previous command
      *   2. Reset check -- if sim time went backward, zero torques and return
      *   3. Compute jnt_trq_cmd from fresh *_msr
-     *   4. Write jnt_trq_cmd directly to qfrc_applied (overrides stale values from step 1)
-     *   5. Set gripper ctrl
+     *   4. Set gripper ctrl
+     *   5. The next update() call applies the freshly computed jnt_trq_cmd.
      */
     auto step_impedance = [&]() {
-        mj_kdl::update(
-          &robot
-        ); // refresh *_msr; old jnt_trq_cmd -> qfrc_applied (overwritten below)
+        mj_kdl::update(&robot); // refresh *_msr; previous jnt_trq_cmd is applied this step
 
         if (data->time < prev_sim_time - 1e-6) {
             // Simulation was reset: restore the home state and re-seed commands.

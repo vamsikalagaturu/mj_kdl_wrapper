@@ -37,7 +37,8 @@ static constexpr double kCubeX        = 0.4;
 static constexpr double kCubeY        = 0.0;
 static constexpr double kCubeHS       = 0.02; // half-size of 4 cm cube
 static constexpr double kCubeZ        = kCubeHS;
-static constexpr double kGripperReach = 0.18422; // bracelet_link -> pad reach along gripper Z
+static constexpr double kTcpClearance = 0.02;
+static constexpr double kIkTol        = 2e-3;
 
 // impedance gains (per joint, matching ex_impedance tuning)
 static constexpr double kKp[7] = { 100, 200, 100, 200, 100, 200, 100 }; // Nm/rad
@@ -86,6 +87,17 @@ static double max_abs_joint_err(const mj_kdl::Robot &robot, const KDL::JntArray 
     for (unsigned i = 0; i < n; ++i)
         max_err = std::max(max_err, std::abs(q_des(i) - robot.jnt_pos_msr[i]));
     return max_err;
+}
+
+static double vertical_reach_to_geom(const mjModel *model, mjData *data, const char *tip_body, const char *geom)
+{
+    mj_forward(model, data);
+    int tip_id  = mj_name2id(model, mjOBJ_BODY, tip_body);
+    int geom_id = mj_name2id(model, mjOBJ_GEOM, geom);
+    if (tip_id < 0 || geom_id < 0) return -1.0;
+    const double *tip_pos  = data->xpos + 3 * tip_id;
+    const double *geom_pos = data->geom_xpos + 3 * geom_id;
+    return std::abs(geom_pos[2] - tip_pos[2]) - model->geom_size[3 * geom_id + 2];
 }
 
 // state machine
@@ -205,7 +217,15 @@ int main(int argc, char *argv[])
     KDL::ChainIkSolverVel_pinv  ik_vel(robot.chain);
     KDL::ChainIkSolverPos_NR_JL ik(robot.chain, q_min, q_max, fk, ik_vel, 500, 1e-5);
 
-    const double        kGraspZ    = kCubeZ + kGripperReach + 0.02;
+    const double tcp_reach = vertical_reach_to_geom(model, data, "bracelet_link", "g_right_pad2");
+    if (tcp_reach <= 0.0) {
+        std::cerr << "could not resolve gripper pad geometry g_right_pad2\n";
+        mj_kdl::cleanup(&robot);
+        mj_kdl::destroy_scene(model, data);
+        return 1;
+    }
+
+    const double        kGraspZ    = kCubeZ + tcp_reach + kTcpClearance;
     const double        kPreGraspZ = kGraspZ + 0.20;
     const double        kLiftZ     = kGraspZ + 0.30;
     const KDL::Rotation kDownRot   = KDL::Rotation::Identity();
@@ -226,8 +246,22 @@ int main(int argc, char *argv[])
     };
     for (auto &wp : wps) {
         KDL::Frame tgt(kDownRot, KDL::Vector(kCubeX, kCubeY, wp.z));
-        if (ik.CartToJnt(*wp.seed, tgt, *wp.out) < 0)
-            std::cerr << "IK warning: did not converge for z=" << wp.z << "\n";
+        if (ik.CartToJnt(*wp.seed, tgt, *wp.out) < 0) {
+            std::cerr << "IK failed for z=" << wp.z << "\n";
+            mj_kdl::cleanup(&robot);
+            mj_kdl::destroy_scene(model, data);
+            return 1;
+        }
+        KDL::Frame fk_out;
+        fk.JntToCart(*wp.out, fk_out);
+        double pos_err = (tgt.p - fk_out.p).Norm();
+        if (pos_err > kIkTol) {
+            std::cerr << "IK pose error " << pos_err << " exceeds tolerance for z=" << wp.z
+                      << "\n";
+            mj_kdl::cleanup(&robot);
+            mj_kdl::destroy_scene(model, data);
+            return 1;
+        }
     }
 
     // state configuration table

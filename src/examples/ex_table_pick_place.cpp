@@ -31,7 +31,8 @@ static constexpr double kPickY       = 0.00;
 static constexpr double kPlaceX      = 0.40;
 static constexpr double kPlaceY      = 0.24;
 static constexpr double kTableZ      = 0.70;
-static constexpr double kReach       = 0.18422; // bracelet_link -> pad tip
+static constexpr double kTcpClearance = 0.02;
+static constexpr double kIkTol        = 2e-3;
 
 static constexpr double kKp[7] = { 100, 200, 100, 200, 100, 200, 100 };
 static constexpr double kKd[7] = { 10, 20, 10, 20, 10, 20, 10 };
@@ -55,6 +56,17 @@ static double max_abs_joint_err(const mj_kdl::Robot &robot, const KDL::JntArray 
     for (unsigned i = 0; i < n; ++i)
         max_err = std::max(max_err, std::abs(q(i) - robot.jnt_pos_msr[i]));
     return max_err;
+}
+
+static double vertical_reach_to_geom(const mjModel *model, mjData *data, const char *tip_body, const char *geom)
+{
+    mj_forward(model, data);
+    int tip_id  = mj_name2id(model, mjOBJ_BODY, tip_body);
+    int geom_id = mj_name2id(model, mjOBJ_GEOM, geom);
+    if (tip_id < 0 || geom_id < 0) return -1.0;
+    const double *tip_pos  = data->xpos + 3 * tip_id;
+    const double *geom_pos = data->geom_xpos + 3 * geom_id;
+    return std::abs(geom_pos[2] - tip_pos[2]) - model->geom_size[3 * geom_id + 2];
 }
 
 static void
@@ -183,31 +195,56 @@ int main(int argc, char *argv[])
     KDL::ChainIkSolverPos_NR_JL ik(robot.chain, q_min, q_max, fk, ik_vel, 500, 1e-5);
     KDL::ChainDynParam          dyn(robot.chain, KDL::Vector(0.0, 0.0, scene.gravity_z));
 
-    const double z_grasp = kCubeHS + kReach + 0.02;
+    const double tcp_reach = vertical_reach_to_geom(model, data, "bracelet_link", "g_right_pad2");
+    if (tcp_reach <= 0.0) {
+        std::cerr << "could not resolve gripper pad geometry g_right_pad2\n";
+        mj_kdl::cleanup(&robot);
+        mj_kdl::destroy_scene(model, data);
+        return 1;
+    }
+
+    const double z_grasp = kCubeHS + tcp_reach + kTcpClearance;
     const double z_above = z_grasp + 0.20;
     const double z_lift  = z_grasp + 0.30;
 
     KDL::JntArray q_pick_above(n), q_pick(n), q_lift(n), q_place_above(n), q_place(n);
     struct Waypoint
     {
-        double               x;
-        double               y;
-        double               z;
+        double               world_x;
+        double               world_y;
+        double               world_z;
         KDL::JntArray       *out;
         const KDL::JntArray *seed;
     };
     Waypoint waypoints[] = {
-        { kPickX, kPickY, z_above, &q_pick_above, &q_home },
-        { kPickX, kPickY, z_grasp, &q_pick, &q_pick_above },
-        { kPickX, kPickY, z_lift, &q_lift, &q_pick },
-        { kPlaceX, kPlaceY, z_above, &q_place_above, &q_lift },
-        { kPlaceX, kPlaceY, z_grasp, &q_place, &q_place_above },
+        { kPickX, kPickY, kTableZ + z_above, &q_pick_above, &q_home },
+        { kPickX, kPickY, kTableZ + z_grasp, &q_pick, &q_pick_above },
+        { kPickX, kPickY, kTableZ + z_lift, &q_lift, &q_pick },
+        { kPlaceX, kPlaceY, kTableZ + z_above, &q_place_above, &q_lift },
+        { kPlaceX, kPlaceY, kTableZ + z_grasp, &q_place, &q_place_above },
     };
+    KDL::Frame world_T_base(KDL::Rotation::Identity(), KDL::Vector(0.0, 0.0, kTableZ));
+    KDL::Frame base_T_world = world_T_base.Inverse();
     for (const auto &wp : waypoints) {
-        KDL::Frame target(KDL::Rotation::Identity(), KDL::Vector(wp.x, wp.y, wp.z));
-        if (ik.CartToJnt(*wp.seed, target, *wp.out) < 0)
-            std::cerr << "IK warning: did not converge for waypoint at [" << wp.x << ", "
-                      << wp.y << ", " << wp.z << "]\n";
+        KDL::Frame world_target(KDL::Rotation::Identity(), KDL::Vector(wp.world_x, wp.world_y, wp.world_z));
+        KDL::Frame base_target = base_T_world * world_target;
+        if (ik.CartToJnt(*wp.seed, base_target, *wp.out) < 0) {
+            std::cerr << "IK failed for waypoint at world [" << wp.world_x << ", " << wp.world_y
+                      << ", " << wp.world_z << "]\n";
+            mj_kdl::cleanup(&robot);
+            mj_kdl::destroy_scene(model, data);
+            return 1;
+        }
+        KDL::Frame fk_out;
+        fk.JntToCart(*wp.out, fk_out);
+        double pos_err = (base_target.p - fk_out.p).Norm();
+        if (pos_err > kIkTol) {
+            std::cerr << "IK pose error " << pos_err << " exceeds tolerance at world ["
+                      << wp.world_x << ", " << wp.world_y << ", " << wp.world_z << "]\n";
+            mj_kdl::cleanup(&robot);
+            mj_kdl::destroy_scene(model, data);
+            return 1;
+        }
     }
 
     const std::vector<Phase> phases = {
@@ -262,10 +299,9 @@ int main(int argc, char *argv[])
                                                 : 1.0;
             lerp_q(q_enter, *phase.target, alpha, q_des);
             impedance_ctrl(robot, q_des, n, dyn);
-            for (unsigned i = 0; i < n; ++i)
-                data->qfrc_applied[robot.kdl_to_mj_dof[i]] = robot.jnt_trq_cmd[i];
             data->ctrl[fingers_act] = phase.gripper_cmd;
             closed                  = phase.gripper_cmd > 0.0;
+            mj_kdl::update(&robot);
 
             double t_rel        = data->time - t_enter;
             bool   done_time    = t_rel >= phase.duration;
@@ -275,7 +311,7 @@ int main(int argc, char *argv[])
             if ((done_time && done_pose) || done_timeout) break;
 
             if (headless) {
-                mj_step(model, data);
+                mj_kdl::step(&robot);
             } else if (!mj_kdl::tick(&viewer, model, data)) {
                 mj_kdl::cleanup(&viewer);
                 mj_kdl::cleanup(&robot);
