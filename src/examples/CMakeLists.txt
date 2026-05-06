@@ -7,6 +7,7 @@ set(EXAMPLES
   ex_impedance
   ex_pick
   ex_table_pick_place
+  ex_table_pour
   ex_table_scene
   ex_dual_arm
   ex_record

@@ -24,6 +24,7 @@ number of physics steps, printing a brief result to stdout.
 | `ex_table_scene` | table + free objects | table/object scene construction |
 | `ex_pick` | floor cube | scripted pick and lift |
 | `ex_table_pick_place` | table + blue cube | scripted tabletop pick, transfer, release, and retreat |
+| `ex_table_pour` | table + transparent receiver | scripted pour from small gripper-held bottle into a tabletop vessel |
 | `ex_dual_arm` | two arms + grippers | multi-robot scene with independent KDL chains |
 | `ex_record` | arm only | headless MP4 recording |
 
@@ -209,6 +210,31 @@ tau[i] = g[i] + Kp[i] * (q_des[i] - q[i]) - Kd[i] * dq[i]
 ```
 
 **Headless output:** `cube final position: [x, y, z] target=[x, y, z] xy_error=X.XXX gripper=open`
+
+---
+
+## ex_table_pour
+
+**Scene:** Kinova GEN3 + 2F-85 gripper mounted on a table, with a transparent
+receiver vessel and small free spheres representing rice or pellets.
+
+**What it does:**
+- Attaches a small gripper-sized bottle to the gripper as a real MJCF tool
+  attachment, so its mass is included through `tool_body = "g_base"`.
+- Initializes the free spheres inside the attached bottle using the bottle body frame.
+- Solves IK waypoints for a pre-pour pose, pour pose, tilted pour pose, shake,
+  retreat, and hold.
+- Uses transparent fixed collision walls for the receiving vessel, so particles
+  can visibly collect inside it.
+
+**Control law:** `CtrlMode::TORQUE` — joint impedance (PD + KDL gravity), matching
+the pick examples.
+
+```
+tau[i] = g[i] + Kp[i] * (q_des[i] - q[i]) - Kd[i] * dq[i]
+```
+
+**Headless output:** `balls in transparent receiver: N/18`
 
 ---
 
