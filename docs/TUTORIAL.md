@@ -1,4 +1,4 @@
-# mj_kdl_wrapper Tutorial
+# Mujoco KDL Wrapper Tutorial
 
 This tutorial builds a simulation application in layers: install the package,
 compile a robot scene, add KDL control, add reset hooks, add objects and cameras,
@@ -57,6 +57,9 @@ sudo tar -xzf mujoco-3.8.0-linux-x86_64.tar.gz -C /opt/
 Configure and build:
 
 ```bash
+git clone https://github.com/secorolab/mj_kdl_wrapper.git
+cd mj_kdl_wrapper
+
 cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DFETCH_MENAGERIE=ON
 cmake --build build --parallel $(nproc)
 ```

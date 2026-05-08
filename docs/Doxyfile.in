@@ -6,7 +6,7 @@
 #   cmake --build build --target docs
 # Output: build/docs/html/index.html
 
-PROJECT_NAME           = "mj-kdl-wrapper"
+PROJECT_NAME           = "Mujoco KDL Wrapper"
 PROJECT_NUMBER         = @PROJECT_VERSION@
 PROJECT_BRIEF          = "MuJoCo + KDL bridge for robot kinematics and dynamics"
 PROJECT_LOGO           =
@@ -55,10 +55,12 @@ HTML_FILE_EXTENSION    = .html
 # Doxygen Awesome CSS theme
 HTML_HEADER            = @CMAKE_CURRENT_SOURCE_DIR@/docs/doxygen-custom/header.html
 HTML_EXTRA_STYLESHEET  = @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome.css \
-                         @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome-sidebar-only.css
+                         @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome-sidebar-only.css \
+                         @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-custom/theme-robot.css \
+                         @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-custom/custom.css
 HTML_EXTRA_FILES       = @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome-darkmode-toggle.js \
-                         @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome-paragraph-link.js \
-                         @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome-interactive-toc.js
+                          @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome-paragraph-link.js \
+                          @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome-interactive-toc.js
 
 # Required by Doxygen Awesome
 GENERATE_TREEVIEW      = YES

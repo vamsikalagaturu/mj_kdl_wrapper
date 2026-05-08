@@ -6,6 +6,9 @@ MuJoCo Menagerie.  Requires `-DFETCH_MENAGERIE=ON` at configure time.
 Build from the repo root:
 
 ```bash
+git clone https://github.com/secorolab/mj_kdl_wrapper.git
+cd mj_kdl_wrapper
+
 cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DFETCH_MENAGERIE=ON
 cmake --build build --parallel $(nproc)
 ```

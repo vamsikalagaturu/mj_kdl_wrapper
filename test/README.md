@@ -3,6 +3,9 @@
 Tests use GoogleTest and are registered with CTest.  Build and run:
 
 ```bash
+git clone https://github.com/secorolab/mj_kdl_wrapper.git
+cd mj_kdl_wrapper
+
 cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTS=ON -DFETCH_MENAGERIE=ON
 cmake --build build --parallel $(nproc)
 

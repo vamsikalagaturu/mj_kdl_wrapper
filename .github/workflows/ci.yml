@@ -51,7 +51,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: third_party/menagerie
-          key: menagerie-${{ runner.os }}-${{ github.run_id }}
+          key: menagerie-${{ runner.os }}-v1
           restore-keys: |
             menagerie-${{ runner.os }}-
 
@@ -59,7 +59,14 @@ jobs:
         if: steps.cache-menagerie.outputs.cache-hit != 'true'
         run: |
           mkdir -p third_party
-          git clone --depth 1 https://github.com/google-deepmind/mujoco_menagerie.git third_party/menagerie
+          if [[ -d third_party/menagerie/.git ]]; then
+            echo "Using restored MuJoCo Menagerie cache"
+          elif [[ -d third_party/menagerie ]]; then
+            echo "third_party/menagerie already exists but is not a git checkout"
+            exit 1
+          else
+            git clone --depth 1 https://github.com/google-deepmind/mujoco_menagerie.git third_party/menagerie
+          fi
 
       - name: Cache ccache
         uses: actions/cache@v4

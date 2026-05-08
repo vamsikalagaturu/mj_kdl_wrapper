@@ -1,4 +1,4 @@
-# mj-kdl-wrapper
+# Mujoco KDL Wrapper
 
 A C++ library bridging [MuJoCo 3.8](https://github.com/google-deepmind/mujoco) physics simulation with [KDL](https://github.com/orocos/orocos_kinematics_dynamics) for robot kinematics and dynamics.
 
@@ -67,6 +67,9 @@ wget https://github.com/google-deepmind/mujoco/releases/download/3.8.0/mujoco-3.
 tar -xzf mujoco-3.8.0-linux-x86_64.tar.gz -C /opt/
 
 sudo apt install libglfw3-dev libgl-dev libegl-dev liborocos-kdl-dev
+
+git clone https://github.com/secorolab/mj_kdl_wrapper.git
+cd mj_kdl_wrapper
 
 cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build --parallel $(nproc)

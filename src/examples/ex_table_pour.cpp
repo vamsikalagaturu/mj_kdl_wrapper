@@ -27,22 +27,22 @@
 
 namespace fs = std::filesystem;
 
-static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
-static constexpr double kTableZ      = 0.70;
-static constexpr double kRobotBackX  = -0.26;
-static constexpr double kJugX        = 0.30;
-static constexpr double kJugY        = 0.14;
-static constexpr double kRetreatX    = kJugX - 0.08;
-static constexpr double kRetreatY    = kJugY - 0.08;
-static constexpr double kJugRadius   = 0.028;
-static constexpr double kJugHeight   = 0.084;
-static constexpr int    kNumBallsGui = 36;
+static constexpr double kHomePose[7]      = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
+static constexpr double kTableZ           = 0.70;
+static constexpr double kRobotBackX       = -0.26;
+static constexpr double kJugX             = 0.30;
+static constexpr double kJugY             = 0.14;
+static constexpr double kRetreatX         = kJugX - 0.08;
+static constexpr double kRetreatY         = kJugY - 0.08;
+static constexpr double kJugRadius        = 0.028;
+static constexpr double kJugHeight        = 0.084;
+static constexpr int    kNumBallsGui      = 36;
 static constexpr int    kNumBallsHeadless = kNumBallsGui;
-static constexpr double kBallRadius  = 0.007;
-static constexpr double kReceiverFrameZ = kTableZ;
-static constexpr double kIkTol       = 3e-3;
-static constexpr double kPourTiltRad = 1.95;
-static constexpr double kTiltOutletZ = kTableZ + 0.18;
+static constexpr double kBallRadius       = 0.007;
+static constexpr double kReceiverFrameZ   = kTableZ;
+static constexpr double kIkTol            = 3e-3;
+static constexpr double kPourTiltRad      = 1.95;
+static constexpr double kTiltOutletZ      = kTableZ + 0.18;
 
 static constexpr double kKp[7] = { 120, 220, 120, 220, 110, 190, 90 };
 static constexpr double kKd[7] = { 12, 22, 12, 22, 11, 18, 9 };
@@ -68,8 +68,12 @@ static double max_abs_joint_err(const mj_kdl::Robot &robot, const KDL::JntArray 
     return max_err;
 }
 
-static void
-  impedance_ctrl(mj_kdl::Robot &robot, const KDL::JntArray &q_des, unsigned n, KDL::ChainDynParam &dyn)
+static void impedance_ctrl(
+  mj_kdl::Robot       &robot,
+  const KDL::JntArray &q_des,
+  unsigned             n,
+  KDL::ChainDynParam  &dyn
+)
 {
     KDL::JntArray q(n), g(n);
     for (unsigned i = 0; i < n; ++i) q(i) = robot.jnt_pos_msr[i];
@@ -82,7 +86,7 @@ static void
 
 static mj_kdl::SceneObject make_ball(int idx)
 {
-    char                name[32];
+    char name[32];
     std::snprintf(name, sizeof(name), "grain_%02d", idx);
     return {
         .name      = name,
@@ -101,9 +105,9 @@ static bool inside_jug(const mjData *data, const mjModel *model, int joint_id)
 {
     const int     qadr = model->jnt_qposadr[joint_id];
     const double *p    = data->qpos + qadr;
-    return std::abs(p[0] - kJugX) < (kJugRadius - 0.012) &&
-           std::abs(p[1] - kJugY) < (kJugRadius - 0.012) &&
-           p[2] > kTableZ + 0.006 && p[2] < kTableZ + kJugHeight + 0.04;
+    return std::abs(p[0] - kJugX) < (kJugRadius - 0.012)
+           && std::abs(p[1] - kJugY) < (kJugRadius - 0.012) && p[2] > kTableZ + 0.006
+           && p[2] < kTableZ + kJugHeight + 0.04;
 }
 
 struct Phase
@@ -118,8 +122,8 @@ struct Phase
 
 int main(int argc, char *argv[])
 {
-    bool headless = false;
-    bool do_record = false;
+    bool        headless    = false;
+    bool        do_record   = false;
     std::string record_path = "table_pour.mp4";
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -127,7 +131,7 @@ int main(int argc, char *argv[])
             headless = true;
         } else if (arg == "--record") {
             do_record = true;
-            headless = true;
+            headless  = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') record_path = argv[++i];
         }
     }
@@ -140,11 +144,11 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    const std::string arm_mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-    const std::string grp_mjcf = (root / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+    const std::string arm_mjcf    = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+    const std::string grp_mjcf    = (root / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
     const std::string bottle_mjcf = (root / "src/examples/assets/mug.xml").string();
     const std::string receiver_mjcf = (root / "src/examples/assets/mug_table.xml").string();
-    const std::string table_mjcf = (root / "src/examples/assets/table.xml").string();
+    const std::string table_mjcf    = (root / "src/examples/assets/table.xml").string();
 
     mj_kdl::AttachmentSpec gripper;
     gripper.mjcf_path = grp_mjcf.c_str();
@@ -168,7 +172,7 @@ int main(int argc, char *argv[])
     robot_spec.attachments.push_back(gripper);
     robot_spec.attachments.push_back(bottle);
 
-    mj_kdl::SceneSpec scene_cfg;
+    mj_kdl::SceneSpec   scene_cfg;
     mj_kdl::SceneObject table{
         .name      = "table",
         .mjcf_path = table_mjcf,
@@ -178,9 +182,9 @@ int main(int argc, char *argv[])
     scene_cfg.objects.push_back(table);
     for (int i = 0; i < num_balls; ++i) scene_cfg.objects.push_back(make_ball(i));
     scene_cfg.objects.push_back(mj_kdl::SceneObject{
-        .name      = "recv",
-        .mjcf_path = receiver_mjcf,
-        .pos       = { kJugX, kJugY, kReceiverFrameZ },
+      .name      = "recv",
+      .mjcf_path = receiver_mjcf,
+      .pos       = { kJugX, kJugY, kReceiverFrameZ },
     });
     scene_cfg.robots.push_back(robot_spec);
 
@@ -191,7 +195,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    KDL::Frame world_T_table_top;
+    KDL::Frame        world_T_table_top;
     const std::string table_top_site = mj_kdl::scene_object_site_name(table, "table_top");
     if (!mj_kdl::get_site_frame(model, data, table_top_site.c_str(), &world_T_table_top)) {
         std::cerr << "table_top site not found\n";
@@ -213,7 +217,7 @@ int main(int argc, char *argv[])
     }
 
     const unsigned n           = robot.chain.getNrOfJoints();
-    const int fingers_act = mj_name2id(model, mjOBJ_ACTUATOR, "g_fingers_actuator");
+    const int      fingers_act = mj_name2id(model, mjOBJ_ACTUATOR, "g_fingers_actuator");
     if (fingers_act < 0) {
         std::cerr << "g_fingers_actuator not found\n";
         mj_kdl::cleanup(&robot);
@@ -264,20 +268,30 @@ int main(int argc, char *argv[])
     mj_kdl::get_site_frame(model, data, "g_pinch", &world_T_tcp);
     const KDL::Vector tcp_outlet = world_T_tcp.Inverse() * world_T_outlet.p;
 
-    const auto outlet_target_to_tcp_target = [&](const KDL::Rotation &tcp_rot, const KDL::Vector &outlet_pos) {
-        return KDL::Frame(tcp_rot, outlet_pos - tcp_rot * tcp_outlet);
-    };
+    const auto outlet_target_to_tcp_target =
+      [&](const KDL::Rotation &tcp_rot, const KDL::Vector &outlet_pos) {
+          return KDL::Frame(tcp_rot, outlet_pos - tcp_rot * tcp_outlet);
+      };
 
     std::array<KDL::Vector, 3> waypoint_pos = {
-        KDL::Vector(kJugX,     kJugY,     kTableZ + 0.27),
-        KDL::Vector(kJugX,     kJugY,     kTableZ + 0.20),
+        KDL::Vector(kJugX, kJugY, kTableZ + 0.27),
+        KDL::Vector(kJugX, kJugY, kTableZ + 0.20),
         KDL::Vector(kRetreatX, kRetreatY, kTableZ + 0.27),
     };
     const auto solve_waypoints = [&](const std::array<KDL::Vector, 3> &pos) {
         Waypoint waypoints[] = {
-            { "pre-pour", base_T_world * outlet_target_to_tcp_target(carry_tcp, pos[0]), &q_pre_pour, &q_home },
-            { "pour",     base_T_world * outlet_target_to_tcp_target(carry_tcp, pos[1]), &q_pour,     &q_pre_pour },
-            { "retreat",  base_T_world * outlet_target_to_tcp_target(carry_tcp, pos[2]), &q_retreat,  &q_pour },
+            { "pre-pour",
+              base_T_world * outlet_target_to_tcp_target(carry_tcp, pos[0]),
+              &q_pre_pour,
+              &q_home },
+            { "pour",
+              base_T_world * outlet_target_to_tcp_target(carry_tcp, pos[1]),
+              &q_pour,
+              &q_pre_pour },
+            { "retreat",
+              base_T_world * outlet_target_to_tcp_target(carry_tcp, pos[2]),
+              &q_retreat,
+              &q_pour },
         };
         for (const auto &wp : waypoints) {
             bool ok = ik_nr.CartToJnt(*wp.seed, wp.target, *wp.out) >= 0;
@@ -350,14 +364,14 @@ int main(int argc, char *argv[])
 
         const double spacing = 2.00 * kBallRadius;
         for (int i = 0; i < num_balls; ++i) {
-            const int    layer = i / 16;
-            const int    slot  = i % 16;
-            const double ix    = static_cast<double>(slot % 4) - 1.5;
-            const double iy    = static_cast<double>(slot) / 4 - 1.5;
+            const int    layer = i / 9;
+            const int    slot  = i % 9;
+            const double ix    = static_cast<double>(slot % 3) - 1.0;
+            const double iy    = static_cast<double>(slot / 3) - 1.0;
             KDL::Vector  world_v =
               world_T_center * KDL::Vector(ix * spacing, iy * spacing, -0.026 + layer * spacing);
             const double world[3] = { world_v.x(), world_v.y(), world_v.z() };
-            char body_name[32];
+            char         body_name[32];
             std::snprintf(body_name, sizeof(body_name), "grain_%02d", i);
             mj_kdl::set_body_pose(m, d, body_name, world);
         }
@@ -375,20 +389,56 @@ int main(int argc, char *argv[])
     };
 
     const std::vector<Phase> phases = {
-        { .name = "HOME",      .target = &q_home,     .duration = 1.0,                  .timeout = 2.5,                   .settle_tol =  0.08, .gripper_cmd = 255.0 },
-        { .name = "PRE_POUR",  .target = &q_pre_pour, .duration = 4.0,                  .timeout = 6.5,                   .settle_tol =  0.08, .gripper_cmd = 255.0 },
-        { .name = "POUR",      .target = &q_pour,     .duration = 3.5,                  .timeout = 5.5,                   .settle_tol =  0.07, .gripper_cmd = 255.0 },
-        { .name = "TILT",      .target = &q_tilt,     .duration = 7.0,                  .timeout = 10.0,                  .settle_tol =  0.07, .gripper_cmd = 255.0 },
-        { .name = "POUR_HOLD", .target = &q_tilt,     .duration = headless ? 9.0 : 10.0, .timeout = headless ? 10.0 : 11.0, .settle_tol = -1.0,  .gripper_cmd = 255.0 },
-        { .name = "RETREAT",   .target = &q_retreat,  .duration = 2.0,                  .timeout = 4.0,                   .settle_tol =  0.08, .gripper_cmd = 255.0 },
-        { .name = "HOLD",      .target = &q_retreat,  .duration = headless ? 1.0 : 1e9,  .timeout = headless ? 1.0 : 1e9,  .settle_tol = -1.0,  .gripper_cmd = 255.0 },
+        { .name        = "HOME",
+          .target      = &q_home,
+          .duration    = 1.0,
+          .timeout     = 2.5,
+          .settle_tol  = 0.08,
+          .gripper_cmd = 255.0 },
+        { .name        = "PRE_POUR",
+          .target      = &q_pre_pour,
+          .duration    = 4.0,
+          .timeout     = 6.5,
+          .settle_tol  = 0.08,
+          .gripper_cmd = 255.0 },
+        { .name        = "POUR",
+          .target      = &q_pour,
+          .duration    = 3.5,
+          .timeout     = 5.5,
+          .settle_tol  = 0.07,
+          .gripper_cmd = 255.0 },
+        { .name        = "TILT",
+          .target      = &q_tilt,
+          .duration    = 7.0,
+          .timeout     = 10.0,
+          .settle_tol  = 0.07,
+          .gripper_cmd = 255.0 },
+        { .name        = "POUR_HOLD",
+          .target      = &q_tilt,
+          .duration    = headless ? 9.0 : 10.0,
+          .timeout     = headless ? 10.0 : 11.0,
+          .settle_tol  = -1.0,
+          .gripper_cmd = 255.0 },
+        { .name        = "RETREAT",
+          .target      = &q_retreat,
+          .duration    = 2.0,
+          .timeout     = 4.0,
+          .settle_tol  = 0.08,
+          .gripper_cmd = 255.0 },
+        { .name        = "HOLD",
+          .target      = &q_retreat,
+          .duration    = headless ? 1.0 : 1e9,
+          .timeout     = headless ? 1.0 : 1e9,
+          .settle_tol  = -1.0,
+          .gripper_cmd = 255.0 },
     };
 
     mj_kdl::VideoRecorder recorder;
     bool                  recorder_ok = false;
     const int             kRecordFps  = 60;
-    const int             steps_per_frame = std::max(1, static_cast<int>(1.0 / (kRecordFps * model->opt.timestep)));
-    int                   sim_step = 0;
+    const int             steps_per_frame =
+      std::max(1, static_cast<int>(1.0 / (kRecordFps * model->opt.timestep)));
+    int sim_step = 0;
     if (do_record) {
         if (!mj_kdl::init_video_recorder(
               &recorder, model, record_path.c_str(), mj_kdl::VideoResolution::R1080p, kRecordFps
@@ -404,7 +454,7 @@ int main(int argc, char *argv[])
         recorder.cam.lookat[0] = 0.05;
         recorder.cam.lookat[1] = 0.02;
         recorder.cam.lookat[2] = 0.88;
-        recorder_ok = true;
+        recorder_ok            = true;
     }
 
     mj_kdl::Viewer viewer;
@@ -433,18 +483,18 @@ int main(int argc, char *argv[])
                 prev_sim_time = data->time;
 
                 mj_kdl::update(&robot);
-                const double alpha = phase.duration > 0.0
-                                       ? clamp01((data->time - t_enter) / phase.duration)
-                                       : 1.0;
+                const double alpha =
+                  phase.duration > 0.0 ? clamp01((data->time - t_enter) / phase.duration) : 1.0;
                 lerp_q(q_enter, *phase.target, alpha, q_des);
                 impedance_ctrl(robot, q_des, n, dyn);
                 data->ctrl[fingers_act] = phase.gripper_cmd;
                 mj_kdl::update(&robot);
 
-                const double t_rel      = data->time - t_enter;
-                const bool   done_time  = t_rel >= phase.duration;
-                const bool   done_pose  = phase.settle_tol < 0.0 ||
-                                         max_abs_joint_err(robot, *phase.target, n) <= phase.settle_tol;
+                const double t_rel     = data->time - t_enter;
+                const bool   done_time = t_rel >= phase.duration;
+                const bool   done_pose =
+                  phase.settle_tol < 0.0
+                  || max_abs_joint_err(robot, *phase.target, n) <= phase.settle_tol;
                 const bool done_timeout = phase.timeout > 0.0 && t_rel >= phase.timeout;
                 if ((done_time && done_pose) || done_timeout) break;
 
@@ -472,7 +522,7 @@ int main(int argc, char *argv[])
 
     int ret = 0;
     if (!aborted) {
-        int in_jug = 0;
+        int    in_jug = 0;
         double avg[3] = {};
         for (int jid : grain_joints)
             if (inside_jug(data, model, jid)) ++in_jug;
@@ -488,7 +538,8 @@ int main(int argc, char *argv[])
             avg[2] /= static_cast<double>(grain_joints.size());
         }
 
-        std::cout << "balls in transparent receiver: " << in_jug << "/" << grain_joints.size() << "\n";
+        std::cout << "balls in transparent receiver: " << in_jug << "/" << grain_joints.size()
+                  << "\n";
         std::cout << "grain centroid: [" << std::fixed << std::setprecision(3) << avg[0] << ", "
                   << avg[1] << ", " << avg[2] << "] receiver center=[" << kJugX << ", " << kJugY
                   << "]\n";
