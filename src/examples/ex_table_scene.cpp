@@ -96,16 +96,10 @@ int main(int argc, char *argv[])
 
     const std::string mjcf     = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
     const std::string grp_mjcf = (root / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+    const std::string table_mjcf = (root / "src/examples/assets/table.xml").string();
 
     mj_kdl::SceneSpec sc;
-    sc.table.enabled     = true;
-    sc.table.pos[2]      = 0.7;
-    sc.table.top_size[0] = 0.8;
-    sc.table.top_size[1] = 0.6;
-    sc.table.thickness   = 0.04;
-    sc.table.leg_radius  = 0.03;
-
-    const double surface_z = sc.table.pos[2];
+    const double surface_z = 0.7;
 
     mj_kdl::AttachmentSpec gs;
     gs.mjcf_path = grp_mjcf.c_str();
@@ -120,6 +114,13 @@ int main(int argc, char *argv[])
     r.attachments.push_back(gs);
     sc.robots.push_back(r);
 
+    mj_kdl::SceneObject table{
+        .name      = "table",
+        .mjcf_path = table_mjcf,
+        .pos       = { 0.0, 0.0, surface_z },
+        .fixed     = true,
+    };
+    sc.objects.push_back(table);
     sc.objects.push_back(
       make_box("red_cube", 0.35, 0.10, 0.03, 0.03, 0.03, 1.0f, 0.2f, 0.2f, surface_z)
     );
@@ -136,6 +137,21 @@ int main(int argc, char *argv[])
       make_sphere("purple_sphere", -0.20, -0.20, 0.025, 0.7f, 0.0f, 0.9f, surface_z)
     );
 
+    /* Static scene cameras.  The Kinova MJCF also contributes a "wrist" camera;
+     * all of them are enumerated by get_camera_names() after build_scene(). */
+    sc.cameras.push_back(mj_kdl::CameraSpec{
+        .name  = "overview",
+        .pos   = { 0.0, -0.6, 1.6 },  // in front of and above the table
+        .euler = { 34.0, 0.0, 0.0 },  // tilt down toward table
+        .fovy  = 55.0,
+    });
+    sc.cameras.push_back(mj_kdl::CameraSpec{
+        .name  = "side",
+        .pos   = { -1.0, 0.0, 1.1 },  // left side, arm height
+        .euler = { 0.0, -68.0, 0.0 }, // pitch down toward robot base
+        .fovy  = 50.0,
+    });
+
     mjModel      *model = nullptr;
     mjData       *data  = nullptr;
     mj_kdl::Robot robot;
@@ -143,9 +159,22 @@ int main(int argc, char *argv[])
         std::cerr << "build_scene() failed\n";
         return 1;
     }
-    mj_kdl::ToolFrameSpec tool;
-    tool.tool_body = "g_base";
-    tool.tcp_site  = "g_pinch";
+
+    KDL::Frame world_T_table_top;
+    const std::string table_top_site = mj_kdl::scene_object_site_name(table, "table_top");
+    if (!mj_kdl::get_site_frame(model, data, table_top_site.c_str(), &world_T_table_top)) {
+        std::cerr << "table_top site not found\n";
+        mj_kdl::destroy_scene(model, data);
+        return 1;
+    }
+    std::cout << "table top z = " << world_T_table_top.p.z() << "\n";
+
+    std::cout << "cameras:";
+    for (const auto &name : mj_kdl::get_camera_names(model))
+        std::cout << " " << name;
+    std::cout << "\n";
+
+    const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base", .tcp_site = "g_pinch" };
 
     if (!mj_kdl::init_robot_from_mjcf(
           &robot, model, data, "base_link", "bracelet_link", "", &tool
@@ -166,20 +195,18 @@ int main(int argc, char *argv[])
 
     robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
 
-    auto reset_to_home = [&]() {
-        mj_resetData(model, data);
+    mj_kdl::Env env;
+    env.spec  = sc;
+    env.model = model;
+    env.data  = data;
+    mj_kdl::env_add_robot(&env, &robot);
+
+    env.on_reset = [&](mj_kdl::ResetContext *) {
         mj_kdl::set_joint_pos(&robot, q_home, false);
-        mj_forward(model, data);
-        for (unsigned i = 0; i < n; ++i) {
-            robot.jnt_pos_cmd[i]                       = data->qpos[robot.kdl_to_mj_qpos[i]];
-            robot.jnt_trq_cmd[i]                       = 0.0;
-            data->qfrc_applied[robot.kdl_to_mj_dof[i]] = 0.0;
-        }
-        mj_kdl::update(&robot);
         if (fingers_act >= 0) data->ctrl[fingers_act] = 255.0;
     };
 
-    reset_to_home();
+    mj_kdl::reset(&env);
 
     KDL::JntArray q(n), g(n);
     auto          ctrl_step = [&]() {
@@ -218,7 +245,7 @@ int main(int argc, char *argv[])
 
         double prev_sim_time = data->time;
         while (true) {
-            if (data->time < prev_sim_time - 1e-6) reset_to_home();
+            if (data->time < prev_sim_time - 1e-6) mj_kdl::reset(&env);
             prev_sim_time = data->time;
             ctrl_step();
             if (!mj_kdl::step(&robot)) break;

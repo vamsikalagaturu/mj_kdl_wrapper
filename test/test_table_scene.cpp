@@ -7,13 +7,10 @@
 #include <gtest/gtest.h>
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
-#include "test_utils.hpp"
 
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chaindynparam.hpp>
 
-#include <iostream>
-#include <iomanip>
 #include <memory>
 #include <string>
 #include <filesystem>
@@ -24,57 +21,33 @@ namespace fs = std::filesystem;
 static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
 
 static mj_kdl::SceneObject make_box(
-  const char *name,
-  double      x,
-  double      y,
-  double      hx,
-  double      hy,
-  double      hz,
-  float       r,
-  float       g,
-  float       b,
-  double      surface_z
+  const char *name, double x, double y, double hx, double hy, double hz,
+  float r, float g, float b, double surface_z
 )
 {
-    mj_kdl::SceneObject o;
-    o.name    = name;
-    o.shape   = mj_kdl::Shape::BOX;
-    o.size[0] = hx;
-    o.size[1] = hy;
-    o.size[2] = hz;
-    o.pos[0]  = x;
-    o.pos[1]  = y;
-    o.pos[2]  = surface_z + hz;
-    o.rgba[0] = r;
-    o.rgba[1] = g;
-    o.rgba[2] = b;
-    o.rgba[3] = 1.0f;
-    return o;
+    return mj_kdl::SceneObject{
+        .name      = name,
+        .mjcf_path = "",
+        .shape     = mj_kdl::Shape::BOX,
+        .size      = { hx, hy, hz },
+        .pos       = { x, y, surface_z + hz },
+        .rgba      = { r, g, b, 1.0f },
+    };
 }
 
 static mj_kdl::SceneObject make_sphere(
-  const char *name,
-  double      x,
-  double      y,
-  double      radius,
-  float       r,
-  float       g,
-  float       b,
-  double      surface_z
+  const char *name, double x, double y, double radius,
+  float r, float g, float b, double surface_z
 )
 {
-    mj_kdl::SceneObject o;
-    o.name    = name;
-    o.shape   = mj_kdl::Shape::SPHERE;
-    o.size[0] = radius;
-    o.pos[0]  = x;
-    o.pos[1]  = y;
-    o.pos[2]  = surface_z + radius;
-    o.rgba[0] = r;
-    o.rgba[1] = g;
-    o.rgba[2] = b;
-    o.rgba[3] = 1.0f;
-    return o;
+    return mj_kdl::SceneObject{
+        .name      = name,
+        .mjcf_path = "",
+        .shape     = mj_kdl::Shape::SPHERE,
+        .size      = { radius, 0.0, 0.0 },
+        .pos       = { x, y, surface_z + radius },
+        .rgba      = { r, g, b, 1.0f },
+    };
 }
 
 class TableSceneTest : public testing::Test
@@ -82,6 +55,7 @@ class TableSceneTest : public testing::Test
   protected:
     std::string       mjcf_;
     mj_kdl::SceneSpec spec_;
+    mj_kdl::SceneObject table_obj_;
     mjModel          *model_ = nullptr;
     mjData           *data_  = nullptr;
     mj_kdl::Robot     s_;
@@ -96,26 +70,24 @@ class TableSceneTest : public testing::Test
     void SetUp() override
     {
         fs::path root = repo_root();
-        if (!fs::exists(root / "third_party/menagerie")) {
-            GTEST_SKIP() << "third_party/menagerie/ not found";
+        mjcf_ = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+        if (!fs::exists(mjcf_)) {
+            GTEST_SKIP() << mjcf_ << " not found";
             return;
         }
-        mjcf_ = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+        std::string table_mjcf = (root / "src/examples/assets/table.xml").string();
 
-        // Table setup: surface at z = 0.7 m, robot mounted at table centre.
-        mj_kdl::TableSpec table;
-        table.enabled     = true;
-        table.pos[0]      = 0.0;
-        table.pos[1]      = 0.0;
-        table.pos[2]      = 0.7; // surface height
-        table.top_size[0] = 0.8; // half-extent x
-        table.top_size[1] = 0.6; // half-extent y
-        table.thickness   = 0.04;
-        table.leg_radius  = 0.03;
-
-        double surface_z = table.pos[2];
+        // Table asset origin is the tabletop surface center.
+        double surface_z = 0.7;
 
         std::vector<mj_kdl::SceneObject> objects;
+        table_obj_ = {
+            .name      = "table",
+            .mjcf_path = table_mjcf,
+            .pos       = { 0.0, 0.0, surface_z },
+            .fixed     = true,
+        };
+        objects.push_back(table_obj_);
         objects.push_back(
           make_box("red_cube", 0.35, 0.10, 0.03, 0.03, 0.03, 1.0f, 0.2f, 0.2f, surface_z)
         );
@@ -132,24 +104,19 @@ class TableSceneTest : public testing::Test
           make_sphere("purple_sphere", -0.20, -0.20, 0.025, 0.7f, 0.0f, 0.9f, surface_z)
         );
 
-        spec_.table     = table;
         spec_.objects   = objects;
         spec_.add_floor = true;
         spec_.gravity_z = -9.81;
 
-        mj_kdl::RobotSpec robot;
-        robot.path   = mjcf_.c_str();
-        robot.prefix = "";
-        robot.pos[0] = 0.0;
-        robot.pos[1] = 0.0;
-        robot.pos[2] = surface_z;
-        spec_.robots.push_back(robot);
+        spec_.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf_.c_str(), .pos = { 0.0, 0.0, surface_z }, .attachments = {} });
 
         ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &spec_));
-        TEST_INFO(model_->nbody << " bodies, " << model_->nq << " DOFs");
+        KDL::Frame world_T_table_top;
+        std::string table_top_site = mj_kdl::scene_object_site_name(table_obj_, "table_top");
+        ASSERT_TRUE(mj_kdl::get_site_frame(model_, data_, table_top_site.c_str(), &world_T_table_top));
+        EXPECT_NEAR(world_T_table_top.p.z(), surface_z, 1e-9);
 
         ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link"));
-        TEST_INFO(s_.n_joints << " joints");
 
         n_ = static_cast<unsigned>(s_.n_joints);
 
@@ -193,31 +160,53 @@ TEST_F(TableSceneTest, GravityCompDrift)
     fk_->JntToCart(q_end, ee_end);
     double drift = (ee_init.p - ee_end.p).Norm();
 
-    TEST_INFO(
-      "EE drift after 500 steps: " << std::fixed << std::setprecision(3) << drift * 1000.0 << " mm"
-    );
-
     ASSERT_LE(drift, 0.001) << "drift " << drift * 1000.0 << " mm exceeds 1 mm threshold";
 }
 
 TEST_F(TableSceneTest, AddRemoveObject)
 {
-    int nbody_before = model_->nbody;
-
     mj_kdl::cleanup(&s_);
     s_cleaned_ = true;
 
-    double              surface_z = spec_.table.pos[2];
+    double              surface_z = 0.7;
     mj_kdl::SceneObject extra =
       make_box("yellow_cube", 0.0, 0.4, 0.03, 0.03, 0.03, 1.0f, 1.0f, 0.0f, surface_z);
 
     ASSERT_TRUE(mj_kdl::scene_add_object(&model_, &data_, &spec_, extra))
       << "scene_add_object() returned false";
-    TEST_INFO("bodies: " << nbody_before << " -> " << model_->nbody << " (after add)");
 
     ASSERT_TRUE(mj_kdl::scene_remove_object(&model_, &data_, &spec_, "yellow_cube"))
       << "scene_remove_object() returned false";
-    TEST_INFO("bodies: " << model_->nbody << " (after remove)");
+}
+
+TEST_F(TableSceneTest, EnvAddRemoveReinitsRobot)
+{
+    mj_kdl::Env env;
+    env.spec  = spec_;
+    env.model = model_;
+    env.data  = data_;
+    mj_kdl::env_add_robot(&env, &s_);
+    // env now owns the rebuild lifecycle; null out fixture pointers to prevent double-free
+    model_ = nullptr;
+    data_  = nullptr;
+
+    int nq_before = env.model->nq;
+
+    double              surface_z = 0.7;
+    mj_kdl::SceneObject extra =
+      make_box("yellow_cube", 0.0, 0.4, 0.03, 0.03, 0.03, 1.0f, 1.0f, 0.0f, surface_z);
+
+    ASSERT_TRUE(mj_kdl::scene_add_object(&env, extra)) << "Env scene_add_object() failed";
+    EXPECT_GT(env.model->nq, nq_before) << "nq should grow after adding a free object";
+    EXPECT_EQ(s_.n_joints, 7) << "robot chain should still have 7 joints after rebuild";
+    EXPECT_EQ(s_.model, env.model) << "robot model pointer should be updated";
+
+    ASSERT_TRUE(mj_kdl::scene_remove_object(&env, "yellow_cube")) << "Env scene_remove_object() failed";
+    EXPECT_EQ(env.model->nq, nq_before) << "nq should return to original after removal";
+    EXPECT_EQ(s_.n_joints, 7) << "robot chain should still have 7 joints after removal";
+
+    mj_kdl::cleanup(&env);
+    s_cleaned_ = true;
 }
 
 int main(int argc, char *argv[])

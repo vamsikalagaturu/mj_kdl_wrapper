@@ -19,7 +19,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstring>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -33,12 +32,6 @@ static constexpr double kTableZ      = 0.70;
 static constexpr double kRobotBackX  = -0.26;
 static constexpr double kJugX        = 0.30;
 static constexpr double kJugY        = 0.14;
-static constexpr double kPrePourX    = kJugX - 0.05;
-static constexpr double kPrePourY    = kJugY - 0.02;
-static constexpr double kPourX       = kJugX - 0.03;
-static constexpr double kPourY       = kJugY;
-static constexpr double kTiltX       = kJugX - 0.02;
-static constexpr double kTiltY       = kJugY;
 static constexpr double kRetreatX    = kJugX - 0.08;
 static constexpr double kRetreatY    = kJugY - 0.08;
 static constexpr double kJugRadius   = 0.028;
@@ -89,123 +82,19 @@ static void
 
 static mj_kdl::SceneObject make_ball(int idx)
 {
-    mj_kdl::SceneObject o;
     char                name[32];
     std::snprintf(name, sizeof(name), "grain_%02d", idx);
-    o.name    = name;
-    o.shape   = mj_kdl::Shape::SPHERE;
-    o.size[0] = kBallRadius;
-    o.pos[0]  = 0.0;
-    o.pos[1]  = 0.0;
-    o.pos[2]  = kTableZ + 0.40 + idx * 2.0 * kBallRadius;
-    o.rgba[0] = 1.0f;
-    o.rgba[1] = 0.84f;
-    o.rgba[2] = 0.30f;
-    o.rgba[3] = 1.0f;
-    o.mass    = 0.006;
-    o.condim  = 4;
-    o.friction[0] = 0.5;
-    o.friction[1] = 0.02;
-    o.friction[2] = 0.001;
-    return o;
-}
-
-static bool add_fixed_attachment_to_world(
-  mjSpec *scene,
-  const char *mjcf_path,
-  const char *prefix,
-  double x,
-  double y,
-  double z,
-  double roll_deg = 0.0,
-  double pitch_deg = 0.0,
-  double yaw_deg = 0.0
-)
-{
-    char err[2048] = {};
-    mjSpec *att = mj_parseXML(mjcf_path, nullptr, err, sizeof(err));
-    if (!att) {
-        std::cerr << "mj_parseXML failed for '" << mjcf_path << "': " << err << "\n";
-        return false;
-    }
-
-    mjsBody *world = mjs_findBody(scene, "world");
-    mjsBody *att_world = mjs_findBody(att, "world");
-    mjsElement *first = att_world ? mjs_firstChild(att_world, mjOBJ_BODY, 0) : nullptr;
-    mjsBody *att_root = first ? mjs_asBody(first) : nullptr;
-    if (!world || !att_root) {
-        mj_deleteSpec(att);
-        std::cerr << "failed to find world or root body for fixed attachment\n";
-        return false;
-    }
-
-    mjsFrame *place = mjs_addFrame(world, nullptr);
-    place->pos[0] = x;
-    place->pos[1] = y;
-    place->pos[2] = z;
-    if (roll_deg || pitch_deg || yaw_deg) {
-        const double d2r = M_PI / 180.0;
-        KDL::Rotation rot = KDL::Rotation::RPY(roll_deg * d2r, pitch_deg * d2r, yaw_deg * d2r);
-        double qx, qy, qz, qw;
-        rot.GetQuaternion(qx, qy, qz, qw);
-        place->quat[0] = qw;
-        place->quat[1] = qx;
-        place->quat[2] = qy;
-        place->quat[3] = qz;
-    }
-
-    if (!mjs_attach(place->element, att_root->element, prefix ? prefix : "", "")) {
-        std::cerr << "mjs_attach failed for fixed attachment: " << mjs_getError(scene) << "\n";
-        mj_deleteSpec(att);
-        return false;
-    }
-    mj_deleteSpec(att);
-    return true;
-}
-
-static void set_free_body_pose(mjModel *model, mjData *data, const char *joint_name, const double pos[3])
-{
-    int jid = mj_name2id(model, mjOBJ_JOINT, joint_name);
-    if (jid < 0) return;
-    int qadr          = model->jnt_qposadr[jid];
-    int dadr          = model->jnt_dofadr[jid];
-    data->qpos[qadr]     = pos[0];
-    data->qpos[qadr + 1] = pos[1];
-    data->qpos[qadr + 2] = pos[2];
-    data->qpos[qadr + 3] = 1.0;
-    data->qpos[qadr + 4] = 0.0;
-    data->qpos[qadr + 5] = 0.0;
-    data->qpos[qadr + 6] = 0.0;
-    for (int k = 0; k < 6; ++k) data->qvel[dadr + k] = 0.0;
-}
-
-static void body_local_to_world(const mjData *data, int body_id, const double local[3], double world[3])
-{
-    const double *p = data->xpos + 3 * body_id;
-    const double *r = data->xmat + 9 * body_id;
-    for (int i = 0; i < 3; ++i) {
-        world[i] = p[i] + r[3 * i + 0] * local[0] + r[3 * i + 1] * local[1] + r[3 * i + 2] * local[2];
-    }
-}
-
-static KDL::Vector site_point_to_local(
-  const mjData *data,
-  int           site_id,
-  const double  point_world[3]
-)
-{
-    const double *p = data->site_xpos + 3 * site_id;
-    const double *r = data->site_xmat + 9 * site_id;
-    const double  d[3] = {
-        point_world[0] - p[0],
-        point_world[1] - p[1],
-        point_world[2] - p[2],
+    return {
+        .name      = name,
+        .mjcf_path = "",
+        .shape     = mj_kdl::Shape::SPHERE,
+        .size      = { kBallRadius, 0.0, 0.0 },
+        .pos       = { 0.0, 0.0, kTableZ + 0.40 + idx * 2.0 * kBallRadius },
+        .rgba      = { 1.0f, 0.84f, 0.30f, 1.0f },
+        .mass      = 0.006,
+        .condim    = 4,
+        .friction  = { 0.5, 0.02, 0.001 },
     };
-    return KDL::Vector(
-      r[0] * d[0] + r[3] * d[1] + r[6] * d[2],
-      r[1] * d[0] + r[4] * d[1] + r[7] * d[2],
-      r[2] * d[0] + r[5] * d[1] + r[8] * d[2]
-    );
 }
 
 static bool inside_jug(const mjData *data, const mjModel *model, int joint_id)
@@ -255,6 +144,7 @@ int main(int argc, char *argv[])
     const std::string grp_mjcf = (root / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
     const std::string bottle_mjcf = (root / "src/examples/assets/mug.xml").string();
     const std::string receiver_mjcf = (root / "src/examples/assets/mug_table.xml").string();
+    const std::string table_mjcf = (root / "src/examples/assets/table.xml").string();
 
     mj_kdl::AttachmentSpec gripper;
     gripper.mjcf_path = grp_mjcf.c_str();
@@ -279,65 +169,33 @@ int main(int argc, char *argv[])
     robot_spec.attachments.push_back(bottle);
 
     mj_kdl::SceneSpec scene_cfg;
-    scene_cfg.table.enabled     = true;
-    scene_cfg.table.pos[2]      = kTableZ;
-    scene_cfg.table.top_size[0] = 0.8;
-    scene_cfg.table.top_size[1] = 0.6;
-    scene_cfg.table.thickness   = 0.04;
-    scene_cfg.table.leg_radius  = 0.03;
+    mj_kdl::SceneObject table{
+        .name      = "table",
+        .mjcf_path = table_mjcf,
+        .pos       = { 0.0, 0.0, kTableZ },
+        .fixed     = true,
+    };
+    scene_cfg.objects.push_back(table);
     for (int i = 0; i < num_balls; ++i) scene_cfg.objects.push_back(make_ball(i));
-
-    mj_kdl::ensure_plugins_loaded();
-    mjSpec *scene = mj_makeSpec();
-    if (!scene) {
-        std::cerr << "mj_makeSpec() failed\n";
-        return 1;
-    }
-
-    char err[2048] = {};
-    mjSpec *arm = mj_parseXML(arm_mjcf.c_str(), nullptr, err, sizeof(err));
-    if (!arm) {
-        std::cerr << "mj_parseXML failed for arm: " << err << "\n";
-        mj_deleteSpec(scene);
-        return 1;
-    }
-    scene->option = arm->option;
-    if (!mj_kdl::attach_to_spec(arm, &gripper) || !mj_kdl::attach_to_spec(arm, &bottle)) {
-        mj_deleteSpec(arm);
-        mj_deleteSpec(scene);
-        return 1;
-    }
-    mjsBody *world = mjs_findBody(scene, "world");
-    mjsBody *arm_world = mjs_findBody(arm, "world");
-    mjsElement *first = arm_world ? mjs_firstChild(arm_world, mjOBJ_BODY, 0) : nullptr;
-    mjsBody *arm_root = first ? mjs_asBody(first) : nullptr;
-    if (!world || !arm_root) {
-        std::cerr << "no root body found in arm spec\n";
-        mj_deleteSpec(arm);
-        mj_deleteSpec(scene);
-        return 1;
-    }
-    mjsFrame *place = mjs_addFrame(world, nullptr);
-    place->pos[0] = kRobotBackX;
-    place->pos[2] = kTableZ;
-    if (!mjs_attach(place->element, arm_root->element, "", "")) {
-        std::cerr << "mjs_attach failed for arm: " << mjs_getError(scene) << "\n";
-        mj_deleteSpec(arm);
-        mj_deleteSpec(scene);
-        return 1;
-    }
-    mj_deleteSpec(arm);
-
-    mj_kdl::configure_spec(scene, &scene_cfg);
-    if (!add_fixed_attachment_to_world(scene, receiver_mjcf.c_str(), "recv_", kJugX, kJugY, kReceiverFrameZ)) {
-        mj_deleteSpec(scene);
-        return 1;
-    }
+    scene_cfg.objects.push_back(mj_kdl::SceneObject{
+        .name      = "recv",
+        .mjcf_path = receiver_mjcf,
+        .pos       = { kJugX, kJugY, kReceiverFrameZ },
+    });
+    scene_cfg.robots.push_back(robot_spec);
 
     mjModel *model = nullptr;
     mjData  *data  = nullptr;
-    if (!mj_kdl::compile_and_make_data(scene, &model, &data)) {
-        std::cerr << "compile_and_make_data() failed\n";
+    if (!mj_kdl::build_scene(&model, &data, &scene_cfg)) {
+        std::cerr << "build_scene() failed\n";
+        return 1;
+    }
+
+    KDL::Frame world_T_table_top;
+    const std::string table_top_site = mj_kdl::scene_object_site_name(table, "table_top");
+    if (!mj_kdl::get_site_frame(model, data, table_top_site.c_str(), &world_T_table_top)) {
+        std::cerr << "table_top site not found\n";
+        mj_kdl::destroy_scene(model, data);
         return 1;
     }
 
@@ -355,11 +213,9 @@ int main(int argc, char *argv[])
     }
 
     const unsigned n           = robot.chain.getNrOfJoints();
-    const int      fingers_act = mj_name2id(model, mjOBJ_ACTUATOR, "g_fingers_actuator");
-    const int      bottle_body = mj_name2id(model, mjOBJ_BODY, "pour_mug");
-    const int      tcp_site    = mj_name2id(model, mjOBJ_SITE, "g_pinch");
-    if (fingers_act < 0 || bottle_body < 0 || tcp_site < 0) {
-        std::cerr << "required gripper actuator, pouring bottle body, or tcp site not found\n";
+    const int fingers_act = mj_name2id(model, mjOBJ_ACTUATOR, "g_fingers_actuator");
+    if (fingers_act < 0) {
+        std::cerr << "g_fingers_actuator not found\n";
         mj_kdl::cleanup(&robot);
         mj_kdl::destroy_scene(model, data);
         return 1;
@@ -403,10 +259,10 @@ int main(int argc, char *argv[])
     const KDL::Frame base_T_world = world_T_base.Inverse();
 
     mj_kdl::set_joint_pos(&robot, q_home, false);
-    mj_forward(model, data);
-    double outlet_home[3] = {};
-    body_local_to_world(data, bottle_body, (const double[3]){ 0.0, 0.0, 0.070 }, outlet_home);
-    const KDL::Vector tcp_outlet = site_point_to_local(data, tcp_site, outlet_home);
+    KDL::Frame world_T_outlet, world_T_tcp;
+    mj_kdl::get_site_frame(model, data, "pour_outlet", &world_T_outlet);
+    mj_kdl::get_site_frame(model, data, "g_pinch", &world_T_tcp);
+    const KDL::Vector tcp_outlet = world_T_tcp.Inverse() * world_T_outlet.p;
 
     const auto outlet_target_to_tcp_target = [&](const KDL::Rotation &tcp_rot, const KDL::Vector &outlet_pos) {
         return KDL::Frame(tcp_rot, outlet_pos - tcp_rot * tcp_outlet);
@@ -448,13 +304,10 @@ int main(int argc, char *argv[])
     q_tilt(n - 1) += kPourTiltRad;
     for (int iter = 0; iter < 4; ++iter) {
         mj_kdl::set_joint_pos(&robot, q_tilt, false);
-        mj_forward(model, data);
-
-        double outlet_world[3] = {};
-        body_local_to_world(data, bottle_body, (const double[3]){ 0.0, 0.0, 0.070 }, outlet_world);
-        const double dx = kJugX - outlet_world[0];
-        const double dy = kJugY - outlet_world[1];
-        const double dz = kTiltOutletZ - outlet_world[2];
+        mj_kdl::get_site_frame(model, data, "pour_outlet", &world_T_outlet);
+        const double dx = kJugX - world_T_outlet.p.x();
+        const double dy = kJugY - world_T_outlet.p.y();
+        const double dz = kTiltOutletZ - world_T_outlet.p.z();
         if (std::sqrt(dx * dx + dy * dy + dz * dz) < 5e-3) break;
 
         waypoint_pos[1][0] += dx;
@@ -480,60 +333,47 @@ int main(int argc, char *argv[])
 
     robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
 
-    /* Scene-specific reset: place balls inside bottle, close gripper.
-     * Called both at startup (after mj_resetData) and by the Simulate UI
-     * reset callback (on_reset), where mj_resetData has already been done. */
-    auto reset_scene_objects = [&](mjModel *m, mjData *d) {
-        mj_kdl::set_joint_pos(&robot, q_home, false);
-        mj_forward(m, d);
+    mj_kdl::Env env;
+    env.model = model;
+    env.data  = data;
+    mj_kdl::env_add_robot(&env, &robot);
 
-        for (unsigned i = 0; i < n; ++i) {
-            robot.jnt_pos_cmd[i]                      = d->qpos[robot.kdl_to_mj_qpos[i]];
-            robot.jnt_trq_cmd[i]                      = 0.0;
-            d->qfrc_applied[robot.kdl_to_mj_dof[i]]  = 0.0;
-        }
+    /* Scene-specific reset: place balls inside bottle and close gripper.
+     * Env::on_reset runs after mj_resetData and before final mj_forward/robot sync. */
+    env.on_reset = [&](mj_kdl::ResetContext *ctx) {
+        mjModel *m = ctx->model;
+        mjData  *d = ctx->data;
+        mj_kdl::set_joint_pos(&robot, q_home, false);
+
+        KDL::Frame world_T_center;
+        mj_kdl::get_site_frame(m, d, "pour_center", &world_T_center);
 
         const double spacing = 2.00 * kBallRadius;
         for (int i = 0; i < num_balls; ++i) {
-            const int layer = i / 16;
-            const int slot  = i % 16;
-            const double ix = static_cast<double>(slot % 4) - 1.5;
-            const double iy = static_cast<double>(slot / 4) - 1.5;
-            const double local[3] = {
-                ix * spacing,
-                iy * spacing,
-                -0.026 + layer * spacing,
-            };
-            double world[3];
-            body_local_to_world(d, bottle_body, local, world);
-            char joint_name[32];
-            std::snprintf(joint_name, sizeof(joint_name), "grain_%02d_joint", i);
-            set_free_body_pose(m, d, joint_name, world);
+            const int    layer = i / 16;
+            const int    slot  = i % 16;
+            const double ix    = static_cast<double>(slot % 4) - 1.5;
+            const double iy    = static_cast<double>(slot) / 4 - 1.5;
+            KDL::Vector  world_v =
+              world_T_center * KDL::Vector(ix * spacing, iy * spacing, -0.026 + layer * spacing);
+            const double world[3] = { world_v.x(), world_v.y(), world_v.z() };
+            char body_name[32];
+            std::snprintf(body_name, sizeof(body_name), "grain_%02d", i);
+            mj_kdl::set_body_pose(m, d, body_name, world);
         }
-        mj_forward(m, d);
-        mj_kdl::update(&robot);
         d->ctrl[fingers_act] = 255.0;
     };
 
-    /* Full reset: data wipe + scene objects. Used at startup. */
-    auto reset_scene = [&]() {
-        mj_resetData(model, data);
-        reset_scene_objects(model, data);
-    };
-
-    /* Hook into the Simulate UI Reset button so the scene is fully restored. */
-    robot.on_reset = reset_scene_objects;
-
-    reset_scene();
+    mj_kdl::reset(&env);
 
     const std::vector<Phase> phases = {
-        { "HOME", &q_home, 1.0, 2.5, 0.08, 255.0 },
-        { "PRE_POUR", &q_pre_pour, 4.0, 6.5, 0.08, 255.0 },
-        { "POUR", &q_pour, 3.5, 5.5, 0.07, 255.0 },
-        { "TILT", &q_tilt, 7.0, 10.0, 0.07, 255.0 },
-        { "POUR_HOLD", &q_tilt, headless ? 9.0 : 10.0, headless ? 10.0 : 11.0, -1.0, 255.0 },
-        { "RETREAT", &q_retreat, 2.0, 4.0, 0.08, 255.0 },
-        { "HOLD", &q_retreat, headless ? 1.0 : 1e9, headless ? 1.0 : 1e9, -1.0, 255.0 },
+        { .name = "HOME",      .target = &q_home,     .duration = 1.0,                  .timeout = 2.5,                   .settle_tol =  0.08, .gripper_cmd = 255.0 },
+        { .name = "PRE_POUR",  .target = &q_pre_pour, .duration = 4.0,                  .timeout = 6.5,                   .settle_tol =  0.08, .gripper_cmd = 255.0 },
+        { .name = "POUR",      .target = &q_pour,     .duration = 3.5,                  .timeout = 5.5,                   .settle_tol =  0.07, .gripper_cmd = 255.0 },
+        { .name = "TILT",      .target = &q_tilt,     .duration = 7.0,                  .timeout = 10.0,                  .settle_tol =  0.07, .gripper_cmd = 255.0 },
+        { .name = "POUR_HOLD", .target = &q_tilt,     .duration = headless ? 9.0 : 10.0, .timeout = headless ? 10.0 : 11.0, .settle_tol = -1.0,  .gripper_cmd = 255.0 },
+        { .name = "RETREAT",   .target = &q_retreat,  .duration = 2.0,                  .timeout = 4.0,                   .settle_tol =  0.08, .gripper_cmd = 255.0 },
+        { .name = "HOLD",      .target = &q_retreat,  .duration = headless ? 1.0 : 1e9,  .timeout = headless ? 1.0 : 1e9,  .settle_tol = -1.0,  .gripper_cmd = 255.0 },
     };
 
     mj_kdl::VideoRecorder recorder;

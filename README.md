@@ -15,15 +15,23 @@ A C++ library bridging [MuJoCo 3.8](https://github.com/google-deepmind/mujoco) p
 </tr>
 </table>
 
+## Start Here
+
+For a full step-by-step walkthrough, read [docs/TUTORIAL.md](docs/TUTORIAL.md).
+It starts from installation and gradually builds up robot control, attachments,
+asset-backed objects, reset hooks, cameras, the Simulate UI, recording, and
+multi-robot scenes.
+
 ## Features
 
-- **Unified scene builder** -- `build_scene()` accepts MJCF files and builds floor, skybox, table, and objects via `mjSpec` with no intermediate XML files
+- **Unified scene builder** -- `build_scene()` accepts MJCF files and builds floor, skybox, primitive objects, asset-backed objects, and cameras via `mjSpec` with no intermediate XML files
 - **Ordered attachment chains** -- `AttachmentSpec` attaches any MJCF body (mount, FT sensor, gripper, arm on a mobile base) under any named body; chains of arbitrary length are applied in declaration order
 - **Multi-robot scenes** -- place multiple robots with independent KDL chains in one shared simulation via `SceneSpec::robots`
+- **Runtime environments** -- `Env` owns model/data, registered robots, and reset hooks for task-specific object/controller state
 - **KDL chain from model** -- `init_robot_from_mjcf()` builds a KDL chain directly from a compiled MuJoCo model
 - **Control ports** -- `update()` reads `qpos`/`qvel`/`qfrc_actuator` into `*_msr` and applies `*_cmd` in POSITION or TORQUE mode
-- **Interactive viewer** -- `init_window_sim()` + `tick()` gives your code the control loop while the MuJoCo simulate UI runs in a background render thread
-- **Headless video recording** -- `VideoRecorder` uses EGL offscreen rendering and an ffmpeg pipe to record MP4s without a display
+- **Interactive viewer** -- `init_window_sim()` + `step()` gives your code the control loop while the MuJoCo simulate UI runs in a background render thread
+- **Interactive and headless recording** -- Simulate UI recorder controls plus `VideoRecorder` for EGL offscreen MP4 recording
 
 ## Dependencies
 
@@ -75,6 +83,13 @@ Optional flags:
 
 The simulate UI screenshot button (`S` key) is always enabled; it uses an ffmpeg pipe to write PNGs without any third-party lodepng dependency.
 
+The local Simulate UI also includes wrapper-specific controls in the Simulation
+panel:
+
+- `RTF` shows the wrapper real-time factor controlled by `,` and `.`.
+- `Recorder` lets you select output path, recording camera, resolution, FPS,
+  and start/stop recording.
+
 ## API
 
 ### Load from MJCF
@@ -83,9 +98,7 @@ The simulate UI screenshot button (`S` key) is always enabled; it uses an ffmpeg
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 
 mj_kdl::SceneSpec sc;
-mj_kdl::RobotSpec r;
-r.path = "third_party/menagerie/kinova_gen3/gen3.xml";
-sc.robots.push_back(r);
+sc.robots.push_back(mj_kdl::RobotSpec{ .path = "third_party/menagerie/kinova_gen3/gen3.xml", .attachments = {} });
 
 mjModel *model = nullptr;
 mjData  *data  = nullptr;
@@ -102,32 +115,28 @@ unsigned n = robot.n_joints;  // 7 for Kinova GEN3
 KDL::ChainDynParam dyn(robot.chain, KDL::Vector(0, 0, -9.81));
 ```
 
-When a tool (gripper) is attached, pass its root body as `tool_body` so KDL dynamics include the full tool inertia:
+When a tool (gripper) is attached, pass a `ToolFrameSpec` so KDL dynamics include the full tool inertia and FK uses the TCP site:
 
 ```cpp
-// Gripper prefix "g_", root body "g_base" lumped into the KDL chain as a fixed segment.
-mj_kdl::init_robot_from_mjcf(&robot, model, data, "base_link", "bracelet_link", "", "g_base");
+const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base", .tcp_site = "g_pinch" };
+mj_kdl::init_robot_from_mjcf(&robot, model, data, "base_link", "bracelet_link", "", &tool);
 
 // ChainDynParam now accounts for arm + gripper mass.
 KDL::ChainDynParam dyn(robot.chain, KDL::Vector(0, 0, -9.81));
 KDL::JntArray q(n), g(n);
-// ...
 dyn.JntToGravity(q, g);  // correct for arm + gripper
 ```
 
 ### Attach a gripper (or any MJCF body)
 
 ```cpp
-mj_kdl::AttachmentSpec gs;
-gs.mjcf_path = "third_party/menagerie/robotiq_2f85/2f85.xml";
-gs.attach_to = "bracelet_link";
-gs.prefix    = "g_";
-gs.pos[2]    = -0.061525;   // offset along bracelet_link -Z [m]
-gs.euler[0]  = 180.0;       // flip 180 deg around X [degrees]
-gs.contact_exclusions = {
-    {"bracelet_link", "g_base"},
-    {"bracelet_link", "g_left_pad"},
-    {"bracelet_link", "g_right_pad"},
+mj_kdl::AttachmentSpec gs{
+    .mjcf_path          = "third_party/menagerie/robotiq_2f85/2f85.xml",
+    .attach_to          = "bracelet_link",
+    .prefix             = "g_",
+    .pos                = { 0.0, 0.0, -0.061525 },  // offset along bracelet_link -Z [m]
+    .euler              = { 180.0, 0.0, 0.0 },       // flip 180 deg around X [degrees]
+    .contact_exclusions = {},
 };
 
 mj_kdl::RobotSpec rs;
@@ -145,13 +154,11 @@ Chains are supported: push multiple `AttachmentSpec` entries in order
 ### Multi-robot scene
 
 ```cpp
-mj_kdl::RobotSpec arm1, arm2;
-arm1.path   = "gen3.xml";  arm1.pos[0] = -0.5;
-arm2.path   = "gen3.xml";  arm2.pos[0] =  0.5;  arm2.prefix = "r2_";
-
 mj_kdl::SceneSpec sc;
-sc.robots.push_back(arm1);
-sc.robots.push_back(arm2);
+sc.robots = {
+    mj_kdl::RobotSpec{ .path = "gen3.xml", .pos = { -0.5, 0.0, 0.0 }, .attachments = {} },
+    mj_kdl::RobotSpec{ .path = "gen3.xml", .prefix = "r2_", .pos = { 0.5, 0.0, 0.0 }, .attachments = {} },
+};
 mj_kdl::build_scene(&model, &data, &sc);
 
 mj_kdl::Robot robot1, robot2;
@@ -163,24 +170,25 @@ mj_kdl::init_robot_from_mjcf(&robot2, model, data, "base_link", "bracelet_link",
 
 ```cpp
 mj_kdl::SceneSpec sc;
-sc.table.enabled     = true;
-sc.table.pos[2]      = 0.7;   // surface height [m]
-sc.table.top_size[0] = 0.8;
-sc.table.top_size[1] = 0.6;
-
-mj_kdl::RobotSpec r;
-r.path   = "third_party/menagerie/kinova_gen3/gen3.xml";
-r.pos[2] = 0.7;
-sc.robots.push_back(r);
-
-mj_kdl::SceneObject cube;
-cube.name    = "red_cube";
-cube.shape   = mj_kdl::Shape::BOX;
-cube.size[0] = cube.size[1] = cube.size[2] = 0.03;
-cube.pos[0]  = 0.35;  cube.pos[1] = 0.1;  cube.pos[2] = 0.73;
-cube.rgba[0] = 1.0f;  cube.rgba[3] = 1.0f;
-sc.objects.push_back(cube);
-
+sc.objects.push_back(mj_kdl::SceneObject{
+    .name      = "table",
+    .mjcf_path = "src/examples/assets/table.xml",
+    .pos       = { 0.0, 0.0, 0.7 },  // asset origin is tabletop surface center
+    .fixed     = true,
+});
+sc.robots.push_back(mj_kdl::RobotSpec{
+    .path = "third_party/menagerie/kinova_gen3/gen3.xml",
+    .pos  = { 0.0, 0.0, 0.7 },
+    .attachments = {},
+});
+sc.objects.push_back(mj_kdl::SceneObject{
+    .name      = "red_cube",
+    .mjcf_path = "",
+    .shape     = mj_kdl::Shape::BOX,
+    .size      = { 0.03, 0.03, 0.03 },
+    .pos       = { 0.35, 0.1, 0.73 },
+    .rgba      = { 1.0f, 0.0f, 0.0f, 1.0f },
+});
 mj_kdl::build_scene(&model, &data, &sc);
 ```
 
@@ -193,7 +201,7 @@ mj_kdl::Viewer viewer;
 mj_kdl::init_window_sim(&viewer, &robot);
 
 KDL::JntArray q(n), g(n);
-while (mj_kdl::tick(&viewer, model, data)) {
+while (mj_kdl::step(&robot)) {                       // returns false when window closes
     mj_kdl::update(&robot);                          // read *_msr, apply *_cmd
     for (unsigned i = 0; i < n; ++i) q(i) = robot.jnt_pos_msr[i];
     dyn.JntToGravity(q, g);
@@ -207,18 +215,28 @@ mj_kdl::destroy_scene(model, data);
 
 ### Reset
 
-`reset()` resets the simulation to its initial keyframe, re-seeds all commanded
-joints to the current measured state, and calls `on_reset` if set.  Use it to
-implement a clean restart without rebuilding the scene:
+`reset(Env*)` resets the environment runtime to its initial keyframe, calls an
+optional environment reset hook, re-seeds all registered robots' command ports to
+the current measured state, and clears stale robot forces.  Use the hook to put
+objects, controllers, and task state back at their episode start values:
 
 ```cpp
-// Optional: register a callback invoked on every reset (GUI or programmatic).
-robot.on_reset = [](mjModel *m, mjData *d) {
-    // re-initialise any external state that depends on simulation time or pose
+mj_kdl::Env env;
+mj_kdl::init_env(&env, &scene);
+
+mj_kdl::Robot robot;
+mj_kdl::init_robot_from_mjcf(&robot, env.model, env.data, "base_link", "bracelet_link");
+mj_kdl::env_add_robot(&env, &robot);
+
+env.on_reset = [&](mj_kdl::ResetContext *ctx) {
+    // Restore robot/object/task state after mj_resetData, before mj_forward.
+    mj_kdl::set_joint_pos(&robot, q_home, false);
+    episode_step = 0;
 };
 
-// Trigger a reset programmatically (also invokes on_reset).
-mj_kdl::reset(&robot);
+mj_kdl::ResetOptions opts;
+opts.keyframe = 0;
+mj_kdl::ResetInfo info = mj_kdl::reset(&env, &opts);
 ```
 
 ### Headless video recording
@@ -244,6 +262,22 @@ for (int i = 0; i < 3000; ++i) {
 mj_kdl::cleanup(&vr);   // flushes pipe, finalises MP4
 ```
 
+Interactive recording is available from the Simulate UI:
+
+1. Open the left Simulation panel.
+2. Scroll to Recorder.
+3. Set `Path`, `Camera`, `Resolution`, and `FPS`.
+4. Press `Start rec`.
+5. Press `Stop rec`.
+
+The recorder camera list includes `Current`, `Free`, `Tracking`, robot MJCF
+cameras, and cameras added through `SceneSpec::cameras`.  When ffmpeg closes
+successfully the terminal prints:
+
+```text
+[mj_kdl] recording saved to <filename>
+```
+
 ### Runtime add / remove objects
 
 ```cpp
@@ -264,10 +298,18 @@ mj_kdl::scene_remove_object(&model, &data, &sc, "red_cube");
 | Right drag (selected) | Apply torque |
 | `D` | Deselect body |
 | `Space` | Pause / resume |
-| `-` | Decrease real-time factor (below 0.05x snaps to 0.0 = uncapped) |
-| `=` | Increase real-time factor (from 0.0 starts at 0.05x) |
+| `,` | Decrease wrapper real-time factor |
+| `.` | Increase wrapper real-time factor |
 
-All other controls (reset, quit, rendering flags) are in the MuJoCo left panel.
+All other controls (reset, quit, rendering flags, live camera selection, and
+recording) are in the MuJoCo panels.
+
+## More Documentation
+
+- [Full tutorial](docs/TUTORIAL.md)
+- [Examples guide](src/examples/README.md)
+- [Torque control notes](docs/HOWTO_torque_control.md)
+- [URDF to MJCF notes](docs/HOWTO_urdf_to_mjcf.md)
 
 ## Tests
 

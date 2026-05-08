@@ -182,22 +182,17 @@ int main(int argc, char *argv[])
     rs.path = arm_mjcf.c_str();
     rs.attachments.push_back(gs);
 
-    mj_kdl::SceneObject cube;
-    cube.name    = "cube";
-    cube.shape   = mj_kdl::Shape::BOX;
-    cube.size[0] = cube.size[1] = cube.size[2] = kCubeHS;
-    cube.pos[0]                                = kCubeX;
-    cube.pos[1]                                = kCubeY;
-    cube.pos[2]                                = kCubeZ;
-    cube.rgba[0]                               = 1.0f;
-    cube.rgba[1]                               = 0.5f;
-    cube.rgba[2]                               = 0.0f;
-    cube.rgba[3]                               = 1.0f;
-    cube.mass                                  = 0.1;
-    cube.condim                                = 4;
-    cube.friction[0]                           = 0.8;
-    cube.friction[1]                           = 0.02;
-    cube.friction[2]                           = 0.001;
+    mj_kdl::SceneObject cube{
+        .name      = "cube",
+        .mjcf_path = "",
+        .shape     = mj_kdl::Shape::BOX,
+        .size      = { kCubeHS, kCubeHS, kCubeHS },
+        .pos       = { kCubeX, kCubeY, kCubeZ },
+        .rgba      = { 1.0f, 0.5f, 0.0f, 1.0f },
+        .mass      = 0.1,
+        .condim    = 4,
+        .friction  = { 0.8, 0.02, 0.001 },
+    };
 
     mj_kdl::SceneSpec sc;
     sc.robots.push_back(rs);
@@ -294,13 +289,13 @@ int main(int argc, char *argv[])
 
     // clang-format off
     const StateConfig state_cfg[] = {
-        /* HOME    */ { 1.0,          2.5,          0.08,  &q_home,     0.0,   PickState::PREGRASP },
-        /* PREGRASP*/ { 5.0,          7.0,          0.08,  &q_pregrasp, 0.0,   PickState::GRASP    },
-        /* GRASP   */ { 5.0,          8.0,          0.03,  &q_grasp,    0.0,   PickState::CLOSE    },
-        /* CLOSE   */ { 1.5,          2.5,         -1.0,   &q_grasp,    255.0, PickState::LIFT     },
-        /* LIFT    */ { 3.0,          5.0,          0.08,  &q_lift,     255.0, PickState::HOLD     },
-        /* HOLD    */ { kHoldDuration, kHoldDuration, -1.0, &q_lift,    255.0, PickState::DONE     },
-        /* DONE    */ { 0.0,          0.0,         -1.0,   &q_lift,     255.0, PickState::DONE     },
+        { .duration = 1.0,           .timeout = 2.5,           .settle_tol =  0.08, .q_target = &q_home,     .gripper_cmd =   0.0, .next = PickState::PREGRASP },
+        { .duration = 5.0,           .timeout = 7.0,           .settle_tol =  0.08, .q_target = &q_pregrasp, .gripper_cmd =   0.0, .next = PickState::GRASP    },
+        { .duration = 5.0,           .timeout = 8.0,           .settle_tol =  0.03, .q_target = &q_grasp,    .gripper_cmd =   0.0, .next = PickState::CLOSE    },
+        { .duration = 1.5,           .timeout = 2.5,           .settle_tol = -1.0,  .q_target = &q_grasp,    .gripper_cmd = 255.0, .next = PickState::LIFT     },
+        { .duration = 3.0,           .timeout = 5.0,           .settle_tol =  0.08, .q_target = &q_lift,     .gripper_cmd = 255.0, .next = PickState::HOLD     },
+        { .duration = kHoldDuration, .timeout = kHoldDuration, .settle_tol = -1.0,  .q_target = &q_lift,     .gripper_cmd = 255.0, .next = PickState::DONE     },
+        { .duration = 0.0,           .timeout = 0.0,           .settle_tol = -1.0,  .q_target = &q_lift,     .gripper_cmd = 255.0, .next = PickState::DONE     },
     };
     // clang-format on
 
@@ -318,29 +313,23 @@ int main(int argc, char *argv[])
 
     robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
 
-    auto seed_reset_state = [&](mjData *d) {
-        for (unsigned i = 0; i < n; ++i) {
-            robot.jnt_pos_cmd[i]                    = d->qpos[robot.kdl_to_mj_qpos[i]];
-            robot.jnt_trq_cmd[i]                    = 0.0;
-            d->qfrc_applied[robot.kdl_to_mj_dof[i]] = 0.0;
-        }
-        mj_kdl::update(&robot);
-        if (fingers_act >= 0) d->ctrl[fingers_act] = 0.0;
+    mj_kdl::Env env;
+    env.spec  = sc;
+    env.model = model;
+    env.data  = data;
+    mj_kdl::env_add_robot(&env, &robot);
+
+    mj_kdl::ResetOptions reset_opts;
+    reset_opts.use_keyframe = key_id >= 0;
+    reset_opts.keyframe     = key_id >= 0 ? key_id : 0;
+
+    env.on_reset = [&](mj_kdl::ResetContext *ctx) {
+        if (key_id < 0) mj_kdl::set_joint_pos(&robot, q_home, false);
+        reset_cube(ctx->data);
+        if (fingers_act >= 0) ctx->data->ctrl[fingers_act] = 0.0;
     };
 
-    auto reset_scene = [&](mjData *d) {
-        if (key_id >= 0) {
-            mj_resetDataKeyframe(model, d, key_id);
-        } else {
-            mj_resetData(model, d);
-            mj_kdl::set_joint_pos(&robot, q_home, false);
-        }
-        reset_cube(d);
-        mj_forward(model, d);
-        seed_reset_state(d);
-    };
-
-    reset_scene(data);
+    mj_kdl::reset(&env, &reset_opts);
 
     // GUI init (non-headless only)
     mj_kdl::Viewer viewer;
@@ -371,10 +360,10 @@ int main(int argc, char *argv[])
     while (sm.state != PickState::DONE) {
         switch (sm.state) {
         case PickState::HOME:
-            LOG_INFO("State: HOME");
+            std::cout << "State: HOME\n";
             while (sm.state == PickState::HOME) {
                 if (data->time < prev_sim_time - 1e-6) {
-                    reset_scene(data);
+                    mj_kdl::reset(&env, &reset_opts);
                     begin_state(PickState::HOME);
                     prev_sim_time = data->time;
                     continue;
@@ -410,10 +399,10 @@ int main(int argc, char *argv[])
             break;
 
         case PickState::PREGRASP:
-            LOG_INFO("State: PREGRASP");
+            std::cout << "State: PREGRASP\n";
             while (sm.state == PickState::PREGRASP) {
                 if (data->time < prev_sim_time - 1e-6) {
-                    reset_scene(data);
+                    mj_kdl::reset(&env, &reset_opts);
                     begin_state(PickState::HOME);
                     prev_sim_time = data->time;
                     break;
@@ -449,10 +438,10 @@ int main(int argc, char *argv[])
             break;
 
         case PickState::GRASP:
-            LOG_INFO("State: GRASP");
+            std::cout << "State: GRASP\n";
             while (sm.state == PickState::GRASP) {
                 if (data->time < prev_sim_time - 1e-6) {
-                    reset_scene(data);
+                    mj_kdl::reset(&env, &reset_opts);
                     begin_state(PickState::HOME);
                     prev_sim_time = data->time;
                     break;
@@ -488,10 +477,10 @@ int main(int argc, char *argv[])
             break;
 
         case PickState::CLOSE:
-            LOG_INFO("State: CLOSE");
+            std::cout << "State: CLOSE\n";
             while (sm.state == PickState::CLOSE) {
                 if (data->time < prev_sim_time - 1e-6) {
-                    reset_scene(data);
+                    mj_kdl::reset(&env, &reset_opts);
                     begin_state(PickState::HOME);
                     prev_sim_time = data->time;
                     break;
@@ -527,10 +516,10 @@ int main(int argc, char *argv[])
             break;
 
         case PickState::LIFT:
-            LOG_INFO("State: LIFT");
+            std::cout << "State: LIFT\n";
             while (sm.state == PickState::LIFT) {
                 if (data->time < prev_sim_time - 1e-6) {
-                    reset_scene(data);
+                    mj_kdl::reset(&env, &reset_opts);
                     begin_state(PickState::HOME);
                     prev_sim_time = data->time;
                     break;
@@ -566,10 +555,10 @@ int main(int argc, char *argv[])
             break;
 
         case PickState::HOLD:
-            LOG_INFO("State: HOLD");
+            std::cout << "State: HOLD\n";
             while (sm.state == PickState::HOLD) {
                 if (data->time < prev_sim_time - 1e-6) {
-                    reset_scene(data);
+                    mj_kdl::reset(&env, &reset_opts);
                     begin_state(PickState::HOME);
                     prev_sim_time = data->time;
                     break;

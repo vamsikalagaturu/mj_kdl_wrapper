@@ -10,15 +10,12 @@
  * Self-skips when third_party/menagerie is absent. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
-#include "test_utils.hpp"
 
 #include <gtest/gtest.h>
 
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chaindynparam.hpp>
 
-#include <iostream>
-#include <iomanip>
 #include <cmath>
 #include <memory>
 #include <string>
@@ -55,12 +52,11 @@ class DualArmTest : public testing::Test
     void SetUp() override
     {
         fs::path root = repo_root();
-        if (!fs::exists(root / "third_party/menagerie")) {
-            GTEST_SKIP() << "third_party/menagerie/ not found";
+        std::string mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+        if (!fs::exists(mjcf)) {
+            GTEST_SKIP() << mjcf << " not found";
             return;
         }
-
-        std::string mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
 
         /* Build a single MuJoCo scene with two arms facing each other.
          *   arm1: at x = -0.5 m, facing +X (default orientation)
@@ -71,20 +67,12 @@ class DualArmTest : public testing::Test
         scene.gravity_z = -9.81;
         scene.add_floor = true;
 
-        mj_kdl::RobotSpec r1, r2;
-        r1.path   = mjcf.c_str();
-        r1.prefix = "";
-        r1.pos[0] = -0.5;
-
-        r2.path     = mjcf.c_str();
-        r2.prefix   = "r2_";
-        r2.pos[0]   = 0.5;
-        r2.euler[2] = 180.0;
-
-        scene.robots = { r1, r2 };
+        scene.robots = {
+            mj_kdl::RobotSpec{ .path = mjcf.c_str(), .pos = { -0.5, 0.0, 0.0 }, .attachments = {} },
+            mj_kdl::RobotSpec{ .path = mjcf.c_str(), .prefix = "r2_", .pos = { 0.5, 0.0, 0.0 }, .euler = { 0.0, 0.0, 180.0 }, .attachments = {} },
+        };
 
         ASSERT_TRUE(mj_kdl::build_scene(&model, &data, &scene)) << "build_scene() returned false";
-        TEST_INFO(model->nbody << " bodies, " << model->nq << " DOFs");
 
         ASSERT_TRUE(
           mj_kdl::init_robot_from_mjcf(&arm1, model, data, "base_link", "bracelet_link", "")
@@ -127,8 +115,7 @@ TEST_F(DualArmTest, GravityInformational)
         err1 = std::max(err1, std::abs(g1(j) - data->qfrc_bias[arm1.kdl_to_mj_dof[j]]));
         err2 = std::max(err2, std::abs(g2(j) - data->qfrc_bias[arm2.kdl_to_mj_dof[j]]));
     }
-    TEST_INFO("arm1 max |KDL - qfrc_bias| = " << err1 << " Nm");
-    TEST_INFO("arm2 max |KDL - qfrc_bias| = " << err2 << " Nm");
+    (void)err1; (void)err2;
 }
 
 TEST_F(DualArmTest, DualArmDrift)
@@ -143,15 +130,6 @@ TEST_F(DualArmTest, DualArmDrift)
     KDL::Frame ee1_init, ee2_init;
     fk1->JntToCart(q_home, ee1_init);
     fk2->JntToCart(q_home, ee2_init);
-
-    TEST_INFO(
-      "Arm 1 initial EE: [" << std::fixed << std::setprecision(4) << ee1_init.p.x() << ", "
-                            << ee1_init.p.y() << ", " << ee1_init.p.z() << "]"
-    );
-    TEST_INFO(
-      "Arm 2 initial EE: [" << ee2_init.p.x() << ", " << ee2_init.p.y() << ", " << ee2_init.p.z()
-                            << "]"
-    );
 
     /* Prime jnt_trq_cmd for both arms so the first update() applies compensation
      * immediately, not zero torques (which would impart velocity that gravity comp
@@ -183,11 +161,6 @@ TEST_F(DualArmTest, DualArmDrift)
 
     double drift1 = (ee1_init.p - ee1_end.p).Norm();
     double drift2 = (ee2_init.p - ee2_end.p).Norm();
-
-    TEST_INFO(
-      "EE drift after 500 steps: arm1=" << std::setprecision(3) << drift1 * 1000.0
-                                        << " mm  arm2=" << drift2 * 1000.0 << " mm"
-    );
 
     ASSERT_LE(drift1, 0.001) << "arm1 drift " << drift1 * 1000.0 << " mm exceeds 1 mm threshold";
     ASSERT_LE(drift2, 0.001) << "arm2 drift " << drift2 * 1000.0 << " mm exceeds 1 mm threshold";

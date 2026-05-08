@@ -12,15 +12,12 @@
  * follow the commanded velocity profile. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
-#include "test_utils.hpp"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
-#include <iomanip>
-#include <iostream>
 #include <string>
 
 static constexpr double kHomePose[7]   = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
@@ -45,17 +42,14 @@ class MjcfVelCtrlTest : public testing::Test
     void SetUp() override
     {
         root_ = repo_root();
-        if (!fs::exists(root_ / "third_party/menagerie")) {
-            GTEST_SKIP() << "third_party/menagerie/ not found";
+        std::string arm_mjcf = (root_ / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+        if (!fs::exists(arm_mjcf)) {
+            GTEST_SKIP() << arm_mjcf << " not found";
             return;
         }
 
-        std::string arm_mjcf = (root_ / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-
         mj_kdl::SceneSpec sc;
-        mj_kdl::RobotSpec r;
-        r.path = arm_mjcf.c_str();
-        sc.robots.push_back(r);
+        sc.robots.push_back(mj_kdl::RobotSpec{ .path = arm_mjcf.c_str(), .attachments = {} });
 
         ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc));
         ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link"));
@@ -109,11 +103,6 @@ TEST_F(MjcfVelCtrlTest, Convergence)
     double max_err = 0.0;
     for (unsigned i = 0; i < n_; ++i)
         max_err = std::max(max_err, std::abs(kTargetPose[i] - s_.jnt_pos_msr[i]));
-
-    TEST_INFO(
-      "MJCF velocity ctrl: " << (arrived ? "converged" : "TIMEOUT") << "  max_err=" << std::fixed
-                             << std::setprecision(4) << max_err << " rad  t=" << data_->time << " s"
-    );
 
     EXPECT_TRUE(arrived) << "velocity controller did not converge within " << kTimeout << " s";
     EXPECT_LE(max_err, kTol * 2);

@@ -98,8 +98,8 @@ Kd = [10,  20,  10,  20,  10,  20,  10 ]  Nm*s/rad
 with five free objects: 3 boxes (red, green, blue) and 2 spheres (orange, purple).
 
 **What it does:**
-- Builds the full scene via `SceneSpec` with `TableSpec` enabled and five
-  `SceneObject` entries using `Shape::BOX` and `Shape::SPHERE`.
+- Builds the full scene via `SceneSpec` with an MJCF table asset and five
+  primitive `SceneObject` entries using `Shape::BOX` and `Shape::SPHERE`.
 - Arm holds home pose via KDL gravity compensation; gripper cycles open/closed.
 - Objects sit on the table surface and respond to physics (can be knocked over).
 
@@ -156,7 +156,7 @@ State table (durations in seconds):
 on the tabletop.
 
 **What it does:**
-- Builds a `TableSpec` scene and places the robot base on the tabletop surface.
+- Adds the table as an MJCF-backed `SceneObject` and places the robot base on the tabletop surface.
 - Solves IK waypoints for a table pick, transfer, placement, release, and retreat.
 - Runs a scripted sequence:
   `HOME -> PICK_ABOVE -> PICK -> CLOSE -> LIFT -> PLACE_ABOVE -> PLACE -> OPEN -> RETREAT -> HOLD`
@@ -178,8 +178,8 @@ receiver vessel and small free spheres representing rice or pellets.
 
 **What it does:**
 - Attaches a small gripper-sized bottle to the gripper as a real MJCF tool
-  attachment, so its mass is included through `tool_body = "g_base"`.
-- Initializes the free spheres inside the attached bottle using the bottle body frame.
+  attachment, so its mass is included through `ToolFrameSpec::tool_body`.
+- Initializes the free spheres inside the attached bottle using the `pour_center` site frame.
 - Solves IK waypoints for a pre-pour pose, pour pose, tilted pour pose, shake,
   retreat, and hold.
 - Uses transparent fixed collision walls for the receiving vessel, so particles
@@ -192,7 +192,7 @@ the pick examples.
 tau[i] = g[i] + Kp[i] * (q_des[i] - q[i]) - Kd[i] * dq[i]
 ```
 
-**Headless output:** `balls in transparent receiver: N/18`
+**Headless output:** `balls in transparent receiver: N/36`
 
 ---
 

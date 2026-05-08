@@ -1,0 +1,1031 @@
+# mj_kdl_wrapper Tutorial
+
+This tutorial builds a simulation application in layers: install the package,
+compile a robot scene, add KDL control, add reset hooks, add objects and cameras,
+use the Simulate UI, record video, and then extend the scene to more robots and
+more complex task assets.
+
+The snippets assume the package is built with MuJoCo Menagerie available, because
+the examples use the Kinova GEN3 arm and Robotiq 2F-85 gripper.
+
+## How To Read This Tutorial
+
+The wrapper has four layers. Keep them separate and the API stays simple:
+
+| Layer | Type | Responsibility |
+|-------|------|----------------|
+| Scene description | `SceneSpec`, `RobotSpec`, `AttachmentSpec`, `SceneObject`, `CameraSpec` | Describe what should be compiled into MuJoCo |
+| Runtime environment | `Env` | Own `mjModel`/`mjData`, registered robots, and reset hooks |
+| Robot control handle | `Robot` | KDL chain, joint maps, measured ports, command ports |
+| Visualization/recording | `Viewer`, `VideoRecorder` | Interactive Simulate UI and offscreen MP4 recording |
+
+The important ownership rule:
+
+- `Env` owns `mjModel` and `mjData`.
+- `Robot` borrows `mjModel` and `mjData`.
+- `Viewer` borrows the same model/data through the step calls.
+- `VideoRecorder` owns only its EGL/rendering/ffmpeg resources; it also borrows
+  model/data when recording frames.
+
+Most examples follow this flow:
+
+1. Build a `SceneSpec`.
+2. Call `init_env()`.
+3. Initialize one or more `Robot` handles from `env.model` and `env.data`.
+4. Register robots with `env_add_robot()`.
+5. Install `env.on_reset` if the task has object/controller state.
+6. Start `init_window_sim()` or a headless loop.
+7. In the loop: `step()`, `update()`, compute commands, write command ports.
+8. Cleanup in reverse order: viewer/recorder, robots, env.
+
+## 1. Install Dependencies
+
+Install system dependencies:
+
+```bash
+sudo apt update
+sudo apt install cmake g++ libglfw3-dev libgl-dev libegl-dev liborocos-kdl-dev ffmpeg
+```
+
+Install MuJoCo 3.8.0:
+
+```bash
+wget https://github.com/google-deepmind/mujoco/releases/download/3.8.0/mujoco-3.8.0-linux-x86_64.tar.gz
+sudo tar -xzf mujoco-3.8.0-linux-x86_64.tar.gz -C /opt/
+```
+
+Configure and build:
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DFETCH_MENAGERIE=ON
+cmake --build build --parallel $(nproc)
+```
+
+The package expects MuJoCo 3.8.0 by default at `/opt/mujoco-3.8.0`. Override it
+with `-DMUJOCO_ROOT=/path/to/mujoco-3.8.0` if needed.
+
+Useful CMake options:
+
+| Option | Default | When to change it |
+|--------|---------|-------------------|
+| `MUJOCO_ROOT` | `/opt/mujoco-3.8.0` | MuJoCo is installed somewhere else |
+| `FETCH_MENAGERIE` | `OFF` | You want the bundled examples to build robot assets automatically |
+| `BUILD_RECORDER` | `ON` | Turn off if EGL is unavailable and you do not need MP4 recording |
+| `BUILD_TESTS` | `ON` | Turn off for a smaller install-only build |
+| `BUILD_DOCS` | `OFF` | Turn on to generate Doxygen HTML docs |
+
+Run a smoke test:
+
+```bash
+ctest --test-dir build --output-on-failure
+./build/src/examples/ex_gravity_comp --headless
+```
+
+If you are developing inside a larger workspace, point CMake at this package
+directory explicitly:
+
+```bash
+cmake -S src/mj_kdl_wrapper -B build/mj_kdl_wrapper \
+      -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+      -DFETCH_MENAGERIE=ON
+cmake --build build/mj_kdl_wrapper --parallel $(nproc)
+```
+
+## 1.1 Build A Small External Program
+
+When using the wrapper from another CMake project, link against
+`mj_kdl_wrapper` and include the public header:
+
+```cmake
+cmake_minimum_required(VERSION 3.16)
+project(my_sim LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(mj_kdl_wrapper REQUIRED)
+
+add_executable(my_sim main.cpp)
+target_link_libraries(my_sim PRIVATE mj_kdl_wrapper::mj_kdl_wrapper)
+```
+
+If you are building directly inside this repository before install, the example
+targets in `src/examples/CMakeLists.txt` show the same pattern with the in-tree
+target:
+
+```cmake
+add_executable(my_sim main.cpp)
+target_link_libraries(my_sim PRIVATE mj_kdl_wrapper)
+```
+
+## 2. Start With One Robot Scene
+
+Scenes are declared with `SceneSpec`. The first useful scene is just one robot
+MJCF, floor, skybox, default timestep, and default gravity:
+
+```cpp
+#include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+
+mj_kdl::SceneSpec scene;
+scene.robots.push_back(mj_kdl::RobotSpec{
+    .path = "third_party/menagerie/kinova_gen3/gen3.xml",
+});
+
+mj_kdl::Env env;
+if (!mj_kdl::init_env(&env, &scene)) {
+    throw std::runtime_error("failed to build scene");
+}
+```
+
+`Env` owns `env.model` and `env.data`. Call `mj_kdl::cleanup(&env)` when done.
+
+You can also build raw pointers directly:
+
+```cpp
+mjModel *model = nullptr;
+mjData  *data  = nullptr;
+mj_kdl::build_scene(&model, &data, &scene);
+```
+
+Prefer `Env` for applications that need reset hooks or registered robots.
+
+### What `SceneSpec` Compiles
+
+`build_scene()` creates one MuJoCo `mjSpec`, attaches robot MJCF trees into it,
+adds global scene options, adds objects and cameras, then compiles the model.
+
+Important fields:
+
+```cpp
+mj_kdl::SceneSpec scene;
+scene.timestep   = 0.002;
+scene.gravity_z  = -9.81;
+scene.add_floor  = true;
+scene.add_skybox = true;
+scene.robots     = {};
+scene.objects    = {};
+scene.cameras    = {};
+```
+
+Use `RobotSpec::prefix` for repeated robots. The prefix is applied during MJCF
+attachment so names stay unique in the compiled model:
+
+```cpp
+scene.robots.push_back(mj_kdl::RobotSpec{
+    .path   = "third_party/menagerie/kinova_gen3/gen3.xml",
+    .prefix = "left_",
+    .pos    = { -0.6, 0.0, 0.0 },
+});
+```
+
+Use `RobotSpec::pos` and `RobotSpec::euler` to place the robot root in the world.
+Euler angles are extrinsic XYZ degrees.
+
+### Cleanup Order
+
+Use a consistent cleanup order:
+
+```cpp
+mj_kdl::cleanup(&viewer);   // stops render thread / closes window
+mj_kdl::cleanup(&robot);    // clears borrowed pointers and KDL/port state
+mj_kdl::cleanup(&env);      // frees mjData and mjModel
+```
+
+If you created raw `mjModel*` and `mjData*` with `build_scene()`, free them with:
+
+```cpp
+mj_kdl::destroy_scene(model, data);
+```
+
+Do not call both `cleanup(&env)` and `destroy_scene(env.model, env.data)` for the
+same model/data. `Env` owns those pointers once `init_env()` succeeds.
+
+## 3. Initialize A KDL Robot
+
+`Robot` is the runtime handle for one controllable articulation. It stores the
+borrowed `mjModel`/`mjData` pointers, KDL chain, joint-name maps, measured ports,
+and command ports.
+
+```cpp
+mj_kdl::Robot robot;
+if (!mj_kdl::init_robot_from_mjcf(
+        &robot,
+        env.model,
+        env.data,
+        "base_link",
+        "bracelet_link")) {
+    throw std::runtime_error("failed to init robot");
+}
+
+mj_kdl::env_add_robot(&env, &robot);
+```
+
+Registering with `env_add_robot()` lets `reset(&env)` sync the robot command
+ports after MuJoCo data is reset.
+
+## 4. Run A Position Control Loop
+
+For position mode, write `jnt_pos_cmd`; `update()` copies it to MuJoCo actuator
+controls.
+
+```cpp
+robot.ctrl_mode = mj_kdl::CtrlMode::POSITION;
+
+mj_kdl::Viewer viewer;
+mj_kdl::init_window_sim(&viewer, &robot, "position control");
+
+while (mj_kdl::step(&viewer, env.model, env.data)) {
+    mj_kdl::update(&robot);
+
+    for (int i = 0; i < robot.n_joints; ++i) {
+        robot.jnt_pos_cmd[i] = robot.jnt_pos_msr[i];
+    }
+}
+
+mj_kdl::cleanup(&viewer);
+```
+
+`init_window_sim()` starts MuJoCo Simulate in a render thread. Your loop still
+owns stepping, updating control, and task logic.
+
+## 5. Add KDL Gravity Compensation
+
+KDL dynamics work directly from the generated chain:
+
+```cpp
+robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
+KDL::ChainDynParam dyn(robot.chain, KDL::Vector(0.0, 0.0, scene.gravity_z));
+KDL::JntArray q(robot.n_joints);
+KDL::JntArray g(robot.n_joints);
+
+while (mj_kdl::step(&viewer, env.model, env.data)) {
+    mj_kdl::update(&robot);
+
+    for (int i = 0; i < robot.n_joints; ++i) {
+        q(i) = robot.jnt_pos_msr[i];
+    }
+    dyn.JntToGravity(q, g);
+
+    for (int i = 0; i < robot.n_joints; ++i) {
+        robot.jnt_trq_cmd[i] = g(i);
+    }
+}
+```
+
+This is the core pattern used by `ex_gravity_comp`.
+
+## 6. Attach A Gripper Or Tool
+
+Attachments are MJCF assets attached under a body in the accumulated robot spec.
+They are applied in order, so mount -> sensor -> gripper chains are natural.
+
+```cpp
+mj_kdl::AttachmentSpec gripper{
+    .mjcf_path = "third_party/menagerie/robotiq_2f85/2f85.xml",
+    .attach_to = "bracelet_link",
+    .prefix    = "g_",
+    .pos       = { 0.0, 0.0, -0.061525 },
+    .euler     = { 180.0, 0.0, 0.0 },
+};
+
+mj_kdl::RobotSpec arm{
+    .path        = "third_party/menagerie/kinova_gen3/gen3.xml",
+    .attachments = { gripper },
+};
+
+scene.robots.clear();
+scene.robots.push_back(arm);
+```
+
+Tell KDL about the attached tool when initializing the robot:
+
+```cpp
+mj_kdl::ToolFrameSpec tool{
+    .tool_body = "g_base",
+    .tcp_site  = "g_pinch",
+};
+
+mj_kdl::init_robot_from_mjcf(
+    &robot, env.model, env.data, "base_link", "bracelet_link", "", &tool);
+```
+
+`tool_body` lumps the tool subtree inertia into the KDL chain. `tcp_site` adds a
+terminal frame from a MuJoCo site.
+
+### Attachment Chains
+
+`attachments` is ordered. Each attachment is applied to the robot spec after all
+previous attachments, so later `attach_to` values may refer to bodies introduced
+by earlier attachments.
+
+```cpp
+mj_kdl::AttachmentSpec mount{
+    .mjcf_path = "assets/wrist_mount.xml",
+    .attach_to = "bracelet_link",
+    .prefix    = "mount_",
+};
+
+mj_kdl::AttachmentSpec sensor{
+    .mjcf_path = "assets/ft_sensor.xml",
+    .attach_to = "mount_tip",
+    .prefix    = "ft_",
+};
+
+mj_kdl::AttachmentSpec gripper{
+    .mjcf_path = "third_party/menagerie/robotiq_2f85/2f85.xml",
+    .attach_to = "ft_tool",
+    .prefix    = "g_",
+};
+
+scene.robots.push_back(mj_kdl::RobotSpec{
+    .path        = "third_party/menagerie/kinova_gen3/gen3.xml",
+    .attachments = { mount, sensor, gripper },
+});
+```
+
+For contact stability, add contact exclusions only when two attached bodies are
+known to overlap structurally:
+
+```cpp
+gripper.contact_exclusions.push_back({ "bracelet_link", "g_base" });
+```
+
+Do not use exclusions to hide unstable task contacts; fix geometry, friction,
+or controller gains instead.
+
+## 7. Add Tables, Objects, And Asset Sites
+
+`SceneObject` supports primitive objects and MJCF-backed assets. Tables are just
+assets, not special first-class fields.
+
+```cpp
+mj_kdl::SceneObject table{
+    .name      = "table",
+    .mjcf_path = "src/examples/assets/table.xml",
+    .pos       = { 0.0, 0.0, 0.7 },
+    .fixed     = true,
+};
+
+scene.objects.push_back(table);
+scene.objects.push_back(mj_kdl::SceneObject{
+    .name  = "cube",
+    .shape = mj_kdl::Shape::BOX,
+    .size  = { 0.03, 0.03, 0.03 },
+    .pos   = { 0.35, 0.05, 0.73 },
+    .rgba  = { 0.1f, 0.3f, 1.0f, 1.0f },
+    .mass  = 0.1,
+});
+```
+
+MJCF-backed object names are prefixed with `object.name + "_"`. If an asset has
+a site named `table_top`, get its compiled name like this:
+
+```cpp
+const std::string site = mj_kdl::scene_object_site_name(table, "table_top");
+KDL::Frame world_T_table_top;
+mj_kdl::get_site_frame(env.model, env.data, site.c_str(), &world_T_table_top);
+```
+
+This is useful for placing robot bases and objects relative to authored asset
+sites rather than hardcoding offsets.
+
+## 8. Add Cameras
+
+Add fixed scene cameras through `SceneSpec::cameras`:
+
+```cpp
+scene.cameras.push_back(mj_kdl::CameraSpec{
+    .name  = "front",
+    .pos   = { 0.0, -0.8, 1.45 },
+    .euler = { 35.0, 0.0, 0.0 },
+    .fovy  = 45.0,
+});
+```
+
+After compile, all cameras are visible to MuJoCo and include:
+
+- robot MJCF cameras,
+- cameras added through `SceneSpec::cameras`,
+- cameras in MJCF object assets.
+
+List them:
+
+```cpp
+for (const auto &name : mj_kdl::get_camera_names(env.model)) {
+    std::cout << name << "\n";
+}
+```
+
+Use one in the viewer or recorder:
+
+```cpp
+mj_kdl::use_camera(&viewer, env.model, "front");
+mj_kdl::use_camera(&recorder, env.model, "front");
+```
+
+The Simulate UI also has its own live camera selector in the Rendering panel.
+
+## 9. Write Production Reset Hooks
+
+`reset(&env)` resets MuJoCo, runs your hook, forwards dynamics, then syncs all
+registered robots so stale commands do not hit the first post-reset step.
+
+```cpp
+KDL::JntArray q_home(robot.n_joints);
+double cube_start[3] = { 0.35, 0.05, 0.73 };
+
+env.on_reset = [&](mj_kdl::ResetContext *ctx) {
+    mj_kdl::set_joint_pos(&robot, q_home, false);
+    mj_kdl::set_body_pose(ctx->model, ctx->data, "cube", cube_start);
+    task_state = TaskState::HOME;
+    episode_step = 0;
+};
+
+mj_kdl::ResetOptions opts{
+    .keyframe     = 0,
+    .use_keyframe = true,
+};
+
+mj_kdl::ResetInfo info = mj_kdl::reset(&env, &opts);
+```
+
+Put robot, object, controller, randomization, and task-specific state in the
+hook. Do not hide reset work in the control loop.
+
+### Reset Lifecycle
+
+`reset(&env)` performs the reset in this order:
+
+1. Reset MuJoCo data to keyframe/default state.
+2. Create a `ResetContext`.
+3. Call `env.on_reset`, if provided.
+4. Call `mj_forward()`.
+5. Sync every registered `Robot`:
+   - `jnt_pos_cmd` becomes the measured joint position,
+   - `jnt_trq_cmd` is cleared,
+   - stale applied forces are cleared.
+
+That order is deliberate. User hooks restore task state after the low-level
+MuJoCo reset, and robot ports are synchronized after the hook so the first
+post-reset update does not apply stale commands.
+
+Use `ResetContext` when your hook needs direct MuJoCo access:
+
+```cpp
+env.on_reset = [&](mj_kdl::ResetContext *ctx) {
+    const double q_identity[4] = { 1.0, 0.0, 0.0, 0.0 };
+    const double cube_pos[3]   = { 0.35, 0.05, 0.73 };
+    mj_kdl::set_body_pose(ctx->model, ctx->data, "cube", cube_pos, q_identity);
+
+    controller_integral.assign(robot.n_joints, 0.0);
+    task_state = TaskState::HOME;
+};
+```
+
+For randomized starts, generate random values in the hook and write them to
+MuJoCo before `reset()` returns.
+
+## 10. Use The Simulate UI
+
+The full viewer path is:
+
+```cpp
+mj_kdl::Viewer viewer;
+mj_kdl::init_window_sim(&viewer, &robot, "task");
+
+while (mj_kdl::step(&viewer, env.model, env.data)) {
+    mj_kdl::update(&robot);
+    // control...
+}
+```
+
+Useful wrapper-specific controls:
+
+| Control | Behavior |
+|---------|----------|
+| `,` | slow the wrapper real-time factor |
+| `.` | speed the wrapper real-time factor |
+| Simulation -> `RTF` | current wrapper real-time factor |
+| Simulation -> Recorder | path, camera, resolution, FPS, start/stop, status |
+
+Recorder camera options include `Current`, `Free`, `Tracking`, and every fixed
+camera compiled into the model.
+
+### Simulate UI Recorder Controls
+
+The recorder controls live in the left Simulation panel:
+
+| Field | Meaning |
+|-------|---------|
+| `Path` | Output MP4 path, relative to the process working directory unless absolute |
+| `Camera` | `Current`, `Free`, `Tracking`, or any compiled fixed camera |
+| `Resolution` | `360p`, `480p`, `720p`, or `1080p` |
+| `FPS` | Recording frame rate |
+| `Start rec` | Opens EGL recorder and starts feeding frames |
+| `Stop rec` | Closes ffmpeg and finalizes the MP4 |
+| `Rec` | `idle`, `recording`, or `failed` |
+
+`Current` means the recorder follows the Simulate viewer camera. A fixed camera
+records from that camera even if the live viewer is moved elsewhere.
+
+When recording stops successfully, the terminal prints:
+
+```text
+[mj_kdl] recording saved to recording.mp4
+```
+
+If the status changes to `failed`, check that `ffmpeg` is installed and the path
+is writable.
+
+## 11. Record Video
+
+Interactive recording is available in the Simulate UI:
+
+1. Open the Simulation panel.
+2. Scroll to Recorder.
+3. Set `Path`, `Camera`, `Resolution`, and `FPS`.
+4. Press `Start rec`.
+5. Press `Stop rec`.
+
+The terminal prints:
+
+```text
+[mj_kdl] recording saved to <path>
+```
+
+Headless recording uses the same `VideoRecorder` API:
+
+```cpp
+mj_kdl::VideoRecorder recorder;
+mj_kdl::init_video_recorder(
+    &recorder, env.model, "episode.mp4", mj_kdl::VideoResolution::R1080p, 60);
+
+for (int i = 0; i < 3000; ++i) {
+    mj_step(env.model, env.data);
+    if (i % 4 == 0) {
+        mj_kdl::record_frame(&recorder, env.model, env.data);
+    }
+}
+
+mj_kdl::cleanup(&recorder);
+```
+
+## 12. Build A Tabletop Pick-Place Example
+
+This section assembles the pieces into a complete pick-place task. The goal is
+to pick a cube from one table location, move it to another location, open the
+gripper, and retreat. The full implementation is `src/examples/ex_table_pick_place.cpp`;
+the code below shows the structure you should reproduce in your own application.
+
+The application has five parts:
+
+1. Build a scene with an arm, gripper, table asset, cube, and camera.
+2. Read the table site to compute reliable tabletop coordinates.
+3. Build KDL FK/IK/dynamics solvers.
+4. Define a reset hook and state machine.
+5. Run torque impedance control against state-specific IK targets.
+
+### 12.1 Build The Scene
+
+Start with the gripper attachment:
+
+```cpp
+mj_kdl::AttachmentSpec gripper{
+    .mjcf_path = "third_party/menagerie/robotiq_2f85/2f85.xml",
+    .attach_to = "bracelet_link",
+    .prefix    = "g_",
+    .pos       = { 0.0, 0.0, -0.061525 },
+    .euler     = { 180.0, 0.0, 0.0 },
+};
+```
+
+Add the table as an MJCF-backed `SceneObject`. The table asset origin is the
+tabletop surface center, so placing it at `z = 0.7` makes the top surface `0.7 m`.
+
+```cpp
+mj_kdl::SceneObject table{
+    .name      = "table",
+    .mjcf_path = "src/examples/assets/table.xml",
+    .pos       = { 0.0, 0.0, 0.7 },
+    .fixed     = true,
+};
+```
+
+Add a free cube. For a box, `size` is half-extents, so the center z coordinate
+is `surface_z + half_height`.
+
+```cpp
+constexpr double kSurfaceZ = 0.7;
+constexpr double kCubeHalf = 0.025;
+
+mj_kdl::SceneObject cube{
+    .name     = "cube",
+    .shape    = mj_kdl::Shape::BOX,
+    .size     = { kCubeHalf, kCubeHalf, kCubeHalf },
+    .pos      = { 0.35, 0.10, kSurfaceZ + kCubeHalf },
+    .rgba     = { 0.1f, 0.25f, 1.0f, 1.0f },
+    .mass     = 0.1,
+    .condim   = 4,
+    .friction = { 0.8, 0.02, 0.001 },
+};
+```
+
+Assemble the scene:
+
+```cpp
+mj_kdl::SceneSpec scene;
+scene.robots.push_back(mj_kdl::RobotSpec{
+    .path        = "third_party/menagerie/kinova_gen3/gen3.xml",
+    .pos         = { 0.0, 0.0, kSurfaceZ },
+    .attachments = { gripper },
+});
+scene.objects.push_back(table);
+scene.objects.push_back(cube);
+scene.cameras.push_back(mj_kdl::CameraSpec{
+    .name  = "task",
+    .pos   = { 0.1, -0.9, 1.45 },
+    .euler = { 35.0, 0.0, 5.0 },
+    .fovy  = 45.0,
+});
+
+mj_kdl::Env env;
+mj_kdl::init_env(&env, &scene);
+```
+
+### 12.2 Read Table Sites Instead Of Hardcoding Geometry
+
+The table asset defines a `table_top` site. Because MJCF-backed objects are
+prefixed when attached, get the compiled site name through the helper:
+
+```cpp
+KDL::Frame world_T_table_top;
+const std::string table_top_site =
+    mj_kdl::scene_object_site_name(table, "table_top");
+
+if (!mj_kdl::get_site_frame(
+        env.model, env.data, table_top_site.c_str(), &world_T_table_top)) {
+    throw std::runtime_error("table_top site not found");
+}
+
+const double surface_z = world_T_table_top.p.z();
+```
+
+Now define task points from the table surface:
+
+```cpp
+KDL::Vector pick_pos(0.35, 0.10, surface_z + 0.02);
+KDL::Vector place_pos(0.20, -0.18, surface_z + 0.02);
+
+KDL::Vector approach_offset(0.0, 0.0, 0.16);
+KDL::Vector lift_offset(0.0, 0.0, 0.22);
+```
+
+This makes the task robust if you move the table asset or swap it for another
+asset with the same site convention.
+
+### 12.3 Initialize Robot, Tool, And Solvers
+
+Initialize the robot with gripper inertia and TCP site:
+
+```cpp
+mj_kdl::Robot robot;
+mj_kdl::ToolFrameSpec tool{
+    .tool_body = "g_base",
+    .tcp_site  = "g_pinch",
+};
+
+mj_kdl::init_robot_from_mjcf(
+    &robot, env.model, env.data, "base_link", "bracelet_link", "", &tool);
+mj_kdl::env_add_robot(&env, &robot);
+
+robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
+```
+
+Create KDL solvers:
+
+```cpp
+KDL::ChainFkSolverPos_recursive fk(robot.chain);
+KDL::ChainIkSolverVel_pinv ik_vel(robot.chain);
+KDL::ChainIkSolverPos_NR_JL ik_pos(
+    robot.chain, q_min, q_max, fk, ik_vel, 100, 1e-5);
+KDL::ChainDynParam dyn(robot.chain, KDL::Vector(0.0, 0.0, scene.gravity_z));
+```
+
+`q_min` and `q_max` come from `robot.joint_limits`. Keep them in `KDL::JntArray`
+so IK respects the compiled model limits.
+
+### 12.4 Generate IK Waypoints
+
+Use one orientation for the gripper and solve a sequence of poses:
+
+```cpp
+KDL::Rotation grasp_R = KDL::Rotation::RPY(M_PI, 0.0, M_PI / 2.0);
+
+KDL::Frame pick_above(grasp_R, pick_pos + approach_offset);
+KDL::Frame pick_frame(grasp_R, pick_pos);
+KDL::Frame lift_frame(grasp_R, pick_pos + lift_offset);
+KDL::Frame place_above(grasp_R, place_pos + approach_offset);
+KDL::Frame place_frame(grasp_R, place_pos);
+KDL::Frame retreat_frame(grasp_R, place_pos + lift_offset);
+```
+
+Solve each waypoint seeded from the previous solution:
+
+```cpp
+auto solve = [&](const KDL::Frame &target, const KDL::JntArray &seed) {
+    KDL::JntArray q_out(robot.n_joints);
+    if (ik_pos.CartToJnt(seed, target, q_out) < 0) {
+        throw std::runtime_error("IK failed");
+    }
+    return q_out;
+};
+
+KDL::JntArray q_home = measured_home(robot);
+KDL::JntArray q_pick_above = solve(pick_above, q_home);
+KDL::JntArray q_pick       = solve(pick_frame, q_pick_above);
+KDL::JntArray q_lift       = solve(lift_frame, q_pick);
+KDL::JntArray q_place_above = solve(place_above, q_lift);
+KDL::JntArray q_place      = solve(place_frame, q_place_above);
+KDL::JntArray q_retreat    = solve(retreat_frame, q_place);
+```
+
+In production code, print the target names when IK fails. It saves time when a
+single pose is outside the workspace or has an impossible orientation.
+
+### 12.5 Define The State Machine
+
+Keep state configuration data-driven. Each row says where to move, how long to
+interpolate, how long to wait before forcing transition, and what the gripper
+should do.
+
+```cpp
+enum class TaskState {
+    HOME,
+    PICK_ABOVE,
+    PICK,
+    CLOSE,
+    LIFT,
+    PLACE_ABOVE,
+    PLACE,
+    OPEN,
+    RETREAT,
+    HOLD,
+};
+
+struct StateConfig {
+    TaskState state;
+    KDL::JntArray target;
+    double duration;
+    double timeout;
+    double settle_tol;
+    double gripper_cmd;
+};
+
+std::vector<StateConfig> plan = {
+    { TaskState::HOME,        q_home,        1.0, 2.5, 0.08, 0.0   },
+    { TaskState::PICK_ABOVE,  q_pick_above,  2.0, 4.0, 0.08, 0.0   },
+    { TaskState::PICK,        q_pick,        1.5, 3.5, 0.06, 0.0   },
+    { TaskState::CLOSE,       q_pick,        0.8, 1.5, 0.00, 255.0 },
+    { TaskState::LIFT,        q_lift,        2.0, 4.0, 0.08, 255.0 },
+    { TaskState::PLACE_ABOVE, q_place_above, 2.0, 4.0, 0.08, 255.0 },
+    { TaskState::PLACE,       q_place,       1.5, 3.0, 0.06, 255.0 },
+    { TaskState::OPEN,        q_place,       0.8, 1.5, 0.00, 0.0   },
+    { TaskState::RETREAT,     q_retreat,     1.5, 3.0, 0.08, 0.0   },
+    { TaskState::HOLD,        q_retreat,     1.0, 1.0, 0.00, 0.0   },
+};
+```
+
+On entry to a state, capture the measured joint position. Interpolate from that
+entry pose to the state target:
+
+```cpp
+KDL::JntArray q_enter = current_q(robot);
+double t_enter = env.data->time;
+
+double alpha = std::clamp(
+    (env.data->time - t_enter) / cfg.duration, 0.0, 1.0);
+
+KDL::JntArray q_des(robot.n_joints);
+for (int i = 0; i < robot.n_joints; ++i) {
+    q_des(i) = q_enter(i) + alpha * (cfg.target(i) - q_enter(i));
+}
+```
+
+Transition when either the duration has elapsed and the joint error is small, or
+the timeout is reached:
+
+```cpp
+bool settled = joint_error(q_des, current_q(robot)) < cfg.settle_tol;
+bool duration_done = env.data->time - t_enter >= cfg.duration;
+bool timed_out = env.data->time - t_enter >= cfg.timeout;
+
+if ((duration_done && settled) || timed_out) {
+    advance_to_next_state();
+}
+```
+
+### 12.6 Apply Torque Impedance
+
+Use KDL gravity plus joint PD:
+
+```cpp
+KDL::JntArray q(robot.n_joints);
+KDL::JntArray dq(robot.n_joints);
+KDL::JntArray gravity(robot.n_joints);
+
+for (int i = 0; i < robot.n_joints; ++i) {
+    q(i)  = robot.jnt_pos_msr[i];
+    dq(i) = robot.jnt_vel_msr[i];
+}
+
+dyn.JntToGravity(q, gravity);
+
+for (int i = 0; i < robot.n_joints; ++i) {
+    const double kp = 120.0;
+    const double kd = 18.0;
+    robot.jnt_trq_cmd[i] =
+        gravity(i) + kp * (q_des(i) - q(i)) - kd * dq(i);
+}
+```
+
+The gripper actuator is model-specific. For the Robotiq Menagerie model, examples
+write the gripper command directly to its actuator control after `update()`:
+
+```cpp
+int gripper_act = mj_name2id(env.model, mjOBJ_ACTUATOR, "g_fingers_actuator");
+if (gripper_act >= 0) {
+    env.data->ctrl[gripper_act] = cfg.gripper_cmd;
+}
+```
+
+### 12.7 Reset The Pick-Place Task
+
+Reset must restore both the robot and task objects:
+
+```cpp
+const double cube_start[3] = { 0.35, 0.10, surface_z + kCubeHalf };
+
+env.on_reset = [&](mj_kdl::ResetContext *ctx) {
+    mj_kdl::set_joint_pos(&robot, q_home, false);
+    mj_kdl::set_body_pose(ctx->model, ctx->data, "cube", cube_start);
+
+    current_state = TaskState::HOME;
+    state_index = 0;
+    q_enter = q_home;
+    t_enter = 0.0;
+};
+```
+
+Because `reset(&env)` syncs registered robot command ports after this hook, the
+first control step after reset starts from the reset pose without stale torque or
+position commands.
+
+### 12.8 Run With Viewer And Recorder
+
+Start the Simulate UI:
+
+```cpp
+mj_kdl::Viewer viewer;
+mj_kdl::init_window_sim(&viewer, &robot, "table pick-place");
+mj_kdl::use_camera(&viewer, env.model, "task");
+
+while (mj_kdl::step(&viewer, env.model, env.data)) {
+    mj_kdl::update(&robot);
+    run_state_machine();
+    apply_impedance_command();
+}
+```
+
+Use `,` and `.` to slow down or speed up the wrapper real-time factor. In the
+Simulation panel, the Recorder subsection can write an MP4 using `Current`,
+`Free`, `Tracking`, or any compiled fixed camera.
+
+### 12.9 What To Validate
+
+Before treating the example as working, check:
+
+- IK waypoints are reachable before the simulation loop starts.
+- The cube is a free body and `set_body_pose()` can reset it.
+- The gripper command closes enough to hold the cube but does not destabilize the arm.
+- Joint torque limits are reasonable for the gains.
+- The state machine can recover after pressing Reset in the Simulate UI.
+- Headless mode runs a fixed number of steps and reports cube final position.
+
+This is the architecture used by `ex_table_pick_place`: a small scene spec, a
+reset hook, precomputed IK waypoints, a data-driven state table, and one control
+law used consistently across states.
+
+## 13. Build A Multi-Robot Scene
+
+Use prefixes to disambiguate the second robot:
+
+```cpp
+scene.robots = {
+    mj_kdl::RobotSpec{
+        .path = "third_party/menagerie/kinova_gen3/gen3.xml",
+        .pos  = { -0.7, 0.0, 0.0 },
+        .attachments = { gripper },
+    },
+    mj_kdl::RobotSpec{
+        .path   = "third_party/menagerie/kinova_gen3/gen3.xml",
+        .prefix = "r2_",
+        .pos    = { 0.7, 0.0, 0.0 },
+        .attachments = { gripper },
+    },
+};
+```
+
+Then initialize two robot handles:
+
+```cpp
+mj_kdl::Robot left;
+mj_kdl::Robot right;
+mj_kdl::init_robot_from_mjcf(&left, env.model, env.data, "base_link", "bracelet_link", "", &tool);
+mj_kdl::init_robot_from_mjcf(&right, env.model, env.data, "base_link", "bracelet_link", "r2_", &tool);
+mj_kdl::env_add_robot(&env, &left);
+mj_kdl::env_add_robot(&env, &right);
+```
+
+Each robot gets its own KDL chain and command ports, while both share the same
+MuJoCo model/data.
+
+## 14. Grow Into Task Examples
+
+The included examples show how these pieces combine:
+
+- `ex_table_scene`: table asset, primitive objects, sites, cameras, reset hook.
+- `ex_pick`: IK waypoints, state machine, torque impedance.
+- `ex_table_pick_place`: tabletop pick/place using table asset sites.
+- `ex_table_pour`: gripper-held bottle asset, free particles, receiver asset.
+- `ex_dual_arm`: two prefixed robots in one scene.
+- `ex_record`: headless MP4 recording.
+
+Read `src/examples/README.md` for behavior summaries and expected outputs.
+
+## 15. Modify A Running Scene
+
+For occasional changes, use the scene add/remove helpers. They rebuild the model,
+so this is for task setup and coarse changes, not per-frame object spawning.
+
+Raw model/data form:
+
+```cpp
+mj_kdl::SceneObject obstacle{
+    .name  = "obstacle",
+    .shape = mj_kdl::Shape::CYLINDER,
+    .size  = { 0.04, 0.12, 0.0 },
+    .pos   = { 0.3, -0.2, 0.82 },
+    .fixed = true,
+};
+
+mj_kdl::scene_add_object(&model, &data, &scene, obstacle);
+// model/data pointers were replaced; reinitialize Robot handles.
+```
+
+`Env` form:
+
+```cpp
+mj_kdl::scene_add_object(&env, obstacle);
+// env.model/env.data and registered Robot model/data pointers are updated.
+```
+
+After a rebuild, any cached MuJoCo IDs may be invalid. Recompute body IDs, joint
+IDs, site names, and KDL solvers that depend on the old model.
+
+## 16. Debugging Checklist
+
+Use this checklist when a scene behaves incorrectly:
+
+| Symptom | Check |
+|---------|-------|
+| Robot does not move in position mode | Model has actuators and `kdl_to_mj_ctrl[i] >= 0` |
+| First step after reset jumps | Robot is registered with `env_add_robot()` and reset uses `reset(&env)` |
+| KDL gravity is wrong with a tool | `ToolFrameSpec::tool_body` points at the tool subtree root |
+| TCP frame is wrong | `ToolFrameSpec::tcp_site` names an authored MuJoCo site |
+| Object asset site not found | Use `scene_object_site_name(object, "site")` to account for prefixes |
+| Recorder fails | `BUILD_RECORDER=ON`, EGL available, ffmpeg installed, output path writable |
+| Camera missing in recorder list | Camera must exist in the compiled `mjModel` (`get_camera_names(model)`) |
+
+## 17. Development Checks
+
+Run the default build:
+
+```bash
+cmake --build build --target mj_kdl_wrapper -j$(nproc)
+```
+
+Run clang-tidy on wrapper code:
+
+```bash
+clang-tidy -p build src/mj_kdl_wrapper.cpp
+```
+
+Run tests:
+
+```bash
+ctest --test-dir build --output-on-failure
+```
+
+The vendored `src/simulate_ui/simulate.cc` is MuJoCo 3.8.0 sample UI code with
+small wrapper UI additions. It is intentionally excluded from clang-tidy style
+cleanup so local changes stay reviewable against upstream.

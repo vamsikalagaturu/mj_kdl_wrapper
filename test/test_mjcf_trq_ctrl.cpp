@@ -2,7 +2,6 @@
  * Torque-mode control on the Kinova GEN3 + Robotiq 2F-85 (MJCF). */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
-#include "test_utils.hpp"
 
 #include <gtest/gtest.h>
 
@@ -12,8 +11,6 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
-#include <iomanip>
-#include <iostream>
 #include <memory>
 #include <string>
 
@@ -41,23 +38,27 @@ class MjcfTrqCtrlTest : public testing::Test
     void SetUp() override
     {
         root_ = repo_root();
-        if (!fs::exists(root_ / "third_party/menagerie")) {
-            GTEST_SKIP() << "third_party/menagerie/ not found";
-            return;
-        }
-
         const std::string arm_mjcf =
           (root_ / "third_party/menagerie/kinova_gen3/gen3.xml").string();
         const std::string grp_mjcf =
           (root_ / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+        if (!fs::exists(arm_mjcf)) {
+            GTEST_SKIP() << arm_mjcf << " not found";
+            return;
+        }
+        if (!fs::exists(grp_mjcf)) {
+            GTEST_SKIP() << grp_mjcf << " not found";
+            return;
+        }
 
-        mj_kdl::AttachmentSpec gs;
-        gs.mjcf_path = grp_mjcf.c_str();
-        gs.attach_to = "bracelet_link";
-        gs.prefix    = "g_";
-        gs.pos[2]    = -0.061525;
-        gs.euler[0]  = 180.0;
-
+        mj_kdl::AttachmentSpec gs{
+            .mjcf_path          = grp_mjcf.c_str(),
+            .attach_to          = "bracelet_link",
+            .prefix             = "g_",
+            .pos                = { 0.0, 0.0, -0.061525 },
+            .euler              = { 180.0, 0.0, 0.0 },
+            .contact_exclusions = {},
+        };
         mj_kdl::RobotSpec rs;
         rs.path = arm_mjcf.c_str();
         rs.attachments.push_back(gs);
@@ -66,9 +67,7 @@ class MjcfTrqCtrlTest : public testing::Test
         sc.robots.push_back(rs);
 
         ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc));
-        mj_kdl::ToolFrameSpec tool;
-        tool.tool_body = "g_base";
-        tool.tcp_site  = "g_pinch";
+        const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base", .tcp_site = "g_pinch" };
         ASSERT_TRUE(
           mj_kdl::init_robot_from_mjcf(
             &s_, model_, data_, "base_link", "bracelet_link", "", &tool
@@ -107,10 +106,6 @@ TEST_F(MjcfTrqCtrlTest, GravityAccuracy)
     double max_err = 0.0;
     for (unsigned i = 0; i < n_; ++i)
         max_err = std::max(max_err, std::abs(g(i) - data_->qfrc_bias[s_.kdl_to_mj_dof[i]]));
-    TEST_INFO(
-      "MJCF+gripper max|KDL - MuJoCo| gravity at q=0: " << std::fixed << std::setprecision(6)
-                                                        << max_err << " Nm"
-    );
     EXPECT_LE(max_err, 5e-2);
 }
 
@@ -138,10 +133,6 @@ TEST_F(MjcfTrqCtrlTest, ImpedanceDrift)
     KDL::Frame ee_end;
     fk_->JntToCart(q_end, ee_end);
     double drift = (ee_init.p - ee_end.p).Norm();
-    TEST_INFO(
-      "MJCF+gripper impedance drift after 500 steps: " << std::fixed << std::setprecision(3)
-                                                       << drift * 1000.0 << " mm"
-    );
     EXPECT_LE(drift, 0.005);
 }
 

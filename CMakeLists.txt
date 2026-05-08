@@ -3,7 +3,7 @@ project(mj_kdl_wrapper VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -70,8 +70,9 @@ message(STATUS "KDL cfg: ${orocos_kdl_DIR}")
 set(LODEPNG_STUB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/lodepng_stub)
 
 set(MJ_SIM_DIR "${MUJOCO_ROOT}/simulate")
+set(MJ_SIM_LOCAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/simulate_ui")
 set(SIMULATE_UI_SOURCES
-  ${MJ_SIM_DIR}/simulate.cc
+  ${MJ_SIM_LOCAL_DIR}/simulate.cc
   ${MJ_SIM_DIR}/glfw_adapter.cc
   ${MJ_SIM_DIR}/glfw_dispatch.cc
   ${MJ_SIM_DIR}/platform_ui_adapter.cc
@@ -81,6 +82,7 @@ message(STATUS "lodepng: using ffmpeg-backed stub - UI screenshots enabled")
 
 add_library(mujoco_simulate_ui STATIC ${SIMULATE_UI_SOURCES})
 target_include_directories(mujoco_simulate_ui PUBLIC
+  ${MJ_SIM_LOCAL_DIR}
   ${MJ_SIM_DIR}
   ${MUJOCO_INCLUDE_DIR}
 )
@@ -94,7 +96,7 @@ target_include_directories(mujoco_simulate_ui PRIVATE
 )
 target_compile_options(mujoco_simulate_ui PRIVATE -w)
 set_target_properties(mujoco_simulate_ui PROPERTIES
-  CXX_STANDARD 17 POSITION_INDEPENDENT_CODE ON)
+  CXX_STANDARD 20 POSITION_INDEPENDENT_CODE ON)
 
 # Library
 add_library(mj_kdl_wrapper SHARED
@@ -117,6 +119,7 @@ foreach(_kdl_inc IN LISTS orocos_kdl_INCLUDE_DIRS)
     endif()
 endforeach()
 target_include_directories(mj_kdl_wrapper PRIVATE
+  ${MJ_SIM_LOCAL_DIR}
   ${MJ_SIM_DIR}
   ${LODEPNG_STUB_DIR}
 )

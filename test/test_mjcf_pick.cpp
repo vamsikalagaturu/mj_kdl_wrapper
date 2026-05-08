@@ -7,7 +7,6 @@
  *   3. Full pick sequence lifts the cube above 0.20 m. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
-#include "test_utils.hpp"
 
 #include <gtest/gtest.h>
 
@@ -20,8 +19,6 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
-#include <iomanip>
-#include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -45,19 +42,6 @@ static double clamp01(double v) { return std::max(0.0, std::min(1.0, v)); }
 static void lerp_q(const KDL::JntArray &a, const KDL::JntArray &b, double t, KDL::JntArray &out)
 {
     for (unsigned i = 0; i < a.rows(); ++i) out(i) = a(i) + t * (b(i) - a(i));
-}
-
-static void wrap_unlimited_joints_to_seed(
-  const KDL::JntArray     &seed,
-  KDL::JntArray           &q,
-  const std::vector<bool> &limited
-)
-{
-    const double two_pi = 2.0 * M_PI;
-    for (unsigned i = 0; i < q.rows(); ++i) {
-        if (limited[i]) continue;
-        q(i) += std::round((seed(i) - q(i)) / two_pi) * two_pi;
-    }
 }
 
 static double max_abs_joint_delta(const KDL::JntArray &a, const KDL::JntArray &b)
@@ -137,52 +121,49 @@ class MjcfPickTest : public testing::Test
     void SetUp() override
     {
         root_ = repo_root();
-        if (!fs::exists(root_ / "third_party/menagerie")) {
-            GTEST_SKIP() << "third_party/menagerie/ not found";
-            return;
-        }
-
         const std::string arm_mjcf =
           (root_ / "third_party/menagerie/kinova_gen3/gen3.xml").string();
         const std::string grp_mjcf =
           (root_ / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+        if (!fs::exists(arm_mjcf)) {
+            GTEST_SKIP() << arm_mjcf << " not found";
+            return;
+        }
+        if (!fs::exists(grp_mjcf)) {
+            GTEST_SKIP() << grp_mjcf << " not found";
+            return;
+        }
 
-        mj_kdl::AttachmentSpec gs;
-        gs.mjcf_path = grp_mjcf.c_str();
-        gs.attach_to = "bracelet_link";
-        gs.prefix    = "g_";
-        gs.pos[2]    = -0.061525;
-        gs.euler[0]  = 180.0;
-
+        mj_kdl::AttachmentSpec gs{
+            .mjcf_path          = grp_mjcf.c_str(),
+            .attach_to          = "bracelet_link",
+            .prefix             = "g_",
+            .pos                = { 0.0, 0.0, -0.061525 },
+            .euler              = { 180.0, 0.0, 0.0 },
+            .contact_exclusions = {},
+        };
         mj_kdl::RobotSpec rs;
         rs.path = arm_mjcf.c_str();
         rs.attachments.push_back(gs);
 
-        mj_kdl::SceneObject cube;
-        cube.name    = "cube";
-        cube.shape   = mj_kdl::Shape::BOX;
-        cube.size[0] = cube.size[1] = cube.size[2] = kCubeHS;
-        cube.pos[0]                                = kCubeX;
-        cube.pos[1]                                = kCubeY;
-        cube.pos[2]                                = kCubeZ;
-        cube.rgba[0]                               = 1.0f;
-        cube.rgba[1]                               = 0.5f;
-        cube.rgba[2]                               = 0.0f;
-        cube.rgba[3]                               = 1.0f;
-        cube.mass                                  = 0.1;
-        cube.condim                                = 4;
-        cube.friction[0]                           = 0.8;
-        cube.friction[1]                           = 0.02;
-        cube.friction[2]                           = 0.001;
+        mj_kdl::SceneObject cube{
+          .name      = "cube",
+          .mjcf_path = "",
+          .shape     = mj_kdl::Shape::BOX,
+          .size      = { kCubeHS, kCubeHS, kCubeHS },
+          .pos       = { kCubeX, kCubeY, kCubeZ },
+          .rgba      = { 1.0f, 0.5f, 0.0f, 1.0f },
+          .mass      = 0.1,
+          .condim    = 4,
+          .friction  = { 0.8, 0.02, 0.001 },
+        };
 
         mj_kdl::SceneSpec sc;
         sc.robots.push_back(rs);
         sc.objects.push_back(cube);
 
         ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc));
-        mj_kdl::ToolFrameSpec tool;
-        tool.tool_body = "g_base";
-        tool.tcp_site  = "g_pinch";
+        const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base", .tcp_site = "g_pinch" };
         ASSERT_TRUE(
           mj_kdl::init_robot_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link", "", &tool)
         );
@@ -318,12 +299,10 @@ class MjcfPickTest : public testing::Test
 
 TEST_F(MjcfPickTest, KDLChain)
 {
-    TEST_INFO("arm KDL chain: " << n_ << " joints");
     EXPECT_EQ(n_, 7u);
 
-    mj_kdl::Robot        wrist;
-    mj_kdl::ToolFrameSpec wrist_tool;
-    wrist_tool.tool_body = "g_base"; // inertia only, no tcp_site -- intentional for FK comparison
+    mj_kdl::Robot wrist;
+    const mj_kdl::ToolFrameSpec wrist_tool{ .tool_body = "g_base" };
     ASSERT_TRUE(
       mj_kdl::init_robot_from_mjcf(
         &wrist, model_, data_, "base_link", "bracelet_link", "", &wrist_tool
@@ -365,10 +344,6 @@ TEST_F(MjcfPickTest, IKConvergence)
         fk_->JntToCart(*wp.q, fk_out);
         double pos_err     = (tgt.p - fk_out.p).Norm();
         double joint_delta = max_abs_joint_delta(*wp.seed, *wp.q);
-        TEST_INFO(
-          "IK " << wp.label << " pos error: " << std::fixed << std::setprecision(3)
-                << pos_err * 1000.0 << " mm, max joint delta: " << joint_delta << " rad"
-        );
         EXPECT_LE(pos_err, kIkTol) << wp.label << " IK error " << pos_err * 1000.0 << " mm";
         EXPECT_LT(joint_delta, 4.0) << wp.label << " IK jumped to a distant joint branch";
     }
@@ -398,7 +373,6 @@ TEST_F(MjcfPickTest, CubeLifted)
 
     int    qadr   = model_->jnt_qposadr[cube_jnt_];
     double cube_z = data_->qpos[qadr + 2];
-    TEST_INFO("cube Z after pick: " << std::fixed << std::setprecision(3) << cube_z << " m");
     EXPECT_GT(cube_z, 0.20) << "cube was not lifted (z=" << cube_z << " m)";
 }
 

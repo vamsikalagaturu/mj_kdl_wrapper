@@ -23,7 +23,7 @@ cmake -B build -DFETCH_MENAGERIE=ON
 |------|----------------|
 | `test_init` | `build_scene`, `init_robot_from_mjcf`, cleanup |
 | `test_dual_arm` | multi-robot scene, independent KDL chains |
-| `test_table_scene` | `TableSpec`, `SceneObject`, runtime add/remove |
+| `test_table_scene` | MJCF table asset, `SceneObject`, runtime add/remove |
 | `test_mjcf_load` | arm-only model (nv=7) + arm+gripper model (nq>=13) |
 | `test_mjcf_pos_ctrl` | position trajectory tracking |
 | `test_mjcf_vel_ctrl` | velocity-style convergence control |
@@ -41,8 +41,9 @@ cmake -B build -DFETCH_MENAGERIE=ON
 - 100 physics steps complete without error.
 - **ResetRestoresDefaultPose** -- `reset()` returns joints to the model's default keyframe pose.
 - **ResetSyncsCmdPorts** -- `reset()` re-seeds `jnt_pos_cmd` / `jnt_trq_cmd` from measured state.
-- **ResetInvokesOnResetCallback** -- `on_reset` is called exactly once per `reset()` invocation.
-- **ResetWithoutOnResetCallbackIsNoOp** -- `reset()` with no `on_reset` set does not crash.
+- **ResetInvokesOnResetCallback** -- `Env::on_reset` is called exactly once per `reset(Env*)` invocation.
+- **ResetWithoutOnResetCallbackIsNoOp** -- `reset(Env*)` with no hook set does not crash.
+- **EnvResetInvokesHookAndSyncsRobot** -- `reset(Env*)` invokes the environment hook and syncs registered robot ports/forces.
 
 ### test_dual_arm
 

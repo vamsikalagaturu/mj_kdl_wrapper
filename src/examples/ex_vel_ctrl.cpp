@@ -76,19 +76,21 @@ int main(int argc, char *argv[])
 
     robot.ctrl_mode = mj_kdl::CtrlMode::POSITION;
 
+    mj_kdl::Env env;
+    env.spec  = sc;
+    env.model = model;
+    env.data  = data;
+    mj_kdl::env_add_robot(&env, &robot);
+
     const double dt      = model->opt.timestep;
     bool         arrived = false;
 
-    auto reset_to_home = [&]() {
-        mj_resetData(model, data);
+    env.on_reset = [&](mj_kdl::ResetContext *) {
         mj_kdl::set_joint_pos(&robot, q_home, false);
-        mj_forward(model, data);
         arrived = false;
-        for (unsigned i = 0; i < n; ++i) { robot.jnt_pos_cmd[i] = kHomePose[i]; }
-        mj_kdl::update(&robot);
     };
 
-    reset_to_home();
+    mj_kdl::reset(&env);
 
     auto ctrl_step = [&]() {
         mj_kdl::update(&robot);
@@ -132,7 +134,7 @@ int main(int argc, char *argv[])
 
         double prev_sim_time = data->time;
         while (true) {
-            if (data->time < prev_sim_time - 1e-6) reset_to_home();
+            if (data->time < prev_sim_time - 1e-6) mj_kdl::reset(&env);
             prev_sim_time = data->time;
             ctrl_step();
             if (!mj_kdl::step(&robot)) break;

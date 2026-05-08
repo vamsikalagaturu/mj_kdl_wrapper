@@ -4,11 +4,9 @@
  * Self-skips when third_party/menagerie is absent. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
-#include "test_utils.hpp"
 
 #include <gtest/gtest.h>
 
-#include <iostream>
 #include <string>
 #include <filesystem>
 
@@ -22,24 +20,21 @@ class InitTest : public testing::Test
   protected:
     mjModel      *model_ = nullptr;
     mjData       *data_  = nullptr;
+    mj_kdl::SceneSpec sc_;
     mj_kdl::Robot s;
 
     void SetUp() override
     {
         fs::path root = repo_root();
-        if (!fs::exists(root / "third_party/menagerie")) {
-            GTEST_SKIP() << "third_party/menagerie/ not found";
+        std::string mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+        if (!fs::exists(mjcf)) {
+            GTEST_SKIP() << mjcf << " not found";
             return;
         }
 
-        std::string mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+        sc_.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf.c_str(), .attachments = {} });
 
-        mj_kdl::SceneSpec sc;
-        mj_kdl::RobotSpec r;
-        r.path = mjcf.c_str();
-        sc.robots.push_back(r);
-
-        ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc)) << "build_scene() returned false";
+        ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc_)) << "build_scene() returned false";
         ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s, model_, data_, "base_link", "bracelet_link"))
           << "init_robot_from_mjcf() returned false";
     }
@@ -54,7 +49,6 @@ class InitTest : public testing::Test
 TEST_F(InitTest, BasicDOF)
 {
     EXPECT_EQ(s.n_joints, 7) << "expected 7 KDL joints, got " << s.n_joints;
-    TEST_INFO("nq=" << s.model->nq << " nv=" << s.model->nv << " kdl_joints=" << s.n_joints);
 }
 
 TEST_F(InitTest, SimulationAdvance)
@@ -68,7 +62,6 @@ TEST_F(InitTest, SimulationAdvance)
     const double t0 = s.data->time;
     mj_kdl::step_n(&s, 100);
     ASSERT_TRUE(s.data->time > t0) << "simulation time did not advance after 100 steps";
-    TEST_INFO("sim_time=" << s.data->time);
 }
 
 /* reset() tests */
@@ -82,31 +75,32 @@ TEST_F(InitTest, ResetRestoresDefaultPose)
     mj_kdl::set_joint_pos(&s, q_displaced);
     mj_kdl::step_n(&s, 50);
 
-    // Record displaced state.
     double pos_before = s.data->qpos[s.kdl_to_mj_qpos[0]];
 
-    mj_kdl::reset(&s);
+    mj_kdl::Env env;
+    env.model = model_;
+    env.data  = data_;
+    mj_kdl::env_add_robot(&env, &s);
+    mj_kdl::reset(&env);
 
     double pos_after = s.data->qpos[s.kdl_to_mj_qpos[0]];
-    // After reset qpos should be back near the model default (not the displaced value).
     EXPECT_NE(pos_after, pos_before);
-    TEST_INFO(
-      "reset(): qpos[0] before=" << pos_before << " after=" << pos_after
-    );
 }
 
 TEST_F(InitTest, ResetSyncsCmdPorts)
 {
     // After reset, jnt_pos_cmd must equal measured qpos and jnt_trq_cmd must be zero.
     unsigned n = static_cast<unsigned>(s.n_joints);
-
-    // Set stale commands.
     for (unsigned i = 0; i < n; ++i) {
         s.jnt_pos_cmd[i] = 99.0;
         s.jnt_trq_cmd[i] = 42.0;
     }
 
-    mj_kdl::reset(&s);
+    mj_kdl::Env env;
+    env.model = model_;
+    env.data  = data_;
+    mj_kdl::env_add_robot(&env, &s);
+    mj_kdl::reset(&env);
 
     for (unsigned i = 0; i < n; ++i) {
         double qpos = s.data->qpos[s.kdl_to_mj_qpos[i]];
@@ -121,9 +115,13 @@ TEST_F(InitTest, ResetInvokesOnResetCallback)
 {
     // on_reset must be called by reset() exactly once.
     int call_count = 0;
-    s.on_reset = [&](mjModel *, mjData *) { ++call_count; };
 
-    mj_kdl::reset(&s);
+    mj_kdl::Env env;
+    env.model    = model_;
+    env.data     = data_;
+    env.on_reset = [&](mj_kdl::ResetContext *) { ++call_count; };
+    mj_kdl::env_add_robot(&env, &s);
+    mj_kdl::reset(&env);
 
     EXPECT_EQ(call_count, 1) << "on_reset was not called by reset()";
 }
@@ -131,8 +129,52 @@ TEST_F(InitTest, ResetInvokesOnResetCallback)
 TEST_F(InitTest, ResetWithoutOnResetCallbackIsNoOp)
 {
     // reset() must not crash when on_reset is not set.
-    s.on_reset = nullptr;
-    EXPECT_NO_FATAL_FAILURE(mj_kdl::reset(&s));
+    mj_kdl::Env env;
+    env.model = model_;
+    env.data  = data_;
+    mj_kdl::env_add_robot(&env, &s);
+    EXPECT_NO_FATAL_FAILURE(mj_kdl::reset(&env));
+}
+
+TEST_F(InitTest, EnvResetInvokesHookAndSyncsRobot)
+{
+    mj_kdl::Env env;
+    env.spec  = sc_;
+    env.model = model_;
+    env.data  = data_;
+    mj_kdl::env_add_robot(&env, &s);
+
+    int call_count = 0;
+    env.on_reset = [&](mj_kdl::ResetContext *ctx) {
+        ++call_count;
+        EXPECT_EQ(ctx->env, &env);
+        EXPECT_EQ(ctx->model, model_);
+        EXPECT_EQ(ctx->data, data_);
+    };
+
+    for (int i = 0; i < s.n_joints; ++i) {
+        s.jnt_pos_cmd[i] = 99.0;
+        s.jnt_trq_cmd[i] = 42.0;
+        s.data->qfrc_applied[s.kdl_to_mj_dof[i]] = 12.0;
+    }
+
+    mj_kdl::ResetInfo info = mj_kdl::reset(&env);
+
+    EXPECT_EQ(call_count, 1);
+    if (model_->nkey > 0) {
+        EXPECT_TRUE(info.used_keyframe);
+        EXPECT_EQ(info.keyframe, 0);
+    }
+    for (int i = 0; i < s.n_joints; ++i) {
+        double qpos = s.data->qpos[s.kdl_to_mj_qpos[i]];
+        EXPECT_DOUBLE_EQ(s.jnt_pos_msr[i], qpos);
+        EXPECT_DOUBLE_EQ(s.jnt_pos_cmd[i], qpos);
+        EXPECT_DOUBLE_EQ(s.jnt_trq_cmd[i], 0.0);
+        EXPECT_DOUBLE_EQ(s.data->qfrc_applied[s.kdl_to_mj_dof[i]], 0.0);
+    }
+
+    env.model = nullptr;
+    env.data  = nullptr;
 }
 
 int main(int argc, char *argv[])

@@ -46,6 +46,11 @@ jobs:
           tar xzf "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz" -C /tmp
           rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
 
+      - name: Fetch MuJoCo Menagerie
+        run: |
+          mkdir -p third_party
+          git clone --depth 1 https://github.com/google-deepmind/mujoco_menagerie.git third_party/menagerie
+
       - name: Cache ccache
         uses: actions/cache@v4
         with:
@@ -73,7 +78,7 @@ jobs:
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DMUJOCO_ROOT="${MUJOCO_ROOT}" \
             -DBUILD_TESTS=ON \
-            -DFETCH_MENAGERIE=ON \
+            -DFETCH_MENAGERIE=OFF \
             -DBUILD_DOCS="${docs_flag}" \
             -DFETCHCONTENT_BASE_DIR="${FETCHCONTENT_BASE_DIR}" \
             -DFETCHCONTENT_UPDATES_DISCONNECTED=ON

@@ -114,6 +114,13 @@ int main(int argc, char *argv[])
     arm1.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
     arm2.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
 
+    mj_kdl::Env env;
+    env.spec  = sc;
+    env.model = model;
+    env.data  = data;
+    mj_kdl::env_add_robot(&env, &arm1);
+    mj_kdl::env_add_robot(&env, &arm2);
+
     // Prime jnt_trq_cmd so the first physics step already gets gravity compensation.
     auto prime_grav = [&]() {
         dyn1.JntToGravity(q_home, g1);
@@ -124,17 +131,13 @@ int main(int argc, char *argv[])
         }
     };
 
-    auto reset_to_home = [&]() {
-        mj_resetData(model, data);
+    env.on_reset = [&](mj_kdl::ResetContext *) {
         mj_kdl::set_joint_pos(&arm1, q_home, false);
         mj_kdl::set_joint_pos(&arm2, q_home, false);
-        mj_forward(model, data);
-        for (int i = 0; i < n; ++i) {
-            arm1.jnt_pos_cmd[i]                       = data->qpos[arm1.kdl_to_mj_qpos[i]];
-            arm2.jnt_pos_cmd[i]                       = data->qpos[arm2.kdl_to_mj_qpos[i]];
-            data->qfrc_applied[arm1.kdl_to_mj_dof[i]] = 0.0;
-            data->qfrc_applied[arm2.kdl_to_mj_dof[i]] = 0.0;
-        }
+    };
+
+    auto reset_to_home = [&]() {
+        mj_kdl::reset(&env);
         prime_grav();
         mj_kdl::update(&arm1);
         mj_kdl::update(&arm2);

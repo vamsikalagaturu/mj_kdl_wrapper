@@ -56,7 +56,7 @@ Column limit is 100. Indentation is 2 spaces. See `.clang-format` and `.clang-ti
 
 - `RobotSpec` -- MJCF path, position, orientation, prefix, optional `AttachmentSpec` chain
 - `AttachmentSpec` -- attachment MJCF, attach body, position/orientation, prefix, contact exclusions
-- `SceneSpec` -- aggregates robots, optional table (`TableSpec`), objects (`SceneObject`), timestep, gravity
+- `SceneSpec` -- aggregates robots, objects (`SceneObject`, including MJCF-backed assets), timestep, gravity
 - `Robot` -- runtime handle: holds `mjModel*`, `mjData*`, KDL chain, joint index maps, measured/commanded joint ports, `CtrlMode`
 - `Viewer` -- GLFW window + MuJoCo render context
 

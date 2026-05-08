@@ -26,7 +26,7 @@
  * @defgroup grp_viewer Visualization
  * @brief GLFW window management and the real-time render/tick loop.
  *
- * Use init_window_sim() + tick() for the full simulate UI with physics panels.
+ * Use init_window_sim() + step() for the full simulate UI with physics panels.
  * Use init_window() + render() for a lightweight manual render loop.
  */
 

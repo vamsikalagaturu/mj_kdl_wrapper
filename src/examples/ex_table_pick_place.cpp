@@ -45,26 +45,6 @@ static void lerp_q(const KDL::JntArray &a, const KDL::JntArray &b, double t, KDL
     for (unsigned i = 0; i < a.rows(); ++i) out(i) = a(i) + t * (b(i) - a(i));
 }
 
-static void wrap_unlimited_joints_to_seed(
-  const KDL::JntArray     &seed,
-  KDL::JntArray           &q,
-  const std::vector<bool> &limited
-)
-{
-    const double two_pi = 2.0 * M_PI;
-    for (unsigned i = 0; i < q.rows(); ++i) {
-        if (limited[i]) continue;
-        q(i) += std::round((seed(i) - q(i)) / two_pi) * two_pi;
-    }
-}
-
-static double max_abs_joint_delta(const KDL::JntArray &a, const KDL::JntArray &b)
-{
-    double max_delta = 0.0;
-    for (unsigned i = 0; i < a.rows(); ++i) max_delta = std::max(max_delta, std::abs(a(i) - b(i)));
-    return max_delta;
-}
-
 static bool solve_near_seed(
   KDL::ChainIkSolverVel_wdls      &ik_vel,
   KDL::ChainFkSolverPos_recursive &fk,
@@ -133,23 +113,17 @@ static void impedance_ctrl(
 
 static mj_kdl::SceneObject make_cube(double surface_z)
 {
-    mj_kdl::SceneObject cube;
-    cube.name    = "cube";
-    cube.shape   = mj_kdl::Shape::BOX;
-    cube.size[0] = cube.size[1] = cube.size[2] = kCubeHS;
-    cube.pos[0]                                = kPickX;
-    cube.pos[1]                                = kPickY;
-    cube.pos[2]                                = surface_z + kCubeHS;
-    cube.rgba[0]                               = 0.1f;
-    cube.rgba[1]                               = 0.35f;
-    cube.rgba[2]                               = 1.0f;
-    cube.rgba[3]                               = 1.0f;
-    cube.mass                                  = 0.1;
-    cube.condim                                = 4;
-    cube.friction[0]                           = 0.8;
-    cube.friction[1]                           = 0.02;
-    cube.friction[2]                           = 0.001;
-    return cube;
+    return {
+        .name      = "cube",
+        .mjcf_path = "",
+        .shape     = mj_kdl::Shape::BOX,
+        .size      = { kCubeHS, kCubeHS, kCubeHS },
+        .pos       = { kPickX, kPickY, surface_z + kCubeHS },
+        .rgba      = { 0.1f, 0.35f, 1.0f, 1.0f },
+        .mass      = 0.1,
+        .condim    = 4,
+        .friction  = { 0.8, 0.02, 0.001 },
+    };
 }
 
 struct Phase
@@ -177,6 +151,7 @@ int main(int argc, char *argv[])
 
     const std::string arm_mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
     const std::string grp_mjcf = (root / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+    const std::string table_mjcf = (root / "src/examples/assets/table.xml").string();
 
     mj_kdl::AttachmentSpec gripper;
     gripper.mjcf_path = grp_mjcf.c_str();
@@ -191,19 +166,28 @@ int main(int argc, char *argv[])
     robot_spec.attachments.push_back(gripper);
 
     mj_kdl::SceneSpec scene;
-    scene.table.enabled     = true;
-    scene.table.pos[2]      = kTableZ;
-    scene.table.top_size[0] = 0.8;
-    scene.table.top_size[1] = 0.6;
-    scene.table.thickness   = 0.04;
-    scene.table.leg_radius  = 0.03;
     scene.robots.push_back(robot_spec);
+    mj_kdl::SceneObject table{
+        .name      = "table",
+        .mjcf_path = table_mjcf,
+        .pos       = { 0.0, 0.0, kTableZ },
+        .fixed     = true,
+    };
+    scene.objects.push_back(table);
     scene.objects.push_back(make_cube(kTableZ));
 
     mjModel *model = nullptr;
     mjData  *data  = nullptr;
     if (!mj_kdl::build_scene(&model, &data, &scene)) {
         std::cerr << "build_scene() failed\n";
+        return 1;
+    }
+
+    KDL::Frame world_T_table_top;
+    const std::string table_top_site = mj_kdl::scene_object_site_name(table, "table_top");
+    if (!mj_kdl::get_site_frame(model, data, table_top_site.c_str(), &world_T_table_top)) {
+        std::cerr << "table_top site not found\n";
+        mj_kdl::destroy_scene(model, data);
         return 1;
     }
 
@@ -298,43 +282,40 @@ int main(int argc, char *argv[])
         }
     }
     const std::vector<Phase> phases = {
-        { "HOME",        &q_home,        1.0,              2.5,              0.08, 0.0   },
-        { "PICK_ABOVE",  &q_pick_above,  5.0,              7.0,              0.08, 0.0   },
-        { "PICK",        &q_pick,        5.0,              8.0,              0.03, 0.0   },
-        { "CLOSE",       &q_pick,        1.5,              2.5,             -1.0,  255.0 },
-        { "LIFT",        &q_lift,        3.0,              5.0,              0.08, 255.0 },
-        { "PLACE_ABOVE", &q_place_above, 3.0,              5.0,              0.08, 255.0 },
-        { "PLACE",       &q_place,       5.0,              8.0,              0.03, 255.0 },
-        { "OPEN",        &q_place,       1.0,              2.0,             -1.0,  0.0   },
-        { "RETREAT",     &q_place_above, 2.0,              4.0,              0.08, 0.0   },
-        { "HOLD",        &q_place_above, headless ? 1.0 : 1e9, headless ? 1.0 : 1e9, -1.0, 0.0 },
+        { .name = "HOME",        .target = &q_home,        .duration = 1.0,                 .timeout = 2.5,                 .settle_tol =  0.08, .gripper_cmd =   0.0 },
+        { .name = "PICK_ABOVE",  .target = &q_pick_above,  .duration = 5.0,                 .timeout = 7.0,                 .settle_tol =  0.08, .gripper_cmd =   0.0 },
+        { .name = "PICK",        .target = &q_pick,        .duration = 5.0,                 .timeout = 8.0,                 .settle_tol =  0.03, .gripper_cmd =   0.0 },
+        { .name = "CLOSE",       .target = &q_pick,        .duration = 1.5,                 .timeout = 2.5,                 .settle_tol = -1.0,  .gripper_cmd = 255.0 },
+        { .name = "LIFT",        .target = &q_lift,        .duration = 3.0,                 .timeout = 5.0,                 .settle_tol =  0.08, .gripper_cmd = 255.0 },
+        { .name = "PLACE_ABOVE", .target = &q_place_above, .duration = 3.0,                 .timeout = 5.0,                 .settle_tol =  0.08, .gripper_cmd = 255.0 },
+        { .name = "PLACE",       .target = &q_place,       .duration = 5.0,                 .timeout = 8.0,                 .settle_tol =  0.03, .gripper_cmd = 255.0 },
+        { .name = "OPEN",        .target = &q_place,       .duration = 1.0,                 .timeout = 2.0,                 .settle_tol = -1.0,  .gripper_cmd =   0.0 },
+        { .name = "RETREAT",     .target = &q_place_above, .duration = 2.0,                 .timeout = 4.0,                 .settle_tol =  0.08, .gripper_cmd =   0.0 },
+        { .name = "HOLD",        .target = &q_place_above, .duration = headless ? 1.0 : 1e9, .timeout = headless ? 1.0 : 1e9, .settle_tol = -1.0,  .gripper_cmd =   0.0 },
     };
 
     robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
-    mj_resetData(model, data);
-    mj_kdl::set_joint_pos(&robot, q_home, false);
-    int qadr             = model->jnt_qposadr[cube_jnt];
-    data->qpos[qadr]     = kPickX;
-    data->qpos[qadr + 1] = kPickY;
-    data->qpos[qadr + 2] = kTableZ + kCubeHS;
-    data->qpos[qadr + 3] = 1.0;
-    data->qpos[qadr + 4] = data->qpos[qadr + 5] = data->qpos[qadr + 6] = 0.0;
-    mj_forward(model, data);
-    for (unsigned i = 0; i < n; ++i) {
-        robot.jnt_pos_cmd[i]                       = data->qpos[robot.kdl_to_mj_qpos[i]];
-        robot.jnt_trq_cmd[i]                       = 0.0;
-        data->qfrc_applied[robot.kdl_to_mj_dof[i]] = 0.0;
-    }
-    mj_kdl::update(&robot);
-    data->ctrl[fingers_act] = 0.0;
+    int qadr = model->jnt_qposadr[cube_jnt];
 
-    mj_kdl::Viewer viewer;
-    if (!headless && !mj_kdl::init_window_sim(&viewer, &robot)) {
-        std::cerr << "init_window_sim() failed\n";
-        mj_kdl::cleanup(&robot);
-        mj_kdl::destroy_scene(model, data);
-        return 1;
-    }
+    auto reset_cube = [&]() {
+        data->qpos[qadr]     = kPickX;
+        data->qpos[qadr + 1] = kPickY;
+        data->qpos[qadr + 2] = kTableZ + kCubeHS;
+        data->qpos[qadr + 3] = 1.0;
+        data->qpos[qadr + 4] = data->qpos[qadr + 5] = data->qpos[qadr + 6] = 0.0;
+    };
+
+    mj_kdl::Env env;
+    env.spec  = scene;
+    env.model = model;
+    env.data  = data;
+    mj_kdl::env_add_robot(&env, &robot);
+
+    env.on_reset = [&](mj_kdl::ResetContext *) {
+        mj_kdl::set_joint_pos(&robot, q_home, false);
+        reset_cube();
+        data->ctrl[fingers_act] = 0.0;
+    };
 
     KDL::JntArray q_enter(n), q_des(n);
     bool          closed        = false;
@@ -343,25 +324,21 @@ int main(int argc, char *argv[])
     bool          restart       = false;
 
     auto reset_scene = [&]() {
-        mj_resetData(model, data);
-        mj_kdl::set_joint_pos(&robot, q_home, false);
-        data->qpos[qadr]     = kPickX;
-        data->qpos[qadr + 1] = kPickY;
-        data->qpos[qadr + 2] = kTableZ + kCubeHS;
-        data->qpos[qadr + 3] = 1.0;
-        data->qpos[qadr + 4] = data->qpos[qadr + 5] = data->qpos[qadr + 6] = 0.0;
-        mj_forward(model, data);
-        for (unsigned i = 0; i < n; ++i) {
-            robot.jnt_pos_cmd[i]                       = data->qpos[robot.kdl_to_mj_qpos[i]];
-            robot.jnt_trq_cmd[i]                       = 0.0;
-            data->qfrc_applied[robot.kdl_to_mj_dof[i]] = 0.0;
-        }
-        mj_kdl::update(&robot);
-        data->ctrl[fingers_act] = 0.0;
+        mj_kdl::reset(&env);
         closed                  = false;
         prev_sim_time           = data->time;
         restart                 = true;
     };
+
+    reset_scene();
+
+    mj_kdl::Viewer viewer;
+    if (!headless && !mj_kdl::init_window_sim(&viewer, &robot)) {
+        std::cerr << "init_window_sim() failed\n";
+        mj_kdl::cleanup(&robot);
+        mj_kdl::destroy_scene(model, data);
+        return 1;
+    }
 
     do {
         restart = false;

@@ -19,6 +19,7 @@ OUTPUT_LANGUAGE        = English
 INPUT                  = @CMAKE_CURRENT_SOURCE_DIR@/include \
                          @CMAKE_CURRENT_SOURCE_DIR@/README.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/groups.dox \
+                         @CMAKE_CURRENT_SOURCE_DIR@/docs/TUTORIAL.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/HOWTO_urdf_to_mjcf.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/HOWTO_torque_control.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/src/examples \

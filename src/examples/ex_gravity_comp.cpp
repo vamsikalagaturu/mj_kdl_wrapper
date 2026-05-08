@@ -69,19 +69,17 @@ int main(int argc, char *argv[])
 
     robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
 
-    auto reset_to_home = [&]() {
-        mj_resetData(model, data);
+    mj_kdl::Env env;
+    env.spec  = sc;
+    env.model = model;
+    env.data  = data;
+    mj_kdl::env_add_robot(&env, &robot);
+
+    env.on_reset = [&](mj_kdl::ResetContext *) {
         mj_kdl::set_joint_pos(&robot, q_home, false);
-        mj_forward(model, data);
-        for (unsigned i = 0; i < n; ++i) {
-            robot.jnt_pos_cmd[i]                       = data->qpos[robot.kdl_to_mj_qpos[i]];
-            robot.jnt_trq_cmd[i]                       = 0.0;
-            data->qfrc_applied[robot.kdl_to_mj_dof[i]] = 0.0;
-        }
-        mj_kdl::update(&robot);
     };
 
-    reset_to_home();
+    mj_kdl::reset(&env);
 
     KDL::JntArray q(n), g(n);
     auto          ctrl_step = [&]() {
@@ -118,7 +116,7 @@ int main(int argc, char *argv[])
 
         double prev_sim_time = data->time;
         while (true) {
-            if (data->time < prev_sim_time - 1e-6) reset_to_home();
+            if (data->time < prev_sim_time - 1e-6) mj_kdl::reset(&env);
             prev_sim_time = data->time;
             ctrl_step();
             if (!mj_kdl::step(&robot)) break;

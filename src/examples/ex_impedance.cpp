@@ -94,28 +94,23 @@ int main(int argc, char *argv[])
 
     robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
 
-    auto seed_reset_state = [&](mjData *d) {
-        for (unsigned i = 0; i < n; ++i) {
-            robot.jnt_pos_cmd[i]                    = d->qpos[robot.kdl_to_mj_qpos[i]];
-            robot.jnt_trq_cmd[i]                    = 0.0;
-            d->qfrc_applied[robot.kdl_to_mj_dof[i]] = 0.0;
-        }
-        mj_kdl::update(&robot); // seed *_msr and neutralize arm position actuators
+    mj_kdl::Env env;
+    env.spec  = sc;
+    env.model = model;
+    env.data  = data;
+    mj_kdl::env_add_robot(&env, &robot);
+
+    mj_kdl::ResetOptions reset_opts;
+    reset_opts.use_keyframe = key_id >= 0;
+    reset_opts.keyframe     = key_id >= 0 ? key_id : 0;
+
+    env.on_reset = [&](mj_kdl::ResetContext *ctx) {
+        if (key_id < 0) mj_kdl::set_joint_pos(&robot, q_home, false);
+        mjData *d = ctx->data;
         if (fingers_act >= 0) d->ctrl[fingers_act] = 255.0;
     };
 
-    auto reset_to_home = [&](mjData *d) {
-        if (key_id >= 0) {
-            mj_resetDataKeyframe(model, d, key_id);
-        } else {
-            mj_resetData(model, d);
-            mj_kdl::set_joint_pos(&robot, q_home, false);
-        }
-        mj_forward(model, d);
-        seed_reset_state(d);
-    };
-
-    reset_to_home(data);
+    mj_kdl::reset(&env, &reset_opts);
 
     double prev_sim_time = data->time;
 
@@ -132,7 +127,7 @@ int main(int argc, char *argv[])
 
         if (data->time < prev_sim_time - 1e-6) {
             // Simulation was reset: restore the home state and re-seed commands.
-            reset_to_home(data);
+            mj_kdl::reset(&env, &reset_opts);
             prev_sim_time = data->time;
             return;
         }

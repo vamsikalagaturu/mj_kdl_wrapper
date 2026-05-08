@@ -35,6 +35,8 @@
       <geom name="mug_front_col" type="box" size="0.022 0.003 0.038"
             pos="0 0.025 0" mass="0.004" rgba="1 1 1 0"
             contype="1" conaffinity="1" condim="4"/>
+      <site name="outlet" pos="0 0 0.070" size="0.001" rgba="0 0 0 0"/>
+      <site name="center" pos="0 0 0" size="0.001" rgba="0 0 0 0"/>
     </body>
   </worldbody>
 </mujoco>

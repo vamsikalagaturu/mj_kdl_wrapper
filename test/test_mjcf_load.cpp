@@ -3,7 +3,6 @@
  * the combined arm + Robotiq 2F-85 model. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
-#include "test_utils.hpp"
 
 #include <gtest/gtest.h>
 
@@ -11,8 +10,6 @@
 
 #include <cmath>
 #include <filesystem>
-#include <iomanip>
-#include <iostream>
 #include <memory>
 #include <string>
 
@@ -40,28 +37,21 @@ class MjcfLoadTest : public testing::Test
     void SetUp() override
     {
         root_ = repo_root();
-        if (!fs::exists(root_ / "third_party/menagerie")) {
-            GTEST_SKIP() << "third_party/menagerie/ not found";
+        // scene.xml already has floor, lights, and skybox.
+        std::string mjcf = (root_ / "third_party/menagerie/kinova_gen3/scene.xml").string();
+        if (!fs::exists(mjcf)) {
+            GTEST_SKIP() << mjcf << " not found";
             return;
         }
 
-        // scene.xml already has floor, lights, and skybox.
-        std::string mjcf = (root_ / "third_party/menagerie/kinova_gen3/scene.xml").string();
-
         mj_kdl::SceneSpec sc;
-        mj_kdl::RobotSpec r;
-        r.path        = mjcf.c_str();
         sc.add_floor  = false;
         sc.add_skybox = false;
-        sc.robots.push_back(r);
+        sc.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf.c_str(), .attachments = {} });
 
         ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc));
         ASSERT_EQ(model_->nv, 7);
         ASSERT_GE(model_->nbody, 9);
-        TEST_INFO(
-          "model: nq=" << model_->nq << " nv=" << model_->nv << " nbody=" << model_->nbody
-                       << " nu=" << model_->nu
-        );
 
         ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link"));
         n_ = s_.chain.getNrOfJoints();
@@ -101,7 +91,6 @@ TEST_F(MjcfLoadTest, ModelLoaded)
 
 TEST_F(MjcfLoadTest, KDLChain)
 {
-    TEST_INFO("arm KDL chain: " << n_ << " joints");
     EXPECT_EQ(n_, 7u);
 }
 
@@ -110,10 +99,6 @@ TEST_F(MjcfLoadTest, FKHomePose)
     KDL::Frame fk_home;
     ASSERT_GE(fk_->JntToCart(q_home_, fk_home), 0) << "FK failed at home pose";
     double dist = fk_home.p.Norm();
-    TEST_INFO(
-      "EE at home: [" << std::fixed << std::setprecision(4) << fk_home.p.x() << ", "
-                      << fk_home.p.y() << ", " << fk_home.p.z() << "]  dist=" << dist << " m"
-    );
     EXPECT_GE(dist, 0.1);
     EXPECT_LE(dist, 1.1);
 }
@@ -135,23 +120,27 @@ class MjcfGripperTest : public testing::Test
     void SetUp() override
     {
         root_ = repo_root();
-        if (!fs::exists(root_ / "third_party/menagerie")) {
-            GTEST_SKIP() << "third_party/menagerie/ not found";
-            return;
-        }
-
         const std::string arm_mjcf =
           (root_ / "third_party/menagerie/kinova_gen3/gen3.xml").string();
         const std::string grp_mjcf =
           (root_ / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+        if (!fs::exists(arm_mjcf)) {
+            GTEST_SKIP() << arm_mjcf << " not found";
+            return;
+        }
+        if (!fs::exists(grp_mjcf)) {
+            GTEST_SKIP() << grp_mjcf << " not found";
+            return;
+        }
 
-        mj_kdl::AttachmentSpec gs;
-        gs.mjcf_path = grp_mjcf.c_str();
-        gs.attach_to = "bracelet_link";
-        gs.prefix    = "g_";
-        gs.pos[2]    = -0.061525;
-        gs.euler[0]  = 180.0;
-
+        mj_kdl::AttachmentSpec gs{
+            .mjcf_path          = grp_mjcf.c_str(),
+            .attach_to          = "bracelet_link",
+            .prefix             = "g_",
+            .pos                = { 0.0, 0.0, -0.061525 },
+            .euler              = { 180.0, 0.0, 0.0 },
+            .contact_exclusions = {},
+        };
         mj_kdl::RobotSpec rs;
         rs.path = arm_mjcf.c_str();
         rs.attachments.push_back(gs);
@@ -160,16 +149,10 @@ class MjcfGripperTest : public testing::Test
         sc.robots.push_back(rs);
 
         ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc));
-        TEST_INFO(
-          "model: nq=" << model_->nq << " nv=" << model_->nv << " nbody=" << model_->nbody
-                       << " nu=" << model_->nu
-        );
         ASSERT_GE(model_->nq, 13);
         ASSERT_GE(model_->nu, 8);
 
-        mj_kdl::ToolFrameSpec tool;
-        tool.tool_body = "g_base";
-        tool.tcp_site  = "g_pinch";
+        const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base", .tcp_site = "g_pinch" };
         ASSERT_TRUE(
           mj_kdl::init_robot_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link", "", &tool)
         );
@@ -199,7 +182,6 @@ TEST_F(MjcfGripperTest, ModelLoaded)
 
 TEST_F(MjcfGripperTest, KDLChain)
 {
-    TEST_INFO("arm KDL chain: " << n_ << " joints");
     EXPECT_EQ(n_, 7u);
 }
 
@@ -210,9 +192,6 @@ TEST_F(MjcfGripperTest, FKWorkspace)
     KDL::Frame fk_pose;
     fk_->JntToCart(q_home, fk_pose);
     double ee_dist = fk_pose.p.Norm();
-    TEST_INFO(
-      "EE distance at home: " << std::fixed << std::setprecision(3) << ee_dist * 1000.0 << " mm"
-    );
     EXPECT_GE(ee_dist, 0.1);
     EXPECT_LE(ee_dist, 1.1);
 }
@@ -224,10 +203,6 @@ TEST_F(MjcfGripperTest, GripperRange)
 
     double lo = model_->jnt_range[2 * rdriver];
     double hi = model_->jnt_range[2 * rdriver + 1];
-    TEST_INFO(
-      "gripper right_driver_joint range: [" << std::fixed << std::setprecision(4) << lo << ", "
-                                            << hi << "] rad"
-    );
     EXPECT_LE(std::abs(hi - 0.8), 0.01);
     EXPECT_GE(lo, -0.01);
 }
