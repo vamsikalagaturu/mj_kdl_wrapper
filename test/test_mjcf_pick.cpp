@@ -15,6 +15,7 @@
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chainiksolverpos_nr_jl.hpp>
 #include <kdl/chainiksolvervel_pinv.hpp>
+#include <kdl/chainiksolvervel_wdls.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -23,16 +24,16 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace fs = std::filesystem;
 
-static constexpr double kHomePose[7]  = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
-static constexpr double kCubeX        = 0.4;
-static constexpr double kCubeY        = 0.0;
-static constexpr double kCubeHS       = 0.02; // cube half-size [m]
-static constexpr double kCubeZ        = kCubeHS;
-static constexpr double kTcpClearance = 0.02;
-static constexpr double kIkTol        = 2e-3;
+static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
+static constexpr double kCubeX       = 0.4;
+static constexpr double kCubeY       = 0.0;
+static constexpr double kCubeHS      = 0.02; // cube half-size [m]
+static constexpr double kCubeZ       = kCubeHS;
+static constexpr double kIkTol       = 2e-3;
 
 static constexpr double kKp[7] = { 100, 200, 100, 200, 100, 200, 100 };
 static constexpr double kKd[7] = { 10, 20, 10, 20, 10, 20, 10 };
@@ -41,20 +42,66 @@ static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_pat
 
 static double clamp01(double v) { return std::max(0.0, std::min(1.0, v)); }
 
-static double vertical_reach_to_geom(const mjModel *model, mjData *data, const char *tip_body, const char *geom)
-{
-    mj_forward(model, data);
-    int tip_id  = mj_name2id(model, mjOBJ_BODY, tip_body);
-    int geom_id = mj_name2id(model, mjOBJ_GEOM, geom);
-    if (tip_id < 0 || geom_id < 0) return -1.0;
-    const double *tip_pos  = data->xpos + 3 * tip_id;
-    const double *geom_pos = data->geom_xpos + 3 * geom_id;
-    return std::abs(geom_pos[2] - tip_pos[2]) - model->geom_size[3 * geom_id + 2];
-}
-
 static void lerp_q(const KDL::JntArray &a, const KDL::JntArray &b, double t, KDL::JntArray &out)
 {
     for (unsigned i = 0; i < a.rows(); ++i) out(i) = a(i) + t * (b(i) - a(i));
+}
+
+static void wrap_unlimited_joints_to_seed(
+  const KDL::JntArray     &seed,
+  KDL::JntArray           &q,
+  const std::vector<bool> &limited
+)
+{
+    const double two_pi = 2.0 * M_PI;
+    for (unsigned i = 0; i < q.rows(); ++i) {
+        if (limited[i]) continue;
+        q(i) += std::round((seed(i) - q(i)) / two_pi) * two_pi;
+    }
+}
+
+static double max_abs_joint_delta(const KDL::JntArray &a, const KDL::JntArray &b)
+{
+    double max_delta = 0.0;
+    for (unsigned i = 0; i < a.rows(); ++i) max_delta = std::max(max_delta, std::abs(a(i) - b(i)));
+    return max_delta;
+}
+
+static bool solve_near_seed(
+  KDL::ChainIkSolverVel_wdls      &ik_vel,
+  KDL::ChainFkSolverPos_recursive &fk,
+  const KDL::JntArray             &seed,
+  const KDL::Frame                &target,
+  const std::vector<bool>         &joint_limited,
+  const KDL::JntArray             &q_min,
+  const KDL::JntArray             &q_max,
+  KDL::JntArray                   &out
+)
+{
+    out = seed;
+    KDL::JntArray dq(out.rows());
+    for (int iter = 0; iter < 300; ++iter) {
+        KDL::Frame fk_out;
+        fk.JntToCart(out, fk_out);
+        KDL::Twist dx = KDL::diff(fk_out, target);
+        if (dx.vel.Norm() <= kIkTol && dx.rot.Norm() <= 2e-2) return true;
+
+        double vel_norm = dx.vel.Norm();
+        if (vel_norm > 0.05) dx.vel = dx.vel * (0.05 / vel_norm);
+        double rot_norm = dx.rot.Norm();
+        if (rot_norm > 0.20) dx.rot = dx.rot * (0.20 / rot_norm);
+
+        if (ik_vel.CartToJnt(out, dx, dq) < 0) return false;
+        for (unsigned i = 0; i < out.rows(); ++i) {
+            out(i) += dq(i);
+            if (joint_limited[i]) out(i) = std::max(q_min(i), std::min(q_max(i), out(i)));
+        }
+    }
+
+    KDL::Frame fk_out;
+    fk.JntToCart(out, fk_out);
+    KDL::Twist dx = KDL::diff(fk_out, target);
+    return dx.vel.Norm() <= kIkTol && dx.rot.Norm() <= 2e-2;
 }
 
 static void
@@ -80,12 +127,10 @@ class MjcfPickTest : public testing::Test
     int           fingers_act_ = -1;
     int           cube_jnt_    = -1;
     unsigned      n_           = 0;
-    double        tcp_reach_   = 0.0;
 
     std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_;
     std::unique_ptr<KDL::ChainDynParam>              dyn_;
-    std::unique_ptr<KDL::ChainIkSolverVel_pinv>      ik_vel_;
-    std::unique_ptr<KDL::ChainIkSolverPos_NR_JL>     ik_;
+    std::unique_ptr<KDL::ChainIkSolverVel_wdls>      ik_vel_;
 
     KDL::JntArray q_home_, q_pregrasp_, q_grasp_, q_lift_;
 
@@ -135,10 +180,11 @@ class MjcfPickTest : public testing::Test
         sc.objects.push_back(cube);
 
         ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc));
+        mj_kdl::ToolFrameSpec tool;
+        tool.tool_body = "g_base";
+        tool.tcp_site  = "g_pinch";
         ASSERT_TRUE(
-          mj_kdl::init_robot_from_mjcf(
-            &s_, model_, data_, "base_link", "bracelet_link", "", "g_base"
-          )
+          mj_kdl::init_robot_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link", "", &tool)
         );
 
         n_ = s_.chain.getNrOfJoints();
@@ -148,16 +194,17 @@ class MjcfPickTest : public testing::Test
         ASSERT_GE(fingers_act_, 0) << "g_fingers_actuator not found";
         cube_jnt_ = mj_name2id(model_, mjOBJ_JOINT, "cube_joint");
         ASSERT_GE(cube_jnt_, 0) << "cube_joint not found";
-        tcp_reach_ = vertical_reach_to_geom(model_, data_, "bracelet_link", "g_right_pad2");
-        ASSERT_GT(tcp_reach_, 0.0) << "could not resolve gripper pad geometry g_right_pad2";
+        ASSERT_GE(mj_name2id(model_, mjOBJ_SITE, "g_pinch"), 0) << "g_pinch site not found";
 
         // IK setup.
-        KDL::JntArray q_min(n_), q_max(n_);
+        KDL::JntArray     q_min(n_), q_max(n_);
+        std::vector<bool> joint_limited(n_, false);
         for (unsigned i = 0; i < n_; ++i) {
             int jid = model_->dof_jntid[s_.kdl_to_mj_dof[i]];
             if (model_->jnt_limited[jid]) {
-                q_min(i) = model_->jnt_range[2 * jid];
-                q_max(i) = model_->jnt_range[2 * jid + 1];
+                joint_limited[i] = true;
+                q_min(i)         = model_->jnt_range[2 * jid];
+                q_max(i)         = model_->jnt_range[2 * jid + 1];
             } else {
                 q_min(i) = -2 * M_PI;
                 q_max(i) = 2 * M_PI;
@@ -165,18 +212,16 @@ class MjcfPickTest : public testing::Test
         }
         fk_     = std::make_unique<KDL::ChainFkSolverPos_recursive>(s_.chain);
         dyn_    = std::make_unique<KDL::ChainDynParam>(s_.chain, KDL::Vector(0, 0, -9.81));
-        ik_vel_ = std::make_unique<KDL::ChainIkSolverVel_pinv>(s_.chain);
-        ik_     = std::make_unique<KDL::ChainIkSolverPos_NR_JL>(
-          s_.chain, q_min, q_max, *fk_, *ik_vel_, 500, 1e-5
-        );
+        ik_vel_ = std::make_unique<KDL::ChainIkSolverVel_wdls>(s_.chain, 1e-5, 150);
+        ik_vel_->setLambda(0.05);
 
         q_home_.resize(n_);
         for (unsigned i = 0; i < n_; ++i) q_home_(i) = kHomePose[i];
 
-        const double        kGraspZ    = kCubeZ + tcp_reach_ + kTcpClearance;
+        const double        kGraspZ    = kCubeZ;
         const double        kPreGraspZ = kGraspZ + 0.20;
         const double        kLiftZ     = kGraspZ + 0.30;
-        const KDL::Rotation kDownRot   = KDL::Rotation::Identity();
+        const KDL::Rotation kGraspRot  = s_.tip_T_tcp.M;
 
         q_pregrasp_.resize(n_);
         q_grasp_.resize(n_);
@@ -194,9 +239,11 @@ class MjcfPickTest : public testing::Test
             { kLiftZ, &q_lift_, &q_grasp_ },
         };
         for (auto &wp : wps) {
-            KDL::Frame tgt(kDownRot, KDL::Vector(kCubeX, kCubeY, wp.z));
-            int        ret = ik_->CartToJnt(*wp.seed, tgt, *wp.out);
-            ASSERT_GE(ret, 0) << "IK failed for z=" << wp.z << " (ret=" << ret << ")";
+            KDL::Frame target(kGraspRot, KDL::Vector(kCubeX, kCubeY, wp.z));
+            ASSERT_TRUE(solve_near_seed(
+              *ik_vel_, *fk_, *wp.seed, target, joint_limited, q_min, q_max, *wp.out
+            )) << "IK failed for z="
+               << wp.z;
         }
     }
 
@@ -273,13 +320,30 @@ TEST_F(MjcfPickTest, KDLChain)
 {
     TEST_INFO("arm KDL chain: " << n_ << " joints");
     EXPECT_EQ(n_, 7u);
+
+    mj_kdl::Robot        wrist;
+    mj_kdl::ToolFrameSpec wrist_tool;
+    wrist_tool.tool_body = "g_base"; // inertia only, no tcp_site -- intentional for FK comparison
+    ASSERT_TRUE(
+      mj_kdl::init_robot_from_mjcf(
+        &wrist, model_, data_, "base_link", "bracelet_link", "", &wrist_tool
+      )
+    );
+    EXPECT_EQ(wrist.chain.getNrOfJoints(), s_.chain.getNrOfJoints());
+
+    KDL::ChainFkSolverPos_recursive wrist_fk(wrist.chain);
+    KDL::Frame                      wrist_frame, tcp_frame;
+    ASSERT_GE(wrist_fk.JntToCart(q_home_, wrist_frame), 0);
+    ASSERT_GE(fk_->JntToCart(q_home_, tcp_frame), 0);
+    EXPECT_GT((tcp_frame.p - wrist_frame.p).Norm(), 0.05);
+    mj_kdl::cleanup(&wrist);
 }
 
 TEST_F(MjcfPickTest, IKConvergence)
 {
-        const KDL::Rotation kDownRot   = KDL::Rotation::Identity();
+    const KDL::Rotation kGraspRot = s_.tip_T_tcp.M;
 
-        const double kGraspZ    = kCubeZ + tcp_reach_ + kTcpClearance;
+    const double kGraspZ    = kCubeZ;
     const double kPreGraspZ = kGraspZ + 0.20;
     const double kLiftZ     = kGraspZ + 0.30;
 
@@ -288,22 +352,25 @@ TEST_F(MjcfPickTest, IKConvergence)
         const char          *label;
         double               z;
         const KDL::JntArray *q;
+        const KDL::JntArray *seed;
     };
     WP wps[] = {
-        { "pre-grasp", kPreGraspZ, &q_pregrasp_ },
-        { "grasp", kGraspZ, &q_grasp_ },
-        { "lift", kLiftZ, &q_lift_ },
+        { "pre-grasp", kPreGraspZ, &q_pregrasp_, &q_home_ },
+        { "grasp", kGraspZ, &q_grasp_, &q_pregrasp_ },
+        { "lift", kLiftZ, &q_lift_, &q_grasp_ },
     };
     for (auto &wp : wps) {
-        KDL::Frame tgt(kDownRot, KDL::Vector(kCubeX, kCubeY, wp.z));
+        KDL::Frame tgt(kGraspRot, KDL::Vector(kCubeX, kCubeY, wp.z));
         KDL::Frame fk_out;
         fk_->JntToCart(*wp.q, fk_out);
-        double pos_err = (tgt.p - fk_out.p).Norm();
+        double pos_err     = (tgt.p - fk_out.p).Norm();
+        double joint_delta = max_abs_joint_delta(*wp.seed, *wp.q);
         TEST_INFO(
           "IK " << wp.label << " pos error: " << std::fixed << std::setprecision(3)
-                << pos_err * 1000.0 << " mm"
+                << pos_err * 1000.0 << " mm, max joint delta: " << joint_delta << " rad"
         );
-            EXPECT_LE(pos_err, kIkTol) << wp.label << " IK error " << pos_err * 1000.0 << " mm";
+        EXPECT_LE(pos_err, kIkTol) << wp.label << " IK error " << pos_err * 1000.0 << " mm";
+        EXPECT_LT(joint_delta, 4.0) << wp.label << " IK jumped to a distant joint branch";
     }
 }
 
@@ -320,9 +387,9 @@ TEST_F(MjcfPickTest, CubeLifted)
     snap();
     run_phase(q_enter, q_home_, 1.0, 2.5, 0.08, 0.0); // HOME
     snap();
-    run_phase(q_enter, q_pregrasp_, 2.0, 4.0, 0.08, 0.0); // PREGRASP
+    run_phase(q_enter, q_pregrasp_, 5.0, 7.0, 0.08, 0.0); // PREGRASP
     snap();
-    run_phase(q_enter, q_grasp_, 2.0, 4.0, 0.06, 0.0); // GRASP
+    run_phase(q_enter, q_grasp_, 5.0, 8.0, 0.03, 0.0); // GRASP
     snap();
     run_phase(q_enter, q_grasp_, 1.5, 2.5, -1.0, 255.0); // CLOSE
     snap();

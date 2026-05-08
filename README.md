@@ -6,7 +6,7 @@ A C++ library bridging [MuJoCo 3.8](https://github.com/google-deepmind/mujoco) p
 
 <table>
 <tr>
-  <td align="center"><img src="docs/screenshots/ex_init.png" width="380"/><br/><b>ex_init</b> &mdash; Single arm loaded from MJCF</td>
+  <td align="center"><img src="docs/screenshots/ex_gravity_comp.png" width="380"/><br/><b>ex_gravity_comp</b> &mdash; Single arm, KDL gravity compensation</td>
   <td align="center"><img src="docs/screenshots/ex_table_scene.png" width="380"/><br/><b>ex_table_scene</b> &mdash; Arm + table + scene objects</td>
 </tr>
 <tr>
@@ -21,7 +21,7 @@ A C++ library bridging [MuJoCo 3.8](https://github.com/google-deepmind/mujoco) p
 - **Ordered attachment chains** -- `AttachmentSpec` attaches any MJCF body (mount, FT sensor, gripper, arm on a mobile base) under any named body; chains of arbitrary length are applied in declaration order
 - **Multi-robot scenes** -- place multiple robots with independent KDL chains in one shared simulation via `SceneSpec::robots`
 - **KDL chain from model** -- `init_robot_from_mjcf()` builds a KDL chain directly from a compiled MuJoCo model
-- **Control ports** -- `update()` reads `qpos`/`qvel`/`qfrc_bias` into `*_msr` and applies `*_cmd` in POSITION or TORQUE mode
+- **Control ports** -- `update()` reads `qpos`/`qvel`/`qfrc_actuator` into `*_msr` and applies `*_cmd` in POSITION or TORQUE mode
 - **Interactive viewer** -- `init_window_sim()` + `tick()` gives your code the control loop while the MuJoCo simulate UI runs in a background render thread
 - **Headless video recording** -- `VideoRecorder` uses EGL offscreen rendering and an ffmpeg pipe to record MP4s without a display
 
@@ -205,6 +205,22 @@ mj_kdl::cleanup(&robot);
 mj_kdl::destroy_scene(model, data);
 ```
 
+### Reset
+
+`reset()` resets the simulation to its initial keyframe, re-seeds all commanded
+joints to the current measured state, and calls `on_reset` if set.  Use it to
+implement a clean restart without rebuilding the scene:
+
+```cpp
+// Optional: register a callback invoked on every reset (GUI or programmatic).
+robot.on_reset = [](mjModel *m, mjData *d) {
+    // re-initialise any external state that depends on simulation time or pose
+};
+
+// Trigger a reset programmatically (also invokes on_reset).
+mj_kdl::reset(&robot);
+```
+
 ### Headless video recording
 
 ```cpp
@@ -248,6 +264,8 @@ mj_kdl::scene_remove_object(&model, &data, &sc, "red_cube");
 | Right drag (selected) | Apply torque |
 | `D` | Deselect body |
 | `Space` | Pause / resume |
+| `-` | Decrease real-time factor (below 0.05x snaps to 0.0 = uncapped) |
+| `=` | Increase real-time factor (from 0.0 starts at 0.05x) |
 
 All other controls (reset, quit, rendering flags) are in the MuJoCo left panel.
 

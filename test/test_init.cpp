@@ -71,6 +71,70 @@ TEST_F(InitTest, SimulationAdvance)
     TEST_INFO("sim_time=" << s.data->time);
 }
 
+/* reset() tests */
+
+TEST_F(InitTest, ResetRestoresDefaultPose)
+{
+    // Displace the arm and advance, then reset -- qpos must return to default.
+    unsigned      n = static_cast<unsigned>(s.n_joints);
+    KDL::JntArray q_displaced(n);
+    for (unsigned i = 0; i < n; ++i) q_displaced(i) = kHomePose[i] + 0.3;
+    mj_kdl::set_joint_pos(&s, q_displaced);
+    mj_kdl::step_n(&s, 50);
+
+    // Record displaced state.
+    double pos_before = s.data->qpos[s.kdl_to_mj_qpos[0]];
+
+    mj_kdl::reset(&s);
+
+    double pos_after = s.data->qpos[s.kdl_to_mj_qpos[0]];
+    // After reset qpos should be back near the model default (not the displaced value).
+    EXPECT_NE(pos_after, pos_before);
+    TEST_INFO(
+      "reset(): qpos[0] before=" << pos_before << " after=" << pos_after
+    );
+}
+
+TEST_F(InitTest, ResetSyncsCmdPorts)
+{
+    // After reset, jnt_pos_cmd must equal measured qpos and jnt_trq_cmd must be zero.
+    unsigned n = static_cast<unsigned>(s.n_joints);
+
+    // Set stale commands.
+    for (unsigned i = 0; i < n; ++i) {
+        s.jnt_pos_cmd[i] = 99.0;
+        s.jnt_trq_cmd[i] = 42.0;
+    }
+
+    mj_kdl::reset(&s);
+
+    for (unsigned i = 0; i < n; ++i) {
+        double qpos = s.data->qpos[s.kdl_to_mj_qpos[i]];
+        EXPECT_DOUBLE_EQ(s.jnt_pos_cmd[i], qpos)
+          << "jnt_pos_cmd[" << i << "] not synced to qpos after reset";
+        EXPECT_DOUBLE_EQ(s.jnt_trq_cmd[i], 0.0)
+          << "jnt_trq_cmd[" << i << "] not zeroed after reset";
+    }
+}
+
+TEST_F(InitTest, ResetInvokesOnResetCallback)
+{
+    // on_reset must be called by reset() exactly once.
+    int call_count = 0;
+    s.on_reset = [&](mjModel *, mjData *) { ++call_count; };
+
+    mj_kdl::reset(&s);
+
+    EXPECT_EQ(call_count, 1) << "on_reset was not called by reset()";
+}
+
+TEST_F(InitTest, ResetWithoutOnResetCallbackIsNoOp)
+{
+    // reset() must not crash when on_reset is not set.
+    s.on_reset = nullptr;
+    EXPECT_NO_FATAL_FAILURE(mj_kdl::reset(&s));
+}
+
 int main(int argc, char *argv[])
 {
     testing::InitGoogleTest(&argc, argv);

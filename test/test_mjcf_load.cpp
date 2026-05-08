@@ -167,7 +167,12 @@ class MjcfGripperTest : public testing::Test
         ASSERT_GE(model_->nq, 13);
         ASSERT_GE(model_->nu, 8);
 
-        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link"));
+        mj_kdl::ToolFrameSpec tool;
+        tool.tool_body = "g_base";
+        tool.tcp_site  = "g_pinch";
+        ASSERT_TRUE(
+          mj_kdl::init_robot_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link", "", &tool)
+        );
         n_ = s_.chain.getNrOfJoints();
         ASSERT_EQ(n_, 7u);
 

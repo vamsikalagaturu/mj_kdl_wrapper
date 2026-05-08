@@ -11,6 +11,8 @@
 #include <EGL/egl.h>
 #endif
 
+#include <kdl/frames.hpp>
+
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -199,9 +201,8 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
 
 void configure_spec(mjSpec *spec, const SceneSpec *sc)
 {
-    spec->option.timestep         = sc->timestep;
-    spec->option.gravity[2]       = sc->gravity_z;
-    spec->option.disableflags |= mjDSBL_MULTICCD;
+    spec->option.timestep   = sc->timestep;
+    spec->option.gravity[2] = sc->gravity_z;
     spec->compiler.balanceinertia = 1;
     spec->compiler.discardvisual  = 0;
     if (sc->add_skybox) add_skybox_to_spec(spec);
@@ -238,6 +239,41 @@ bool compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data)
 // Convert MuJoCo quaternion [w, x, y, z] to KDL::Rotation (KDL expects x, y, z, w).
 static KDL::Rotation mj_quat_to_kdl_rot(const double *q)
 { return KDL::Rotation::Quaternion(q[1], q[2], q[3], q[0]); }
+
+static KDL::Rotation mj_xmat_to_kdl_rot(const double *m)
+{ return KDL::Rotation(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]); }
+
+static bool get_site_frame_in_body(
+  const mjModel *model,
+  mjData        *data,
+  const char    *body_name,
+  const char    *site_name,
+  KDL::Frame    *out
+)
+{
+    if (!model || !data || !body_name || !site_name || !out) return false;
+
+    mj_forward(model, data);
+
+    int body_id = mj_name2id(model, mjOBJ_BODY, body_name);
+    int site_id = mj_name2id(model, mjOBJ_SITE, site_name);
+    if (body_id < 0 || site_id < 0) return false;
+
+    const double *body_pos = data->xpos + 3 * body_id;
+    const double *site_pos = data->site_xpos + 3 * site_id;
+
+    KDL::Frame world_T_body(
+      mj_xmat_to_kdl_rot(data->xmat + 9 * body_id),
+      KDL::Vector(body_pos[0], body_pos[1], body_pos[2])
+    );
+    KDL::Frame world_T_site(
+      mj_xmat_to_kdl_rot(data->site_xmat + 9 * site_id),
+      KDL::Vector(site_pos[0], site_pos[1], site_pos[2])
+    );
+
+    *out = world_T_body.Inverse() * world_T_site;
+    return true;
+}
 
 // Collect all body IDs in the subtree rooted at root_bid (inclusive).
 // MuJoCo stores bodies in topological order (parent always precedes children),
@@ -718,53 +754,104 @@ bool init_robot_from_mjcf(
   const char *tool_body
 )
 {
+    ToolFrameSpec tool;
+    tool.tool_body = tool_body;
+    return init_robot_from_mjcf(r, model, data, base_body, tip_body, prefix, &tool);
+}
+
+bool init_robot_from_mjcf(
+  Robot               *r,
+  mjModel             *model,
+  mjData              *data,
+  const char          *base_body,
+  const char          *tip_body,
+  const char          *prefix,
+  const ToolFrameSpec *tool
+)
+{
     LOG_INFO(
-      "init_robot_from_mjcf: '" << base_body << "' -> '" << tip_body << "' prefix='"
-                                << (prefix ? prefix : "") << "'"
-                                << (tool_body ? std::string(" tool='") + tool_body + "'" : "")
+      "init_robot_from_mjcf: '"
+      << base_body << "' -> '" << tip_body << "' prefix='" << (prefix ? prefix : "") << "'"
+      << (tool && tool->tool_body ? std::string(" tool='") + tool->tool_body + "'" : "")
+      << (tool && tool->tcp_site ? std::string(" tcp='") + tool->tcp_site + "'" : "")
     );
-    r->model = model;
-    r->data  = data;
+    r->model         = model;
+    r->data          = data;
+    r->tip_T_tcp     = KDL::Frame::Identity();
+    r->has_tcp_frame = false;
+    r->tcp_site.clear();
     if (!build_kdl_from_model(r, model, base_body, tip_body)) return false;
     if (!build_index_map(r, prefix ? prefix : "")) return false;
 
-    if (tool_body) {
-        int tool_bid = mj_name2id(model, mjOBJ_BODY, tool_body);
+    KDL::Frame tip_T_tcp = KDL::Frame::Identity();
+    bool       has_tcp   = false;
+    if (tool && tool->tcp_site) {
+        if (!get_site_frame_in_body(model, data, tip_body, tool->tcp_site, &tip_T_tcp)) {
+            LOG_ERROR(
+              "tcp_site '" << tool->tcp_site << "' or tip body '" << tip_body
+                           << "' not found in model"
+            );
+            return false;
+        }
+        has_tcp          = true;
+        r->tip_T_tcp     = tip_T_tcp;
+        r->has_tcp_frame = true;
+        r->tcp_site      = tool->tcp_site;
+    } else if (tool && !Equal(tool->tcp_frame, KDL::Frame::Identity(), 1e-12)) {
+        tip_T_tcp        = tool->tcp_frame;
+        has_tcp          = true;
+        r->tip_T_tcp     = tip_T_tcp;
+        r->has_tcp_frame = true;
+    }
+
+    if (tool && tool->tool_body) {
+        int tool_bid = mj_name2id(model, mjOBJ_BODY, tool->tool_body);
         if (tool_bid < 0) {
-            LOG_ERROR("tool_body '" << tool_body << "' not found in model");
+            LOG_ERROR("tool_body '" << tool->tool_body << "' not found in model");
             return false;
         }
         int tip_bid = mj_name2id(model, mjOBJ_BODY, tip_body);
         // Ensure xpos/xmat are valid for inertia computation.
         mj_forward(model, data);
-        std::vector<int> subtree = collect_subtree(model, tool_bid);
+        std::vector<int>      subtree      = collect_subtree(model, tool_bid);
+        KDL::RigidBodyInertia tool_inertia = compute_tool_inertia(model, data, tip_bid, subtree);
         LOG_INFO(
-          "appending lumped tool inertia: " << subtree.size() << " bodies under '" << tool_body
-                                            << "'"
+          "appending lumped tool inertia: " << subtree.size() << " bodies under '"
+                                            << tool->tool_body << "'"
         );
         r->chain.addSegment(
           KDL::Segment(
-            tool_body,
-            KDL::Joint(KDL::Joint::None),
-            KDL::Frame::Identity(),
-            compute_tool_inertia(model, data, tip_bid, subtree)
+            tool->tool_body, KDL::Joint(KDL::Joint::None), KDL::Frame::Identity(), tool_inertia
           )
         );
         // Fixed joints do not count: n_joints remains the same after addSegment.
     }
 
+    if (has_tcp) {
+        const std::string seg_name = (tool && tool->tcp_site) ? tool->tcp_site : "tcp";
+        r->chain.addSegment(KDL::Segment(seg_name, KDL::Joint(KDL::Joint::None), tip_T_tcp));
+    }
+
     LOG_INFO(
       "chain ready: " << r->n_joints << " joints [" << base_body << " -> " << tip_body << "]"
-                      << (tool_body ? std::string(" + tool '") + tool_body + "'" : "")
+                      << (tool && tool->tool_body ? std::string(" + tool '") + tool->tool_body + "'"
+                                                  : "")
+                      << (has_tcp ? (tool && tool->tcp_site
+                                       ? std::string(" tcp site '") + tool->tcp_site + "'"
+                                       : " tcp frame (manual)")
+                                  : "")
     );
     return true;
 }
 
 void cleanup(Robot *r)
 {
-    r->model    = nullptr;
-    r->data     = nullptr;
-    r->chain    = KDL::Chain();
+    r->model         = nullptr;
+    r->data          = nullptr;
+    r->chain         = KDL::Chain();
+    r->tip_T_tcp     = KDL::Frame::Identity();
+    r->has_tcp_frame = false;
+    r->tcp_site.clear();
     r->n_joints = 0;
     r->joint_names.clear();
     r->joint_limits.clear();
@@ -783,7 +870,7 @@ void cleanup(Robot *r)
 
 void set_joint_pos(Robot *r, const KDL::JntArray &q, bool call_forward)
 {
-    if (!r->data) return;
+    if (!r->model || !r->data) return;
     int n = std::min((int)q.rows(), r->n_joints);
     for (int i = 0; i < n; ++i) r->data->qpos[r->kdl_to_mj_qpos[i]] = q(i);
     if (call_forward) mj_forward(r->model, r->data);
@@ -791,44 +878,83 @@ void set_joint_pos(Robot *r, const KDL::JntArray &q, bool call_forward)
 
 // Simulation API
 
-void step(Robot *s)
+static bool tick_impl(Viewer *v, mjModel *m, mjData *d, bool paused); // defined below
+
+bool step(Robot *s)
 {
-    if (!s->model || !s->data || s->paused) return;
-    if (g_viewer && g_viewer->pert.active)
-        mjv_applyPerturbForce(s->model, s->data, &g_viewer->pert);
+    if (!s->model || !s->data) return true;
+    if (g_viewer)
+        return tick_impl(g_viewer, s->model, s->data, s->paused);
+    if (s->paused) return true;
     mj_step(s->model, s->data);
+    return true;
 }
 
-void step_n(Robot *s, int n)
+bool step_n(Robot *s, int n)
 {
-    for (int i = 0; i < n; ++i) step(s);
+    for (int i = 0; i < n; ++i)
+        if (!step(s)) return false;
+    return true;
+}
+
+bool step(Viewer *v, mjModel *m, mjData *d)
+{
+    return tick_impl(v, m, d, false);
 }
 
 void reset(Robot *s)
 {
-    if (s->model && s->data) {
+    if (!s->model || !s->data) return;
+    // Use keyframe 0 if one exists, otherwise fall back to the model default.
+    if (s->model->nkey > 0)
+        mj_resetDataKeyframe(s->model, s->data, 0);
+    else
         mj_resetData(s->model, s->data);
-        mj_forward(s->model, s->data);
+    mj_forward(s->model, s->data);
+    // Sync command ports to the reset pose so the first update() applies
+    // no residual torque or position error from the previous episode.
+    for (int i = 0; i < s->n_joints; ++i) {
+        s->jnt_pos_cmd[i] = s->data->qpos[s->kdl_to_mj_qpos[i]];
+        s->jnt_trq_cmd[i] = 0.0;
     }
+    // Invoke the application reset callback -- same behaviour as the UI Reset
+    // button so headless and GUI reset paths are consistent.
+    if (s->on_reset) s->on_reset(s->model, s->data);
+}
+
+static mjtNum clamp_ctrlrange(const mjModel *m, int ci, mjtNum u)
+{
+    if (m->actuator_ctrllimited[ci])
+        u = std::clamp(u, m->actuator_ctrlrange[2 * ci], m->actuator_ctrlrange[2 * ci + 1]);
+    return u;
 }
 
 void update(Robot *r)
 {
-    if (!r->data) return;
+    if (!r || !r->model || !r->data) return;
+
+    mjModel *m = r->model;
+    mjData  *d = r->data;
+
     for (int i = 0; i < r->n_joints; ++i) {
-        r->jnt_pos_msr[i] = r->data->qpos[r->kdl_to_mj_qpos[i]];
-        r->jnt_vel_msr[i] = r->data->qvel[r->kdl_to_mj_dof[i]];
-        r->jnt_trq_msr[i] = r->data->qfrc_bias[r->kdl_to_mj_dof[i]];
+        const int qpos_id = r->kdl_to_mj_qpos[i];
+        const int dof_id  = r->kdl_to_mj_dof[i];
+        const int ctrl_id = r->kdl_to_mj_ctrl[i];
+
+        r->jnt_pos_msr[i] = d->qpos[qpos_id];
+        r->jnt_vel_msr[i] = d->qvel[dof_id];
+        r->jnt_trq_msr[i] = d->qfrc_actuator[dof_id];
+
         switch (r->ctrl_mode) {
         case CtrlMode::POSITION:
-            if (r->kdl_to_mj_ctrl[i] >= 0) r->data->ctrl[r->kdl_to_mj_ctrl[i]] = r->jnt_pos_cmd[i];
+            if (ctrl_id >= 0)
+                d->ctrl[ctrl_id] = clamp_ctrlrange(m, ctrl_id, r->jnt_pos_cmd[i]);
             break;
         case CtrlMode::TORQUE:
-            r->data->qfrc_applied[r->kdl_to_mj_dof[i]] = r->jnt_trq_cmd[i];
-            /* Neutralize position actuators: setting ctrl = qpos zeroes the position
-             * error so they contribute only passive -kv*qvel damping, not the full
-             * kp*(ctrl-qpos) restoring force that would fight qfrc_applied. */
-            if (r->kdl_to_mj_ctrl[i] >= 0) r->data->ctrl[r->kdl_to_mj_ctrl[i]] = r->jnt_pos_msr[i];
+            // Track ctrl = qpos so the position actuator contributes only its
+            // passive -kv*qvel damping, not kp*(ctrl-qpos) stiffness.
+            if (ctrl_id >= 0) d->ctrl[ctrl_id] = d->qpos[qpos_id];
+            d->qfrc_applied[dof_id] = r->jnt_trq_cmd[i];
             break;
         }
     }
@@ -1030,6 +1156,10 @@ struct SimUiState
     bool                              sim_ready = false;
     std::mutex                        sim_ready_mtx;
     std::condition_variable           sim_ready_cv;
+    double                            prev_sim_time        = 0.0;
+    double                            prev_realtime_factor = 1.0;
+    int                               prev_rt_index        = 0;
+
 };
 
 void cleanup(Viewer *v)
@@ -1040,6 +1170,7 @@ void cleanup(Viewer *v)
         if (ss->render_thread.joinable()) ss->render_thread.join();
         delete ss;
         v->_sim_ui = nullptr;
+        if (g_viewer == v) g_viewer = nullptr;
         return;
     }
     if (!v->window) return;
@@ -1126,8 +1257,14 @@ bool init_window_sim(Viewer *v, Robot *r, const char *title)
         std::unique_lock<std::recursive_mutex> lock(ss->sim->mtx);
         mj_forward(r->model, r->data);
     }
+    // Clear the startup speed_changed=true so the first tick does not apply
+    // a phantom speed change.  Sync prev_rt_index to match.
+    ss->sim->speed_changed = false;
+    ss->prev_rt_index      = ss->sim->real_time_index;
 
     v->_sim_ui = ss;
+    g_viewer   = v;
+    g_robot    = r;
     return true;
 }
 
@@ -1143,40 +1280,99 @@ static bool tick_impl(Viewer *v, mjModel *m, mjData *d, bool paused)
 
         if (sim->exitrequest.load()) return false;
 
-        // Real-time sync.
+        // -/= keys: adjust realtime_factor.  The Simulate UI increments
+        // real_time_index on '-' (slow) and decrements on '=' (fast), then sets
+        // speed_changed.  We intercept the flag, map the direction to a
+        // realtime_factor change, then sync real_time_index back to the closest
+        // percentRealTime entry so the UI display reflects the actual factor.
+        // For factors > 1.0 (faster than real-time) the display clamps to 100%.
+        if (sim->speed_changed) {
+            sim->speed_changed = false;
+            const double step = std::sqrt(2.0); // two presses = 2x
+            // Direction: UI key '-' incremented index (slow), '=' decremented (fast).
+            // We detect which by comparing to the index we last set.
+            if (sim->real_time_index > ss->prev_rt_index) {
+                // Slow down: divide by sqrt(2).  Below 0.05 snap to 0.0 (max speed).
+                double next = v->realtime_factor / step;
+                v->realtime_factor = (next < 0.05) ? 0.0 : next;
+            } else {
+                // Speed up: multiply by sqrt(2).  If currently at 0.0 (max speed),
+                // start from 0.05 so the first '=' press gives a defined factor.
+                double base = (v->realtime_factor == 0.0) ? 0.05 : v->realtime_factor;
+                v->realtime_factor = std::min(10.0, base * step);
+            }
+            // Sync index to closest percentRealTime entry (<= 100%).
+            const float *prt     = mujoco::Simulate::percentRealTime;
+            const int    n_prt   = static_cast<int>(
+                sizeof(mujoco::Simulate::percentRealTime) /
+                sizeof(mujoco::Simulate::percentRealTime[0]));
+            float target = static_cast<float>(v->realtime_factor * 100.0);
+            int   best   = 0;
+            float best_d = std::abs(prt[0] - target);
+            for (int i = 1; i < n_prt; ++i) {
+                float d = std::abs(prt[i] - target);
+                if (d < best_d) { best_d = d; best = i; }
+            }
+            sim->real_time_index  = best;
+            ss->prev_rt_index     = best;
+            v->_tick_t = {};
+            if (v->realtime_factor == 0.0)
+                LOG_INFO("RTF: MAX (uncapped)");
+            else
+                LOG_INFO("RTF: " << v->realtime_factor << "x");
+        }
+        if (v->realtime_factor != ss->prev_realtime_factor) {
+            ss->prev_realtime_factor = v->realtime_factor;
+            v->_tick_t               = {};
+        }
+        double wall_per_step = (v->realtime_factor > 0.0)
+                                   ? m->opt.timestep / v->realtime_factor
+                                   : 0.0;
         auto now = Clock::now();
-        if (v->_tick_t.time_since_epoch().count() != 0) {
-            auto next = v->_tick_t + Dur(m->opt.timestep);
+        if (wall_per_step > 0.0 && v->_tick_t.time_since_epoch().count() != 0) {
+            auto next = v->_tick_t + Dur(wall_per_step);
             if (now < next) std::this_thread::sleep_until(next);
         }
         v->_tick_t = Clock::now();
 
         {
+            /* step() is the sole physics driver; the render thread only renders.
+             * Honour sim->run as the pause flag so the Simulate UI Space-bar
+             * and Pause/Run radio button work correctly. */
             std::unique_lock<std::recursive_mutex> lock(sim->mtx);
+
+            // Detect a UI-driven reset: time jumped back (or to zero) while the
+            // simulation had already advanced.  Guard with prev_sim_time > timestep
+            // to avoid false triggers on the very first tick or when the user
+            // scrubs to t=0 from a paused state before any physics has run.
+            const bool time_jumped_back =
+                ss->prev_sim_time > m->opt.timestep &&
+                d->time < ss->prev_sim_time - 1e-9;
+            if (time_jumped_back && g_robot) {
+                // Re-sync command ports BEFORE mj_step so position actuators
+                // don't apply kp*(0-qpos) restoring force on the first
+                // post-reset step, which causes NaN/Inf in qacc.
+                for (int i = 0; i < g_robot->n_joints; ++i) {
+                    g_robot->jnt_pos_cmd[i] = d->qpos[g_robot->kdl_to_mj_qpos[i]];
+                    g_robot->jnt_trq_cmd[i] = 0.0;
+                    const int ctrl_id = g_robot->kdl_to_mj_ctrl[i];
+                    if (ctrl_id >= 0) d->ctrl[ctrl_id] = d->qpos[g_robot->kdl_to_mj_qpos[i]];
+                    d->qfrc_applied[g_robot->kdl_to_mj_dof[i]] = 0.0;
+                }
+                // Invoke the application reset callback to restore scene-specific
+                // state (object poses, gripper cmd, etc.) that mj_resetData skips.
+                if (g_robot->on_reset) g_robot->on_reset(m, d);
+                v->_tick_t = {};
+            }
+            ss->prev_sim_time = d->time;
+
             if (sim->run) {
                 if (sim->pert.active) mjv_applyPerturbForce(m, d, &sim->pert);
                 mj_step(m, d);
                 sim->AddToHistory();
             } else {
                 mj_forward(m, d);
-                sim->speed_changed = true;
             }
-        }
-
-        // Selected body overlay (double-buffer pattern).
-        if (sim->newtextrequest.load() == 0) {
-            const int sel = sim->pert.select;
-            sim->user_texts_new_.clear();
-            if (sel > 0) {
-                const char *name = mj_id2name(m, mjOBJ_BODY, sel);
-                sim->user_texts_new_.emplace_back(
-                  (int)mjFONT_SHADOW,
-                  (int)mjGRID_TOPRIGHT,
-                  std::string("Selected"),
-                  name ? std::string(name) : std::string("?")
-                );
-            }
-            sim->newtextrequest = 1;
         }
 
         // Render is handled by the render thread inside RenderLoop().

@@ -15,11 +15,9 @@ number of physics steps, printing a brief result to stdout.
 
 | Example | Scene | Main behavior |
 |---------|-------|---------------|
-| `ex_init` | arm only | load MJCF, build KDL chain, print FK |
 | `ex_gravity_comp` | arm only | hold home pose with KDL gravity compensation |
 | `ex_pos_ctrl` | arm only | position trajectory tracking |
 | `ex_vel_ctrl` | arm only | velocity-style convergence control |
-| `ex_gripper` | arm + gripper | gravity compensation with gripper cycling |
 | `ex_impedance` | arm + gripper | joint impedance with gripper inertia |
 | `ex_table_scene` | table + free objects | table/object scene construction |
 | `ex_pick` | floor cube | scripted pick and lift |
@@ -27,26 +25,6 @@ number of physics steps, printing a brief result to stdout.
 | `ex_table_pour` | table + transparent receiver | scripted pour from small gripper-held bottle into a tabletop vessel |
 | `ex_dual_arm` | two arms + grippers | multi-robot scene with independent KDL chains |
 | `ex_record` | arm only | headless MP4 recording |
-
----
-
-## ex_init
-
-**Scene:** Kinova GEN3 arm (arm only, no gripper).
-
-**What it does:**
-- Loads the arm from `kinova_gen3/gen3.xml` via `build_scene` + `init_robot_from_mjcf`.
-- Prints model dimensions (`nq`, `nu`, `nbody`, `n_joints`) and joint names.
-- Runs forward kinematics at home pose and prints end-effector (EE) position.
-- In GUI mode: sets the arm to the home pose and enters the control loop.
-
-**Control law:** `CtrlMode::TORQUE` — pure KDL gravity compensation.
-
-```
-tau[i] = JntToGravity(q)[i]
-```
-
-**Headless output:** EE position at home pose, then exits.
 
 ---
 
@@ -114,26 +92,6 @@ Kd = [10,  20,  10,  20,  10,  20,  10 ]  Nm*s/rad
 
 ---
 
-## ex_gripper
-
-**Scene:** Kinova GEN3 arm + Robotiq 2F-85 gripper.
-
-**What it does:**
-- Holds the arm at home via KDL gravity compensation (includes gripper mass).
-- Gripper cycles open/closed every 3 s.
-- Demonstrates the minimal arm+gripper scene setup and `g_base` tool_body usage.
-
-**Control law:** `CtrlMode::TORQUE` — KDL gravity compensation only (no PD restoring force).
-
-```
-tau[i] = JntToGravity(q)[i]
-gripper_ctrl = fmod(t, 6) < 3 ? 255.0 : 0.0
-```
-
-**Headless output:** `sim_time=X.XX s` after 300 steps.
-
----
-
 ## ex_table_scene
 
 **Scene:** Kinova GEN3 + 2F-85 gripper, mounted on a table (`z = 0.7 m` surface)
@@ -186,7 +144,7 @@ State table (durations in seconds):
 | GRASP    | 2.0      | 4.0     | 0.06 rad   | open    |
 | CLOSE    | 1.5      | 2.5     | (none)     | closed  |
 | LIFT     | 3.0      | 5.0     | 0.08 rad   | closed  |
-| HOLD     | inf      | inf     | (none)     | closed  |
+| HOLD     | 10.0 (GUI) / 1.0 (headless) | same | (none)     | closed  |
 
 **Headless output:** `cube Z after pick: X.XXX m`
 

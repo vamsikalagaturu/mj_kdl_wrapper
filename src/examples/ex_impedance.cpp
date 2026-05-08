@@ -71,9 +71,13 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    mj_kdl::ToolFrameSpec tool;
+    tool.tool_body = "g_base";
+    tool.tcp_site  = "g_pinch";
+
     mj_kdl::Robot robot;
     if (!mj_kdl::init_robot_from_mjcf(
-          &robot, model, data, "base_link", "bracelet_link", "", "g_base"
+          &robot, model, data, "base_link", "bracelet_link", "", &tool
         )) {
         std::cerr << "init_robot_from_mjcf() failed\n";
         mj_kdl::destroy_scene(model, data);
@@ -173,7 +177,7 @@ int main(int argc, char *argv[])
 
         while (true) {
             step_impedance();
-            if (!mj_kdl::tick(&viewer, model, data)) break;
+            if (!mj_kdl::step(&robot)) break;
         }
 
         mj_kdl::cleanup(&viewer);

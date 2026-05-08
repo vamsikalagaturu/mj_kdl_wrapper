@@ -118,7 +118,7 @@ int main(int argc, char *argv[])
             if (data->time < prev_sim_time - 1e-6) reset_to_home();
             prev_sim_time = data->time;
             ctrl_step();
-            if (!mj_kdl::tick(&viewer, model, data)) break;
+            if (!mj_kdl::step(&robot)) break;
         }
 
         mj_kdl::cleanup(&viewer);

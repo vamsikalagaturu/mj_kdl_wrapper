@@ -84,11 +84,17 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    mj_kdl::ToolFrameSpec tool1, tool2;
+    tool1.tool_body = "g_base";
+    tool1.tcp_site  = "g_pinch";
+    tool2.tool_body = "r2_g_base";
+    tool2.tcp_site  = "r2_g_pinch";
+
     mj_kdl::Robot arm1, arm2;
     if (
-      !mj_kdl::init_robot_from_mjcf(&arm1, model, data, "base_link", "bracelet_link", "", "g_base")
+      !mj_kdl::init_robot_from_mjcf(&arm1, model, data, "base_link", "bracelet_link", "", &tool1)
       || !mj_kdl::init_robot_from_mjcf(
-        &arm2, model, data, "r2_base_link", "r2_bracelet_link", "", "r2_g_base"
+        &arm2, model, data, "r2_base_link", "r2_bracelet_link", "", &tool2
       )
     ) {
         std::cerr << "init_robot_from_mjcf() failed\n";
@@ -189,7 +195,7 @@ int main(int argc, char *argv[])
             if (data->time < prev_sim_time - 1e-6) reset_to_home();
             prev_sim_time = data->time;
             ctrl_step();
-            if (!mj_kdl::tick(&viewer, model, data)) break;
+            if (!mj_kdl::step(&arm1)) break;
         }
 
         mj_kdl::cleanup(&viewer);

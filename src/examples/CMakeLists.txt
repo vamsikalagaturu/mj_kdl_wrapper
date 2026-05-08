@@ -1,9 +1,7 @@
 set(EXAMPLES
-  ex_init
   ex_gravity_comp
   ex_pos_ctrl
   ex_vel_ctrl
-  ex_gripper
   ex_impedance
   ex_pick
   ex_table_pick_place

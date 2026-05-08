@@ -101,6 +101,37 @@ TEST_F(MjcfPosCtrlTest, TrajectoryTracking)
     EXPECT_LE(max_err, kErrTol);
 }
 
+TEST_F(MjcfPosCtrlTest, ClampCtrlrange)
+{
+    // Set a command far outside any physical joint range and call update().
+    // The ctrl[] written to MuJoCo must be clamped to [ctrlrange_lo, ctrlrange_hi].
+    for (unsigned i = 0; i < n_; ++i) s_.jnt_pos_cmd[i] = 1e9;
+    mj_kdl::update(&s_);
+
+    for (unsigned i = 0; i < n_; ++i) {
+        const int ci = s_.kdl_to_mj_ctrl[i];
+        if (ci < 0) continue;
+        if (!model_->actuator_ctrllimited[ci]) continue;
+        double lo = model_->actuator_ctrlrange[2 * ci];
+        double hi = model_->actuator_ctrlrange[2 * ci + 1];
+        EXPECT_LE(data_->ctrl[ci], hi + 1e-12)
+          << "ctrl[" << ci << "] exceeds ctrlrange upper bound";
+        EXPECT_GE(data_->ctrl[ci], lo - 1e-12)
+          << "ctrl[" << ci << "] below ctrlrange lower bound";
+    }
+}
+
+TEST_F(MjcfPosCtrlTest, QfrcAppliedUnchangedInPositionMode)
+{
+    // In POSITION mode, update() must NOT zero qfrc_applied (user-set values
+    // should be preserved so external disturbances can be applied).
+    const int dof0 = s_.kdl_to_mj_dof[0];
+    data_->qfrc_applied[dof0] = 5.0; // sentinel external disturbance
+    mj_kdl::update(&s_);
+    EXPECT_DOUBLE_EQ(data_->qfrc_applied[dof0], 5.0)
+      << "update() clobbered qfrc_applied in POSITION mode";
+}
+
 int main(int argc, char *argv[])
 {
     testing::InitGoogleTest(&argc, argv);

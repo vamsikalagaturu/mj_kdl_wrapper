@@ -48,6 +48,8 @@ static constexpr int    kNumBallsHeadless = kNumBallsGui;
 static constexpr double kBallRadius  = 0.007;
 static constexpr double kReceiverFrameZ = kTableZ;
 static constexpr double kIkTol       = 3e-3;
+static constexpr double kPourTiltRad = 1.95;
+static constexpr double kTiltOutletZ = kTableZ + 0.18;
 
 static constexpr double kKp[7] = { 120, 220, 120, 220, 110, 190, 90 };
 static constexpr double kKd[7] = { 12, 22, 12, 22, 11, 18, 9 };
@@ -186,6 +188,26 @@ static void body_local_to_world(const mjData *data, int body_id, const double lo
     }
 }
 
+static KDL::Vector site_point_to_local(
+  const mjData *data,
+  int           site_id,
+  const double  point_world[3]
+)
+{
+    const double *p = data->site_xpos + 3 * site_id;
+    const double *r = data->site_xmat + 9 * site_id;
+    const double  d[3] = {
+        point_world[0] - p[0],
+        point_world[1] - p[1],
+        point_world[2] - p[2],
+    };
+    return KDL::Vector(
+      r[0] * d[0] + r[3] * d[1] + r[6] * d[2],
+      r[1] * d[0] + r[4] * d[1] + r[7] * d[2],
+      r[2] * d[0] + r[5] * d[1] + r[8] * d[2]
+    );
+}
+
 static bool inside_jug(const mjData *data, const mjModel *model, int joint_id)
 {
     const int     qadr = model->jnt_qposadr[joint_id];
@@ -319,9 +341,13 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    mj_kdl::ToolFrameSpec tool;
+    tool.tool_body = "g_base";
+    tool.tcp_site  = "g_pinch";
+
     mj_kdl::Robot robot;
     if (!mj_kdl::init_robot_from_mjcf(
-          &robot, model, data, "base_link", "bracelet_link", "", "g_base"
+          &robot, model, data, "base_link", "bracelet_link", "", &tool
         )) {
         std::cerr << "init_robot_from_mjcf() failed\n";
         mj_kdl::destroy_scene(model, data);
@@ -331,8 +357,9 @@ int main(int argc, char *argv[])
     const unsigned n           = robot.chain.getNrOfJoints();
     const int      fingers_act = mj_name2id(model, mjOBJ_ACTUATOR, "g_fingers_actuator");
     const int      bottle_body = mj_name2id(model, mjOBJ_BODY, "pour_mug");
-    if (fingers_act < 0 || bottle_body < 0) {
-        std::cerr << "required gripper actuator or pouring bottle body not found\n";
+    const int      tcp_site    = mj_name2id(model, mjOBJ_SITE, "g_pinch");
+    if (fingers_act < 0 || bottle_body < 0 || tcp_site < 0) {
+        std::cerr << "required gripper actuator, pouring bottle body, or tcp site not found\n";
         mj_kdl::cleanup(&robot);
         mj_kdl::destroy_scene(model, data);
         return 1;
@@ -360,8 +387,7 @@ int main(int argc, char *argv[])
 
     KDL::Frame home_fk;
     fk.JntToCart(q_home, home_fk);
-    const KDL::Rotation carry_rot = home_fk.M * KDL::Rotation::RotY(-0.05);
-    const KDL::Rotation pour_rot  = carry_rot * KDL::Rotation::RotZ(-1.95);
+    const KDL::Rotation carry_tcp = home_fk.M * KDL::Rotation::RotY(-0.05);
 
     KDL::JntArray q_pre_pour(n), q_pour(n), q_tilt(n), q_retreat(n);
     struct Waypoint
@@ -375,18 +401,27 @@ int main(int argc, char *argv[])
       KDL::Rotation::Identity(), KDL::Vector(kRobotBackX, 0.0, kTableZ)
     );
     const KDL::Frame base_T_world = world_T_base.Inverse();
-    std::array<KDL::Vector, 4> waypoint_pos = {
-        KDL::Vector(kPrePourX, kPrePourY, kTableZ + 0.27),
-        KDL::Vector(kPourX, kPourY, kTableZ + 0.20),
-        KDL::Vector(kTiltX, kTiltY, kTableZ + 0.17),
+
+    mj_kdl::set_joint_pos(&robot, q_home, false);
+    mj_forward(model, data);
+    double outlet_home[3] = {};
+    body_local_to_world(data, bottle_body, (const double[3]){ 0.0, 0.0, 0.070 }, outlet_home);
+    const KDL::Vector tcp_outlet = site_point_to_local(data, tcp_site, outlet_home);
+
+    const auto outlet_target_to_tcp_target = [&](const KDL::Rotation &tcp_rot, const KDL::Vector &outlet_pos) {
+        return KDL::Frame(tcp_rot, outlet_pos - tcp_rot * tcp_outlet);
+    };
+
+    std::array<KDL::Vector, 3> waypoint_pos = {
+        KDL::Vector(kJugX,     kJugY,     kTableZ + 0.27),
+        KDL::Vector(kJugX,     kJugY,     kTableZ + 0.20),
         KDL::Vector(kRetreatX, kRetreatY, kTableZ + 0.27),
     };
-    const auto solve_waypoints = [&](const std::array<KDL::Vector, 4> &pos) {
+    const auto solve_waypoints = [&](const std::array<KDL::Vector, 3> &pos) {
         Waypoint waypoints[] = {
-            { "pre-pour", base_T_world * KDL::Frame(carry_rot, pos[0]), &q_pre_pour, &q_home },
-            { "pour", base_T_world * KDL::Frame(carry_rot, pos[1]), &q_pour, &q_pre_pour },
-            { "tilt", base_T_world * KDL::Frame(pour_rot, pos[2]), &q_tilt, &q_pour },
-            { "retreat", base_T_world * KDL::Frame(carry_rot, pos[3]), &q_retreat, &q_pour },
+            { "pre-pour", base_T_world * outlet_target_to_tcp_target(carry_tcp, pos[0]), &q_pre_pour, &q_home },
+            { "pour",     base_T_world * outlet_target_to_tcp_target(carry_tcp, pos[1]), &q_pour,     &q_pre_pour },
+            { "retreat",  base_T_world * outlet_target_to_tcp_target(carry_tcp, pos[2]), &q_retreat,  &q_pour },
         };
         for (const auto &wp : waypoints) {
             bool ok = ik_nr.CartToJnt(*wp.seed, wp.target, *wp.out) >= 0;
@@ -409,27 +444,29 @@ int main(int argc, char *argv[])
         mj_kdl::destroy_scene(model, data);
         return 1;
     }
-    for (int iter = 0; iter < 3; ++iter) {
+    q_tilt = q_pour;
+    q_tilt(n - 1) += kPourTiltRad;
+    for (int iter = 0; iter < 4; ++iter) {
         mj_kdl::set_joint_pos(&robot, q_tilt, false);
         mj_forward(model, data);
 
-        // Align the actual pouring tip, not the mug body center.
         double outlet_world[3] = {};
         body_local_to_world(data, bottle_body, (const double[3]){ 0.0, 0.0, 0.070 }, outlet_world);
-
         const double dx = kJugX - outlet_world[0];
         const double dy = kJugY - outlet_world[1];
-        if (std::hypot(dx, dy) < 5e-3) break;
+        const double dz = kTiltOutletZ - outlet_world[2];
+        if (std::sqrt(dx * dx + dy * dy + dz * dz) < 5e-3) break;
 
-        for (auto &p : waypoint_pos) {
-            p[0] += dx;
-            p[1] += dy;
-        }
+        waypoint_pos[1][0] += dx;
+        waypoint_pos[1][1] += dy;
+        waypoint_pos[1][2] += dz;
         if (!solve_waypoints(waypoint_pos)) {
             mj_kdl::cleanup(&robot);
             mj_kdl::destroy_scene(model, data);
             return 1;
         }
+        q_tilt = q_pour;
+        q_tilt(n - 1) += kPourTiltRad;
     }
 
     std::vector<int> grain_joints;
@@ -442,15 +479,18 @@ int main(int argc, char *argv[])
     }
 
     robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
-    auto reset_scene = [&]() {
-        mj_resetData(model, data);
+
+    /* Scene-specific reset: place balls inside bottle, close gripper.
+     * Called both at startup (after mj_resetData) and by the Simulate UI
+     * reset callback (on_reset), where mj_resetData has already been done. */
+    auto reset_scene_objects = [&](mjModel *m, mjData *d) {
         mj_kdl::set_joint_pos(&robot, q_home, false);
-        mj_forward(model, data);
+        mj_forward(m, d);
 
         for (unsigned i = 0; i < n; ++i) {
-            robot.jnt_pos_cmd[i]                       = data->qpos[robot.kdl_to_mj_qpos[i]];
-            robot.jnt_trq_cmd[i]                       = 0.0;
-            data->qfrc_applied[robot.kdl_to_mj_dof[i]] = 0.0;
+            robot.jnt_pos_cmd[i]                      = d->qpos[robot.kdl_to_mj_qpos[i]];
+            robot.jnt_trq_cmd[i]                      = 0.0;
+            d->qfrc_applied[robot.kdl_to_mj_dof[i]]  = 0.0;
         }
 
         const double spacing = 2.00 * kBallRadius;
@@ -465,15 +505,24 @@ int main(int argc, char *argv[])
                 -0.026 + layer * spacing,
             };
             double world[3];
-            body_local_to_world(data, bottle_body, local, world);
+            body_local_to_world(d, bottle_body, local, world);
             char joint_name[32];
             std::snprintf(joint_name, sizeof(joint_name), "grain_%02d_joint", i);
-            set_free_body_pose(model, data, joint_name, world);
+            set_free_body_pose(m, d, joint_name, world);
         }
-        mj_forward(model, data);
+        mj_forward(m, d);
         mj_kdl::update(&robot);
-        data->ctrl[fingers_act] = 255.0;
+        d->ctrl[fingers_act] = 255.0;
     };
+
+    /* Full reset: data wipe + scene objects. Used at startup. */
+    auto reset_scene = [&]() {
+        mj_resetData(model, data);
+        reset_scene_objects(model, data);
+    };
+
+    /* Hook into the Simulate UI Reset button so the scene is fully restored. */
+    robot.on_reset = reset_scene_objects;
 
     reset_scene();
 
@@ -539,21 +588,19 @@ int main(int argc, char *argv[])
             const bool done_timeout = phase.timeout > 0.0 && t_rel >= phase.timeout;
             if ((done_time && done_pose) || done_timeout) break;
 
-            if (headless) {
-                mj_kdl::step(&robot);
-                ++sim_step;
-                if (recorder_ok && sim_step % steps_per_frame == 0) {
-                    if (!mj_kdl::record_frame(&recorder, model, data)) {
-                        std::cerr << "record_frame() failed at step " << sim_step << "\n";
-                        mj_kdl::cleanup(&recorder);
-                        recorder_ok = false;
-                    }
-                }
-            } else if (!mj_kdl::tick(&viewer, model, data)) {
+            if (!mj_kdl::step(&robot)) {
                 mj_kdl::cleanup(&viewer);
                 mj_kdl::cleanup(&robot);
                 mj_kdl::destroy_scene(model, data);
                 return 0;
+            }
+            ++sim_step;
+            if (recorder_ok && sim_step % steps_per_frame == 0) {
+                if (!mj_kdl::record_frame(&recorder, model, data)) {
+                    std::cerr << "record_frame() failed at step " << sim_step << "\n";
+                    mj_kdl::cleanup(&recorder);
+                    recorder_ok = false;
+                }
             }
         }
     }

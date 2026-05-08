@@ -69,7 +69,6 @@ message(STATUS "KDL cfg: ${orocos_kdl_DIR}")
 # simulate.cc without pulling in the full lodepng library.
 set(LODEPNG_STUB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/lodepng_stub)
 
-# MuJoCo simulate UI  (simulate.cc + GLFW adapter from the MuJoCo source tree)
 set(MJ_SIM_DIR "${MUJOCO_ROOT}/simulate")
 set(SIMULATE_UI_SOURCES
   ${MJ_SIM_DIR}/simulate.cc

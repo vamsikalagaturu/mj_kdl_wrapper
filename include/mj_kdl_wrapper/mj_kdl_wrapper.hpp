@@ -7,6 +7,7 @@
 #include <mujoco/mujoco.h>
 #include <GLFW/glfw3.h>
 #include <kdl/chain.hpp>
+#include <kdl/frames.hpp>
 #include <kdl/jntarray.hpp>
 #include <functional>
 #include <string>
@@ -171,6 +172,24 @@ struct SceneSpec
 
 /**
  * @ingroup grp_types
+ * Optional tool/end-effector description used while building the KDL chain.
+ *
+ * tool_body names the root of the attached tool subtree whose mass/inertia is
+ * lumped into the arm dynamics.  tcp_site names an authored MuJoCo site that
+ * becomes the KDL terminal frame for FK/IK (takes priority when set).  When
+ * the model has no suitable site, tcp_frame provides an equivalent manual
+ * transform expressed in the tip body's local frame.
+ * For the prefixed Robotiq 2F-85 this is typically {"g_base", "g_pinch"}.
+ */
+struct ToolFrameSpec
+{
+    const char *tool_body = nullptr;
+    const char *tcp_site  = nullptr;                 // MuJoCo site name (takes priority)
+    KDL::Frame  tcp_frame = KDL::Frame::Identity(); // manual TCP in tip frame (fallback)
+};
+
+/**
+ * @ingroup grp_types
  * Joint-space control mode for update().
  *   POSITION - writes jnt_pos_cmd to actuator ctrl inputs.
  *   TORQUE   - writes jnt_trq_cmd to qfrc_applied (generalized forces).
@@ -193,6 +212,9 @@ struct Robot
     mjModel                               *model = nullptr;
     mjData                                *data  = nullptr;
     KDL::Chain                             chain;
+    KDL::Frame                             tip_T_tcp     = KDL::Frame::Identity();
+    bool                                   has_tcp_frame = false;
+    std::string                            tcp_site;
     int                                    n_joints = 0;
     std::vector<std::string>               joint_names;
     std::vector<std::pair<double, double>> joint_limits;
@@ -200,9 +222,15 @@ struct Robot
     /* Ports - read/written each control cycle. */
     CtrlMode            ctrl_mode = CtrlMode::POSITION;
     bool                paused    = false;
+    /* Optional callback invoked by step() whenever the Simulate UI Reset button
+     * is pressed.  Use this to restore scene-specific state (object poses,
+     * gripper position, etc.) that mj_resetData does not cover.
+     * Called after mj_resetData + mj_forward, before the next mj_step.
+     * The callback receives the model and data pointers for convenience. */
+    std::function<void(mjModel *, mjData *)> on_reset;
     std::vector<double> jnt_pos_msr; // [rad]   - measured joint positions   (written by update())
     std::vector<double> jnt_vel_msr; // [rad/s] - measured joint velocities  (written by update())
-    std::vector<double> jnt_trq_msr; // [Nm]    - bias torques (grav+Cor)    (written by update())
+    std::vector<double> jnt_trq_msr; // [Nm]    - actuator output torques    (written by update())
     std::vector<double> jnt_pos_cmd; // [rad] - position setpoints  (POSITION mode)
     std::vector<double> jnt_trq_cmd; // [Nm]  - torque commands     (TORQUE mode)
 
@@ -225,6 +253,12 @@ struct Viewer
     mjvOption   opt{};
     mjvPerturb  pert{};
     mjrContext  con{};
+    /* Real-time factor controlling simulation speed in tick().
+     * 1.0 = real-time (default), 2.0 = 2x faster, 0.5 = half speed, 0.0 = max speed.
+     * In GUI mode the Simulate UI -/= keys adjust this value.
+     * 0.0 means run as fast as possible (no sleep).
+     * Note: the Simulate UI display caps at 100% (1.0x); faster values show as 100%. */
+    double      realtime_factor = 1.0;
     /* internal: real-time pacing state used by tick(). */
     std::chrono::steady_clock::time_point _tick_t{};
     /* internal: non-null when init_window_sim() is used; holds SimUiState*. */
@@ -308,15 +342,36 @@ bool save_model_xml(const mjModel *model, const char *path);
  *                        fixed segment.  Pass the gripper base body (e.g. "g_base") so that
  *                        KDL dynamics include the full gripper mass.
  * @return true on success.
+ * @deprecated Prefer the ToolFrameSpec overload which also accepts tcp_site/tcp_frame.
  */
+[[deprecated("use init_robot_from_mjcf(..., const ToolFrameSpec *tool) to also set tcp_site")]]
 bool init_robot_from_mjcf(
   Robot      *r,
   mjModel    *model,
   mjData     *data,
   const char *base_body,
   const char *tip_body,
-  const char *prefix    = "",
-  const char *tool_body = nullptr
+  const char *prefix,
+  const char *tool_body
+);
+
+/**
+ * @ingroup grp_robot
+ * Build KDL chain from a compiled MuJoCo model and optional tool/TCP metadata.
+ *
+ * If tool->tcp_site is set, that authored site becomes the KDL terminal frame
+ * for FK/IK.  The joint count and MuJoCo joint/actuator maps still cover only
+ * the controllable joints from base_body to tip_body.
+ * Pass tool = nullptr (the default) for an arm with no attached tool.
+ */
+bool init_robot_from_mjcf(
+  Robot               *r,
+  mjModel             *model,
+  mjData              *data,
+  const char          *base_body,
+  const char          *tip_body,
+  const char          *prefix = "",
+  const ToolFrameSpec *tool   = nullptr
 );
 
 /**
@@ -392,7 +447,10 @@ bool init_window(
  * this works correctly.  Not supported on macOS.
  *
  * @param[out] v      Viewer to initialise; freed by cleanup(Viewer *).
- * @param[in]  r      Robot to simulate.
+ * @param[in]  r      Robot to simulate.  r is registered globally; pass the same
+ *                    Robot to every subsequent step() call so that keyboard and
+ *                    mouse perturbation callbacks operate on the correct model.
+ *                    Only one (Viewer, Robot) pair may be active at a time.
  * @param[in]  title  Label shown in the window title bar (default "MuJoCo").
  * @return true on success.
  */
@@ -479,22 +537,59 @@ void cleanup(VideoRecorder *vr);
 
 /**
  * @ingroup grp_robot
- * Advance the simulation by one timestep and call mj_forward().
- * @param[in,out] s  Simulation state.
+ * Advance one physics timestep.
+ *
+ * Headless (no viewer active): calls mj_step() and returns true.
+ * GUI (init_window_sim() was called): advances physics, renders, syncs to real
+ * time, and polls GLFW events -- exactly what tick() used to do.  Returns false
+ * once the user closes the window.
+ *
+ * This replaces the old headless/GUI split:
+ *
+ *   // Before:
+ *   if (headless) { mj_kdl::step(&r); }
+ *   else if (!mj_kdl::tick(&v, m, d)) break;
+ *
+ *   // After:
+ *   if (!mj_kdl::step(&r)) break;
+ *
+ * Coupling note: in GUI mode the keyboard and mouse perturbation callbacks
+ * operate on the Robot registered via init_window_sim().  Always pass the
+ * same Robot to both init_window_sim() and step(); passing a different Robot
+ * causes perturbation forces to be applied to the wrong model.
+ *
+ * @param[in,out] s  Simulation state; must be the Robot passed to init_window_sim().
+ * @return true while the window is open (or always true in headless mode).
  */
-void step(Robot *s);
+bool step(Robot *s);
 
 /**
  * @ingroup grp_robot
  * Advance the simulation by n timesteps.
+ * Returns false immediately if the viewer window is closed mid-sequence.
  * @param[in,out] s  Simulation state.
  * @param[in]     n  Number of steps.
  */
-void step_n(Robot *s, int n);
+bool step_n(Robot *s, int n);
+
+/**
+ * @ingroup grp_viewer
+ * Model/data overload of step() for multi-robot or no-robot GUI loops.
+ * Equivalent to the former tick(Viewer*, mjModel*, mjData*).
+ * @param[in,out] v  Viewer initialised by init_window() or init_window_sim().
+ * @param[in]     m  Shared MuJoCo model.
+ * @param[in]     d  Shared MuJoCo data.
+ * @return true while the window is open; false once the user closes it.
+ */
+bool step(Viewer *v, mjModel *m, mjData *d);
 
 /**
  * @ingroup grp_robot
- * Reset simulation to the model's keyframe 0 (or default pose).
+ * Reset simulation to keyframe 0 if the model has one, otherwise to the
+ * model default pose.  Syncs jnt_pos_cmd to the reset qpos and zeroes
+ * jnt_trq_cmd so the first update() after reset applies no stale commands.
+ * Invokes on_reset if set, matching the behaviour of the Simulate UI Reset
+ * button so headless and GUI reset paths are consistent.
  * @param[in,out] s  Simulation state.
  */
 void reset(Robot *s);
@@ -526,50 +621,15 @@ bool render(Viewer *v, const Robot *r);
  */
 bool render(Viewer *v, mjModel *m, mjData *d);
 
-/**
- * @ingroup grp_viewer
- * Advance one physics step, render, sync to real time, and poll GLFW events.
- * Intended for user-owned control loops; call once per control cycle.
- *
- * Sequence inside tick():
- *   1. glfwPollEvents()             -- fires keyboard / mouse callbacks
- *   2. real-time sleep              -- paces the loop to model->opt.timestep wall time
- *   3. if (!r->paused):
- *        apply mouse perturbation forces (if active)
- *        mj_step()
- *   4. render()
- *
- * update() is NOT called here -- call it yourself to read *_msr and apply *_cmd.
- * Typical loop:
- *
- *   update(&robot);                 // seed initial sensor readings
- *   while (tick(&viewer, &robot)) {
- *       my_control_step(&robot);    // reads *_msr, writes *_cmd
- *       update(&robot);             // applies *_cmd, refreshes *_msr for next step
- *   }
- *
- * @return true while the window is open; false once the user closes it.
- */
-bool tick(Viewer *v, Robot *r);
-
-/**
- * @ingroup grp_viewer
- * Model/data overload of tick() for multi-robot or model-owned loops where no
- * single Robot is the canonical owner of the scene.  Physics always runs
- * (paused state is not tracked; use the sim UI pause button when using
- * init_window_sim, or manage it externally for init_window).
- *
- * @param[in,out] v  Viewer initialised by init_window() or init_window_sim().
- * @param[in]     m  Shared MuJoCo model.
- * @param[in]     d  Shared MuJoCo data.
- * @return true while the window is open; false once the user closes it.
- */
-bool tick(Viewer *v, mjModel *m, mjData *d);
+/** @deprecated Use step(Robot *) instead. */
+[[deprecated("use step(Robot *)")]] bool tick(Viewer *v, Robot *r);
+/** @deprecated Use step(Viewer *, mjModel *, mjData *) instead. */
+[[deprecated("use step(Viewer *, mjModel *, mjData *)")]] bool tick(Viewer *v, mjModel *m, mjData *d);
 
 /**
  * @ingroup grp_robot
  * One control cycle: read MuJoCo into *_msr, then apply *_cmd to MuJoCo.
- * Read step: qpos -> jnt_pos_msr, qvel -> jnt_vel_msr, qfrc_bias -> jnt_trq_msr.
+ * Read step: qpos -> jnt_pos_msr, qvel -> jnt_vel_msr, qfrc_actuator -> jnt_trq_msr.
  * Apply step: POSITION -> data->ctrl,
  *             TORQUE   -> qfrc_applied; also sets ctrl = qpos to neutralize
  *             position actuators (zeroes kp*(ctrl-qpos) restoring force).

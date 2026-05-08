@@ -39,6 +39,10 @@ cmake -B build -DFETCH_MENAGERIE=ON
 - DOF count is 7, joint names resolve correctly.
 - `set_joint_pos()` and `mj_forward()` complete without error.
 - 100 physics steps complete without error.
+- **ResetRestoresDefaultPose** -- `reset()` returns joints to the model's default keyframe pose.
+- **ResetSyncsCmdPorts** -- `reset()` re-seeds `jnt_pos_cmd` / `jnt_trq_cmd` from measured state.
+- **ResetInvokesOnResetCallback** -- `on_reset` is called exactly once per `reset()` invocation.
+- **ResetWithoutOnResetCallbackIsNoOp** -- `reset()` with no `on_reset` set does not crash.
 
 ### test_dual_arm
 
@@ -68,6 +72,9 @@ Two fixtures:
 `CtrlMode::POSITION`.  Linearly interpolates from home to a target pose over 5 s,
 settles 1 s.  Max joint error < 0.05 rad.
 
+- **ClampCtrlrange** -- position commands are clamped to the actuator `ctrlrange`; out-of-range setpoints are rejected.
+- **QfrcAppliedUnchangedInPositionMode** -- `qfrc_applied` is never written in POSITION mode; torque commands from a prior TORQUE phase are not silently zeroed.
+
 ### test_mjcf_vel_ctrl
 
 Velocity-style control implemented by integrating a proportional velocity command
@@ -80,6 +87,7 @@ converges from home to the target pose within the configured joint tolerance.
 
 - **GravityAccuracy** -- KDL gravity vs `qfrc_bias` at q=0: max error < 5e-2 Nm.
 - **ImpedanceDrift** -- PD + gravity for 500 steps: EE drift < 5 mm.
+- **TrqMsrReadsQfrcActuator** -- `jnt_trq_msr` reflects `qfrc_actuator` (not `qfrc_bias`) after `update()`.
 
 ### test_mjcf_pick
 

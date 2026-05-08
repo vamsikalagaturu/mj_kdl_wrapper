@@ -66,9 +66,12 @@ class MjcfTrqCtrlTest : public testing::Test
         sc.robots.push_back(rs);
 
         ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc));
+        mj_kdl::ToolFrameSpec tool;
+        tool.tool_body = "g_base";
+        tool.tcp_site  = "g_pinch";
         ASSERT_TRUE(
           mj_kdl::init_robot_from_mjcf(
-            &s_, model_, data_, "base_link", "bracelet_link", "", "g_base"
+            &s_, model_, data_, "base_link", "bracelet_link", "", &tool
           )
         );
 
@@ -140,6 +143,25 @@ TEST_F(MjcfTrqCtrlTest, ImpedanceDrift)
                                                        << drift * 1000.0 << " mm"
     );
     EXPECT_LE(drift, 0.005);
+}
+
+TEST_F(MjcfTrqCtrlTest, TrqMsrReadsQfrcActuator)
+{
+    // jnt_trq_msr must reflect qfrc_actuator (the net actuator output torque),
+    // NOT qfrc_bias (gravitational/Coriolis torques). After update() with zero
+    // commands the robot is not yet running, so qfrc_actuator may be small but
+    // the values must match element-wise.
+    s_.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
+    for (unsigned i = 0; i < n_; ++i) s_.jnt_trq_cmd[i] = 0.0;
+    mj_kdl::update(&s_);
+    mj_kdl::step(&s_);
+    mj_kdl::update(&s_);
+
+    for (unsigned i = 0; i < static_cast<unsigned>(s_.n_joints); ++i) {
+        double expected = s_.data->qfrc_actuator[s_.kdl_to_mj_dof[i]];
+        EXPECT_DOUBLE_EQ(s_.jnt_trq_msr[i], expected)
+          << "jnt_trq_msr[" << i << "] does not match qfrc_actuator";
+    }
 }
 
 int main(int argc, char *argv[])
