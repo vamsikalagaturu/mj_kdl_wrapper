@@ -56,6 +56,7 @@ HTML_FILE_EXTENSION    = .html
 HTML_HEADER            = @CMAKE_CURRENT_SOURCE_DIR@/docs/doxygen-custom/header.html
 HTML_EXTRA_STYLESHEET  = @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome.css \
                          @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome-sidebar-only.css \
+                         @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome-sidebar-only-darkmode-toggle.css \
                          @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-custom/theme-robot.css \
                          @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-custom/custom.css
 HTML_EXTRA_FILES       = @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome-darkmode-toggle.js \

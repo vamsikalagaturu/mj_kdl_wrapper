@@ -189,7 +189,7 @@ if(BUILD_DOCS)
         FetchContent_Declare(
       doxygen_awesome
       GIT_REPOSITORY https://github.com/jothepro/doxygen-awesome-css.git
-      GIT_TAG        main
+      GIT_TAG        v2.4.2
       GIT_SHALLOW    TRUE
       SOURCE_DIR     ${DOXYGEN_AWESOME_DIR}
     )
@@ -204,6 +204,30 @@ if(BUILD_DOCS)
 
     add_custom_target(docs
     COMMAND ${DOXYGEN_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      ${DOXYGEN_AWESOME_DIR}/doxygen-awesome-darkmode-toggle.js
+      ${CMAKE_CURRENT_SOURCE_DIR}/docs/html/doxygen-awesome-darkmode-toggle.js
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      ${DOXYGEN_AWESOME_DIR}/doxygen-awesome-paragraph-link.js
+      ${CMAKE_CURRENT_SOURCE_DIR}/docs/html/doxygen-awesome-paragraph-link.js
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      ${DOXYGEN_AWESOME_DIR}/doxygen-awesome-interactive-toc.js
+      ${CMAKE_CURRENT_SOURCE_DIR}/docs/html/doxygen-awesome-interactive-toc.js
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      ${DOXYGEN_AWESOME_DIR}/doxygen-awesome.css
+      ${CMAKE_CURRENT_SOURCE_DIR}/docs/html/doxygen-awesome.css
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      ${DOXYGEN_AWESOME_DIR}/doxygen-awesome-sidebar-only.css
+      ${CMAKE_CURRENT_SOURCE_DIR}/docs/html/doxygen-awesome-sidebar-only.css
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      ${DOXYGEN_AWESOME_DIR}/doxygen-awesome-sidebar-only-darkmode-toggle.css
+      ${CMAKE_CURRENT_SOURCE_DIR}/docs/html/doxygen-awesome-sidebar-only-darkmode-toggle.css
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      ${DOXYGEN_AWESOME_DIR}/doxygen-custom/theme-robot.css
+      ${CMAKE_CURRENT_SOURCE_DIR}/docs/html/theme-robot.css
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      ${DOXYGEN_AWESOME_DIR}/doxygen-custom/custom.css
+      ${CMAKE_CURRENT_SOURCE_DIR}/docs/html/custom.css
     COMMAND ${CMAKE_COMMAND} -E copy_directory
       ${CMAKE_CURRENT_SOURCE_DIR}/docs/screenshots
       ${CMAKE_CURRENT_SOURCE_DIR}/docs/html/docs/screenshots
