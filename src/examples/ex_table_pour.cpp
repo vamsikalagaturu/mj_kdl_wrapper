@@ -364,7 +364,15 @@ int main(int argc, char *argv[])
         d->ctrl[fingers_act] = 255.0;
     };
 
-    mj_kdl::reset(&env);
+    double prev_sim_time = 0.0;
+    bool   restart       = false;
+    bool   aborted       = false;
+
+    auto reset_scene = [&]() {
+        mj_kdl::reset(&env);
+        prev_sim_time = data->time;
+        restart       = true;
+    };
 
     const std::vector<Phase> phases = {
         { .name = "HOME",      .target = &q_home,     .duration = 1.0,                  .timeout = 2.5,                   .settle_tol =  0.08, .gripper_cmd = 255.0 },
@@ -407,78 +415,91 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    reset_scene();
+
     KDL::JntArray q_enter(n), q_des(n);
-    for (const Phase &phase : phases) {
-        std::cout << "State: " << phase.name << "\n";
-        const double t_enter = data->time;
-        snapshot_q(robot, n, q_enter);
-        while (true) {
-            mj_kdl::update(&robot);
-            const double alpha = phase.duration > 0.0 ? clamp01((data->time - t_enter) / phase.duration)
-                                                       : 1.0;
-            lerp_q(q_enter, *phase.target, alpha, q_des);
-            impedance_ctrl(robot, q_des, n, dyn);
-            data->ctrl[fingers_act] = phase.gripper_cmd;
-            mj_kdl::update(&robot);
+    do {
+        restart = false;
+        for (const Phase &phase : phases) {
+            if (restart) break;
+            std::cout << "State: " << phase.name << "\n";
+            const double t_enter = data->time;
+            snapshot_q(robot, n, q_enter);
+            while (true) {
+                if (data->time < prev_sim_time - 1e-6) {
+                    reset_scene();
+                    break;
+                }
+                prev_sim_time = data->time;
 
-            const double t_rel        = data->time - t_enter;
-            const bool   done_time    = t_rel >= phase.duration;
-            const bool   done_pose    = phase.settle_tol < 0.0 ||
-                                      max_abs_joint_err(robot, *phase.target, n) <= phase.settle_tol;
-            const bool done_timeout = phase.timeout > 0.0 && t_rel >= phase.timeout;
-            if ((done_time && done_pose) || done_timeout) break;
+                mj_kdl::update(&robot);
+                const double alpha = phase.duration > 0.0
+                                       ? clamp01((data->time - t_enter) / phase.duration)
+                                       : 1.0;
+                lerp_q(q_enter, *phase.target, alpha, q_des);
+                impedance_ctrl(robot, q_des, n, dyn);
+                data->ctrl[fingers_act] = phase.gripper_cmd;
+                mj_kdl::update(&robot);
 
-            if (!mj_kdl::step(&robot)) {
-                mj_kdl::cleanup(&viewer);
-                mj_kdl::cleanup(&robot);
-                mj_kdl::destroy_scene(model, data);
-                return 0;
-            }
-            ++sim_step;
-            if (recorder_ok && sim_step % steps_per_frame == 0) {
-                if (!mj_kdl::record_frame(&recorder, model, data)) {
-                    std::cerr << "record_frame() failed at step " << sim_step << "\n";
-                    mj_kdl::cleanup(&recorder);
-                    recorder_ok = false;
+                const double t_rel      = data->time - t_enter;
+                const bool   done_time  = t_rel >= phase.duration;
+                const bool   done_pose  = phase.settle_tol < 0.0 ||
+                                         max_abs_joint_err(robot, *phase.target, n) <= phase.settle_tol;
+                const bool done_timeout = phase.timeout > 0.0 && t_rel >= phase.timeout;
+                if ((done_time && done_pose) || done_timeout) break;
+
+                if (!mj_kdl::step(&robot)) {
+                    aborted = true;
+                    break;
+                }
+                ++sim_step;
+                if (recorder_ok && sim_step % steps_per_frame == 0) {
+                    if (!mj_kdl::record_frame(&recorder, model, data)) {
+                        std::cerr << "record_frame() failed at step " << sim_step << "\n";
+                        mj_kdl::cleanup(&recorder);
+                        recorder_ok = false;
+                    }
                 }
             }
+            if (aborted) break;
         }
-    }
-
-    int in_jug = 0;
-    double avg[3] = {};
-    for (int jid : grain_joints)
-        if (inside_jug(data, model, jid)) ++in_jug;
-    for (int jid : grain_joints) {
-        const double *p = data->qpos + model->jnt_qposadr[jid];
-        avg[0] += p[0];
-        avg[1] += p[1];
-        avg[2] += p[2];
-    }
-    if (!grain_joints.empty()) {
-        avg[0] /= static_cast<double>(grain_joints.size());
-        avg[1] /= static_cast<double>(grain_joints.size());
-        avg[2] /= static_cast<double>(grain_joints.size());
-    }
+    } while (restart);
 
     if (recorder_ok) {
         mj_kdl::cleanup(&recorder);
         std::cout << "Saved recording: " << record_path << "\n";
     }
 
-    std::cout << "balls in transparent receiver: " << in_jug << "/" << grain_joints.size() << "\n";
-    std::cout << "grain centroid: [" << std::fixed << std::setprecision(3) << avg[0] << ", "
-              << avg[1] << ", " << avg[2] << "] receiver center=[" << kJugX << ", " << kJugY
-              << "]\n";
-    if (headless && in_jug < 4) {
-        std::cerr << "pour failed: too few balls reached the receiver\n";
-        mj_kdl::cleanup(&robot);
-        mj_kdl::destroy_scene(model, data);
-        return 1;
+    int ret = 0;
+    if (!aborted) {
+        int in_jug = 0;
+        double avg[3] = {};
+        for (int jid : grain_joints)
+            if (inside_jug(data, model, jid)) ++in_jug;
+        for (int jid : grain_joints) {
+            const double *p = data->qpos + model->jnt_qposadr[jid];
+            avg[0] += p[0];
+            avg[1] += p[1];
+            avg[2] += p[2];
+        }
+        if (!grain_joints.empty()) {
+            avg[0] /= static_cast<double>(grain_joints.size());
+            avg[1] /= static_cast<double>(grain_joints.size());
+            avg[2] /= static_cast<double>(grain_joints.size());
+        }
+
+        std::cout << "balls in transparent receiver: " << in_jug << "/" << grain_joints.size() << "\n";
+        std::cout << "grain centroid: [" << std::fixed << std::setprecision(3) << avg[0] << ", "
+                  << avg[1] << ", " << avg[2] << "] receiver center=[" << kJugX << ", " << kJugY
+                  << "]\n";
+        if (headless && in_jug < 4) {
+            std::cerr << "pour failed: too few balls reached the receiver\n";
+            ret = 1;
+        }
     }
 
     if (!headless) mj_kdl::cleanup(&viewer);
     mj_kdl::cleanup(&robot);
     mj_kdl::destroy_scene(model, data);
-    return 0;
+    return ret;
 }
