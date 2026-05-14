@@ -1163,9 +1163,17 @@ void update(Robot *r)
                 d->ctrl[ctrl_id] = clamp_ctrlrange(m, ctrl_id, r->jnt_pos_cmd[i]);
             break;
         case CtrlMode::TORQUE:
-            // Track ctrl = qpos so the position actuator contributes only its
-            // passive -kv*qvel damping, not kp*(ctrl-qpos) stiffness.
-            if (ctrl_id >= 0) d->ctrl[ctrl_id] = d->qpos[qpos_id];
+            if (ctrl_id >= 0) {
+                /* Null the position actuator completely (both kp and kv terms).
+                 * Actuator force = kp*(ctrl-pos) - kv*vel (affine bias, biastype=1).
+                 * Setting ctrl = pos + (kv/kp)*vel drives force to zero,
+                 * making qfrc_applied the sole torque source -- matching the
+                 * real robot's pure torque interface. */
+                const double kp =  m->actuator_gainprm[ctrl_id * mjNGAIN + 0];
+                const double kv = -m->actuator_biasprm[ctrl_id * mjNBIAS + 2];
+                const double vel_ff = (kp > 0.0) ? (kv / kp) * d->qvel[dof_id] : 0.0;
+                d->ctrl[ctrl_id] = d->qpos[qpos_id] + vel_ff;
+            }
             d->qfrc_applied[dof_id] = r->jnt_trq_cmd[i];
             break;
         }
