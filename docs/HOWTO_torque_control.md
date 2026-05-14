@@ -197,13 +197,137 @@ mj_kdl::init_robot_from_mjcf(&arm2, model, data,
 
 ---
 
+## Computed-Torque Control (Full RNEA)
+
+### The problem with naive TORQUE mode and position actuators
+
+MuJoCo position actuators (such as those in the Kinova GEN3 Menagerie model) compute:
+
+```
+force = kp * (ctrl - pos) - kv * vel
+```
+
+The original TORQUE mode implementation set `ctrl = qpos` each step. This zeroed the
+stiffness term `kp*(ctrl-pos)` but left the velocity term `-kv*vel` active --
+effectively adding an unmodelled damping of `kv` Nm*s/rad per joint. For the GEN3:
+
+| Actuator class | kp   | kv  |
+|---------------|------|-----|
+| large (j0-j3) | 2000 | 100 |
+| small (j4-j6) |  500 |  50 |
+
+With full RNEA computed-torque, the closed-loop dynamics are nominally
+`qddot = qddot_des`. The unmodelled `-kv*vel` term breaks this:
+
+```
+qddot = qddot_des + (kv / M) * qvel
+```
+
+For the GEN3's lightweight wrist links (M ~ 0.01 kg*m^2) and kv = 50, the extra
+damping term is `kv/M ~ 5000 rad/s` -- orders of magnitude larger than any Kd gain.
+The arm barely moves.
+
+### The fix -- full actuator nulling
+
+`update()` in TORQUE mode now reads `kp` and `kv` from the compiled model and sets:
+
+```
+ctrl = qpos + (kv / kp) * qvel
+```
+
+This drives the full actuator force to zero:
+
+```
+kp * (ctrl - pos) - kv * vel
+= kp * ((pos + (kv/kp)*vel) - pos) - kv * vel
+= kv * vel - kv * vel
+= 0
+```
+
+`qfrc_applied` is then the sole torque source, exactly matching a real robot's
+torque interface. The relevant code is in `src/mj_kdl_wrapper.cpp`:
+
+```cpp
+case CtrlMode::TORQUE:
+    if (ctrl_id >= 0) {
+        const double kp =  m->actuator_gainprm[ctrl_id * mjNGAIN + 0];
+        const double kv = -m->actuator_biasprm[ctrl_id * mjNBIAS + 2];
+        d->ctrl[ctrl_id] = d->qpos[qpos_id] + (kp > 0.0 ? kv/kp : 0.0) * d->qvel[dof_id];
+    }
+    d->qfrc_applied[dof_id] = r->jnt_trq_cmd[i];
+    break;
+```
+
+This works for any actuator type that stores its bias as `biasprm[2] = -kv` (MuJoCo's
+`mjBIAS_AFFINE` / biastype=1), which covers all standard `<position>` actuators.
+
+### Using RNEA for full computed-torque control
+
+With the actuator fully nulled, the simulation plant is:
+
+```
+M(q) * qddot + C(q, qdot) * qdot + g(q) = tau_applied
+```
+
+which is the standard rigid-body dynamics equation. Applying
+`tau = M(q)*qddot_des + C(q,qdot)*qdot + g(q)` via `KDL::ChainIdSolver_RNE`
+yields exact closed-loop decoupling `qddot = qddot_des` (to within model accuracy).
+
+```cpp
+KDL::ChainIdSolver_RNE rnea(robot.chain, KDL::Vector(0, 0, -9.81));
+KDL::JntArray q(n), qdot(n), qddot_des(n), torques(n);
+KDL::Wrenches f_ext(robot.chain.getNrOfSegments(), KDL::Wrench::Zero());
+
+// in control loop:
+for (unsigned i = 0; i < n; ++i) {
+    q(i)         = robot.jnt_pos_msr[i];
+    qdot(i)      = robot.jnt_vel_msr[i];
+    qddot_des(i) = Kp[i] * (q_des(i) - q(i)) - Kd[i] * qdot(i);
+}
+rnea.CartToJnt(q, qdot, qddot_des, f_ext, torques);
+for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = torques(i);
+mj_kdl::update(&robot);
+```
+
+With Kp[i] acting as a squared natural frequency (rad/s^2 per rad) and
+Kd[i] ~ 2*sqrt(Kp[i]) for critical damping, the closed loop per joint is a
+decoupled second-order system: `e_ddot + Kd*e_dot + Kp*e = 0`.
+
+### Inertia model accuracy
+
+The KDL chain built by `init_robot_from_mjcf` reads `body_inertia` (principal
+moments) and `body_iquat` (principal-axis orientation) from the compiled MuJoCo
+model and correctly rotates them into the body frame (`I = R * diag(lambda) * R^T`).
+A direct comparison of RNEA gravity torques between the URDF model (parsed via
+`kdl_parser`) and the MuJoCo model shows differences below 3 mNm at the home
+configuration -- the two models are consistent.
+
+Neither model includes reflected motor/gear inertia (armature). For the real
+GEN3 this is the dominant inertia term; for simulation it is irrelevant since
+MuJoCo also omits it. If you add `armature` to the MJCF joints, update the KDL
+chain inertias accordingly (or the computed-torque feedforward will be inaccurate).
+
+### Comparison with gravity-comp impedance
+
+| Controller | tau formula | Kp units | xy_error (pick-place) |
+|---|---|---|---|
+| Gravity-comp impedance | `g(q) + Kp*e - Kd*edot` | Nm/rad | ~0.075 m |
+| Full RNEA computed-torque | `M*qddot_des + C*qdot + g` | rad/s^2 per rad | ~0.009 m |
+
+The tighter tracking from full RNEA comes from inertia and Coriolis cancellation
+during fast transits.
+
+---
+
 ## Reference
 
 - `init_robot_from_mjcf()` -- API doc in `mj_kdl_wrapper.hpp`
 - `KDL::ChainDynParam` -- orocos_kdl documentation
+- `KDL::ChainIdSolver_RNE` -- orocos_kdl documentation
 - `test_mjcf_trq_ctrl.cpp` -- gravity accuracy and impedance drift tests
 - `src/examples/ex_impedance.cpp` -- single arm + gripper torque control (PD + gravity)
-- `src/examples/ex_impedance.cpp` -- joint impedance with gripper
 - `src/examples/ex_pick.cpp` -- scripted floor pick and lift
-- `src/examples/ex_table_pick_place.cpp` -- scripted tabletop pick, place, and retreat
+- `src/examples/ex_table_pick_place.cpp` -- tabletop pick and place (gravity-comp)
+- `src/examples/ex_rnea_pick_place.cpp` -- tabletop pick and place (full RNEA)
 - `src/examples/ex_dual_arm.cpp` -- two arms, each with gripper
+- `test/compare_rnea_urdf_mujoco.cpp` -- URDF vs MuJoCo inertia comparison

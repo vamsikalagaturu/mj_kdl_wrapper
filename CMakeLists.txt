@@ -52,6 +52,22 @@ find_package(orocos_kdl REQUIRED CONFIG
   NO_CMAKE_PACKAGE_REGISTRY
 )
 
+set(_KDL_PARSER_INSTALL "${CMAKE_SOURCE_DIR}/../../install/kdl_parser")
+get_filename_component(_KDL_PARSER_INSTALL "${_KDL_PARSER_INSTALL}" ABSOLUTE)
+find_library(KDL_PARSER_LIB kdl_parser
+  PATHS "${_KDL_PARSER_INSTALL}/lib"
+  NO_DEFAULT_PATH)
+if(KDL_PARSER_LIB)
+  add_library(kdl_parser::kdl_parser SHARED IMPORTED)
+  set_target_properties(kdl_parser::kdl_parser PROPERTIES
+    IMPORTED_LOCATION "${KDL_PARSER_LIB}"
+    INTERFACE_INCLUDE_DIRECTORIES "${_KDL_PARSER_INSTALL}/include"
+  )
+  set(kdl_parser_FOUND TRUE)
+  set(_KDL_PARSER_LIB_DIR "${_KDL_PARSER_INSTALL}/lib")
+  message(STATUS "kdl_parser (local): ${KDL_PARSER_LIB}")
+endif()
+
 if(NOT orocos_kdl_FOUND)
     message(FATAL_ERROR
     "orocos_kdl not found. Set either:\n"

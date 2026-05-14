@@ -32,3 +32,12 @@ endforeach()
 
 install(TARGETS ${ALL_TESTS}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+if(kdl_parser_FOUND)
+  add_executable(compare_rnea_urdf_mujoco compare_rnea_urdf_mujoco.cpp)
+  target_link_libraries(compare_rnea_urdf_mujoco PRIVATE mj_kdl_wrapper kdl_parser::kdl_parser)
+  target_compile_options(compare_rnea_urdf_mujoco PRIVATE -Wall -Wextra)
+  set_target_properties(compare_rnea_urdf_mujoco PROPERTIES
+    BUILD_RPATH "${_KDL_PARSER_LIB_DIR}"
+  )
+endif()
