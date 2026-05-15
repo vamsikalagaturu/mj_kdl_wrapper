@@ -6,7 +6,7 @@ set(EXAMPLES
   ex_pick
   ex_table_pick_place
   ex_rnea_pick_place
-  ex_achd_home_hold
+  ex_achd_table_slide
   ex_achd_pick_place
   ex_table_pour
   ex_table_scene
@@ -25,7 +25,7 @@ target_sources(ex_achd_pick_place PRIVATE
   "${_OROCOS_KDL_SRC}/chainhdsolver_vereshchagin_fixed_joint.cpp"
 )
 target_include_directories(ex_achd_pick_place PRIVATE "${_OROCOS_KDL_SRC}")
-target_sources(ex_achd_home_hold PRIVATE
+target_sources(ex_achd_table_slide PRIVATE
   "${_OROCOS_KDL_SRC}/chainhdsolver_vereshchagin_fixed_joint.cpp"
 )
-target_include_directories(ex_achd_home_hold PRIVATE "${_OROCOS_KDL_SRC}")
+target_include_directories(ex_achd_table_slide PRIVATE "${_OROCOS_KDL_SRC}")

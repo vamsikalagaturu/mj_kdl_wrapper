@@ -30,6 +30,7 @@ multi-robot scenes.
 - **Runtime environments** -- `Env` owns model/data, registered robots, and reset hooks for task-specific object/controller state
 - **KDL chain from model** -- `init_robot_from_mjcf()` builds a KDL chain directly from a compiled MuJoCo model
 - **Control ports** -- `update()` reads `qpos`/`qvel`/`qfrc_actuator` into `*_msr` and applies `*_cmd` in POSITION or TORQUE mode
+- **Dynamics probes** -- `test/urdf_solver_probe.cpp` uses the bundled Kinova GEN3 URDF to check ACHD fixed-joint outputs and compare URDF-vs-MuJoCo RNEA torques
 - **Interactive viewer** -- `init_window_sim()` + `step()` gives your code the control loop while the MuJoCo simulate UI runs in a background render thread
 - **Interactive and headless recording** -- Simulate UI recorder controls plus `VideoRecorder` for EGL offscreen MP4 recording
 
@@ -83,6 +84,9 @@ Optional flags:
 | `FETCH_MENAGERIE=ON` | OFF | Download MuJoCo Menagerie robot models |
 | `BUILD_TESTS=ON` | ON | Build and register GoogleTest tests with CTest |
 | `BUILD_DOCS=ON` | OFF | Generate Doxygen HTML docs (`cmake --build build --target docs`) |
+
+The repo also carries `third_party/kinova/GEN3_URDF_V12.urdf` for KDL parser
+diagnostics.  The MuJoCo model remains sourced from Menagerie.
 
 The simulate UI screenshot button (`S` key) is always enabled; it uses an ffmpeg pipe to write PNGs without any third-party lodepng dependency.
 

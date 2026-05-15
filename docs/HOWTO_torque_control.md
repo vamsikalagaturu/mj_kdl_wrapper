@@ -1,8 +1,8 @@
-# Torque Control and Tool Inertia {#page_howto_torque_control}
+# Torque Control {#page_howto_torque_control}
 
 This document explains how torque-mode control works in mj-kdl-wrapper, why KDL is
-used for all dynamics computations, how gripper (tool) inertia is incorporated into
-the KDL chain, and how the multi-robot prefix system works.
+used for all dynamics computations, how MuJoCo's equation of motion relates to the
+torques you send, and how ACHD and RNEA fit together.
 
 This document covers torque mode only. Position and velocity modes write directly
 to `data->ctrl` and do not involve KDL dynamics.
@@ -30,176 +30,47 @@ torque-mode computation.
 
 ---
 
-## Adding Tool Inertia to the KDL Chain
+## MuJoCo Equation of Motion
 
-### The problem
+MuJoCo's continuous-time equations of motion are:
 
-`init_robot_from_mjcf()` walks the MuJoCo body tree from `base_body` to `tip_body`
-and builds a KDL chain from those bodies' masses and inertias. For a Kinova GEN3 the
-tip is `bracelet_link`. When a Robotiq 2F-85 gripper is attached there, its ~0.9 kg
-mass is *not* in the chain, so `JntToGravity` underestimates the required joint
-torques. The arm will slowly sag under gravity.
-
-### The fix -- `tool_body`
-
-Pass the root body of the attached tool as the `tool_body` argument:
-
-```cpp
-mj_kdl::init_robot_from_mjcf(
-    &robot, model, data,
-    "base_link", "bracelet_link",
-    "",          // prefix (empty for single-arm, see Multi-robot below)
-    "g_base"     // root body of the gripper subtree
-);
+```
+M(q) * v_dot + c(q, v) = tau + J^T * f_constraint
 ```
 
-Internally this:
+which rearranges to the forward dynamics solve:
 
-1. Calls `mj_forward(model, data)` to ensure `xpos`/`xmat` are valid.
-2. Collects every body in the subtree rooted at `tool_body` (via a single forward
-   pass over the body array -- children always appear after their parent in MuJoCo's
-   topological ordering).
-3. Computes the *lumped* `KDL::RigidBodyInertia` for the entire subtree in three steps:
-
-   **Step 1 -- total mass and world-frame COM:**
-   ```
-   m_total = sum(m_i)
-   p_com_w = (1/m_total) * sum(m_i * p_i_w)
-   ```
-   where `p_i_w = data->xpos[b] + R_i * body_ipos[b]` is the body's COM in world
-   frame and `R_i` is the body's world-frame rotation matrix from `data->xmat[9*b]`.
-
-   **Step 2 -- combined inertia via parallel-axis theorem (world frame):**
-   ```
-   I_w = sum( R_i * I_body_i * R_i^T + m_i * [|r_i|^2 I_3 - r_i r_i^T] )
-   ```
-   where `r_i = p_i_w - p_com_w` is the offset from the lumped COM and
-   `I_body_i` is the body's inertia tensor from `model->body_inertia[3*b]` (diagonal
-   in body frame).
-
-   **Step 3 -- rotate into tip_body frame:**
-   ```
-   I_tip = R_tip^T * I_w * R_tip
-   p_com_tip = R_tip^T * (p_com_w - p_tip_w)
-   ```
-   where `R_tip` is the tip body's world-frame rotation matrix.
-
-4. Appends a `KDL::Segment` with `KDL::Joint(KDL::Joint::None)` and the computed
-   `KDL::RigidBodyInertia` to the end of the chain.
-
-Because the joint type is `None`, this segment does **not** contribute to
-`chain.getNrOfJoints()` -- `n_joints` stays at 7 for the GEN3. The inertia *is*
-included in all `KDL::ChainDynParam` computations because those traverse every
-segment, moveable or not.
-
-### Result
-
-With `tool_body = "g_base"` the KDL gravity torques match MuJoCo's `qfrc_bias`
-to within ~0.05 Nm across the full workspace (verified by `test_mjcf_trq_ctrl::GravityAccuracy`).
-
----
-
-## Example: Single Arm with Gripper
-
-```cpp
-mj_kdl::AttachmentSpec gs;
-gs.mjcf_path = "third_party/menagerie/robotiq_2f85/2f85.xml";
-gs.attach_to = "bracelet_link";
-gs.prefix    = "g_";
-gs.pos[2]    = -0.061525;
-gs.euler[0]  = 180.0;
-
-mj_kdl::RobotSpec rs;
-rs.path = "third_party/menagerie/kinova_gen3/gen3.xml";
-rs.attachments.push_back(gs);
-
-mj_kdl::SceneSpec sc;
-sc.robots.push_back(rs);
-mj_kdl::build_scene(&model, &data, &sc);
-
-mj_kdl::Robot robot;
-mj_kdl::init_robot_from_mjcf(&robot, model, data,
-    "base_link", "bracelet_link", "", "g_base");
-
-// KDL chain now includes gripper inertia.
-KDL::ChainDynParam dyn(robot.chain, KDL::Vector(0, 0, -9.81));
-
-robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
-
-KDL::JntArray q(robot.n_joints), g(robot.n_joints);
-while (mj_kdl::tick(&viewer, model, data)) {
-    mj_kdl::update(&robot);
-    for (unsigned i = 0; i < robot.n_joints; ++i) q(i) = robot.jnt_pos_msr[i];
-    dyn.JntToGravity(q, g);
-    for (unsigned i = 0; i < robot.n_joints; ++i) robot.jnt_trq_cmd[i] = g(i);
-}
+```
+v_dot = M^-1 * (tau - c + J^T * f_constraint)
 ```
 
----
+The key quantities stored in `mjData` are:
 
-## Multi-robot Scenes and Prefixes
+| Field | Meaning |
+|---|---|
+| `qfrc_bias` | Bias force **c** = Coriolis + centrifugal + gravity |
+| `qfrc_applied` | User-supplied generalized forces (what `jnt_trq_cmd` writes to) |
+| `qfrc_actuator` | Forces from model actuators through their moment arms |
+| `qfrc_passive` | Spring/damper passive forces |
 
-### How prefixes work
+The total applied force is `tau = qfrc_applied + qfrc_actuator + qfrc_passive`.
 
-`init_robot_from_mjcf()` does two things internally:
+**Critical sign convention:** `c` is *subtracted* in the forward dynamics.
+To hold a static pose (v_dot = 0, f_constraint = 0):
 
-1. `build_kdl_from_model()` -- walks from `base_body` to `tip_body`, reading joint
-   names from the MuJoCo model (these are the *raw* names in the compiled model,
-   e.g. `joint_1`, `r2_joint_1`).
-
-2. `build_index_map()` -- for each joint name stored in step 1, looks up the
-   actuator/DOF index in the MuJoCo model. If `prefix` is non-empty, it is
-   *prepended* to the joint name before the lookup.
-
-This creates two valid usage patterns:
-
-### Pattern A: Shorthand (arm1 body names, prefix for arm2)
-
-```cpp
-// arm1 -- body names have no prefix, joints are joint_1 ... joint_7
-mj_kdl::init_robot_from_mjcf(&arm1, model, data,
-    "base_link", "bracelet_link", "", "g_base");
-
-// arm2 -- use arm1's body names but tell the index map to look for r2_joint_*
-mj_kdl::init_robot_from_mjcf(&arm2, model, data,
-    "base_link", "bracelet_link", "r2_", "r2_g_base");
+```
+tau = c   =>   qfrc_applied = qfrc_bias
 ```
 
-`build_kdl_from_model` walks `base_link -> bracelet_link` (the *arm1* bodies, which
-also describe arm2's geometry identically). `build_index_map` looks up `r2_joint_1`,
-`r2_joint_2`, ... in the compiled model.
-
-### Pattern B: Fully-qualified names (empty prefix)
-
-```cpp
-// arm1 -- no prefix either way
-mj_kdl::init_robot_from_mjcf(&arm1, model, data,
-    "base_link", "bracelet_link", "", "g_base");
-
-// arm2 -- walk arm2's own bodies (r2_base_link -> r2_bracelet_link)
-// Joints are already named r2_joint_1 ... r2_joint_7 in the walk result.
-// Passing prefix="" tells the index map to look them up as-is.
-mj_kdl::init_robot_from_mjcf(&arm2, model, data,
-    "r2_base_link", "r2_bracelet_link", "", "r2_g_base");
-```
-
-### Common mistake: double prefix
-
-```cpp
-// WRONG -- walk produces r2_joint_*, then prefix prepends r2_ again.
-// build_index_map looks for r2_r2_joint_1, which does not exist.
-mj_kdl::init_robot_from_mjcf(&arm2, model, data,
-    "r2_base_link", "r2_bracelet_link", "r2_", "r2_g_base");
-// Error: joint 'r2_r2_joint_1' not found in MuJoCo model
-```
-
-**Rule:** use `prefix` OR fully-qualified body names, never both at the same time.
+This means the controller must *explicitly supply* the gravity and Coriolis
+compensation -- MuJoCo does not provide it passively regardless of the actuator
+type used.
 
 ---
 
 ## Computed-Torque Control (Full RNEA)
 
-### The problem with naive TORQUE mode and position actuators
+### Position actuator nulling
 
 MuJoCo position actuators (such as those in the Kinova GEN3 Menagerie model) compute:
 
@@ -207,35 +78,34 @@ MuJoCo position actuators (such as those in the Kinova GEN3 Menagerie model) com
 force = kp * (ctrl - pos) - kv * vel
 ```
 
-The original TORQUE mode implementation set `ctrl = qpos` each step. This zeroed the
-stiffness term `kp*(ctrl-pos)` but left the velocity term `-kv*vel` active --
-effectively adding an unmodelled damping of `kv` Nm*s/rad per joint. For the GEN3:
+For the GEN3:
 
 | Actuator class | kp   | kv  |
 |---------------|------|-----|
 | large (j0-j3) | 2000 | 100 |
 | small (j4-j6) |  500 |  50 |
 
-With full RNEA computed-torque, the closed-loop dynamics are nominally
-`qddot = qddot_des`. The unmodelled `-kv*vel` term breaks this:
+**Case 1 -- partial nulling (`ctrl = qpos`):**
+Setting `ctrl = qpos` zeroes the stiffness term `kp*(ctrl-pos)` but leaves the
+velocity term `-kv*vel` active. With full RNEA computed-torque the desired closed-loop
+is `qddot = qddot_des`, but the residual damping breaks this:
 
 ```
 qddot = qddot_des + (kv / M) * qvel
 ```
 
 For the GEN3's lightweight wrist links (M ~ 0.01 kg*m^2) and kv = 50, the extra
-damping term is `kv/M ~ 5000 rad/s` -- orders of magnitude larger than any Kd gain.
+term is `kv/M ~ 5000 rad/s` -- orders of magnitude larger than any Kd gain.
 The arm barely moves.
 
-### The fix -- full actuator nulling
-
-`update()` in TORQUE mode now reads `kp` and `kv` from the compiled model and sets:
+**Case 2 -- full nulling (`ctrl = qpos + (kv/kp) * qvel`):**
+Reading `kp` and `kv` from the compiled model and setting:
 
 ```
 ctrl = qpos + (kv / kp) * qvel
 ```
 
-This drives the full actuator force to zero:
+drives the complete actuator force to zero:
 
 ```
 kp * (ctrl - pos) - kv * vel
@@ -261,17 +131,24 @@ case CtrlMode::TORQUE:
 This works for any actuator type that stores its bias as `biasprm[2] = -kv` (MuJoCo's
 `mjBIAS_AFFINE` / biastype=1), which covers all standard `<position>` actuators.
 
-### Using RNEA for full computed-torque control
+### RNEA control loop
 
-With the actuator fully nulled, the simulation plant is:
+With the actuator fully nulled, the MuJoCo plant (from the equation of motion above)
+reduces to:
 
 ```
-M(q) * qddot + C(q, qdot) * qdot + g(q) = tau_applied
+M(q) * v_dot = tau - c(q, v)   =>   v_dot = M^-1 * (tau - c)
 ```
 
-which is the standard rigid-body dynamics equation. Applying
-`tau = M(q)*qddot_des + C(q,qdot)*qdot + g(q)` via `KDL::ChainIdSolver_RNE`
-yields exact closed-loop decoupling `qddot = qddot_des` (to within model accuracy).
+Applying `tau = M(q)*qddot_des + C(q,qdot)*qdot + g(q)` -- which equals `c` when
+`qddot_des = 0`, and generally equals `c + M*qddot_des` -- yields:
+
+```
+v_dot = M^-1 * (M*qddot_des + c - c) = qddot_des
+```
+
+This is exact computed-torque cancellation. `KDL::ChainIdSolver_RNE` computes
+`M*qddot_des + C*qdot + g` in O(n) with the Recursive Newton-Euler algorithm:
 
 ```cpp
 KDL::ChainIdSolver_RNE rnea(robot.chain, KDL::Vector(0, 0, -9.81));
@@ -299,23 +176,189 @@ The KDL chain built by `init_robot_from_mjcf` reads `body_inertia` (principal
 moments) and `body_iquat` (principal-axis orientation) from the compiled MuJoCo
 model and correctly rotates them into the body frame (`I = R * diag(lambda) * R^T`).
 A direct comparison of RNEA gravity torques between the URDF model (parsed via
-`kdl_parser`) and the MuJoCo model shows differences below 3 mNm at the home
-configuration -- the two models are consistent.
+`kdl_parser`) and the MuJoCo model is available in `test/urdf_solver_probe.cpp`.
+It is a diagnostic, not a pass/fail unit test: the current Menagerie model and
+`GEN3_URDF_V12.urdf` agree on most link inertias, but the bracelet link differs,
+so gravity torques at the home configuration differ visibly on joints 2, 4, and 6.
 
 Neither model includes reflected motor/gear inertia (armature). For the real
 GEN3 this is the dominant inertia term; for simulation it is irrelevant since
 MuJoCo also omits it. If you add `armature` to the MJCF joints, update the KDL
 chain inertias accordingly (or the computed-torque feedforward will be inaccurate).
 
-### Comparison with gravity-comp impedance
+---
 
-| Controller | tau formula | Kp units | xy_error (pick-place) |
-|---|---|---|---|
-| Gravity-comp impedance | `g(q) + Kp*e - Kd*edot` | Nm/rad | ~0.075 m |
-| Full RNEA computed-torque | `M*qddot_des + C*qdot + g` | rad/s^2 per rad | ~0.009 m |
+## ACHD Constraint Torques and the RNEA Bridge
 
-The tighter tracking from full RNEA comes from inertia and Coriolis cancellation
-during fast transits.
+### The Vereshchagin (ACHD) solver
+
+The `KDL::ChainHdSolver_Vereshchagin_Fixed_Joint` solver (ACHD) takes Cartesian
+acceleration constraints at the end-effector and computes both a forward-dynamics
+result (joint accelerations `qdd`) and the joint torques that enforce those
+constraints (`constraint_tau`).
+
+Its key inputs and outputs:
+
+```
+Inputs:
+  q, qd            -- current joint state
+  alpha (6 x nc)   -- unit constraint forces at the EE (expressed in base frame)
+  beta  (nc x 1)   -- desired acceleration energy setpoints per constraint
+  ff_tau           -- feedforward joint torques (typically zero)
+  f_ext            -- external Cartesian wrenches on each segment
+
+Outputs:
+  qdd              -- joint accelerations satisfying the constraints (FD solution)
+  constraint_tau   -- joint torques arising from the Lagrange multiplier forces
+```
+
+The solver models gravity via a root acceleration `acc_root = (0, 0, -g)` -- the
+standard ABA pseudo-force trick that makes gravity appear as an inertial effect.
+This means `constraint_tau` is computed in an ABA frame where gravity is already
+absorbed, and `total_tau` (obtainable via `getTotalTorque()`) is near zero for a
+static constrained hold:
+
+```
+total_tau = ff_tau + bias(gravity+Coriolis) + parent_inertial + constraint_tau ~= 0
+```
+
+The TCP's spatial acceleration from `getTransformedLinkAcceleration()` correctly
+shows `xdd_lin = (0, 0, g)` at the end-effector -- confirming the solver holds
+the TCP stationary in the inertial frame (`xdd_inertial = xdd_ABA + acc_root = 0`).
+
+### Why constraint_tau alone is insufficient for MuJoCo
+
+From MuJoCo's equation of motion:
+
+```
+v_dot = M^-1 * (tau - c)
+```
+
+To produce the desired `qdd` from ACHD, we need:
+
+```
+tau = M * qdd + c
+```
+
+ACHD's `constraint_tau` is defined as:
+
+```
+constraint_tau = total_tau - bias - parent_inertial
+               = (M * qdd) - bias_ACHD
+```
+
+Since `bias_ACHD ~= c = qfrc_bias`, this gives:
+
+```
+constraint_tau ~= M * qdd - c
+```
+
+But MuJoCo requires `tau = M * qdd + c`. Sending `constraint_tau` as `qfrc_applied`
+therefore produces:
+
+```
+v_dot = M^-1 * (constraint_tau - c)
+      = M^-1 * (M*qdd - c - c)
+      = qdd - 2 * M^-1 * c
+```
+
+The `2 * M^-1 * c` residual is an uncompensated double-gravity term that causes
+the arm to drift. Measured on the Kinova GEN3 home-hold task:
+
+| Command sent to `qfrc_applied` | TCP position error (2500 steps) |
+|---|---|
+| `constraint_tau` only | ~31 mm |
+| RNEA (`M*qdd + C*qd + G`) | ~7 mm |
+
+Adding an integral term (Ki) to the Cartesian PD reduces the steady-state
+offset but does not fix the underlying mismatch -- it just accumulates enough
+integral action to fight the double-gravity residual.
+
+### The correct two-step pipeline: ACHD -> RNEA
+
+The proper way to use ACHD output in MuJoCo torque control is:
+
+1. **ACHD:** Given Cartesian constraints (alpha, beta), compute `qdd` -- the joint
+   accelerations that satisfy the task while minimising acceleration energy (Gauss'
+   principle). The `xdd_tcp = (0, 0, g)` output confirms the TCP is correctly
+   held against gravity in the ABA frame.
+
+2. **RNEA:** Given `qdd` from step 1, compute `tau = M*qdd + C*qd + G`. This is
+   exactly `c + M*qdd` -- what MuJoCo requires as `qfrc_applied` to realise the
+   desired joint accelerations.
+
+```cpp
+KDL::Twist root_acc(KDL::Vector(0.0, 0.0, -scene.gravity_z), KDL::Vector::Zero());
+KDL::ChainHdSolver_Vereshchagin_Fixed_Joint achd(robot.chain, root_acc, nc);
+KDL::ChainIdSolver_RNE rnea(robot.chain, KDL::Vector(0.0, 0.0, scene.gravity_z));
+
+KDL::JntArray qdd(n), ff_tau(n), constraint_tau(n), tau_cmd(n);
+KDL::Wrenches f_ext_achd(ns, KDL::Wrench::Zero());
+KDL::Wrenches f_ext_rnea_zero(ns, KDL::Wrench::Zero());
+
+// in control loop:
+KDL::SetToZero(ff_tau);
+achd.CartToJnt(q, qd, qdd, alpha, beta, f_ext_achd, ff_tau, constraint_tau);
+rnea.CartToJnt(q, qd, qdd, f_ext_rnea_zero, tau_cmd);  // qdd is from ACHD
+
+for (unsigned i = 0; i < n; ++i)
+    robot.jnt_trq_cmd[i] = clamp(tau_cmd(i), -tau_max, tau_max);
+mj_kdl::update(&robot);
+```
+
+For the combined ACHD -> RNEA controller, do not pass ACHD task/support wrenches
+into RNEA.  The wrench is part of the ACHD constrained dynamics solve; RNEA is
+only the inverse-dynamics bridge that converts the resulting `qdd` into the full
+joint torque needed by MuJoCo or the robot.  Keep the RNEA external-wrench vector
+zero in this path.
+
+The `constraint_tau` output is still useful for diagnostics -- it isolates the
+task-space contribution -- but `tau_cmd` from RNEA is what gets sent to the
+actuators.
+
+### Partial constraints: table slide
+
+ACHD does not require all six TCP axes to be constrained.  The table-slide
+example uses this to let the table/contact system handle vertical support while
+the controller regulates only the useful task axes:
+
+```
+alpha columns:
+  0: TCP linear X
+  1: TCP linear Y
+  2: TCP angular X
+  3: TCP angular Y
+  4: TCP angular Z
+
+omitted:
+  TCP linear Z
+```
+
+In `src/examples/ex_achd_table_slide.cpp`, `set_alpha_no_linear_z()` builds this
+5-column `alpha`, and `beta` contains only the X/Y position and orientation
+errors.  There is no linear-Z beta term, so ACHD is free to choose the vertical
+joint acceleration that best satisfies the remaining constraints and the system
+dynamics.  This is the right model for a supported slide: wrist/table contact can
+carry the vertical reaction, while the controller commands forward motion and
+orientation.
+
+The RNEA bridge is unchanged for partial constraints:
+
+```
+ACHD(alpha_5d, beta_5d, f_ext_achd) -> qdd
+RNEA(q, qd, qdd, zero_f_ext)        -> full joint torque command
+```
+
+RNEA does not need to know which Cartesian axes were constrained.  It only sees
+the resolved joint acceleration `qdd` from ACHD and computes the full torque
+needed to realise that acceleration in the robot dynamics.  The one-shot printout
+in `ex_achd_table_slide` compares the `nc=6` and `nc=5` cases so the torque
+difference from disabling linear Z is visible.
+
+**Note on real robots:** On a real robot with an inner gravity-compensation loop
+(common on torque-controlled manipulators), `constraint_tau` *would* be the correct
+outer-loop command because the inner loop already provides `c`. MuJoCo does not
+provide such a layer -- it simulates raw physics -- so the full RNEA is necessary.
 
 ---
 
@@ -324,10 +367,12 @@ during fast transits.
 - `init_robot_from_mjcf()` -- API doc in `mj_kdl_wrapper.hpp`
 - `KDL::ChainDynParam` -- orocos_kdl documentation
 - `KDL::ChainIdSolver_RNE` -- orocos_kdl documentation
+- `KDL::ChainHdSolver_Vereshchagin_Fixed_Joint` -- orocos_kdl documentation
 - `test_mjcf_trq_ctrl.cpp` -- gravity accuracy and impedance drift tests
 - `src/examples/ex_impedance.cpp` -- single arm + gripper torque control (PD + gravity)
 - `src/examples/ex_pick.cpp` -- scripted floor pick and lift
 - `src/examples/ex_table_pick_place.cpp` -- tabletop pick and place (gravity-comp)
 - `src/examples/ex_rnea_pick_place.cpp` -- tabletop pick and place (full RNEA)
+- `src/examples/ex_achd_table_slide.cpp` -- ACHD-based Cartesian sliding task
 - `src/examples/ex_dual_arm.cpp` -- two arms, each with gripper
-- `test/compare_rnea_urdf_mujoco.cpp` -- URDF vs MuJoCo inertia comparison
+- `test/urdf_solver_probe.cpp` -- URDF ACHD probe and URDF vs MuJoCo RNEA comparison
