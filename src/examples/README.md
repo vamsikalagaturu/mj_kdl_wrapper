@@ -26,6 +26,9 @@ number of physics steps, printing a brief result to stdout.
 | `ex_pick` | floor cube | scripted pick and lift |
 | `ex_table_pick_place` | table + blue cube | scripted tabletop pick, transfer, release, and retreat |
 | `ex_table_pour` | table + transparent receiver | scripted pour from small gripper-held bottle into a tabletop vessel |
+| `ex_rnea_pick_place` | table + blue cube | Cartesian target interpolation with IK + RNEA inverse dynamics |
+| `ex_achd_table_slide` | table contact | ACHD partial constraint comparison with wrist/table support |
+| `ex_achd_pick_place` | table + blue cube | ACHD Cartesian pick/place with 6D TCP regulation and half-arm support wrench |
 | `ex_dual_arm` | two arms + grippers | multi-robot scene with independent KDL chains |
 | `ex_record` | arm only | headless MP4 recording |
 
@@ -196,6 +199,32 @@ tau[i] = g[i] + Kp[i] * (q_des[i] - q[i]) - Kd[i] * dq[i]
 ```
 
 **Headless output:** `balls in transparent receiver: N/36`
+
+---
+
+## ACHD examples
+
+The ACHD examples use `ChainHdSolver_Vereshchagin_Fixed_Joint` to convert
+Cartesian task accelerations into constrained joint accelerations.  For MuJoCo
+torque control, the examples command the full inverse-dynamics torque computed
+from that ACHD `qddot`:
+
+```
+pose error -> beta -> ACHD qddot -> RNEA(q, qdot, qddot) -> jnt_trq_cmd
+```
+
+- `ex_achd_table_slide` compares table-supported motion with linear-Z
+  constrained vs unconstrained.
+- `ex_achd_pick_place` runs a pick/place sequence.  During the place-side
+  phases it feeds an ACHD-only upward support wrench on `half_arm_2_link` to
+  keep the elbow/half-arm from dropping while preserving the TCP task.
+
+Run headless:
+
+```bash
+./build/src/examples/ex_achd_table_slide --headless
+./build/src/examples/ex_achd_pick_place --headless
+```
 
 ---
 
