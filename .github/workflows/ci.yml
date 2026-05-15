@@ -15,6 +15,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Checkout orocos_kinematics_dynamics
+        run: |
+          git clone --depth 1 --branch feature/achd_fixed_joint \
+            https://github.com/secorolab/orocos_kinematics_dynamics.git \
+            "${{ github.workspace }}/../orocos_kinematics_dynamics"
+
       - name: Install dependencies
         run: |
           sudo apt-get update -q
