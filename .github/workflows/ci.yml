@@ -38,6 +38,20 @@ jobs:
           sudo apt-get install -y \
             doxygen
 
+      - name: Fetch doxygen-awesome-css
+        # Ensure the doxygen theme files exist on the runner for docs generation
+        run: |
+          mkdir -p third_party
+          if [[ -d third_party/doxygen-awesome-css && -d third_party/doxygen-awesome-css/.git ]]; then
+            echo "doxygen-awesome-css already present"
+          elif [[ -d third_party/doxygen-awesome-css ]]; then
+            echo "third_party/doxygen-awesome-css exists but is not a git repository"
+            ls -la third_party/doxygen-awesome-css
+            exit 1
+          else
+            git clone --depth 1 https://github.com/jothepro/doxygen-awesome-css.git third_party/doxygen-awesome-css
+          fi
+
       - name: Cache MuJoCo
         id: cache-mujoco
         uses: actions/cache@v4
