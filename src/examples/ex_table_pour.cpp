@@ -152,14 +152,12 @@ int main(int argc, char *argv[])
 
     mj_kdl::AttachmentSpec gripper;
     gripper.mjcf_path = grp_mjcf.c_str();
-    gripper.attach_to = "bracelet_link";
+    gripper.attach_to = { mj_kdl::AttachKind::Site, "pinch_site" };
     gripper.prefix    = "g_";
-    gripper.pos[2]    = -0.061525;
-    gripper.euler[0]  = 180.0;
 
     mj_kdl::AttachmentSpec bottle;
     bottle.mjcf_path = bottle_mjcf.c_str();
-    bottle.attach_to = "g_base";
+    bottle.attach_to = { mj_kdl::AttachKind::Body, "g_base" };
     bottle.prefix    = "pour_";
     bottle.pos[0]    = 0.0;
     bottle.pos[1]    = 0.0;

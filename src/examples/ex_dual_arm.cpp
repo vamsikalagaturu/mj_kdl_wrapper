@@ -56,10 +56,8 @@ int main(int argc, char *argv[])
 
     mj_kdl::AttachmentSpec gs;
     gs.mjcf_path = grp_mjcf.c_str();
-    gs.attach_to = "bracelet_link";
+    gs.attach_to = { mj_kdl::AttachKind::Site, "pinch_site" };
     gs.prefix    = "g_";
-    gs.pos[2]    = -0.061525;
-    gs.euler[0]  = 180.0; // 180 deg around X to flip gripper
 
     mj_kdl::RobotSpec arm1_spec;
     arm1_spec.path   = arm_mjcf.c_str();

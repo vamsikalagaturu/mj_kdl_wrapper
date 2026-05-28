@@ -168,10 +168,8 @@ int main(int argc, char *argv[])
 
     mj_kdl::AttachmentSpec gripper;
     gripper.mjcf_path = grp_mjcf.c_str();
-    gripper.attach_to = "bracelet_link";
+    gripper.attach_to = { mj_kdl::AttachKind::Site, "pinch_site" };
     gripper.prefix    = "g_";
-    gripper.pos[2]    = -0.061525;
-    gripper.euler[0]  = 180.0;
 
     mj_kdl::RobotSpec robot_spec;
     robot_spec.path   = arm_mjcf.c_str();

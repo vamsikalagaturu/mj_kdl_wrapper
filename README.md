@@ -25,7 +25,8 @@ multi-robot scenes.
 ## Features
 
 - **Unified scene builder** -- `build_scene()` accepts MJCF files and builds floor, skybox, primitive objects, asset-backed objects, and cameras via `mjSpec` with no intermediate XML files
-- **Ordered attachment chains** -- `AttachmentSpec` attaches any MJCF body (mount, FT sensor, gripper, arm on a mobile base) under any named body; chains of arbitrary length are applied in declaration order
+- **Ordered attachment chains** -- `AttachmentSpec` attaches any MJCF body (mount, FT sensor, gripper, arm on a mobile base) under any named body, site, or frame via a tagged `AttachTarget`; chains of arbitrary length are applied in declaration order
+- **Relative placement everywhere** -- `RobotSpec.attach_to` and `SceneObject.attach_to` accept the same tagged `AttachTarget`, so a robot can be mounted on a site exported by a prior scene object (e.g. a tabletop site) without hand-threading world-frame heights
 - **Multi-robot scenes** -- place multiple robots with independent KDL chains in one shared simulation via `SceneSpec::robots`
 - **Runtime environments** -- `Env` owns model/data, registered robots, and reset hooks for task-specific object/controller state
 - **KDL chain from model** -- `init_robot_from_mjcf()` builds a KDL chain directly from a compiled MuJoCo model
@@ -136,13 +137,16 @@ dyn.JntToGravity(q, g);  // correct for arm + gripper
 
 ### Attach a gripper (or any MJCF body)
 
+`AttachTarget` is a tagged pair of `AttachKind { World, Body, Site, Frame }`
+and an element name. The Kinova GEN3 MJCF exports `pinch_site` on the
+bracelet, which already encodes the tool offset and flip, so a gripper
+attaches with no manual `pos`/`euler`:
+
 ```cpp
 mj_kdl::AttachmentSpec gs{
     .mjcf_path          = "third_party/menagerie/robotiq_2f85/2f85.xml",
-    .attach_to          = "bracelet_link",
+    .attach_to          = { mj_kdl::AttachKind::Site, "pinch_site" },
     .prefix             = "g_",
-    .pos                = { 0.0, 0.0, -0.061525 },  // offset along bracelet_link -Z [m]
-    .euler              = { 180.0, 0.0, 0.0 },       // flip 180 deg around X [degrees]
     .contact_exclusions = {},
 };
 
@@ -155,8 +159,25 @@ sc.robots.push_back(rs);
 mj_kdl::build_scene(&model, &data, &sc);
 ```
 
+Optional `pos`/`euler` on the spec are **composed** with the site's pose, so
+you can still nudge:
+
+```cpp
+gs.pos[2]   = 0.005;   // +5 mm along the tool z
+gs.euler[2] = 15.0;    // +15 deg about the tool z
+```
+
+If a model has no suitable site, attach by body name instead:
+
+```cpp
+gs.attach_to = { mj_kdl::AttachKind::Body, "bracelet_link" };
+gs.pos[2]    = -0.061525;
+gs.euler[0]  = 180.0;
+```
+
 Chains are supported: push multiple `AttachmentSpec` entries in order
-(mount -> FT sensor -> gripper).
+(mount -> FT sensor -> gripper). Each entry's `attach_to` may reference
+any body, site, or frame added by prior entries.
 
 ### Multi-robot scene
 
@@ -175,27 +196,53 @@ mj_kdl::init_robot_from_mjcf(&robot2, model, data, "base_link", "bracelet_link",
 
 ### Table + objects
 
+`SceneObject` and `RobotSpec` share the same `attach_to` field, so the robot
+follows the table's tabletop site without hand-threaded heights. Build
+order in `build_scene` is decorations -> objects (declaration order) ->
+robots -> cameras, so a robot's `attach_to` can reference any prior object
+and a child object's `attach_to` can reference any earlier object in
+`SceneSpec::objects`.
+
 ```cpp
 mj_kdl::SceneSpec sc;
-sc.objects.push_back(mj_kdl::SceneObject{
+
+mj_kdl::SceneObject table{
     .name      = "table",
-    .mjcf_path = "src/examples/assets/table.xml",
-    .pos       = { 0.0, 0.0, 0.7 },  // asset origin is tabletop surface center
+    .mjcf_path = "src/examples/assets/table.xml",  // ships a `table_top` site
+    .pos       = { 0.0, 0.0, 0.7 },                // asset origin = tabletop center
+    .fixed     = true,
+};
+sc.objects.push_back(table);
+
+// scene_object_site_name() yields the compiled site name (prefixed by
+// obj.name + "_"), here "table_table_top".
+std::string mount = mj_kdl::scene_object_site_name(table, "table_top");
+
+sc.robots.push_back(mj_kdl::RobotSpec{
+    .path      = "third_party/menagerie/kinova_gen3/gen3.xml",
+    .attach_to = { mj_kdl::AttachKind::Site, mount.c_str() },
+});
+
+// MJCF-asset SceneObjects expose their root body under obj.name in the
+// compiled scene, so fixed objects can attach to it directly:
+sc.objects.push_back(mj_kdl::SceneObject{
+    .name      = "fixture",
+    .mjcf_path = "fixture.xml",
+    .attach_to = { mj_kdl::AttachKind::Body, "table" },
+    .pos       = { 0.0, 0.0, 0.0 },
     .fixed     = true,
 });
-sc.robots.push_back(mj_kdl::RobotSpec{
-    .path = "third_party/menagerie/kinova_gen3/gen3.xml",
-    .pos  = { 0.0, 0.0, 0.7 },
-    .attachments = {},
-});
+
+// MuJoCo restricts freejoints to top-level bodies, so a non-fixed primitive
+// (with a freejoint) must stay world-anchored:
 sc.objects.push_back(mj_kdl::SceneObject{
     .name      = "red_cube",
-    .mjcf_path = "",
     .shape     = mj_kdl::Shape::BOX,
     .size      = { 0.03, 0.03, 0.03 },
-    .pos       = { 0.35, 0.1, 0.73 },
+    .pos       = { 0.35, 0.10, 0.73 },  // world frame; tabletop_z + half_height
     .rgba      = { 1.0f, 0.0f, 0.0f, 1.0f },
 });
+
 mj_kdl::build_scene(&model, &data, &sc);
 ```
 

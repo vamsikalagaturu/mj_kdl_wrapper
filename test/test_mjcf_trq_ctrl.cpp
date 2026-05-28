@@ -53,10 +53,8 @@ class MjcfTrqCtrlTest : public testing::Test
 
         mj_kdl::AttachmentSpec gs{
             .mjcf_path          = grp_mjcf.c_str(),
-            .attach_to          = "bracelet_link",
+            .attach_to          = { mj_kdl::AttachKind::Site, "pinch_site" },
             .prefix             = "g_",
-            .pos                = { 0.0, 0.0, -0.061525 },
-            .euler              = { 180.0, 0.0, 0.0 },
             .contact_exclusions = {},
         };
         mj_kdl::RobotSpec rs;

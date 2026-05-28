@@ -72,9 +72,127 @@ static Viewer *g_viewer = nullptr;
 
 // Spec-API helpers
 
+// Sole owner of the MuJoCo worldbody name. Every other site that needs the
+// worldbody (skybox light, floor geom, resolve_parent with kind == World,
+// cameras) calls this so the literal "world" exists in one place.
+static mjsBody *world_body(mjSpec *spec) { return mjs_findBody(spec, "world"); }
+
+// Resolve an AttachTarget to its element in the accumulated spec.
+// Returns nullptr (and logs) when a non-World name is missing.
+static mjsElement *resolve_parent(mjSpec *spec, const AttachTarget &t)
+{
+    switch (t.kind) {
+    case AttachKind::World: {
+        mjsBody *wb = world_body(spec);
+        return wb ? wb->element : nullptr;
+    }
+    case AttachKind::Body: {
+        if (!t.name) { LOG_ERROR("AttachTarget kind=Body has null name"); return nullptr; }
+        mjsBody *b = mjs_findBody(spec, t.name);
+        if (!b) LOG_ERROR("attach parent body '" << t.name << "' not found");
+        return b ? b->element : nullptr;
+    }
+    case AttachKind::Site: {
+        if (!t.name) { LOG_ERROR("AttachTarget kind=Site has null name"); return nullptr; }
+        mjsElement *e = mjs_findElement(spec, mjOBJ_SITE, t.name);
+        if (!e) LOG_ERROR("attach parent site '" << t.name << "' not found");
+        return e;
+    }
+    case AttachKind::Frame: {
+        if (!t.name) { LOG_ERROR("AttachTarget kind=Frame has null name"); return nullptr; }
+        mjsFrame *f = mjs_findFrame(spec, t.name);
+        if (!f) LOG_ERROR("attach parent frame '" << t.name << "' not found");
+        return f ? f->element : nullptr;
+    }
+    }
+    return nullptr;
+}
+
+// Pack extrinsic XYZ Euler [deg] into a MuJoCo quaternion [w, x, y, z].
+static void euler_deg_to_mj_quat(const double euler[3], double out_quat[4])
+{
+    if (!euler[0] && !euler[1] && !euler[2]) {
+        out_quat[0] = 1; out_quat[1] = 0; out_quat[2] = 0; out_quat[3] = 0;
+        return;
+    }
+    const double d2r = M_PI / 180.0;
+    KDL::Rotation rot = KDL::Rotation::RPY(euler[0] * d2r, euler[1] * d2r, euler[2] * d2r);
+    double qx, qy, qz, qw;
+    rot.GetQuaternion(qx, qy, qz, qw);
+    out_quat[0] = qw; out_quat[1] = qx; out_quat[2] = qy; out_quat[3] = qz;
+}
+
+// Attach a child body element under the resolved parent at the given offset.
+// For body parents, an intermediate mjsFrame carries the offset so the child's
+// authored pos/quat is preserved. For site/frame parents (which do not accept
+// mjs_addFrame), the offset is written into the child root's pos/quat.
+// Returns the attached body element in the scene spec on success (so callers
+// can rename it or inspect it), or nullptr on failure.
+static mjsBody *attach_child(
+  mjSpec             *spec,
+  const AttachTarget &target,
+  const double        pos[3],
+  const double        euler[3],
+  mjsBody            *child_root,
+  const char         *prefix
+)
+{
+    if (!spec || !child_root) return nullptr;
+    mjsElement *parent = resolve_parent(spec, target);
+    if (!parent) return nullptr;
+
+    double quat[4];
+    euler_deg_to_mj_quat(euler, quat);
+
+    mjsElement *attach_parent = parent;
+    if (mjsBody *body_parent = mjs_asBody(parent)) {
+        // Intermediate frame carries the user offset; child keeps its authored pose.
+        mjsFrame *frame = mjs_addFrame(body_parent, nullptr);
+        frame->pos[0] = pos[0]; frame->pos[1] = pos[1]; frame->pos[2] = pos[2];
+        for (int i = 0; i < 4; ++i) frame->quat[i] = quat[i];
+        attach_parent = frame->element;
+    } else {
+        // Site/frame parents do not accept mjs_addFrame, so the offset has to
+        // ride on the child root. Compose user_offset * child_authored so the
+        // child's MJCF-authored pos/quat is not silently dropped.
+        KDL::Rotation user_R = KDL::Rotation::Quaternion(quat[1], quat[2], quat[3], quat[0]);
+        KDL::Vector   user_p(pos[0], pos[1], pos[2]);
+        KDL::Rotation child_R = KDL::Rotation::Quaternion(
+          child_root->quat[1], child_root->quat[2], child_root->quat[3], child_root->quat[0]);
+        KDL::Vector   child_p(child_root->pos[0], child_root->pos[1], child_root->pos[2]);
+        KDL::Frame    composed = KDL::Frame(user_R, user_p) * KDL::Frame(child_R, child_p);
+        double cqx, cqy, cqz, cqw;
+        composed.M.GetQuaternion(cqx, cqy, cqz, cqw);
+        child_root->pos[0] = composed.p.x();
+        child_root->pos[1] = composed.p.y();
+        child_root->pos[2] = composed.p.z();
+        child_root->quat[0] = cqw;
+        child_root->quat[1] = cqx;
+        child_root->quat[2] = cqy;
+        child_root->quat[3] = cqz;
+    }
+
+    const char *pfx = prefix ? prefix : "";
+    mjsElement *attached = mjs_attach(attach_parent, child_root->element, pfx, "");
+    if (!attached) {
+        LOG_ERROR("mjs_attach failed: " << mjs_getError(spec));
+        return nullptr;
+    }
+    return mjs_asBody(attached);
+}
+
+// Extract the first root body from a freshly parsed or built mjSpec
+// (i.e. the first body child of its worldbody).
+static mjsBody *first_root_body(mjSpec *spec)
+{
+    mjsBody    *wb    = world_body(spec);
+    mjsElement *first = wb ? mjs_firstChild(wb, mjOBJ_BODY, 0) : nullptr;
+    return first ? mjs_asBody(first) : nullptr;
+}
+
 void add_skybox_to_spec(mjSpec *spec)
 {
-    mjsBody *wb = mjs_findBody(spec, "world");
+    mjsBody *wb = world_body(spec);
 
     mjsTexture *sky = mjs_addTexture(spec);
     mjs_setString(mjs_getName(sky->element), "skybox");
@@ -98,7 +216,7 @@ void add_skybox_to_spec(mjSpec *spec)
 
 void add_floor_to_spec(mjSpec *spec)
 {
-    mjsBody *wb = mjs_findBody(spec, "world");
+    mjsBody *wb = world_body(spec);
 
     mjsTexture *tex = mjs_addTexture(spec);
     mjs_setString(mjs_getName(tex->element), "groundplane");
@@ -135,7 +253,8 @@ void add_floor_to_spec(mjSpec *spec)
 
 void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
 {
-    mjsBody *wb = mjs_findBody(spec, "world");
+    static const double kZeroEuler[3] = { 0, 0, 0 };
+
     for (const auto &obj : objects) {
         if (!obj.mjcf_path.empty()) {
             char    err[2048] = {};
@@ -145,33 +264,32 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
                 continue;
             }
 
-            mjsBody *asset_world = mjs_findBody(asset, "world");
-            mjsElement *first = asset_world ? mjs_firstChild(asset_world, mjOBJ_BODY, 0) : nullptr;
-            mjsBody    *root  = first ? mjs_asBody(first) : nullptr;
+            mjsBody *root = first_root_body(asset);
             if (!root) {
                 LOG_ERROR("no root body found in object asset '" << obj.mjcf_path << "'");
                 mj_deleteSpec(asset);
                 continue;
             }
 
-            mjsFrame *place = mjs_addFrame(wb, nullptr);
-            place->pos[0]   = obj.pos[0];
-            place->pos[1]   = obj.pos[1];
-            place->pos[2]   = obj.pos[2];
-
             std::string prefix = obj.name.empty() ? "" : obj.name + "_";
-            if (!mjs_attach(place->element, root->element, prefix.c_str(), "")) {
-                LOG_ERROR("mjs_attach failed for object asset '" << obj.mjcf_path << "': " << mjs_getError(spec));
+            mjsBody *attached =
+              attach_child(spec, obj.attach_to, obj.pos, kZeroEuler, root, prefix.c_str());
+            // Rename the asset's root body to obj.name so callers can write
+            // attach_to = { Body, obj.name } without knowing the MJCF-internal
+            // root body name. Other elements keep the obj.name + "_" prefix.
+            if (attached && !obj.name.empty()) {
+                mjs_setString(mjs_getName(attached->element), obj.name.c_str());
             }
             mj_deleteSpec(asset);
             continue;
         }
 
-        mjsBody *ob = mjs_addBody(wb, nullptr);
+        // Build the primitive body inside a throwaway spec so it can be attached
+        // under any parent kind (body, site, frame, world) via the same helper.
+        mjSpec  *tmp    = mj_makeSpec();
+        mjsBody *tmp_wb = world_body(tmp);
+        mjsBody *ob     = mjs_addBody(tmp_wb, nullptr);
         mjs_setString(mjs_getName(ob->element), obj.name.c_str());
-        ob->pos[0] = obj.pos[0];
-        ob->pos[1] = obj.pos[1];
-        ob->pos[2] = obj.pos[2];
 
         if (!obj.fixed) {
             mjsJoint *fj = mjs_addJoint(ob, nullptr);
@@ -182,15 +300,9 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
         mjsGeom *g = mjs_addGeom(ob, nullptr);
         mjs_setString(mjs_getName(g->element), (obj.name + "_geom").c_str());
         switch (obj.shape) {
-        case Shape::BOX:
-            g->type = mjGEOM_BOX;
-            break;
-        case Shape::SPHERE:
-            g->type = mjGEOM_SPHERE;
-            break;
-        case Shape::CYLINDER:
-            g->type = mjGEOM_CYLINDER;
-            break;
+        case Shape::BOX:      g->type = mjGEOM_BOX;      break;
+        case Shape::SPHERE:   g->type = mjGEOM_SPHERE;   break;
+        case Shape::CYLINDER: g->type = mjGEOM_CYLINDER; break;
         }
         g->size[0] = obj.size[0];
         g->size[1] = obj.size[1];
@@ -201,12 +313,15 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
         g->contype     = 1;
         g->conaffinity = 1;
         g->condim      = obj.condim;
+
+        attach_child(spec, obj.attach_to, obj.pos, kZeroEuler, ob, "");
+        mj_deleteSpec(tmp);
     }
 }
 
 static void add_cameras_to_spec(mjSpec *spec, const std::vector<CameraSpec> &cameras)
 {
-    mjsBody *wb = mjs_findBody(spec, "world");
+    mjsBody *wb = world_body(spec);
     for (const auto &cs : cameras) {
         mjsCamera *cam = mjs_addCamera(wb, nullptr);
         mjs_setString(mjs_getName(cam->element), cs.name.c_str());
@@ -214,29 +329,8 @@ static void add_cameras_to_spec(mjSpec *spec, const std::vector<CameraSpec> &cam
         cam->pos[1] = cs.pos[1];
         cam->pos[2] = cs.pos[2];
         cam->fovy   = cs.fovy;
-        if (cs.euler[0] || cs.euler[1] || cs.euler[2]) {
-            const double  d2r = M_PI / 180.0;
-            KDL::Rotation rot = KDL::Rotation::RPY(cs.euler[0]*d2r, cs.euler[1]*d2r, cs.euler[2]*d2r);
-            double qx, qy, qz, qw;
-            rot.GetQuaternion(qx, qy, qz, qw);
-            cam->quat[0] = qw;
-            cam->quat[1] = qx;
-            cam->quat[2] = qy;
-            cam->quat[3] = qz;
-        }
+        euler_deg_to_mj_quat(cs.euler, cam->quat);
     }
-}
-
-void configure_spec(mjSpec *spec, const SceneSpec *sc)
-{
-    spec->option.timestep   = sc->timestep;
-    spec->option.gravity[2] = sc->gravity_z;
-    spec->compiler.balanceinertia = 1;
-    spec->compiler.discardvisual  = 0;
-    if (sc->add_skybox) add_skybox_to_spec(spec);
-    if (sc->add_floor) add_floor_to_spec(spec);
-    if (!sc->objects.empty()) add_objects_to_spec(spec, sc->objects);
-    if (!sc->cameras.empty()) add_cameras_to_spec(spec, sc->cameras);
 }
 
 // Compile spec into a model and data; spec is always deleted.
@@ -612,8 +706,8 @@ bool attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
     if (!robot_spec || !a || !a->mjcf_path) return false;
     ensure_plugins_loaded();
     LOG_INFO(
-      "attach_to_spec: body='" << (a->attach_to ? a->attach_to : "(null)") << "' prefix='"
-                               << (a->prefix ? a->prefix : "") << "'"
+      "attach_to_spec: parent='" << (a->attach_to.name ? a->attach_to.name : "(world)")
+                                 << "' prefix='" << (a->prefix ? a->prefix : "") << "'"
     );
 
     char    err[2048] = {};
@@ -623,43 +717,14 @@ bool attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
         return false;
     }
 
-    mjsBody *attach_body = mjs_findBody(robot_spec, a->attach_to);
-    if (!attach_body) {
-        LOG_ERROR("attach body '" << a->attach_to << "' not found in robot spec");
-        mj_deleteSpec(att);
-        return false;
-    }
-
-    // Create an offset frame under the attach body.
-    mjsFrame *frame = mjs_addFrame(attach_body, nullptr);
-    frame->pos[0]   = a->pos[0];
-    frame->pos[1]   = a->pos[1];
-    frame->pos[2]   = a->pos[2];
-    if (a->euler[0] || a->euler[1] || a->euler[2]) {
-        double        d2r = M_PI / 180.0;
-        KDL::Rotation rot =
-          KDL::Rotation::RPY(a->euler[0] * d2r, a->euler[1] * d2r, a->euler[2] * d2r);
-        double qx, qy, qz, qw;
-        rot.GetQuaternion(qx, qy, qz, qw);
-        frame->quat[0] = qw;
-        frame->quat[1] = qx;
-        frame->quat[2] = qy;
-        frame->quat[3] = qz;
-    }
-
-    // Attach the first root body of the attachment (first body child of worldbody).
-    mjsBody    *att_world = mjs_findBody(att, "world");
-    mjsElement *first     = att_world ? mjs_firstChild(att_world, mjOBJ_BODY, 0) : nullptr;
-    mjsBody    *att_root  = first ? mjs_asBody(first) : nullptr;
+    mjsBody *att_root = first_root_body(att);
     if (!att_root) {
         LOG_ERROR("no root body found in attachment spec '" << a->mjcf_path << "'");
         mj_deleteSpec(att);
         return false;
     }
 
-    const char *pfx = a->prefix ? a->prefix : "";
-    if (!mjs_attach(frame->element, att_root->element, pfx, "")) {
-        LOG_ERROR("mjs_attach failed: " << mjs_getError(robot_spec));
+    if (!attach_child(robot_spec, a->attach_to, a->pos, a->euler, att_root, a->prefix)) {
         mj_deleteSpec(att);
         return false;
     }
@@ -688,9 +753,21 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
         LOG_ERROR("mj_makeSpec() failed");
         return false;
     }
-    mjsBody *world     = mjs_findBody(scene, "world");
-    bool     first_arm = true;
 
+    scene->compiler.balanceinertia = 1;
+    scene->compiler.discardvisual  = 0;
+
+    // Scene decorations go in before any object/robot so they exist as world
+    // anchors regardless of declaration order.
+    if (sc->add_skybox) add_skybox_to_spec(scene);
+    if (sc->add_floor)  add_floor_to_spec(scene);
+
+    // Objects come before robots so a robot can attach to a SceneObject (e.g.
+    // {AttachKind::Site, "table_mount"}). A child object that references
+    // another object must appear after its parent in SceneSpec::objects.
+    if (!sc->objects.empty()) add_objects_to_spec(scene, sc->objects);
+
+    bool first_arm = true;
     char err[2048] = {};
     for (int ai = 0; ai < (int)sc->robots.size(); ++ai) {
         const RobotSpec &rs = sc->robots[ai];
@@ -707,10 +784,13 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
             return false;
         }
 
-        // Inherit physics options (integrator, solver, etc.) from the first arm.
+        // Inherit physics options (integrator, solver, etc.) from the first
+        // arm, then apply the SceneSpec's user-controlled fields on top.
         if (first_arm) {
-            scene->option = arm->option;
-            first_arm     = false;
+            scene->option            = arm->option;
+            scene->option.timestep   = sc->timestep;
+            scene->option.gravity[2] = sc->gravity_z;
+            first_arm = false;
         }
 
         // Apply attachment chain in order (mount, sensor, gripper, etc.).
@@ -722,27 +802,7 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
             }
         }
 
-        // Create a placement frame in the scene at the desired position/orientation.
-        mjsFrame *place = mjs_addFrame(world, nullptr);
-        place->pos[0]   = rs.pos[0];
-        place->pos[1]   = rs.pos[1];
-        place->pos[2]   = rs.pos[2];
-        if (rs.euler[0] || rs.euler[1] || rs.euler[2]) {
-            double        d2r = M_PI / 180.0;
-            KDL::Rotation rot =
-              KDL::Rotation::RPY(rs.euler[0] * d2r, rs.euler[1] * d2r, rs.euler[2] * d2r);
-            double qx, qy, qz, qw;
-            rot.GetQuaternion(qx, qy, qz, qw);
-            place->quat[0] = qw;
-            place->quat[1] = qx;
-            place->quat[2] = qy;
-            place->quat[3] = qz;
-        }
-
-        // Attach the arm's root body (first child of worldbody) into the scene.
-        mjsBody    *arm_world = mjs_findBody(arm, "world");
-        mjsElement *first     = arm_world ? mjs_firstChild(arm_world, mjOBJ_BODY, 0) : nullptr;
-        mjsBody    *arm_root  = first ? mjs_asBody(first) : nullptr;
+        mjsBody *arm_root = first_root_body(arm);
         if (!arm_root) {
             LOG_ERROR("no root body found in arm spec '" << rs.path << "'");
             mj_deleteSpec(arm);
@@ -750,9 +810,8 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
             return false;
         }
 
-        const char *pfx = rs.prefix ? rs.prefix : "";
-        if (!mjs_attach(place->element, arm_root->element, pfx, "")) {
-            LOG_ERROR("mjs_attach failed for arm " << ai << ": " << mjs_getError(scene));
+        if (!attach_child(scene, rs.attach_to, rs.pos, rs.euler, arm_root, rs.prefix)) {
+            LOG_ERROR("attach failed for arm " << ai);
             mj_deleteSpec(arm);
             mj_deleteSpec(scene);
             return false;
@@ -760,8 +819,7 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
         mj_deleteSpec(arm); // deep-copied into scene; source can be freed
     }
 
-    // Apply SceneSpec settings: override timestep/gravity, add floor/skybox/objects.
-    configure_spec(scene, sc);
+    if (!sc->cameras.empty()) add_cameras_to_spec(scene, sc->cameras);
     return compile_and_make_data(scene, out_model, out_data);
 }
 

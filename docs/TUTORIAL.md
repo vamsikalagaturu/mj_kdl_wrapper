@@ -279,16 +279,20 @@ This is the core pattern used by `ex_gravity_comp`.
 
 ## 6. Attach A Gripper Or Tool
 
-Attachments are MJCF assets attached under a body in the accumulated robot spec.
-They are applied in order, so mount -> sensor -> gripper chains are natural.
+Attachments are MJCF assets attached under a body, site, or frame in the
+accumulated robot spec. They are applied in order, so mount -> sensor ->
+gripper chains are natural.
+
+`AttachTarget` is a tagged pair of `AttachKind { World, Body, Site, Frame }`
+and an element name. Sites are the natural mount-point: the Kinova GEN3 MJCF
+ships `pinch_site` on the bracelet, with its own pos/quat that already encode
+the gripper offset and 180-degree flip. So the gripper attachment is just:
 
 ```cpp
 mj_kdl::AttachmentSpec gripper{
     .mjcf_path = "third_party/menagerie/robotiq_2f85/2f85.xml",
-    .attach_to = "bracelet_link",
+    .attach_to = { mj_kdl::AttachKind::Site, "pinch_site" },
     .prefix    = "g_",
-    .pos       = { 0.0, 0.0, -0.061525 },
-    .euler     = { 180.0, 0.0, 0.0 },
 };
 
 mj_kdl::RobotSpec arm{
@@ -298,6 +302,20 @@ mj_kdl::RobotSpec arm{
 
 scene.robots.clear();
 scene.robots.push_back(arm);
+```
+
+`pos` and `euler` on the spec are still available as offsets. For body and
+frame parents they ride on an intermediate frame, preserving the child's
+authored pose. For site parents they compose with the child root's authored
+pose so authored values are never silently dropped.
+
+When the model has no suitable site, fall back to a body name and add the
+offset by hand:
+
+```cpp
+gripper.attach_to = { mj_kdl::AttachKind::Body, "bracelet_link" };
+gripper.pos[2]    = -0.061525;
+gripper.euler[0]  = 180.0;
 ```
 
 Tell KDL about the attached tool when initializing the robot:
@@ -324,19 +342,19 @@ by earlier attachments.
 ```cpp
 mj_kdl::AttachmentSpec mount{
     .mjcf_path = "assets/wrist_mount.xml",
-    .attach_to = "bracelet_link",
+    .attach_to = { mj_kdl::AttachKind::Body, "bracelet_link" },
     .prefix    = "mount_",
 };
 
 mj_kdl::AttachmentSpec sensor{
     .mjcf_path = "assets/ft_sensor.xml",
-    .attach_to = "mount_tip",
+    .attach_to = { mj_kdl::AttachKind::Body, "mount_tip" },
     .prefix    = "ft_",
 };
 
 mj_kdl::AttachmentSpec gripper{
     .mjcf_path = "third_party/menagerie/robotiq_2f85/2f85.xml",
-    .attach_to = "ft_tool",
+    .attach_to = { mj_kdl::AttachKind::Body, "ft_tool" },
     .prefix    = "g_",
 };
 
@@ -358,8 +376,12 @@ or controller gains instead.
 
 ## 7. Add Tables, Objects, And Asset Sites
 
-`SceneObject` supports primitive objects and MJCF-backed assets. Tables are just
-assets, not special first-class fields.
+`SceneObject` supports primitive objects and MJCF-backed assets. Tables are
+just assets, not special first-class fields. `SceneObject::attach_to` accepts
+the same tagged `AttachTarget` as `RobotSpec` and `AttachmentSpec`. Inside
+`build_scene` the order is decorations -> objects (declaration order) ->
+robots -> cameras, so a robot or a later object may reference any prior
+object via its name or one of its sites.
 
 ```cpp
 mj_kdl::SceneObject table{
@@ -374,14 +396,19 @@ scene.objects.push_back(mj_kdl::SceneObject{
     .name  = "cube",
     .shape = mj_kdl::Shape::BOX,
     .size  = { 0.03, 0.03, 0.03 },
-    .pos   = { 0.35, 0.05, 0.73 },
+    .pos   = { 0.35, 0.05, 0.73 },   // free cubes stay world-anchored
     .rgba  = { 0.1f, 0.3f, 1.0f, 1.0f },
     .mass  = 0.1,
 });
 ```
 
-MJCF-backed object names are prefixed with `object.name + "_"`. If an asset has
-a site named `table_top`, get its compiled name like this:
+After `build_scene`, an MJCF-backed `SceneObject` exposes its root body in
+the compiled scene under `obj.name` (i.e. the asset's internal root body name
+is rewritten so callers never need to know it). All other elements (sites,
+geoms, joints, child bodies) keep the `obj.name + "_"` prefix.
+
+`scene_object_site_name(obj, "site_name")` returns the compiled name of a
+site authored inside the asset, for places that need a string at runtime:
 
 ```cpp
 const std::string site = mj_kdl::scene_object_site_name(table, "table_top");
@@ -389,8 +416,32 @@ KDL::Frame world_T_table_top;
 mj_kdl::get_site_frame(env.model, env.data, site.c_str(), &world_T_table_top);
 ```
 
-This is useful for placing robot bases and objects relative to authored asset
-sites rather than hardcoding offsets.
+Combined, this lets a robot sit on the tabletop without hand-threading
+heights:
+
+```cpp
+const std::string mount = mj_kdl::scene_object_site_name(table, "table_top");
+
+scene.robots.push_back(mj_kdl::RobotSpec{
+    .path      = "third_party/menagerie/kinova_gen3/gen3.xml",
+    .attach_to = { mj_kdl::AttachKind::Site, mount.c_str() },
+});
+```
+
+A fixed object can also attach to the table body directly:
+
+```cpp
+scene.objects.push_back(mj_kdl::SceneObject{
+    .name      = "fixture",
+    .mjcf_path = "fixture.xml",
+    .attach_to = { mj_kdl::AttachKind::Body, "table" },
+    .fixed     = true,
+});
+```
+
+MuJoCo restricts freejoints to top-level bodies, so non-fixed primitives and
+asset roots with a freejoint must use `AttachKind::World` (the default).
+`mj_compile` reports the violation if this rule is broken.
 
 ## 8. Add Cameras
 
@@ -590,15 +641,14 @@ The application has five parts:
 
 ### 12.1 Build The Scene
 
-Start with the gripper attachment:
+Start with the gripper attachment. The Kinova `pinch_site` already encodes
+the tool offset and 180-degree flip, so no `pos`/`euler` are needed:
 
 ```cpp
 mj_kdl::AttachmentSpec gripper{
     .mjcf_path = "third_party/menagerie/robotiq_2f85/2f85.xml",
-    .attach_to = "bracelet_link",
+    .attach_to = { mj_kdl::AttachKind::Site, "pinch_site" },
     .prefix    = "g_",
-    .pos       = { 0.0, 0.0, -0.061525 },
-    .euler     = { 180.0, 0.0, 0.0 },
 };
 ```
 
@@ -614,8 +664,9 @@ mj_kdl::SceneObject table{
 };
 ```
 
-Add a free cube. For a box, `size` is half-extents, so the center z coordinate
-is `surface_z + half_height`.
+Add a free cube. For a box, `size` is half-extents, so the world-frame
+center z is `surface_z + half_height`. Free objects must stay world-anchored
+(MuJoCo restricts freejoints to top-level bodies).
 
 ```cpp
 constexpr double kSurfaceZ = 0.7;
@@ -633,17 +684,22 @@ mj_kdl::SceneObject cube{
 };
 ```
 
-Assemble the scene:
+Assemble the scene. Mount the arm on the table's `table_top` site instead
+of writing `surface_z` into the robot position by hand:
 
 ```cpp
 mj_kdl::SceneSpec scene;
-scene.robots.push_back(mj_kdl::RobotSpec{
-    .path        = "third_party/menagerie/kinova_gen3/gen3.xml",
-    .pos         = { 0.0, 0.0, kSurfaceZ },
-    .attachments = { gripper },
-});
 scene.objects.push_back(table);
 scene.objects.push_back(cube);
+
+const std::string mount =
+    mj_kdl::scene_object_site_name(table, "table_top");
+
+scene.robots.push_back(mj_kdl::RobotSpec{
+    .path        = "third_party/menagerie/kinova_gen3/gen3.xml",
+    .attach_to   = { mj_kdl::AttachKind::Site, mount.c_str() },
+    .attachments = { gripper },
+});
 scene.cameras.push_back(mj_kdl::CameraSpec{
     .name  = "task",
     .pos   = { 0.1, -0.9, 1.45 },

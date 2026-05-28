@@ -47,6 +47,6 @@
  * @defgroup grp_advanced Advanced / Internal Helpers
  * @brief Low-level mjSpec helpers exposed for custom scene assembly.
  *
- * These are used internally by build_scene() and configure_spec().
+ * These are used internally by build_scene().
  * They are not part of the stable public API and may change between releases.
  */

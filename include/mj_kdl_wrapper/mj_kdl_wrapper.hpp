@@ -39,19 +39,41 @@ inline LogLevel get_log_level() { return g_log_level; }
 
 /**
  * @ingroup grp_types
+ * Kind of element an AttachTarget references in the accumulated scene spec.
+ * World selects the worldbody (the default); Body, Site, and Frame each look
+ * up a named element of the corresponding type.
+ */
+enum class AttachKind { World, Body, Site, Frame };
+
+/**
+ * @ingroup grp_types
+ * Where to attach a robot, object, or attachment in the accumulated scene spec.
+ * Tagged so exactly one alternative is encoded; defaulting to World keeps
+ * callers that omit attach_to anchored to the worldbody.
+ * For Site, the site's own pos/quat becomes the placement frame and the
+ * accompanying pos/euler are an additional offset on top of it (matches MJCF).
+ */
+struct AttachTarget
+{
+    AttachKind  kind = AttachKind::World;
+    const char *name = nullptr; // ignored when kind == World
+};
+
+/**
+ * @ingroup grp_types
  * One link in an ordered attachment chain for a robot.
  * An attachment is any MJCF body (end effector, mount, FT sensor, tool, additional arm
- * on a mobile base, etc.) attached under a named body in the accumulated robot spec.
- * Attachments are applied in declaration order; attach_to may reference any body present
- * after all prior attachments have been applied.
+ * on a mobile base, etc.) attached under a named element in the accumulated robot spec.
+ * Attachments are applied in declaration order; attach_to may reference any body, site,
+ * or frame present after all prior attachments have been applied.
  */
 struct AttachmentSpec
 {
-    const char *mjcf_path = nullptr;     // MJCF file for this attachment
-    const char *attach_to = nullptr;     // body to attach under (in root or prior attachment)
-    const char *prefix    = "";          // element name prefix (avoids name conflicts)
-    double      pos[3]    = { 0, 0, 0 }; // position offset [m]
-    double      euler[3]  = { 0, 0, 0 }; // extrinsic XYZ Euler offset [degrees]
+    const char  *mjcf_path = nullptr;     // MJCF file for this attachment
+    AttachTarget attach_to;               // parent in root or prior attachment (default: world)
+    const char  *prefix    = "";          // element name prefix (avoids name conflicts)
+    double       pos[3]    = { 0, 0, 0 }; // position offset [m]
+    double       euler[3]  = { 0, 0, 0 }; // extrinsic XYZ Euler offset [degrees]
 
     /* Contact exclusion pairs registered by attach_to_spec(). */
     std::vector<std::pair<std::string, std::string>> contact_exclusions; // (body1, body2) pairs
@@ -60,12 +82,17 @@ struct AttachmentSpec
 /**
  * @ingroup grp_types
  * One robot in a scene: a root MJCF (arm, mobile base, ...) with an ordered attachment
- * chain and world-frame placement.
+ * chain and a placement target.
  *
  * attachments is applied in order by build_scene() / attach_to_spec(): each entry's
- * attach_to may reference any body in the accumulated spec (root + all prior attachments).
- * This naturally supports: fixed arm, arm+gripper, arm+mount+FT+gripper, mobile base,
- * mobile manipulator (base root, arm as first attachment), and so on.
+ * attach_to may reference any body, site, or frame in the accumulated spec (root + all
+ * prior attachments). This naturally supports: fixed arm, arm+gripper, arm+mount+FT+
+ * gripper, mobile base, mobile manipulator (base root, arm as first attachment), etc.
+ *
+ * attach_to selects where the robot root is placed in the scene; the default is the
+ * worldbody. Set it to e.g. { AttachKind::Site, "table_mount" } to place the robot on
+ * a tabletop site exported by a prior scene object. pos/euler are offsets in the
+ * resolved parent frame.
  *
  * path is the root MJCF passed to build_scene(). prefix must be unique per robot
  * in multi-robot scenes.
@@ -74,8 +101,9 @@ struct RobotSpec
 {
     const char                 *path     = nullptr;     // root MJCF path
     const char                 *prefix   = "";          // element name prefix
-    double                      pos[3]   = { 0, 0, 0 }; // world-frame position [m]
-    double                      euler[3] = { 0, 0, 0 }; // extrinsic XYZ Euler angles [degrees]
+    AttachTarget                attach_to;              // placement parent (default: world)
+    double                      pos[3]   = { 0, 0, 0 }; // offset in parent frame [m]
+    double                      euler[3] = { 0, 0, 0 }; // extrinsic XYZ Euler offset [degrees]
     std::vector<AttachmentSpec> attachments;            // ordered attachment chain; empty = none
 };
 
@@ -93,26 +121,36 @@ enum class Shape { BOX, SPHERE, CYLINDER };
  *   CYLINDER  - {radius, half-length, 0}
  *   Ignored when mjcf_path is set.
  *
+ * attach_to:
+ *   Parent in the accumulated scene spec. Default is the worldbody. A child
+ *   object must appear after its parent in SceneSpec::objects.
+ *   MuJoCo constraint: a body that carries a freejoint must be a direct child
+ *   of the worldbody. So a non-fixed primitive (fixed == false) and any
+ *   mjcf_path asset whose root body owns a freejoint must use AttachKind::World.
+ *   Fixed primitives and articulated subtrees (no freejoint on the root) may
+ *   use any kind. mj_compile reports the violation if this rule is broken.
+ *
  * pos:
- *   World-frame position. For MJCF assets, this is the placement frame for the
- *   asset's first root body.
+ *   Offset in the resolved parent frame. For MJCF assets, this is the placement
+ *   frame for the asset's first root body.
  *
  * fixed:
- *   If true the body is welded to the world (no freejoint); useful for
+ *   If true the body is welded to its parent (no freejoint); useful for
  *   static obstacles or fixtures. Ignored when mjcf_path is set.
  */
 struct SceneObject
 {
-    std::string name;
-    std::string mjcf_path; // optional MJCF asset; when set, shape/size/mass/friction are ignored
-    Shape       shape       = Shape::BOX;
-    double      size[3]     = { 0.03, 0.03, 0.03 };
-    double      pos[3]      = { 0.0, 0.0, 0.0 };
-    float       rgba[4]     = { 1.0f, 0.0f, 0.0f, 1.0f };
-    bool        fixed       = false;
-    double      mass        = 0.1;
-    int         condim      = 3;
-    double      friction[3] = { 0.5, 0.005, 0.0001 }; // MuJoCo defaults
+    std::string  name;
+    std::string  mjcf_path; // optional MJCF asset; when set, shape/size/mass/friction are ignored
+    AttachTarget attach_to;             // placement parent (default: world)
+    Shape        shape       = Shape::BOX;
+    double       size[3]     = { 0.03, 0.03, 0.03 };
+    double       pos[3]      = { 0.0, 0.0, 0.0 };
+    float        rgba[4]     = { 1.0f, 0.0f, 0.0f, 1.0f };
+    bool         fixed       = false;
+    double       mass        = 0.1;
+    int          condim      = 3;
+    double       friction[3] = { 0.5, 0.005, 0.0001 }; // MuJoCo defaults
 };
 
 /**
@@ -751,9 +789,9 @@ bool use_camera(VideoRecorder *vr, const mjModel *model, const char *name);
 /**
  * Internal spec-building helpers.
  *
- * These are used internally by build_scene() and configure_spec(), but are
- * exposed here for advanced callers that construct mjSpec objects directly.
- * They are not part of the stable public API and may change between releases.
+ * These are used internally by build_scene() but are exposed here for advanced
+ * callers that construct mjSpec objects directly. They are not part of the
+ * stable public API and may change between releases.
  */
 
 /**
@@ -777,14 +815,6 @@ void add_floor_to_spec(mjSpec *spec);
  * @param objects  List of objects to add.
  */
 void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects);
-
-/**
- * @ingroup grp_advanced
- * Apply all SceneSpec settings to a parsed mjSpec:
- * physics options (timestep, gravity), compiler flags, and scene decorations
- * (skybox, floor, table, objects) according to the flags in sc.
- */
-void configure_spec(mjSpec *spec, const SceneSpec *sc);
 
 /**
  * @ingroup grp_advanced

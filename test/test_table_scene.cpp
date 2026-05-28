@@ -20,6 +20,9 @@ static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.95
 namespace fs = std::filesystem;
 static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
 
+// Free-jointed primitives must stay world-anchored (MuJoCo: freejoint only on
+// top level), so their z is surface_z + half_height. The robot, which has no
+// freejoint at its root, attaches to the table via a site instead.
 static mj_kdl::SceneObject make_box(
   const char *name, double x, double y, double hx, double hy, double hz,
   float r, float g, float b, double surface_z
@@ -56,6 +59,7 @@ class TableSceneTest : public testing::Test
     std::string       mjcf_;
     mj_kdl::SceneSpec spec_;
     mj_kdl::SceneObject table_obj_;
+    std::string       table_mount_site_; // compiled site name; lifetime backs RobotSpec.attach_to.name
     mjModel          *model_ = nullptr;
     mjData           *data_  = nullptr;
     mj_kdl::Robot     s_;
@@ -77,43 +81,40 @@ class TableSceneTest : public testing::Test
         }
         std::string table_mjcf = (root / "src/examples/assets/table.xml").string();
 
-        // Table asset origin is the tabletop surface center.
-        double surface_z = 0.7;
+        // Table asset origin is the tabletop surface center; only the table
+        // itself carries a world-frame z. Robot and objects derive their
+        // height from attach_to.
+        const double surface_z = 0.7;
 
-        std::vector<mj_kdl::SceneObject> objects;
         table_obj_ = {
             .name      = "table",
             .mjcf_path = table_mjcf,
             .pos       = { 0.0, 0.0, surface_z },
             .fixed     = true,
         };
+        table_mount_site_ = mj_kdl::scene_object_site_name(table_obj_, "table_top");
+
+        std::vector<mj_kdl::SceneObject> objects;
         objects.push_back(table_obj_);
-        objects.push_back(
-          make_box("red_cube", 0.35, 0.10, 0.03, 0.03, 0.03, 1.0f, 0.2f, 0.2f, surface_z)
-        );
-        objects.push_back(
-          make_box("green_cube", 0.35, -0.10, 0.03, 0.03, 0.03, 0.2f, 1.0f, 0.2f, surface_z)
-        );
-        objects.push_back(
-          make_box("blue_cube", 0.35, 0.30, 0.04, 0.04, 0.04, 0.2f, 0.2f, 1.0f, surface_z)
-        );
-        objects.push_back(
-          make_sphere("orange_sphere", -0.20, 0.20, 0.035, 1.0f, 0.55f, 0.0f, surface_z)
-        );
-        objects.push_back(
-          make_sphere("purple_sphere", -0.20, -0.20, 0.025, 0.7f, 0.0f, 0.9f, surface_z)
-        );
+        objects.push_back(make_box("red_cube",     0.35,  0.10, 0.03, 0.03, 0.03, 1.0f, 0.2f, 0.2f, surface_z));
+        objects.push_back(make_box("green_cube",   0.35, -0.10, 0.03, 0.03, 0.03, 0.2f, 1.0f, 0.2f, surface_z));
+        objects.push_back(make_box("blue_cube",    0.35,  0.30, 0.04, 0.04, 0.04, 0.2f, 0.2f, 1.0f, surface_z));
+        objects.push_back(make_sphere("orange_sphere", -0.20,  0.20, 0.035, 1.0f, 0.55f, 0.0f, surface_z));
+        objects.push_back(make_sphere("purple_sphere", -0.20, -0.20, 0.025, 0.7f, 0.0f,  0.9f, surface_z));
 
         spec_.objects   = objects;
         spec_.add_floor = true;
         spec_.gravity_z = -9.81;
 
-        spec_.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf_.c_str(), .pos = { 0.0, 0.0, surface_z }, .attachments = {} });
+        spec_.robots.push_back(mj_kdl::RobotSpec{
+            .path      = mjcf_.c_str(),
+            .attach_to = { mj_kdl::AttachKind::Site, table_mount_site_.c_str() },
+            .attachments = {},
+        });
 
         ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &spec_));
         KDL::Frame world_T_table_top;
-        std::string table_top_site = mj_kdl::scene_object_site_name(table_obj_, "table_top");
-        ASSERT_TRUE(mj_kdl::get_site_frame(model_, data_, table_top_site.c_str(), &world_T_table_top));
+        ASSERT_TRUE(mj_kdl::get_site_frame(model_, data_, table_mount_site_.c_str(), &world_T_table_top));
         EXPECT_NEAR(world_T_table_top.p.z(), surface_z, 1e-9);
 
         ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link"));
@@ -168,7 +169,7 @@ TEST_F(TableSceneTest, AddRemoveObject)
     mj_kdl::cleanup(&s_);
     s_cleaned_ = true;
 
-    double              surface_z = 0.7;
+    const double        surface_z = 0.7;
     mj_kdl::SceneObject extra =
       make_box("yellow_cube", 0.0, 0.4, 0.03, 0.03, 0.03, 1.0f, 1.0f, 0.0f, surface_z);
 
@@ -192,7 +193,7 @@ TEST_F(TableSceneTest, EnvAddRemoveReinitsRobot)
 
     int nq_before = env.model->nq;
 
-    double              surface_z = 0.7;
+    const double        surface_z = 0.7;
     mj_kdl::SceneObject extra =
       make_box("yellow_cube", 0.0, 0.4, 0.03, 0.03, 0.03, 1.0f, 1.0f, 0.0f, surface_z);
 
