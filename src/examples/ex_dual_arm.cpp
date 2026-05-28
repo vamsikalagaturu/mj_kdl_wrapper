@@ -72,6 +72,9 @@ int main(int argc, char *argv[])
     arm2_spec.attachments.push_back(gs);
 
     mj_kdl::SceneSpec sc;
+    sc.timestep   = 0.002;
+    sc.add_floor  = true;
+    sc.add_skybox = true;
     sc.robots.push_back(arm1_spec);
     sc.robots.push_back(arm2_spec);
 

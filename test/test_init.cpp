@@ -32,6 +32,9 @@ class InitTest : public testing::Test
             return;
         }
 
+        sc_.timestep   = 0.002;
+        sc_.add_floor  = true;
+        sc_.add_skybox = true;
         sc_.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf.c_str(), .attachments = {} });
 
         ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc_)) << "build_scene() returned false";

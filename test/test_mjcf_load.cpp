@@ -45,6 +45,9 @@ class MjcfLoadTest : public testing::Test
         }
 
         mj_kdl::SceneSpec sc;
+    sc.timestep   = 0.002;
+    sc.add_floor  = true;
+    sc.add_skybox = true;
         sc.add_floor  = false;
         sc.add_skybox = false;
         sc.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf.c_str(), .attachments = {} });
@@ -144,6 +147,9 @@ class MjcfGripperTest : public testing::Test
         rs.attachments.push_back(gs);
 
         mj_kdl::SceneSpec sc;
+    sc.timestep   = 0.002;
+    sc.add_floor  = true;
+    sc.add_skybox = true;
         sc.robots.push_back(rs);
 
         ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc));

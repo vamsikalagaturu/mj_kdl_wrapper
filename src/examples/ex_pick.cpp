@@ -188,11 +188,14 @@ int main(int argc, char *argv[])
         .pos       = { kCubeX, kCubeY, kCubeZ },
         .rgba      = { 1.0f, 0.5f, 0.0f, 1.0f },
         .mass      = 0.1,
-        .condim    = 4,
+        .condim    = mj_kdl::Condim::Torsional,
         .friction  = { 0.8, 0.02, 0.001 },
     };
 
     mj_kdl::SceneSpec sc;
+    sc.timestep   = 0.002;
+    sc.add_floor  = true;
+    sc.add_skybox = true;
     sc.robots.push_back(rs);
     sc.objects.push_back(cube);
 

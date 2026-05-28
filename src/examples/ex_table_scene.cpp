@@ -99,6 +99,9 @@ int main(int argc, char *argv[])
     const std::string table_mjcf = (root / "src/examples/assets/table.xml").string();
 
     mj_kdl::SceneSpec sc;
+    sc.timestep   = 0.002;
+    sc.add_floor  = true;
+    sc.add_skybox = true;
     const double surface_z = 0.7;
 
     mj_kdl::AttachmentSpec gs;

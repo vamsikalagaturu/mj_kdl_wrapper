@@ -123,13 +123,18 @@ target_link_libraries(my_sim PRIVATE mj_kdl_wrapper)
 
 ## 2. Start With One Robot Scene
 
-Scenes are declared with `SceneSpec`. The first useful scene is just one robot
-MJCF, floor, skybox, default timestep, and default gravity:
+Scenes are declared with `SceneSpec`. `timestep`, `add_floor`, and
+`add_skybox` have no defaults - they are choices the wrapper refuses to
+guess on your behalf. `build_scene` rejects `timestep <= 0` at runtime.
+`gravity_z` defaults to Earth gravity (-9.81 m/s^2).
 
 ```cpp
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 
 mj_kdl::SceneSpec scene;
+scene.timestep   = 0.002;   // [s]
+scene.add_floor  = true;
+scene.add_skybox = true;
 scene.robots.push_back(mj_kdl::RobotSpec{
     .path = "third_party/menagerie/kinova_gen3/gen3.xml",
 });
@@ -383,6 +388,15 @@ the same tagged `AttachTarget` as `RobotSpec` and `AttachmentSpec`. Inside
 robots -> cameras, so a robot or a later object may reference any prior
 object via its name or one of its sites.
 
+`SceneObject` has no defaults for `shape`, `size`, `rgba`, `mass`, or
+`friction`. For MJCF-backed objects (when `mjcf_path` is set) those fields
+are ignored at runtime, so leaving them zero-initialised is fine. For
+primitives, `build_scene` runs explicit checks:
+
+- `shape == Shape::Unspecified` -> error, the object is skipped.
+- `size[i] <= 0` for the relevant dimensions of the shape -> error, skipped.
+- `mass <= 0` on a non-fixed primitive -> error, skipped.
+
 ```cpp
 mj_kdl::SceneObject table{
     .name      = "table",
@@ -392,15 +406,22 @@ mj_kdl::SceneObject table{
 };
 
 scene.objects.push_back(table);
+
+// Primitives require shape, size, rgba, mass, and friction.
 scene.objects.push_back(mj_kdl::SceneObject{
-    .name  = "cube",
-    .shape = mj_kdl::Shape::BOX,
-    .size  = { 0.03, 0.03, 0.03 },
-    .pos   = { 0.35, 0.05, 0.73 },   // free cubes stay world-anchored
-    .rgba  = { 0.1f, 0.3f, 1.0f, 1.0f },
-    .mass  = 0.1,
+    .name     = "cube",
+    .shape    = mj_kdl::Shape::BOX,
+    .size     = { 0.03, 0.03, 0.03 },                 // half-extents [m]
+    .pos      = { 0.35, 0.05, 0.73 },                 // free cubes stay world-anchored
+    .rgba     = { 0.1f, 0.3f, 1.0f, 1.0f },
+    .mass     = 0.1,                                  // [kg]
+    .condim   = mj_kdl::Condim::Torsional,            // friction model
+    .friction = { 0.8, 0.02, 0.001 },                 // [slide, spin, roll]
 });
 ```
+
+`Condim` is a typed enum (`Tangential` = 3, `Torsional` = 4, `Rolling` = 6)
+matching MuJoCo's contact-dimensionality integers. Default is `Tangential`.
 
 After `build_scene`, an MJCF-backed `SceneObject` exposes its root body in
 the compiled scene under `obj.name` (i.e. the asset's internal root body name
@@ -445,14 +466,15 @@ asset roots with a freejoint must use `AttachKind::World` (the default).
 
 ## 8. Add Cameras
 
-Add fixed scene cameras through `SceneSpec::cameras`:
+Add fixed scene cameras through `SceneSpec::cameras`. `CameraSpec` requires
+`pos` and `fovy`; `euler` defaults to identity.
 
 ```cpp
 scene.cameras.push_back(mj_kdl::CameraSpec{
     .name  = "front",
-    .pos   = { 0.0, -0.8, 1.45 },
+    .pos   = { 0.0, -0.8, 1.45 },  // required
     .euler = { 35.0, 0.0, 0.0 },
-    .fovy  = 45.0,
+    .fovy  = 45.0,                 // required
 });
 ```
 
@@ -679,16 +701,20 @@ mj_kdl::SceneObject cube{
     .pos      = { 0.35, 0.10, kSurfaceZ + kCubeHalf },
     .rgba     = { 0.1f, 0.25f, 1.0f, 1.0f },
     .mass     = 0.1,
-    .condim   = 4,
+    .condim   = mj_kdl::Condim::Torsional,
     .friction = { 0.8, 0.02, 0.001 },
 };
 ```
 
-Assemble the scene. Mount the arm on the table's `table_top` site instead
-of writing `surface_z` into the robot position by hand:
+Assemble the scene. Set `timestep`, `add_floor`, and `add_skybox`
+explicitly, then mount the arm on the table's `table_top` site instead of
+writing `surface_z` into the robot position by hand:
 
 ```cpp
 mj_kdl::SceneSpec scene;
+scene.timestep   = 0.002;
+scene.add_floor  = true;
+scene.add_skybox = true;
 scene.objects.push_back(table);
 scene.objects.push_back(cube);
 
@@ -1032,9 +1058,10 @@ Raw model/data form:
 mj_kdl::SceneObject obstacle{
     .name  = "obstacle",
     .shape = mj_kdl::Shape::CYLINDER,
-    .size  = { 0.04, 0.12, 0.0 },
+    .size  = { 0.04, 0.12, 0.0 },                 // {radius, half_length, 0}
     .pos   = { 0.3, -0.2, 0.82 },
-    .fixed = true,
+    .rgba  = { 0.6f, 0.6f, 0.6f, 1.0f },
+    .fixed = true,                                // fixed obstacles tolerate mass = 0
 };
 
 mj_kdl::scene_add_object(&model, &data, &scene, obstacle);

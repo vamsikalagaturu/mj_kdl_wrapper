@@ -9,7 +9,10 @@
 #include <kdl/chain.hpp>
 #include <kdl/frames.hpp>
 #include <kdl/jntarray.hpp>
+#include <cstdio>
+#include <cstring>
 #include <functional>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <chrono>
@@ -36,6 +39,41 @@ inline void set_log_level(LogLevel level) { g_log_level = level; }
 /** @ingroup grp_logging
  *  Get the library-wide log verbosity. */
 inline LogLevel get_log_level() { return g_log_level; }
+
+} // namespace mj_kdl
+
+/* @ingroup grp_logging
+ * Internal logging macros, exposed so wrapper users (examples, tests, and
+ * downstream code) can emit messages through the same stream/level filter.
+ * MJ_LOG_ is the primitive; LOG_INFO/LOG_WARN/LOG_ERROR are the entry points.
+ * `expr` may use << to build the message: LOG_INFO("count=" << n).
+ *
+ * Defined at file scope (not inside the mj_kdl namespace) because macros are
+ * not namespaced; the MJ_ prefix avoids collisions.
+ */
+#define MJ_FILENAME_ (::strrchr(__FILE__, '/') ? ::strrchr(__FILE__, '/') + 1 : __FILE__)
+
+#define MJ_LOG_(lvl_enum, color, label, expr)                        \
+    do {                                                             \
+        if (::mj_kdl::g_log_level >= ::mj_kdl::LogLevel::lvl_enum) { \
+            std::ostringstream _mj_oss;                              \
+            _mj_oss << expr; /* NOLINT(bugprone-macro-parentheses) */ \
+            std::fprintf(                                            \
+              stderr,                                                \
+              color "[mj_kdl " label "] %s:%d (%s): %s\033[0m\n",    \
+              MJ_FILENAME_,                                          \
+              __LINE__,                                              \
+              __func__,                                              \
+              _mj_oss.str().c_str()                                  \
+            );                                                       \
+        }                                                            \
+    } while (0)
+
+#define LOG_INFO(expr)  MJ_LOG_(INFO,  "",          "INFO ", expr)
+#define LOG_WARN(expr)  MJ_LOG_(WARN,  "\033[33m",  "WARN ", expr)
+#define LOG_ERROR(expr) MJ_LOG_(ERROR, "\033[31m",  "ERROR", expr)
+
+namespace mj_kdl {
 
 /**
  * @ingroup grp_types
@@ -108,8 +146,20 @@ struct RobotSpec
 };
 
 /** @ingroup grp_types
- *  Shape type for scene objects. */
-enum class Shape { BOX, SPHERE, CYLINDER };
+ *  Shape type for scene objects. Unspecified is the sentinel value;
+ *  build_scene rejects a primitive SceneObject whose shape is Unspecified. */
+enum class Shape { Unspecified, BOX, SPHERE, CYLINDER };
+
+/**
+ * @ingroup grp_types
+ * Contact-friction dimensionality, matching MuJoCo's `condim` integer values.
+ *   Tangential (3) - sliding friction only (default).
+ *   Torsional  (4) - +torsion about the contact normal.
+ *   Rolling    (6) - +torsion and +rolling resistance.
+ * Values 1 (frictionless) and 2 (1D friction) exist in MuJoCo but are
+ * uncommon; if needed, pass `static_cast<Condim>(1)` etc.
+ */
+enum class Condim : int { Tangential = 3, Torsional = 4, Rolling = 6 };
 
 /**
  * @ingroup grp_types
@@ -137,20 +187,25 @@ enum class Shape { BOX, SPHERE, CYLINDER };
  * fixed:
  *   If true the body is welded to its parent (no freejoint); useful for
  *   static obstacles or fixtures. Ignored when mjcf_path is set.
+ *
+ * Fields without an inline default (size, rgba, mass, friction) must be set
+ * explicitly by the caller. They are arbitrary visual/material/dynamic
+ * choices, not neutral identities, so the API refuses to invent placeholder
+ * values.
  */
 struct SceneObject
 {
     std::string  name;
-    std::string  mjcf_path; // optional MJCF asset; when set, shape/size/mass/friction are ignored
-    AttachTarget attach_to;             // placement parent (default: world)
-    Shape        shape       = Shape::BOX;
-    double       size[3]     = { 0.03, 0.03, 0.03 };
-    double       pos[3]      = { 0.0, 0.0, 0.0 };
-    float        rgba[4]     = { 1.0f, 0.0f, 0.0f, 1.0f };
-    bool         fixed       = false;
-    double       mass        = 0.1;
-    int          condim      = 3;
-    double       friction[3] = { 0.5, 0.005, 0.0001 }; // MuJoCo defaults
+    std::string  mjcf_path;  // optional MJCF asset; when set, shape/size/mass/friction are ignored
+    AttachTarget attach_to;  // placement parent (default: world)
+    Shape        shape    = Shape::Unspecified; // required for primitives; rejected at build time if not set
+    double       size[3]; // half-extents (BOX) / {radius, 0, 0} (SPHERE) / {radius, half-len, 0} (CYL)
+    double       pos[3]  = { 0.0, 0.0, 0.0 }; // offset in resolved parent frame [m]
+    float        rgba[4];                     // [r, g, b, a]; required for primitives
+    bool         fixed    = false;
+    double       mass;                        // [kg]; required for primitives
+    Condim       condim   = Condim::Tangential;
+    double       friction[3];                 // [slide, spin, roll]; required for primitives
 };
 
 /**
@@ -158,24 +213,31 @@ struct SceneObject
  * A named fixed camera to add to the world body of the scene.
  * After build_scene() the camera is accessible by name via get_camera_names()
  * and can be activated on a Viewer or VideoRecorder with use_camera().
+ *
+ * pos and fovy have no defaults: there is no neutral camera position or
+ * field of view, so the caller must specify both. euler defaults to identity.
  */
 struct CameraSpec
 {
     std::string name;
-    double      pos[3]   = { 0.0, 0.0, 1.0 }; // world-frame position [m]
+    double      pos[3];                       // world-frame position [m]
     double      euler[3] = { 0.0, 0.0, 0.0 }; // extrinsic XYZ Euler [degrees]
-    double      fovy     = 45.0;              // vertical field of view [degrees]
+    double      fovy;                         // vertical field of view [degrees]
 };
 
 /** @ingroup grp_types
- *  Full scene description passed to build_scene(). */
+ *  Full scene description passed to build_scene().
+ *  timestep, add_floor, and add_skybox have no defaults: the caller must
+ *  choose a physics step and an explicit yes/no for each decoration so the
+ *  resulting scene is never silently misconfigured. gravity_z defaults to
+ *  Earth gravity. */
 struct SceneSpec
 {
     std::vector<RobotSpec>   robots;
-    double                   timestep   = 0.002;
-    double                   gravity_z  = -9.81;
-    bool                     add_floor  = true; // checker groundplane geom
-    bool                     add_skybox = true; // gradient sky texture + directional light
+    double                   timestep;          // required; suggested 0.002 [s]
+    double                   gravity_z = -9.81; // Earth gravity [m/s^2]
+    bool                     add_floor;         // required; checker groundplane geom
+    bool                     add_skybox;        // required; gradient sky + directional light
     std::vector<SceneObject> objects;
     std::vector<CameraSpec>  cameras; // static world cameras added to worldbody
 };

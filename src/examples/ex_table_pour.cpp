@@ -96,7 +96,7 @@ static mj_kdl::SceneObject make_ball(int idx)
         .pos       = { 0.0, 0.0, kTableZ + 0.40 + idx * 2.0 * kBallRadius },
         .rgba      = { 1.0f, 0.84f, 0.30f, 1.0f },
         .mass      = 0.006,
-        .condim    = 4,
+        .condim    = mj_kdl::Condim::Torsional,
         .friction  = { 0.5, 0.02, 0.001 },
     };
 }
@@ -171,6 +171,9 @@ int main(int argc, char *argv[])
     robot_spec.attachments.push_back(bottle);
 
     mj_kdl::SceneSpec   scene_cfg;
+    scene_cfg.timestep   = 0.002;
+    scene_cfg.add_floor  = true;
+    scene_cfg.add_skybox = true;
     mj_kdl::SceneObject table{
         .name      = "table",
         .mjcf_path = table_mjcf,

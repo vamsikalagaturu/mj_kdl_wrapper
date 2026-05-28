@@ -45,6 +45,9 @@ int main(int argc, char *argv[])
     const std::string mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
 
     mj_kdl::SceneSpec sc;
+    sc.timestep   = 0.002;
+    sc.add_floor  = true;
+    sc.add_skybox = true;
     mj_kdl::RobotSpec r;
     r.path = mjcf.c_str();
     sc.robots.push_back(r);

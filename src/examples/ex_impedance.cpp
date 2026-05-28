@@ -60,6 +60,9 @@ int main(int argc, char *argv[])
     rs.attachments.push_back(gs);
 
     mj_kdl::SceneSpec sc;
+    sc.timestep   = 0.002;
+    sc.add_floor  = true;
+    sc.add_skybox = true;
     sc.robots.push_back(rs);
 
     mjModel *model = nullptr;

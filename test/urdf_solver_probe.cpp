@@ -192,6 +192,9 @@ int main(int argc, char *argv[])
     robot_spec.attachments.push_back(gripper);
 
     mj_kdl::SceneSpec scene;
+    scene.timestep   = 0.002;
+    scene.add_floor  = true;
+    scene.add_skybox = true;
     scene.robots.push_back(robot_spec);
 
     mjModel *model = nullptr;

@@ -23,6 +23,10 @@ static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_pat
 // Free-jointed primitives must stay world-anchored (MuJoCo: freejoint only on
 // top level), so their z is surface_z + half_height. The robot, which has no
 // freejoint at its root, attaches to the table via a site instead.
+static constexpr double kCubeMass         = 0.1; // [kg]
+static constexpr double kSphereMass       = 0.05;
+static constexpr double kPickFriction[3]  = { 0.8, 0.02, 0.001 };
+
 static mj_kdl::SceneObject make_box(
   const char *name, double x, double y, double hx, double hy, double hz,
   float r, float g, float b, double surface_z
@@ -35,6 +39,8 @@ static mj_kdl::SceneObject make_box(
         .size      = { hx, hy, hz },
         .pos       = { x, y, surface_z + hz },
         .rgba      = { r, g, b, 1.0f },
+        .mass      = kCubeMass,
+        .friction  = { kPickFriction[0], kPickFriction[1], kPickFriction[2] },
     };
 }
 
@@ -50,6 +56,8 @@ static mj_kdl::SceneObject make_sphere(
         .size      = { radius, 0.0, 0.0 },
         .pos       = { x, y, surface_z + radius },
         .rgba      = { r, g, b, 1.0f },
+        .mass      = kSphereMass,
+        .friction  = { kPickFriction[0], kPickFriction[1], kPickFriction[2] },
     };
 }
 
@@ -102,9 +110,11 @@ class TableSceneTest : public testing::Test
         objects.push_back(make_sphere("orange_sphere", -0.20,  0.20, 0.035, 1.0f, 0.55f, 0.0f, surface_z));
         objects.push_back(make_sphere("purple_sphere", -0.20, -0.20, 0.025, 0.7f, 0.0f,  0.9f, surface_z));
 
-        spec_.objects   = objects;
-        spec_.add_floor = true;
-        spec_.gravity_z = -9.81;
+        spec_.objects    = objects;
+        spec_.timestep   = 0.002;
+        spec_.gravity_z  = -9.81;
+        spec_.add_floor  = true;
+        spec_.add_skybox = true;
 
         spec_.robots.push_back(mj_kdl::RobotSpec{
             .path      = mjcf_.c_str(),

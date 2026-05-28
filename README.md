@@ -102,11 +102,18 @@ panel:
 
 ### Load from MJCF
 
+`SceneSpec` has no defaults for `timestep`, `add_floor`, or `add_skybox`:
+those are choices, not values the library can guess. `build_scene` rejects
+`timestep <= 0` at runtime.
+
 ```cpp
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 
 mj_kdl::SceneSpec sc;
-sc.robots.push_back(mj_kdl::RobotSpec{ .path = "third_party/menagerie/kinova_gen3/gen3.xml", .attachments = {} });
+sc.timestep   = 0.002;   // [s]; required, must be > 0
+sc.add_floor  = true;
+sc.add_skybox = true;
+sc.robots.push_back(mj_kdl::RobotSpec{ .path = "third_party/menagerie/kinova_gen3/gen3.xml" });
 
 mjModel *model = nullptr;
 mjData  *data  = nullptr;
@@ -155,6 +162,9 @@ rs.path = "third_party/menagerie/kinova_gen3/gen3.xml";
 rs.attachments.push_back(gs);
 
 mj_kdl::SceneSpec sc;
+sc.timestep   = 0.002;
+sc.add_floor  = true;
+sc.add_skybox = true;
 sc.robots.push_back(rs);
 mj_kdl::build_scene(&model, &data, &sc);
 ```
@@ -183,9 +193,12 @@ any body, site, or frame added by prior entries.
 
 ```cpp
 mj_kdl::SceneSpec sc;
+sc.timestep   = 0.002;
+sc.add_floor  = true;
+sc.add_skybox = true;
 sc.robots = {
-    mj_kdl::RobotSpec{ .path = "gen3.xml", .pos = { -0.5, 0.0, 0.0 }, .attachments = {} },
-    mj_kdl::RobotSpec{ .path = "gen3.xml", .prefix = "r2_", .pos = { 0.5, 0.0, 0.0 }, .attachments = {} },
+    mj_kdl::RobotSpec{ .path = "gen3.xml", .pos = { -0.5, 0.0, 0.0 } },
+    mj_kdl::RobotSpec{ .path = "gen3.xml", .prefix = "r2_", .pos = { 0.5, 0.0, 0.0 } },
 };
 mj_kdl::build_scene(&model, &data, &sc);
 
@@ -203,8 +216,19 @@ robots -> cameras, so a robot's `attach_to` can reference any prior object
 and a child object's `attach_to` can reference any earlier object in
 `SceneSpec::objects`.
 
+`SceneObject` has no defaults for `shape`, `size`, `rgba`, `mass`, or
+`friction`. For MJCF-backed objects (when `mjcf_path` is set) those fields
+are ignored at runtime; for primitives, `build_scene` runs explicit checks:
+
+- `shape == Shape::Unspecified` -> error, object skipped.
+- `size[i] <= 0` for the relevant dimensions of the shape -> error, skipped.
+- `mass <= 0` on a non-fixed primitive -> error, skipped.
+
 ```cpp
 mj_kdl::SceneSpec sc;
+sc.timestep   = 0.002;
+sc.add_floor  = true;
+sc.add_skybox = true;
 
 mj_kdl::SceneObject table{
     .name      = "table",
@@ -234,13 +258,17 @@ sc.objects.push_back(mj_kdl::SceneObject{
 });
 
 // MuJoCo restricts freejoints to top-level bodies, so a non-fixed primitive
-// (with a freejoint) must stay world-anchored:
+// (with a freejoint) must stay world-anchored. Primitives require shape,
+// size, rgba, mass, and friction.
 sc.objects.push_back(mj_kdl::SceneObject{
-    .name      = "red_cube",
-    .shape     = mj_kdl::Shape::BOX,
-    .size      = { 0.03, 0.03, 0.03 },
-    .pos       = { 0.35, 0.10, 0.73 },  // world frame; tabletop_z + half_height
-    .rgba      = { 1.0f, 0.0f, 0.0f, 1.0f },
+    .name     = "red_cube",
+    .shape    = mj_kdl::Shape::BOX,
+    .size     = { 0.03, 0.03, 0.03 },                 // half-extents [m]
+    .pos      = { 0.35, 0.10, 0.73 },                 // world frame; tabletop_z + half_height
+    .rgba     = { 1.0f, 0.0f, 0.0f, 1.0f },
+    .mass     = 0.1,                                  // [kg]
+    .condim   = mj_kdl::Condim::Torsional,            // friction model (Tangential/Torsional/Rolling)
+    .friction = { 0.8, 0.02, 0.001 },                 // [slide, spin, roll]
 });
 
 mj_kdl::build_scene(&model, &data, &sc);

@@ -63,6 +63,9 @@ class DualArmTest : public testing::Test
          *   arm2: at x = +0.5 m, facing -X (rotated 180 degrees around Z)
          * arm2 joints are prefixed "r2_" in MuJoCo to avoid name collisions. */
         mj_kdl::SceneSpec scene;
+    scene.timestep   = 0.002;
+    scene.add_floor  = true;
+    scene.add_skybox = true;
         scene.timestep  = 0.002;
         scene.gravity_z = -9.81;
         scene.add_floor = true;

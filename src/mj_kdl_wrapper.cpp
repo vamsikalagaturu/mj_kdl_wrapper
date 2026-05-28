@@ -31,28 +31,6 @@
 #include <sstream>
 #include <thread>
 
-#define MJ_FILENAME_ (::strrchr(__FILE__, '/') ? ::strrchr(__FILE__, '/') + 1 : __FILE__)
-
-#define MJ_LOG_(lvl_enum, color, label, expr)                        \
-    do {                                                             \
-        if (::mj_kdl::g_log_level >= ::mj_kdl::LogLevel::lvl_enum) { \
-            std::ostringstream _mj_oss;                              \
-            _mj_oss << expr; /* NOLINT(bugprone-macro-parentheses) */ \
-            std::fprintf(                                            \
-              stderr,                                                \
-              color "[mj_kdl " label "] %s:%d (%s): %s\033[0m\n",    \
-              MJ_FILENAME_,                                          \
-              __LINE__,                                              \
-              __func__,                                              \
-              _mj_oss.str().c_str()                                  \
-            );                                                       \
-        }                                                            \
-    } while (0)
-
-#define LOG_INFO(expr)  MJ_LOG_(INFO,  "",          "INFO ", expr)
-#define LOG_WARN(expr)  MJ_LOG_(WARN,  "\033[33m",  "WARN ", expr)
-#define LOG_ERROR(expr) MJ_LOG_(ERROR, "\033[31m",  "ERROR", expr)
-
 namespace mj_kdl {
 
 void ensure_plugins_loaded()
@@ -72,10 +50,74 @@ static Viewer *g_viewer = nullptr;
 
 // Spec-API helpers
 
+// Buffer size for MuJoCo error strings returned by mj_parseXML / mj_saveLastXML.
+static constexpr size_t kMjErrBuf = 2048;
+
+// Default scene-decoration constants used by add_floor_to_spec /
+// add_skybox_to_spec. Keep here so callers reading the code see one source.
+static constexpr int    kFloorHalfSize    = 10;      // floor plane half-extents [m]
+static constexpr double kFloorThickness   = 0.05;    // floor geom thickness   [m]
+static constexpr int    kFloorTexSize     = 300;     // checker texture size   [px]
+static constexpr int    kFloorTexRepeat   = 5;       // checker tile repeat
+static constexpr float  kFloorReflectance = 0.2f;    // floor material reflectance
+static constexpr int    kSkyTexSize       = 200;     // skybox gradient texture size [px]
+static constexpr double kSunHeight        = 4.0;     // overhead directional light z [m]
+
+// Numerical tolerances. Frame-equality test treats relative deviations below
+// kIdentityTol as zero; sim-time guard rejects steps shorter than kSimTimeEps
+// caused by floating-point round-trip through MuJoCo.
+static constexpr double kIdentityTol = 1e-12;
+static constexpr double kSimTimeEps  = 1e-9;
+
+// Default MuJoCo collision category bitmask for wrapper-authored geoms (sets
+// category bit 0, matching MuJoCo's MJCF compiler defaults for contype and
+// conaffinity). This is a bitmask, not a boolean.
+static constexpr int kContactCategoryAll = 1;
+
+// GL/MuJoCo viewer defaults.
+static constexpr int    kMsaaSamples       = 4;     // GLFW_SAMPLES (4x MSAA)
+static constexpr int    kMaxSceneGeoms     = 2000;  // mjv_makeScene buffer capacity
+static constexpr double kCamDefaultDist    = 2.5;
+static constexpr double kCamDefaultAzim    = 135.0;
+static constexpr double kCamDefaultElev    = -20.0;
+
+// Pixel layout for the offscreen recorder (RGB24 / ffmpeg rgb24 input).
+static constexpr int kRgbBytesPerPixel = 3;
+
+// Defaults applied when the Simulate UI omits recorder fields.
+static constexpr int kRecorderDefaultResIndex = 2; // 720p (see recorder_resolution_from_index)
+static constexpr int kRecorderDefaultFps      = 30;
+
+#ifdef MJ_KDL_HAS_EGL
+// EGL framebuffer attribute values for the headless recorder.
+static constexpr EGLint kEglChannelBits = 8;
+static constexpr EGLint kEglDepthBits   = 24;
+#endif
+
 // Sole owner of the MuJoCo worldbody name. Every other site that needs the
 // worldbody (skybox light, floor geom, resolve_parent with kind == World,
 // cameras) calls this so the literal "world" exists in one place.
 static mjsBody *world_body(mjSpec *spec) { return mjs_findBody(spec, "world"); }
+
+// MuJoCo quaternion [w,x,y,z] <-> KDL::Rotation [x,y,z,w]. Single source so
+// the w/x/y/z swap is never re-derived inline.
+static KDL::Rotation mj_quat_to_kdl_rot(const double *q)
+{ return KDL::Rotation::Quaternion(q[1], q[2], q[3], q[0]); }
+
+static void kdl_rot_to_mj_quat(const KDL::Rotation &R, double q[4])
+{
+    double qx, qy, qz, qw;
+    R.GetQuaternion(qx, qy, qz, qw);
+    q[0] = qw; q[1] = qx; q[2] = qy; q[3] = qz;
+}
+
+static KDL::Rotation mj_xmat_to_kdl_rot(const double *m)
+{ return KDL::Rotation(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]); }
+
+// RAII guard for transient mjSpec pointers built/parsed inside scene-building
+// functions. unique_ptr handles every early-return error path automatically.
+using MjSpecPtr = std::unique_ptr<mjSpec, decltype(&mj_deleteSpec)>;
+static MjSpecPtr make_spec_ptr(mjSpec *s) { return { s, &mj_deleteSpec }; }
 
 // Resolve an AttachTarget to its element in the accumulated spec.
 // Returns nullptr (and logs) when a non-World name is missing.
@@ -116,10 +158,8 @@ static void euler_deg_to_mj_quat(const double euler[3], double out_quat[4])
         return;
     }
     const double d2r = M_PI / 180.0;
-    KDL::Rotation rot = KDL::Rotation::RPY(euler[0] * d2r, euler[1] * d2r, euler[2] * d2r);
-    double qx, qy, qz, qw;
-    rot.GetQuaternion(qx, qy, qz, qw);
-    out_quat[0] = qw; out_quat[1] = qx; out_quat[2] = qy; out_quat[3] = qz;
+    kdl_rot_to_mj_quat(
+      KDL::Rotation::RPY(euler[0] * d2r, euler[1] * d2r, euler[2] * d2r), out_quat);
 }
 
 // Attach a child body element under the resolved parent at the given offset.
@@ -155,21 +195,15 @@ static mjsBody *attach_child(
         // Site/frame parents do not accept mjs_addFrame, so the offset has to
         // ride on the child root. Compose user_offset * child_authored so the
         // child's MJCF-authored pos/quat is not silently dropped.
-        KDL::Rotation user_R = KDL::Rotation::Quaternion(quat[1], quat[2], quat[3], quat[0]);
-        KDL::Vector   user_p(pos[0], pos[1], pos[2]);
-        KDL::Rotation child_R = KDL::Rotation::Quaternion(
-          child_root->quat[1], child_root->quat[2], child_root->quat[3], child_root->quat[0]);
-        KDL::Vector   child_p(child_root->pos[0], child_root->pos[1], child_root->pos[2]);
-        KDL::Frame    composed = KDL::Frame(user_R, user_p) * KDL::Frame(child_R, child_p);
-        double cqx, cqy, cqz, cqw;
-        composed.M.GetQuaternion(cqx, cqy, cqz, cqw);
+        KDL::Frame user(mj_quat_to_kdl_rot(quat), KDL::Vector(pos[0], pos[1], pos[2]));
+        KDL::Frame child(
+          mj_quat_to_kdl_rot(child_root->quat),
+          KDL::Vector(child_root->pos[0], child_root->pos[1], child_root->pos[2]));
+        KDL::Frame composed = user * child;
         child_root->pos[0] = composed.p.x();
         child_root->pos[1] = composed.p.y();
         child_root->pos[2] = composed.p.z();
-        child_root->quat[0] = cqw;
-        child_root->quat[1] = cqx;
-        child_root->quat[2] = cqy;
-        child_root->quat[3] = cqz;
+        kdl_rot_to_mj_quat(composed.M, child_root->quat);
     }
 
     const char *pfx = prefix ? prefix : "";
@@ -204,14 +238,14 @@ void add_skybox_to_spec(mjSpec *spec)
     sky->rgb2[0] = 0.65f;
     sky->rgb2[1] = 0.80f;
     sky->rgb2[2] = 0.95f; // bottom: pale blue
-    sky->width   = 200;
-    sky->height  = 200;
+    sky->width   = kSkyTexSize;
+    sky->height  = kSkyTexSize;
 
     mjsLight *sun = mjs_addLight(wb, nullptr);
     sun->type     = mjLIGHT_DIRECTIONAL;
     sun->pos[0]   = 0;
     sun->pos[1]   = 0;
-    sun->pos[2]   = 4;
+    sun->pos[2]   = kSunHeight;
 }
 
 void add_floor_to_spec(mjSpec *spec)
@@ -228,27 +262,27 @@ void add_floor_to_spec(mjSpec *spec)
     tex->rgb2[0] = 0.1;
     tex->rgb2[1] = 0.2;
     tex->rgb2[2] = 0.3;
-    tex->width   = 300;
-    tex->height  = 300;
+    tex->width   = kFloorTexSize;
+    tex->height  = kFloorTexSize;
 
     mjsMaterial *mat = mjs_addMaterial(spec, nullptr);
     mjs_setString(mjs_getName(mat->element), "groundplane");
     // Set texture at slot mjTEXROLE_RGB (1); vector is pre-initialised with 10 empty strings
     mjs_setInStringVec(mat->textures, mjTEXROLE_RGB, "groundplane");
-    mat->texrepeat[0] = 5;
-    mat->texrepeat[1] = 5;
-    mat->reflectance  = 0.2f;
+    mat->texrepeat[0] = kFloorTexRepeat;
+    mat->texrepeat[1] = kFloorTexRepeat;
+    mat->reflectance  = kFloorReflectance;
 
     mjsGeom *floor = mjs_addGeom(wb, nullptr);
     mjs_setString(mjs_getName(floor->element), "floor");
     mjs_setString(floor->material, "groundplane");
     floor->type        = mjGEOM_PLANE;
-    floor->size[0]     = 10;
-    floor->size[1]     = 10;
-    floor->size[2]     = 0.05;
-    floor->contype     = 1;
-    floor->conaffinity = 1;
-    floor->condim      = 3;
+    floor->size[0]     = kFloorHalfSize;
+    floor->size[1]     = kFloorHalfSize;
+    floor->size[2]     = kFloorThickness;
+    floor->contype     = kContactCategoryAll;
+    floor->conaffinity = kContactCategoryAll;
+    floor->condim      = static_cast<int>(Condim::Tangential);
 }
 
 void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
@@ -257,17 +291,17 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
 
     for (const auto &obj : objects) {
         if (!obj.mjcf_path.empty()) {
-            char    err[2048] = {};
-            mjSpec *asset     = mj_parseXML(obj.mjcf_path.c_str(), nullptr, err, sizeof(err));
+            char     err[kMjErrBuf] = {};
+            MjSpecPtr asset = make_spec_ptr(
+              mj_parseXML(obj.mjcf_path.c_str(), nullptr, err, sizeof(err)));
             if (!asset) {
                 LOG_ERROR("mj_parseXML failed for object asset '" << obj.mjcf_path << "': " << err);
                 continue;
             }
 
-            mjsBody *root = first_root_body(asset);
+            mjsBody *root = first_root_body(asset.get());
             if (!root) {
                 LOG_ERROR("no root body found in object asset '" << obj.mjcf_path << "'");
-                mj_deleteSpec(asset);
                 continue;
             }
 
@@ -280,15 +314,40 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
             if (attached && !obj.name.empty()) {
                 mjs_setString(mjs_getName(attached->element), obj.name.c_str());
             }
-            mj_deleteSpec(asset);
+            continue;
+        }
+
+        if (obj.shape == Shape::Unspecified) {
+            LOG_ERROR(
+              "primitive SceneObject '" << obj.name
+              << "' has Shape::Unspecified; set .shape explicitly (BOX/SPHERE/CYLINDER)");
+            continue;
+        }
+        // Validate fields the user must set on a primitive. Free-jointed bodies
+        // also need mass > 0; fixed bodies tolerate any non-negative mass.
+        const bool need_size2 = (obj.shape == Shape::BOX);
+        const bool need_size1 = (obj.shape == Shape::CYLINDER);
+        if (obj.size[0] <= 0.0
+            || (need_size1 && obj.size[1] <= 0.0)
+            || (need_size2 && (obj.size[1] <= 0.0 || obj.size[2] <= 0.0))) {
+            LOG_ERROR(
+              "primitive SceneObject '" << obj.name
+              << "' has zero or negative .size for its shape; set explicit dimensions");
+            continue;
+        }
+        if (!obj.fixed && obj.mass <= 0.0) {
+            LOG_ERROR(
+              "primitive SceneObject '" << obj.name
+              << "' has .mass=" << obj.mass
+              << "; non-fixed bodies require mass > 0");
             continue;
         }
 
         // Build the primitive body inside a throwaway spec so it can be attached
         // under any parent kind (body, site, frame, world) via the same helper.
-        mjSpec  *tmp    = mj_makeSpec();
-        mjsBody *tmp_wb = world_body(tmp);
-        mjsBody *ob     = mjs_addBody(tmp_wb, nullptr);
+        MjSpecPtr tmp    = make_spec_ptr(mj_makeSpec());
+        mjsBody  *tmp_wb = world_body(tmp.get());
+        mjsBody  *ob     = mjs_addBody(tmp_wb, nullptr);
         mjs_setString(mjs_getName(ob->element), obj.name.c_str());
 
         if (!obj.fixed) {
@@ -303,6 +362,7 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
         case Shape::BOX:      g->type = mjGEOM_BOX;      break;
         case Shape::SPHERE:   g->type = mjGEOM_SPHERE;   break;
         case Shape::CYLINDER: g->type = mjGEOM_CYLINDER; break;
+        case Shape::Unspecified: break; // unreachable, guarded above
         }
         g->size[0] = obj.size[0];
         g->size[1] = obj.size[1];
@@ -310,12 +370,11 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
         g->mass    = obj.mass;
         for (int k = 0; k < 4; ++k) g->rgba[k] = obj.rgba[k];
         for (int k = 0; k < 3; ++k) g->friction[k] = obj.friction[k];
-        g->contype     = 1;
-        g->conaffinity = 1;
-        g->condim      = obj.condim;
+        g->contype     = kContactCategoryAll;
+        g->conaffinity = kContactCategoryAll;
+        g->condim      = static_cast<int>(obj.condim);
 
         attach_child(spec, obj.attach_to, obj.pos, kZeroEuler, ob, "");
-        mj_deleteSpec(tmp);
     }
 }
 
@@ -357,13 +416,6 @@ bool compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data)
 }
 
 // KDL helpers
-
-// Convert MuJoCo quaternion [w, x, y, z] to KDL::Rotation (KDL expects x, y, z, w).
-static KDL::Rotation mj_quat_to_kdl_rot(const double *q)
-{ return KDL::Rotation::Quaternion(q[1], q[2], q[3], q[0]); }
-
-static KDL::Rotation mj_xmat_to_kdl_rot(const double *m)
-{ return KDL::Rotation(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]); }
 
 static bool get_site_frame_in_body(
   const mjModel *model,
@@ -654,8 +706,8 @@ static bool
 
 bool save_model_xml(const mjModel *model, const char *path)
 {
-    char err[2048] = {};
-    int  ok        = mj_saveLastXML(path, model, err, sizeof(err));
+    char err[kMjErrBuf] = {};
+    int  ok             = mj_saveLastXML(path, model, err, sizeof(err));
     if (!ok) {
         LOG_ERROR("mj_saveLastXML failed for '" << path << "': " << err);
     } else {
@@ -710,25 +762,23 @@ bool attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
                                  << "' prefix='" << (a->prefix ? a->prefix : "") << "'"
     );
 
-    char    err[2048] = {};
-    mjSpec *att       = mj_parseXML(a->mjcf_path, nullptr, err, sizeof(err));
+    char      err[kMjErrBuf] = {};
+    MjSpecPtr att = make_spec_ptr(mj_parseXML(a->mjcf_path, nullptr, err, sizeof(err)));
     if (!att) {
         LOG_ERROR("mj_parseXML failed for attachment '" << a->mjcf_path << "': " << err);
         return false;
     }
 
-    mjsBody *att_root = first_root_body(att);
+    mjsBody *att_root = first_root_body(att.get());
     if (!att_root) {
         LOG_ERROR("no root body found in attachment spec '" << a->mjcf_path << "'");
-        mj_deleteSpec(att);
         return false;
     }
 
     if (!attach_child(robot_spec, a->attach_to, a->pos, a->euler, att_root, a->prefix)) {
-        mj_deleteSpec(att);
         return false;
     }
-    mj_deleteSpec(att); // deep-copied into robot_spec; source can be freed
+    // att (deep-copied into robot_spec) is freed by MjSpecPtr at scope exit.
 
     // Register contact exclusions.
     for (const auto &ex : a->contact_exclusions) {
@@ -742,45 +792,49 @@ bool attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
 bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
 {
     if (!sc || sc->robots.empty()) return false;
+    if (sc->timestep <= 0.0) {
+        LOG_ERROR(
+          "SceneSpec::timestep must be > 0 (got " << sc->timestep
+          << "); the field has no default, set it explicitly (suggested 0.002 s)");
+        return false;
+    }
     ensure_plugins_loaded();
     LOG_INFO(
       "build_scene: " << sc->robots.size() << " robot(s)"
                       << ", objects=" << sc->objects.size()
     );
 
-    mjSpec *scene = mj_makeSpec();
+    MjSpecPtr scene = make_spec_ptr(mj_makeSpec());
     if (!scene) {
         LOG_ERROR("mj_makeSpec() failed");
         return false;
     }
 
-    scene->compiler.balanceinertia = 1;
-    scene->compiler.discardvisual  = 0;
+    scene->compiler.balanceinertia = true;  // mjsCompiler stores as int 0/1
+    scene->compiler.discardvisual  = false;
 
     // Scene decorations go in before any object/robot so they exist as world
     // anchors regardless of declaration order.
-    if (sc->add_skybox) add_skybox_to_spec(scene);
-    if (sc->add_floor)  add_floor_to_spec(scene);
+    if (sc->add_skybox) add_skybox_to_spec(scene.get());
+    if (sc->add_floor)  add_floor_to_spec(scene.get());
 
     // Objects come before robots so a robot can attach to a SceneObject (e.g.
     // {AttachKind::Site, "table_mount"}). A child object that references
     // another object must appear after its parent in SceneSpec::objects.
-    if (!sc->objects.empty()) add_objects_to_spec(scene, sc->objects);
+    if (!sc->objects.empty()) add_objects_to_spec(scene.get(), sc->objects);
 
-    bool first_arm = true;
-    char err[2048] = {};
+    bool first_arm        = true;
+    char err[kMjErrBuf]   = {};
     for (int ai = 0; ai < (int)sc->robots.size(); ++ai) {
         const RobotSpec &rs = sc->robots[ai];
         if (!rs.path) {
             LOG_ERROR("robots[" << ai << "].path is null");
-            mj_deleteSpec(scene);
             return false;
         }
 
-        mjSpec *arm = mj_parseXML(rs.path, nullptr, err, sizeof(err));
+        MjSpecPtr arm = make_spec_ptr(mj_parseXML(rs.path, nullptr, err, sizeof(err)));
         if (!arm) {
             LOG_ERROR("mj_parseXML failed for '" << rs.path << "': " << err);
-            mj_deleteSpec(scene);
             return false;
         }
 
@@ -795,32 +849,25 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
 
         // Apply attachment chain in order (mount, sensor, gripper, etc.).
         for (const auto &att : rs.attachments) {
-            if (!attach_to_spec(arm, &att)) {
-                mj_deleteSpec(arm);
-                mj_deleteSpec(scene);
-                return false;
-            }
+            if (!attach_to_spec(arm.get(), &att)) return false;
         }
 
-        mjsBody *arm_root = first_root_body(arm);
+        mjsBody *arm_root = first_root_body(arm.get());
         if (!arm_root) {
             LOG_ERROR("no root body found in arm spec '" << rs.path << "'");
-            mj_deleteSpec(arm);
-            mj_deleteSpec(scene);
             return false;
         }
 
-        if (!attach_child(scene, rs.attach_to, rs.pos, rs.euler, arm_root, rs.prefix)) {
+        if (!attach_child(scene.get(), rs.attach_to, rs.pos, rs.euler, arm_root, rs.prefix)) {
             LOG_ERROR("attach failed for arm " << ai);
-            mj_deleteSpec(arm);
-            mj_deleteSpec(scene);
             return false;
         }
-        mj_deleteSpec(arm); // deep-copied into scene; source can be freed
+        // arm (deep-copied into scene) is freed by MjSpecPtr at scope exit.
     }
 
-    if (!sc->cameras.empty()) add_cameras_to_spec(scene, sc->cameras);
-    return compile_and_make_data(scene, out_model, out_data);
+    if (!sc->cameras.empty()) add_cameras_to_spec(scene.get(), sc->cameras);
+    // compile_and_make_data takes ownership of the raw spec and always deletes it.
+    return compile_and_make_data(scene.release(), out_model, out_data);
 }
 
 bool scene_add_object(mjModel **model, mjData **data, SceneSpec *spec, const SceneObject &obj)
@@ -986,7 +1033,7 @@ bool init_robot_from_mjcf(
         r->tip_T_tcp     = tip_T_tcp;
         r->has_tcp_frame = true;
         r->tcp_site      = tool->tcp_site;
-    } else if (tool && !Equal(tool->tcp_frame, KDL::Frame::Identity(), 1e-12)) {
+    } else if (tool && !Equal(tool->tcp_frame, KDL::Frame::Identity(), kIdentityTol)) {
         tip_T_tcp        = tool->tcp_frame;
         has_tcp          = true;
         r->tip_T_tcp     = tip_T_tcp;
@@ -1416,7 +1463,7 @@ bool init_window(Viewer *v, Robot *r, const char *title, int width, int height)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_FALSE);
-    glfwWindowHint(GLFW_SAMPLES, 4);
+    glfwWindowHint(GLFW_SAMPLES, kMsaaSamples);
 
     v->window = glfwCreateWindow(width, height, title, nullptr, nullptr);
     if (!v->window) {
@@ -1447,12 +1494,12 @@ bool init_window(Viewer *v, Robot *r, const char *title, int width, int height)
     mjv_defaultCamera(&v->cam);
     mjv_defaultOption(&v->opt);
     mjv_defaultPerturb(&v->pert);
-    mjv_makeScene(r->model, &v->scn, 2000);
+    mjv_makeScene(r->model, &v->scn, kMaxSceneGeoms);
     mjr_makeContext(r->model, &v->con, mjFONTSCALE_150);
     v->cam.type      = mjCAMERA_FREE;
-    v->cam.distance  = 2.5;
-    v->cam.azimuth   = 135.0;
-    v->cam.elevation = -20.0;
+    v->cam.distance  = kCamDefaultDist;
+    v->cam.azimuth   = kCamDefaultAzim;
+    v->cam.elevation = kCamDefaultElev;
     g_robot          = r;
     g_viewer         = v;
     return true;
@@ -1509,8 +1556,8 @@ static void handle_recorder_request(SimUiState *ss, mjModel *m)
 
     char path[mujoco::Simulate::kMaxFilenameLength] = {};
     int  camera     = 0;
-    int  resolution = 2;
-    int  fps        = 30;
+    int  resolution = kRecorderDefaultResIndex;
+    int  fps        = kRecorderDefaultFps;
     int  request =
       ss->sim->ConsumeWrapperRecordRequest(path, sizeof(path), &camera, &resolution, &fps);
     if (!request) return;
@@ -1770,7 +1817,7 @@ static bool tick_impl(Viewer *v, mjModel *m, mjData *d, bool paused)
             // scrubs to t=0 from a paused state before any physics has run.
             const bool time_jumped_back =
                 ss->prev_sim_time > m->opt.timestep &&
-                d->time < ss->prev_sim_time - 1e-9;
+                d->time < ss->prev_sim_time - kSimTimeEps;
             if (time_jumped_back && g_robot) {
                 std::vector<Robot *> robots = { g_robot };
                 (void)reset_runtime(nullptr, m, d, robots, nullptr, {}, false);
@@ -1836,24 +1883,15 @@ struct VideoRecorderImpl
 
 static bool vr_egl_init(VideoRecorderImpl *impl)
 {
-    const EGLint attrs[] = { EGL_RED_SIZE,
-                             8,
-                             EGL_GREEN_SIZE,
-                             8,
-                             EGL_BLUE_SIZE,
-                             8,
-                             EGL_ALPHA_SIZE,
-                             8,
-                             EGL_DEPTH_SIZE,
-                             24,
-                             EGL_STENCIL_SIZE,
-                             8,
-                             EGL_COLOR_BUFFER_TYPE,
-                             EGL_RGB_BUFFER,
-                             EGL_SURFACE_TYPE,
-                             EGL_PBUFFER_BIT,
-                             EGL_RENDERABLE_TYPE,
-                             EGL_OPENGL_BIT,
+    const EGLint attrs[] = { EGL_RED_SIZE,         kEglChannelBits,
+                             EGL_GREEN_SIZE,       kEglChannelBits,
+                             EGL_BLUE_SIZE,        kEglChannelBits,
+                             EGL_ALPHA_SIZE,       kEglChannelBits,
+                             EGL_DEPTH_SIZE,       kEglDepthBits,
+                             EGL_STENCIL_SIZE,     kEglChannelBits,
+                             EGL_COLOR_BUFFER_TYPE, EGL_RGB_BUFFER,
+                             EGL_SURFACE_TYPE,     EGL_PBUFFER_BIT,
+                             EGL_RENDERABLE_TYPE,  EGL_OPENGL_BIT,
                              EGL_NONE };
 
     impl->egl_dpy = eglGetDisplay(EGL_DEFAULT_DISPLAY);
@@ -1927,7 +1965,8 @@ bool init_video_recorder(
     impl->width  = width;
     impl->height = height;
     impl->out_path = out_path;
-    impl->rgb_buf.resize(static_cast<size_t>(width) * static_cast<size_t>(height) * 3);
+    impl->rgb_buf.resize(
+      static_cast<size_t>(width) * static_cast<size_t>(height) * kRgbBytesPerPixel);
 
     if (!vr_egl_init(impl)) {
         delete impl;
@@ -1986,7 +2025,7 @@ bool record_frame(VideoRecorder *vr, mjModel *model, mjData *data)
     mjr_readPixels(impl->rgb_buf.data(), nullptr, vp, &impl->con);
 
     // MuJoCo fills the buffer bottom-to-top; flip before piping to ffmpeg.
-    const int            row_bytes = 3 * impl->width;
+    const int            row_bytes = kRgbBytesPerPixel * impl->width;
     uint8_t             *buf       = impl->rgb_buf.data();
     std::vector<uint8_t> tmp(static_cast<size_t>(row_bytes));
     for (int top = 0, bot = impl->height - 1; top < bot; ++top, --bot) {

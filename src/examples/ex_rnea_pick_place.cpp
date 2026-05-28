@@ -134,7 +134,7 @@ static mj_kdl::SceneObject make_cube(double surface_z)
         .pos       = { kPickX, kPickY, surface_z + kCubeHS },
         .rgba      = { 0.1f, 0.35f, 1.0f, 1.0f },
         .mass      = 0.1,
-        .condim    = 4,
+        .condim    = mj_kdl::Condim::Torsional,
         .friction  = { 0.8, 0.02, 0.001 },
     };
 }
@@ -177,6 +177,9 @@ int main(int argc, char *argv[])
     robot_spec.attachments.push_back(gripper);
 
     mj_kdl::SceneSpec scene;
+    scene.timestep   = 0.002;
+    scene.add_floor  = true;
+    scene.add_skybox = true;
     scene.robots.push_back(robot_spec);
     mj_kdl::SceneObject table{
         .name      = "table",

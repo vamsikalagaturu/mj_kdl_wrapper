@@ -49,6 +49,9 @@ class MjcfVelCtrlTest : public testing::Test
         }
 
         mj_kdl::SceneSpec sc;
+    sc.timestep   = 0.002;
+    sc.add_floor  = true;
+    sc.add_skybox = true;
         sc.robots.push_back(mj_kdl::RobotSpec{ .path = arm_mjcf.c_str(), .attachments = {} });
 
         ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc));

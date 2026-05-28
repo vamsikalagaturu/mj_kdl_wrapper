@@ -67,6 +67,9 @@ int main(int argc, char *argv[])
 
     // Build scene
     mj_kdl::SceneSpec sc;
+    sc.timestep   = 0.002;
+    sc.add_floor  = true;
+    sc.add_skybox = true;
     mj_kdl::RobotSpec r;
     r.path = mjcf.c_str();
     sc.robots.push_back(r);
