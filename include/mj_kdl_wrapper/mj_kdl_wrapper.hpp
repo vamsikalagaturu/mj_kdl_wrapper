@@ -558,6 +558,33 @@ bool init_window(
 bool init_window_sim(Viewer *v, Robot *r, const char *title = "MuJoCo");
 
 /**
+ * @ingroup grp_viewer
+ * Reset the viewer's user-scene geom count to 0.
+ * Call once per frame before appending trace segments with add_trace_segment().
+ * No-op when v is not backed by an init_window_sim() window (e.g. headless).
+ * @param[in,out] v  Viewer initialised by init_window_sim().
+ */
+void clear_trace(Viewer *v);
+
+/**
+ * @ingroup grp_viewer
+ * Append a single line segment to the viewer's user scene. Thread-safe.
+ * The render thread merges the user scene into each frame automatically.
+ * Silently drops the segment once the user-scene geom buffer is full.
+ * No-op when v is not backed by an init_window_sim() window (e.g. headless).
+ * @param[in,out] v     Viewer initialised by init_window_sim().
+ * @param[in]     a     Segment start point (world frame) [m].
+ * @param[in]     b     Segment end point (world frame) [m].
+ * @param[in]     rgba  Optional [r, g, b, a] colour; nullptr -> warm orange.
+ */
+void add_trace_segment(
+  Viewer            *v,
+  const KDL::Vector &a,
+  const KDL::Vector &b,
+  const float        rgba[4] = nullptr
+);
+
+/**
  * @ingroup grp_robot
  * Zero all Robot fields.  Does not free model or data; call destroy_scene() for that.
  * @param[in,out] r  Robot to tear down.

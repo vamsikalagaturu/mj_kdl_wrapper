@@ -613,6 +613,58 @@ When recording stops successfully, the terminal prints:
 If the status changes to `failed`, check that `ffmpeg` is installed and the path
 is writable.
 
+### Draw A Live Trajectory Trace Overlay
+
+`init_window_sim()` owns a user scene that the render thread merges into every
+frame. Two helpers let you draw your own line geometry into it -- the built-in
+use is a live polyline of recent end-effector positions, which makes it obvious
+at a glance whether the EE is tracking a commanded path:
+
+```cpp
+#include <deque>
+
+std::deque<KDL::Vector> trace;          // ring buffer of recent EE points
+constexpr size_t kTraceMax = 4096;      // bounded by the user-scene geom budget
+
+while (mj_kdl::step(&robot)) {
+    mj_kdl::update(&robot);
+    // ... run your controller; advance the EE ...
+
+    // FK gives the EE in the chain-root frame; the overlay renders in world
+    // frame, so lift it through the (fixed) base body pose -- cache this once.
+    static KDL::Frame world_T_base;
+    static bool have_base =
+        mj_kdl::get_body_frame(robot.model, robot.data, "base_link", &world_T_base);
+
+    KDL::Frame ee_base;
+    fk_solver.JntToCart(q, ee_base);
+    trace.push_back(world_T_base * ee_base.p);
+    if (trace.size() > kTraceMax) trace.pop_front();
+
+    mj_kdl::clear_trace(&viewer);                 // reset the overlay each frame
+    static constexpr float kOrange[4] = {1.0f, 0.5f, 0.1f, 1.0f};
+    for (size_t i = 1; i < trace.size(); ++i)
+        mj_kdl::add_trace_segment(&viewer, trace[i - 1], trace[i], kOrange);
+}
+```
+
+Key points:
+
+- Both helpers are **no-ops when `viewer` is not backed by an `init_window_sim()`
+  window** (e.g. headless runs), so the same loop compiles and runs unchanged
+  with no display -- guard the bookkeeping with `if (!headless)` to skip the
+  allocation entirely.
+- `add_trace_segment()` is thread-safe and silently drops segments once the
+  user-scene geom buffer is full (8192 geoms). Keep your ring buffer at or below
+  that to avoid a truncated trace.
+- Pass `nullptr` for `rgba` to use the default warm orange.
+- Points are in **world frame**. Robot FK is in the chain-root frame, so compose
+  with the base body's world pose (constant for a fixed base; read it once).
+
+The motion-spec code generator wires this up automatically: declare a `TRACE`
+block in the `ENVIRONMENT` of a `.robmot` model (`enabled`, `length`, `color`)
+and every generated demo renders the trace with no hand-written loop code.
+
 ## 11. Record Video
 
 Interactive recording is available in the Simulate UI:
