@@ -33,6 +33,7 @@ multi-robot scenes.
 - **Control ports** -- `update()` reads `qpos`/`qvel`/`qfrc_actuator` into `*_msr` and applies `*_cmd` in POSITION or TORQUE mode
 - **Dynamics probes** -- `test/urdf_solver_probe.cpp` uses the bundled Kinova GEN3 URDF to check ACHD fixed-joint outputs and compare URDF-vs-MuJoCo RNEA torques
 - **Interactive viewer** -- `init_window_sim()` + `step()` gives your code the control loop while the MuJoCo simulate UI runs in a background render thread
+- **Overlay geometry** -- `clear_trace()` / `add_trace_segment()` draw your own lines (e.g. a live end-effector trajectory trace) into the simulate UI's user scene; no-ops in headless mode
 - **Interactive and headless recording** -- Simulate UI recorder controls plus `VideoRecorder` for EGL offscreen MP4 recording
 
 ## Dependencies

@@ -28,6 +28,10 @@
  *
  * Use init_window_sim() + step() for the full simulate UI with physics panels.
  * Use init_window() + render() for a lightweight manual render loop.
+ *
+ * The simulate UI owns a user scene merged into every frame; draw your own
+ * overlay geometry (e.g. a live end-effector trajectory trace) into it with
+ * clear_trace() and add_trace_segment().  Both are no-ops in headless mode.
  */
 
 /**

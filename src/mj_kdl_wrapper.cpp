@@ -1533,6 +1533,11 @@ struct SimUiState
     int                  record_camera        = 0; // 0=current, 1=free, 2=tracking, 3+=fixed cam
     int                  record_frame_stride  = 1;
     int                  record_frame_counter = 0;
+    /* User scene merged into each render frame by Simulate (overlay polylines,
+     * e.g. the EE trajectory trace). Guarded by user_scn_mtx because the control
+     * thread appends to it while the render thread reads it. */
+    mjvScene             user_scn{};
+    std::mutex           user_scn_mtx;
 };
 
 static VideoResolution recorder_resolution_from_index(int index)
@@ -1659,6 +1664,8 @@ void cleanup(Viewer *v)
         ss->sim->exitrequest = 1;
         if (ss->render_thread.joinable()) ss->render_thread.join();
         if (ss->recorder_active) cleanup(&ss->recorder);
+        /* Render thread has stopped, so no one is reading user_scn now. */
+        mjv_freeScene(&ss->user_scn);
         delete ss;
         v->_sim_ui = nullptr;
         if (g_viewer == v) g_viewer = nullptr;
@@ -1672,6 +1679,31 @@ void cleanup(Viewer *v)
     v->window = nullptr;
     glfwTerminate();
     if (g_viewer == v) g_viewer = nullptr;
+}
+
+void clear_trace(Viewer *v)
+{
+    if (!v || !v->_sim_ui) return; // headless / no window
+    auto *ss = static_cast<SimUiState *>(v->_sim_ui);
+    std::lock_guard<std::mutex> lk(ss->user_scn_mtx);
+    ss->user_scn.ngeom = 0;
+}
+
+void add_trace_segment(Viewer *v, const KDL::Vector &a, const KDL::Vector &b, const float rgba[4])
+{
+    if (!v || !v->_sim_ui) return; // headless / no window
+    auto *ss = static_cast<SimUiState *>(v->_sim_ui);
+    std::lock_guard<std::mutex> lk(ss->user_scn_mtx);
+    if (ss->user_scn.ngeom >= ss->user_scn.maxgeom) return;
+    mjvGeom *g = &ss->user_scn.geoms[ss->user_scn.ngeom++];
+
+    static constexpr float kDefault[4] = { 1.0f, 0.5f, 0.1f, 1.0f }; // warm orange
+    const float           *col         = rgba ? rgba : kDefault;
+    mjv_initGeom(g, mjGEOM_LINE, /*size=*/nullptr, /*pos=*/nullptr, /*mat=*/nullptr, col);
+
+    const mjtNum from[3] = { a.x(), a.y(), a.z() };
+    const mjtNum to[3]   = { b.x(), b.y(), b.z() };
+    mjv_connector(g, mjGEOM_LINE, /*width=*/3.0, from, to);
 }
 
 bool is_running(const Viewer *v)
@@ -1760,6 +1792,16 @@ bool init_window_sim(Viewer *v, Robot *r, const char *title)
         std::unique_lock<std::recursive_mutex> lock(ss->sim->mtx);
         mj_forward(r->model, r->data);
     }
+
+    /* Allocate the overlay user scene and hand it to Simulate, which merges it
+     * into every rendered frame (simulate.h: Simulate::user_scn). add_trace_segment()
+     * appends geoms here from the control thread. */
+    mjv_defaultScene(&ss->user_scn);
+    // Overlay geom budget for add_trace_segment(); caps the DSL trace-length
+    // (mj:trace-length maxInclusive in simulation/mujoco.shacl.ttl).
+    mjv_makeScene(r->model, &ss->user_scn, /*maxgeom=*/8192);
+    ss->user_scn.ngeom = 0;
+    ss->sim->user_scn  = &ss->user_scn;
 
     v->_sim_ui = ss;
     g_viewer   = v;

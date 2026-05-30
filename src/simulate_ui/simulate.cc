@@ -2346,6 +2346,20 @@ void Simulate::Sync(bool state_only) {
   // update scene or sync data from user in passive mode
   if (!is_passive_) {
     mjv_updateScene(m_, d_, &this->opt, &this->pert, &this->cam, mjCAT_ALL, &this->scn);
+
+    // Managed mode upstream ignores user_scn; append its overlay geoms (e.g. the
+    // wrapper's EE trajectory trace) here so they survive into Render(). The
+    // buffer is bounded by user_scn->maxgeom, so a torn read across the wrapper's
+    // append is at worst a one-frame visual glitch, never out of bounds.
+    if (user_scn) {
+      int nusergeom = user_scn->ngeom;
+      int ngeom = std::min(nusergeom, this->scn.maxgeom - this->scn.ngeom);
+      if (ngeom > 0) {
+        std::memcpy(this->scn.geoms + this->scn.ngeom, user_scn->geoms,
+                    ngeom * sizeof(mjvGeom));
+        this->scn.ngeom += ngeom;
+      }
+    }
   } else {
     if (state_only) {
       int state_size = mj_stateSize(m_, mjSTATE_INTEGRATION);
