@@ -33,6 +33,7 @@ multi-robot scenes.
 - **Control ports** -- `update()` reads `qpos`/`qvel`/`qfrc_actuator` into `*_msr` and applies `*_cmd` in POSITION or TORQUE mode
 - **Dynamics probes** -- `test/urdf_solver_probe.cpp` uses the bundled Kinova GEN3 URDF to check ACHD fixed-joint outputs and compare URDF-vs-MuJoCo RNEA torques
 - **Interactive viewer** -- `init_window_sim()` + `step()` gives your code the control loop while the MuJoCo simulate UI runs in a background render thread
+- **Viewer debug panels** -- `Frames` (per-body/site coordinate triads), `Trace` (end-effector trail), and `Perturb` (point-and-drag force/torque on a selected body) sections in the simulate UI
 - **Overlay geometry** -- `clear_trace()` / `add_trace_segment()` draw your own lines (e.g. a live end-effector trajectory trace) into the simulate UI's user scene; no-ops in headless mode
 - **Interactive and headless recording** -- Simulate UI recorder controls plus `VideoRecorder` for EGL offscreen MP4 recording
 
@@ -86,18 +87,34 @@ Optional flags:
 | `FETCH_MENAGERIE=ON` | OFF | Download MuJoCo Menagerie robot models |
 | `BUILD_TESTS=ON` | ON | Build and register GoogleTest tests with CTest |
 | `BUILD_DOCS=ON` | OFF | Generate Doxygen HTML docs (`cmake --build build --target docs`) |
+| `SHOW_EQUALITY_PANEL=ON` | OFF | Show the Simulate UI `Equality` section (hidden by default) |
+| `SHOW_GROUP_PANEL=ON` | OFF | Show the Simulate UI `Group enable` section (hidden by default) |
 
 The repo also carries `third_party/kinova/GEN3_URDF_V12.urdf` for KDL parser
 diagnostics.  The MuJoCo model remains sourced from Menagerie.
 
 The simulate UI screenshot button (`S` key) is always enabled; it uses an ffmpeg pipe to write PNGs without any third-party lodepng dependency.
 
-The local Simulate UI also includes wrapper-specific controls in the Simulation
-panel:
+The local Simulate UI also includes wrapper-specific controls. In the left
+Simulation panel:
 
 - `RTF` shows the wrapper real-time factor controlled by `,` and `.`.
 - `Recorder` lets you select output path, recording camera, resolution, FPS,
   and start/stop recording.
+
+The right panel adds debug sections:
+
+- `Frames` -- per-body and per-site coordinate-frame triads (RViz-style),
+  toggled individually, with a `Scale` slider for axis length.
+- `Trace` -- `Trace EE` toggles a trail that follows the robot's TCP site.
+- `Perturb` -- shows the double-clicked `Body` name and a `Drag` selector
+  (`Camera` / `Force` / `Torque`); see [Viewer controls](#viewer-controls).
+
+The `Equality` and `Group enable` sections are hidden by default; build with
+`-DSHOW_EQUALITY_PANEL=ON` / `-DSHOW_GROUP_PANEL=ON` to restore them.
+
+The viewer-only `Frames`, `Trace`, and `Perturb` geometry is not drawn into
+recorded MP4s, which use a separate offscreen scene.
 
 ## API
 
@@ -376,13 +393,19 @@ mj_kdl::scene_remove_object(&model, &data, &sc, "red_cube");
 | Left drag | Orbit camera |
 | Right drag | Pan camera |
 | Scroll | Zoom |
-| Double-click body | Select body for perturbation |
-| Left drag (selected) | Apply translational force |
-| Right drag (selected) | Apply torque |
+| Double-click body | Select body (name shown in the `Perturb` panel) |
 | `D` | Deselect body |
 | `Space` | Pause / resume |
 | `,` | Decrease wrapper real-time factor |
 | `.` | Increase wrapper real-time factor |
+
+Applying a perturbation force/torque to the selected body, two equivalent ways:
+
+- **Perturb panel** -- set `Drag` to `Force` or `Torque`, then left-drag in the
+  3D view (right-drag still pans the camera). `Shift` drags in the horizontal
+  plane instead of the vertical.
+- **Keyboard + mouse** -- `Ctrl` + right-drag applies force, `Ctrl` + left-drag
+  applies torque.
 
 All other controls (reset, quit, rendering flags, live camera selection, and
 recording) are in the MuJoCo panels.
