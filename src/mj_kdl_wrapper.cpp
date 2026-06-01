@@ -1803,6 +1803,10 @@ bool init_window_sim(Viewer *v, Robot *r, const char *title)
     ss->user_scn.ngeom = 0;
     ss->sim->user_scn  = &ss->user_scn;
 
+    // trace follows the robot's TCP site (Frames panel "Trace EE")
+    if (!r->tcp_site.empty())
+        ss->sim->ee_trace_site_ = mj_name2id(r->model, mjOBJ_SITE, r->tcp_site.c_str());
+
     v->_sim_ui = ss;
     g_viewer   = v;
     g_robot    = r;

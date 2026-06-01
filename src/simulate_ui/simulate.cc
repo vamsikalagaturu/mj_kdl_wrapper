@@ -791,6 +791,33 @@ void UpdateWrapperRecorderState(mj::Simulate* sim) {
   mjui_update(SECT_SIMULATION, 20, &sim->ui0, &sim->uistate, &sim->platform_ui->mjr_context());
 }
 
+// refresh the Perturb panel body name when the selection changes
+void UpdatePerturbBody(mj::Simulate* sim) {
+  if (sim->perturb_sect_ < 0) {
+    return;
+  }
+  int sel = sim->pert.select;
+  if (sel == sim->perturb_select_shown_) {
+    return;
+  }
+  sim->perturb_select_shown_ = sel;
+
+  char name[100] = "(none)";
+  if (sel > 0 && sim->m_) {
+    const char* n = mj_id2name(sim->m_, mjOBJ_BODY, sel);
+    if (n && n[0]) {
+      mju::strcpy_arr(name, n);
+    } else {
+      mju::sprintf_arr(name, "body %d", sel);
+    }
+  }
+  mjuiItem& item = sim->ui1.sect[sim->perturb_sect_].item[0];
+  item.multi.nelem = 1;
+  mju::strcpy_arr(item.multi.name[0], name);
+  mjui_update(sim->perturb_sect_, 0, &sim->ui1, &sim->uistate,
+              &sim->platform_ui->mjr_context());
+}
+
 void UpdateWrapperRecordCameraList(mj::Simulate* sim, const mjModel* m) {
   mjuiItem& item = sim->ui0.sect[SECT_SIMULATION].item[15];
   item.multi.nelem = 3;
@@ -1199,6 +1226,174 @@ void MakeGroupSection(mj::Simulate* sim) {
   mjui_add(&sim->ui0, defGroup);
 }
 
+// add one show-frame checkbox per body/site to the Frames section
+void AddFrameCheckboxes(mj::Simulate* sim, mjtObj objtype,
+                        std::vector<int>& show, int count, int* itemcnt) {
+  mjuiDef defCheck[] = {
+    {mjITEM_CHECKINT, "", 2, nullptr, ""},
+    {mjITEM_END}
+  };
+  int n = mjMIN(count, static_cast<int>(show.size()));
+  for (int i = 0; i < n && *itemcnt < mjMAXUIITEM; i++) {
+    defCheck[0].pdata = &show[i];
+    const char* name = mj_id2name(sim->m_, objtype, i);
+    if (name && name[0]) {
+      mju::strcpy_arr(defCheck[0].name, name);
+    } else {
+      mju::sprintf_arr(defCheck[0].name, "%d", i);
+    }
+    mjui_add(&sim->ui1, defCheck);
+    (*itemcnt)++;
+  }
+}
+
+// make frames section of UI: scale slider + per-body/per-site frame toggles
+void MakeFrameSection(mj::Simulate* sim) {
+  mjuiDef defFrame[] = {
+    {mjITEM_SECTION,   "Frames",   mjPRESERVE, nullptr, "AF"},
+    {mjITEM_SLIDERNUM, "Scale",    2, &sim->frame_scale_, "0 0.3"},
+    {mjITEM_SEPARATOR, "Bodies",   1},
+    {mjITEM_END}
+  };
+  mjuiDef defSitesSep[] = {
+    {mjITEM_SEPARATOR, "Sites", 1},
+    {mjITEM_END}
+  };
+
+  mjui_add(&sim->ui1, defFrame);
+
+  // slider + two separators already occupy section items
+  int itemcnt = 3;
+  AddFrameCheckboxes(sim, mjOBJ_BODY, sim->body_show_frame_, sim->m_->nbody, &itemcnt);
+  if (sim->m_->nsite > 0) {
+    mjui_add(&sim->ui1, defSitesSep);
+    AddFrameCheckboxes(sim, mjOBJ_SITE, sim->site_show_frame_, sim->m_->nsite, &itemcnt);
+  }
+}
+
+// make trace section of UI: EE trajectory trail toggle
+void MakeTraceSection(mj::Simulate* sim) {
+  mjuiDef defTrace[] = {
+    {mjITEM_SECTION,  "Trace",    mjPRESERVE, nullptr, "AT"},
+    {mjITEM_CHECKINT, "Trace EE", 2, &sim->ee_trace_enable_, ""},
+    {mjITEM_END}
+  };
+  mjui_add(&sim->ui1, defTrace);
+}
+
+// make perturb section of UI: alternative to Ctrl+drag for force/torque
+void MakePerturbSection(mj::Simulate* sim) {
+  mjuiDef defPerturb[] = {
+    {mjITEM_SECTION, "Perturb", mjPRESERVE, nullptr, "AP"},
+    {mjITEM_STATIC,  "Body",    2, nullptr, "(none)"},
+    {mjITEM_RADIO,   "Drag",    2, &sim->perturb_mode_, "Camera\nForce\nTorque"},
+    {mjITEM_END}
+  };
+  sim->perturb_sect_ = sim->ui1.nsect;
+  mjui_add(&sim->ui1, defPerturb);
+  sim->perturb_select_shown_ = -1;
+}
+
+// append an RGB triad (x red, y green, z blue) at a world pose; mat is row-major
+void AddTriad(mjvScene* scn, const mjtNum* pos, const mjtNum* mat,
+              mjtNum len, mjtNum wid) {
+  static const float kAxisRgba[3][4] = {
+    {1, 0, 0, 1},  // x: red
+    {0, 1, 0, 1},  // y: green
+    {0, 0, 1, 1},  // z: blue
+  };
+  for (int axis = 0; axis < 3; axis++) {
+    if (scn->ngeom >= scn->maxgeom) {
+      return;
+    }
+    const mjtNum to[3] = {
+      pos[0] + len * mat[0 * 3 + axis],
+      pos[1] + len * mat[1 * 3 + axis],
+      pos[2] + len * mat[2 * 3 + axis],
+    };
+    mjvGeom* g = &scn->geoms[scn->ngeom];
+    mjv_initGeom(g, mjGEOM_ARROW, nullptr, nullptr, nullptr, kAxisRgba[axis]);
+    mjv_connector(g, mjGEOM_ARROW, wid, pos, to);
+    g->category = mjCAT_DECOR;
+    g->objtype = mjOBJ_UNKNOWN;
+    g->objid = -1;
+    scn->ngeom++;
+  }
+}
+
+// append triads for every body/site whose Frames checkbox is enabled
+void AddFrameGeoms(mj::Simulate* sim) {
+  const mjModel* m = sim->m_;
+  const mjData* d = sim->d_;
+  if (!m || !d) {
+    return;
+  }
+
+  mjvScene* scn = &sim->scn;
+  const mjtNum len = sim->frame_scale_ * m->stat.extent;
+  const mjtNum wid = len * 0.03;
+
+  int nbody = mjMIN(m->nbody, static_cast<int>(sim->body_show_frame_.size()));
+  for (int b = 0; b < nbody; b++) {
+    if (sim->body_show_frame_[b]) {
+      AddTriad(scn, d->xpos + 3 * b, d->xmat + 9 * b, len, wid);
+    }
+  }
+
+  int nsite = mjMIN(m->nsite, static_cast<int>(sim->site_show_frame_.size()));
+  for (int s = 0; s < nsite; s++) {
+    if (sim->site_show_frame_[s]) {
+      AddTriad(scn, d->site_xpos + 3 * s, d->site_xmat + 9 * s, len, wid);
+    }
+  }
+}
+
+// record and draw the EE world-position trail when "Trace EE" is enabled
+void AddEeTrace(mj::Simulate* sim) {
+  const mjModel* m = sim->m_;
+  const mjData* d = sim->d_;
+  if (!m || !d) {
+    return;
+  }
+  if (!sim->ee_trace_enable_) {
+    sim->ee_trace_pts_.clear();
+    return;
+  }
+
+  const mjtNum* pos = nullptr;
+  if (sim->ee_trace_site_ >= 0 && sim->ee_trace_site_ < m->nsite) {
+    pos = d->site_xpos + 3 * sim->ee_trace_site_;
+  } else if (sim->ee_trace_body_ >= 0 && sim->ee_trace_body_ < m->nbody) {
+    pos = d->xpos + 3 * sim->ee_trace_body_;
+  }
+  if (!pos) {
+    return;
+  }
+
+  std::vector<mjtNum>& pts = sim->ee_trace_pts_;
+  constexpr std::size_t kMaxPts = 2000;
+  std::size_t n = pts.size() / 3;
+  if (n == 0 || mju_dist3(pos, &pts[3 * (n - 1)]) > 0.002 * m->stat.extent) {
+    if (n >= kMaxPts) {
+      pts.erase(pts.begin(), pts.begin() + 3);
+    }
+    pts.insert(pts.end(), pos, pos + 3);
+  }
+
+  mjvScene* scn = &sim->scn;
+  static const float kTraceRgba[4] = {1, 1, 0, 1};  // yellow
+  n = pts.size() / 3;
+  for (std::size_t i = 1; i < n && scn->ngeom < scn->maxgeom; i++) {
+    mjvGeom* g = &scn->geoms[scn->ngeom];
+    mjv_initGeom(g, mjGEOM_LINE, nullptr, nullptr, nullptr, kTraceRgba);
+    mjv_connector(g, mjGEOM_LINE, 3, &pts[3 * (i - 1)], &pts[3 * i]);
+    g->category = mjCAT_DECOR;
+    g->objtype = mjOBJ_UNKNOWN;
+    g->objid = -1;
+    scn->ngeom++;
+  }
+}
+
 // make joint section of UI
 void MakeJointSection(mj::Simulate* sim) {
   mjuiDef defJoint[] = {
@@ -1348,10 +1543,17 @@ void MakeUiSections(mj::Simulate* sim, const mjModel* m, const mjData* d) {
   MakePhysicsSection(sim);
   MakeRenderingSection(sim, m);
   MakeVisualizationSection(sim, m);
+#ifdef MJ_KDL_SHOW_GROUP
   MakeGroupSection(sim);
+#endif
   MakeJointSection(sim);
   MakeControlSection(sim);
+#ifdef MJ_KDL_SHOW_EQUALITY
   MakeEqualitySection(sim);
+#endif
+  MakeFrameSection(sim);
+  MakeTraceSection(sim);
+  MakePerturbSection(sim);
 }
 
 //---------------------------------- utility functions ---------------------------------------------
@@ -2012,12 +2214,17 @@ void UiEvent(mjuiState* state) {
   if (state->type==mjEVENT_PRESS && state->mouserect==3) {
     // set perturbation
     int newperturb = 0;
-    if (state->control && sim->pert.select>0 && (sim->m_ || sim->is_passive_)) {
-      // right: translate;  left: rotate
-      if (state->right) {
-        newperturb = mjPERT_TRANSLATE;
-      } else if (state->left) {
-        newperturb = mjPERT_ROTATE;
+    if (sim->pert.select>0 && (sim->m_ || sim->is_passive_)) {
+      // Perturb panel: left-drag applies the selected force/torque mode
+      if (sim->perturb_mode_ && state->left) {
+        newperturb = sim->perturb_mode_==1 ? mjPERT_TRANSLATE : mjPERT_ROTATE;
+      } else if (state->control) {
+        // Ctrl right: translate;  Ctrl left: rotate
+        if (state->right) {
+          newperturb = mjPERT_TRANSLATE;
+        } else if (state->left) {
+          newperturb = mjPERT_ROTATE;
+        }
       }
       if (newperturb && !sim->pert.active) {
         sim->pending_.newperturb = newperturb;
@@ -2060,6 +2267,12 @@ void UiEvent(mjuiState* state) {
     // move perturb or camera
     mjrRect r = state->rect[3];
     if (sim->pert.active) {
+      // map drag to the active perturbation: translate=force, rotate=torque
+      if (sim->pert.active & mjPERT_TRANSLATE) {
+        action = state->shift ? mjMOUSE_MOVE_H : mjMOUSE_MOVE_V;
+      } else {
+        action = state->shift ? mjMOUSE_ROTATE_H : mjMOUSE_ROTATE_V;
+      }
       mjv_movePerturb(model, data, action, state->dx / r.height, -state->dy / r.height,
                       &sim->scn, &sim->pert);
     } else {
@@ -2347,6 +2560,10 @@ void Simulate::Sync(bool state_only) {
   if (!is_passive_) {
     mjv_updateScene(m_, d_, &this->opt, &this->pert, &this->cam, mjCAT_ALL, &this->scn);
 
+    // draw frames + EE trace from the Frames UI panel
+    AddFrameGeoms(this);
+    AddEeTrace(this);
+
     // Managed mode upstream ignores user_scn; append its overlay geoms (e.g. the
     // wrapper's EE trajectory trace) here so they survive into Render(). The
     // buffer is bounded by user_scn->maxgeom, so a torn read across the wrapper's
@@ -2513,6 +2730,11 @@ void Simulate::LoadOnRenderThread() {
   body_parentid_.resize(this->m_->nbody);
   std::memcpy(body_parentid_.data(), this->m_->body_parentid,
               sizeof(this->m_->body_parentid[0]) * this->m_->nbody);
+
+  // reset Frames panel toggles to match the new model
+  body_show_frame_.assign(this->m_->nbody, 0);
+  site_show_frame_.assign(this->m_->nsite, 0);
+  ee_trace_pts_.clear();
 
   jnt_type_.resize(this->m_->njnt);
   std::memcpy(jnt_type_.data(), this->m_->jnt_type,
@@ -2789,6 +3011,7 @@ void Simulate::Render() {
       pending_.ui_update_rendering = true;
     }
 
+#ifdef MJ_KDL_SHOW_GROUP
     if (this->ui0_enable && this->ui0.sect[SECT_RENDERING].state &&
         (IsDifferent(opt_prev_.geomgroup, opt.geomgroup) ||
          IsDifferent(opt_prev_.sitegroup, opt.sitegroup) ||
@@ -2799,6 +3022,7 @@ void Simulate::Render() {
          IsDifferent(opt_prev_.skingroup, opt.skingroup))) {
       mjui0_update_section(this, SECT_GROUP);
     }
+#endif
 
     opt_prev_ = opt;
     cam_prev_ = cam;
@@ -2835,12 +3059,14 @@ void Simulate::Render() {
     pending_.ui_update_ctrl = false;
   }
 
+#ifdef MJ_KDL_SHOW_EQUALITY
   if (pending_.ui_update_equality) {
     if (this->ui1_enable && this->ui1.sect[SECT_EQUALITY].state) {
       mjui_update(SECT_EQUALITY, -1, &this->ui1, &this->uistate, &this->platform_ui->mjr_context());
     }
     pending_.ui_update_equality = false;
   }
+#endif
 
   // render scene
   mjr_render(rect, &this->scn, &this->platform_ui->mjr_context());
@@ -2903,6 +3129,7 @@ void Simulate::Render() {
 
   // show ui 1
   if (this->ui1_enable) {
+    UpdatePerturbBody(this);
     mjui_render(&this->ui1, &this->uistate, &this->platform_ui->mjr_context());
   }
 

@@ -96,6 +96,10 @@ set(SIMULATE_UI_SOURCES
 )
 message(STATUS "lodepng: using ffmpeg-backed stub - UI screenshots enabled")
 
+# Optional viewer UI sections (hidden by default)
+option(SHOW_EQUALITY_PANEL "Show the Equality UI section in the viewer" OFF)
+option(SHOW_GROUP_PANEL    "Show the Group-enable UI section in the viewer" OFF)
+
 add_library(mujoco_simulate_ui STATIC ${SIMULATE_UI_SOURCES})
 target_include_directories(mujoco_simulate_ui PUBLIC
   ${MJ_SIM_LOCAL_DIR}
@@ -111,6 +115,12 @@ target_include_directories(mujoco_simulate_ui PRIVATE
   ${LODEPNG_STUB_DIR}
 )
 target_compile_options(mujoco_simulate_ui PRIVATE -w)
+if(SHOW_EQUALITY_PANEL)
+  target_compile_definitions(mujoco_simulate_ui PRIVATE MJ_KDL_SHOW_EQUALITY)
+endif()
+if(SHOW_GROUP_PANEL)
+  target_compile_definitions(mujoco_simulate_ui PRIVATE MJ_KDL_SHOW_GROUP)
+endif()
 set_target_properties(mujoco_simulate_ui PROPERTIES
   CXX_STANDARD 20 POSITION_INDEPENDENT_CODE ON)
 

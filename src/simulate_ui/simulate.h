@@ -119,6 +119,23 @@ class Simulate {
 
   std::vector<int> body_parentid_;
 
+  // Frames UI panel: per-body/per-site frame toggles + axis length (fraction of
+  // model extent)
+  std::vector<int> body_show_frame_;
+  std::vector<int> site_show_frame_;
+  double frame_scale_ = 0.08;
+
+  // EE trajectory trace (Trace panel); ee frame set by the wrapper
+  int ee_trace_enable_ = 0;
+  int ee_trace_site_ = -1;
+  int ee_trace_body_ = -1;
+  std::vector<mjtNum> ee_trace_pts_;
+
+  // Perturb panel: alternative to Ctrl+drag for force/torque on selected body
+  int perturb_mode_ = 0;            // 0 camera, 1 force, 2 torque
+  int perturb_sect_ = -1;           // ui1 section index, for body-name updates
+  int perturb_select_shown_ = -1;   // last body id shown in the panel
+
   std::vector<int> jnt_type_;
   std::vector<int> jnt_group_;
   std::vector<int> jnt_qposadr_;
