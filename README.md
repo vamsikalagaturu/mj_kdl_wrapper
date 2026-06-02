@@ -79,6 +79,72 @@ cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build --parallel $(nproc)
 ```
 
+## Python bindings
+
+The Python package exposes the headless scene, robot, and environment APIs plus
+the wrapper's custom Simulate UI backend. It uses wrapper-owned MuJoCo
+model/data handles; live interop with official `mujoco.MjModel` / `mujoco.MjData`
+objects is intentionally left for a later phase.
+
+```bash
+uv pip install .
+# or, with pip in your environment:
+pip install .
+```
+
+```python
+import mj_kdl_wrapper as mjk
+
+spec = mjk.SceneSpec()
+spec.timestep = 0.002
+spec.add_floor = True
+spec.add_skybox = True
+robot_spec = mjk.RobotSpec()
+robot_spec.path = "third_party/menagerie/kinova_gen3/gen3.xml"
+spec.robots = [robot_spec]
+
+scene = mjk.Scene.build(spec)
+robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link")
+
+robot.jnt_pos_cmd = [0.0] * robot.n_joints
+robot.update()
+robot.step()
+
+scene.save_xml("scene.xml")
+scene.close()
+```
+
+Run the headless example:
+
+```bash
+python3 python/examples/basic_scene.py
+```
+
+Python ports of the C++ position and velocity control examples:
+
+```bash
+python3 python/examples/ex_pos_ctrl.py
+python3 python/examples/ex_vel_ctrl.py
+```
+
+Add `--gui` to either command to run it in the custom Simulate UI.
+
+Run the custom Simulate UI with the wrapper panels (`Frames`, `Trace`,
+`Perturb`, `Recorder`, and `RTF`):
+
+```bash
+python3 python/examples/custom_ui_scene.py
+```
+
+Run the official MuJoCo viewer bridge. This exports a temporary `.mjb` and
+opens it in a separate Python process, so the installed `mujoco` Python package
+must match the wrapper-linked MuJoCo version reported by
+`mj_kdl_wrapper.mujoco_version()`:
+
+```bash
+python3 python/examples/viewer_scene.py
+```
+
 Optional flags:
 
 | Flag | Default | Description |

@@ -1,0 +1,30 @@
+[build-system]
+requires = [
+  "scikit-build-core>=0.10",
+  "pybind11>=2.13",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "mj-kdl-wrapper"
+version = "0.1.0"
+description = "Python bindings for mj_kdl_wrapper"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+  { name = "Vamsi Kalagaturu" },
+]
+dependencies = []
+
+[tool.scikit-build]
+cmake.args = [
+  "-DBUILD_PYTHON_BINDINGS=ON",
+  "-DBUILD_TESTS=OFF",
+  "-DBUILD_EXAMPLES=OFF",
+]
+wheel.packages = ["python/mj_kdl_wrapper"]
+build-dir = "build/{wheel_tag}"
+
+[tool.ruff]
+line-length = 100

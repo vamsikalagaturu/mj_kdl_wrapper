@@ -169,8 +169,48 @@ if(BUILD_RECORDER AND EGL_LIBRARY)
     target_compile_definitions(mj_kdl_wrapper PRIVATE MJ_KDL_HAS_EGL)
 endif()
 
+option(BUILD_PYTHON_BINDINGS "Build Python bindings" OFF)
+if(BUILD_PYTHON_BINDINGS)
+    find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
+    find_package(pybind11 CONFIG QUIET)
+    if(NOT pybind11_FOUND)
+        execute_process(
+          COMMAND "${Python3_EXECUTABLE}" -c "import pybind11; print(pybind11.get_cmake_dir())"
+          OUTPUT_VARIABLE _pybind11_cmake_dir
+          OUTPUT_STRIP_TRAILING_WHITESPACE
+          ERROR_QUIET
+        )
+        if(_pybind11_cmake_dir)
+            list(APPEND CMAKE_PREFIX_PATH "${_pybind11_cmake_dir}")
+        endif()
+        find_package(pybind11 CONFIG REQUIRED)
+    endif()
+
+    pybind11_add_module(_mj_kdl_wrapper
+      src/python/bindings.cpp
+    )
+    target_link_libraries(_mj_kdl_wrapper PRIVATE mj_kdl_wrapper)
+    target_compile_features(_mj_kdl_wrapper PRIVATE cxx_std_20)
+    target_compile_options(_mj_kdl_wrapper PRIVATE -Wall -Wextra -Wpedantic)
+    set_target_properties(_mj_kdl_wrapper PROPERTIES
+      BUILD_RPATH "$<TARGET_FILE_DIR:mj_kdl_wrapper>"
+      INSTALL_RPATH "$ORIGIN"
+    )
+    install(TARGETS _mj_kdl_wrapper
+      LIBRARY DESTINATION mj_kdl_wrapper
+      RUNTIME DESTINATION mj_kdl_wrapper
+    )
+    install(TARGETS mj_kdl_wrapper
+      LIBRARY DESTINATION mj_kdl_wrapper
+      RUNTIME DESTINATION mj_kdl_wrapper
+    )
+endif()
+
 # Examples (GUI by default; pass --headless to skip the window)
-add_subdirectory(src/examples)
+option(BUILD_EXAMPLES "Build examples" ON)
+if(BUILD_EXAMPLES)
+    add_subdirectory(src/examples)
+endif()
 
 # Tests
 option(BUILD_TESTS "Build and register tests with CTest" ON)

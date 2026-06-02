@@ -1708,6 +1708,12 @@ void add_trace_segment(Viewer *v, const KDL::Vector &a, const KDL::Vector &b, co
 
 bool is_running(const Viewer *v)
 {
+    if (!v) return false;
+    if (v->_sim_ui) {
+        auto *ss = static_cast<SimUiState *>(v->_sim_ui);
+        if (!ss || !ss->sim) return false;
+        return !ss->sim->exitrequest.load();
+    }
     if (!v->window) return false;
     return !glfwWindowShouldClose(v->window);
 }

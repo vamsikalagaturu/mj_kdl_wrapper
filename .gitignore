@@ -1,8 +1,10 @@
 # Build
 build/
+build_py/
 *.o
 *.so
 *.a
+__pycache__/
 
 # CMake
 CMakeCache.txt
