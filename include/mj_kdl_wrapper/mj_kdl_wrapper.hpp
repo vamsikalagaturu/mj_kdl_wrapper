@@ -853,6 +853,12 @@ bool get_body_frame(const mjModel *model, mjData *data, const char *body_name, K
 
 /**
  * @ingroup grp_scene
+ * Read a named joint's position (qpos) in physical units (rad or m).
+ */
+bool get_joint_position(const mjModel *model, mjData *data, const char *joint_name, double *out);
+
+/**
+ * @ingroup grp_scene
  * Return the names of all cameras in a compiled model.
  * Includes cameras from robot MJCFs (e.g. the Kinova wrist camera) and any
  * cameras added via SceneSpec::cameras.

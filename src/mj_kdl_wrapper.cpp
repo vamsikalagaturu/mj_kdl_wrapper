@@ -963,6 +963,17 @@ bool get_body_frame(const mjModel *model, mjData *data, const char *body_name, K
     return true;
 }
 
+bool get_joint_position(const mjModel *model, mjData *data, const char *joint_name, double *out)
+{
+    if (!model || !data || !joint_name || !out) return false;
+
+    const int jid = mj_name2id(model, mjOBJ_JOINT, joint_name);
+    if (jid < 0) return false;
+
+    *out = data->qpos[model->jnt_qposadr[jid]];
+    return true;
+}
+
 std::vector<std::string> get_camera_names(const mjModel *model)
 {
     std::vector<std::string> names;

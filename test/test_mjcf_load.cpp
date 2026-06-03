@@ -211,6 +211,20 @@ TEST_F(MjcfGripperTest, GripperRange)
     EXPECT_GE(lo, -0.01);
 }
 
+TEST_F(MjcfGripperTest, JointPositionByName)
+{
+    int rdriver = mj_name2id(model_, mjOBJ_JOINT, "g_right_driver_joint");
+    ASSERT_GE(rdriver, 0) << "g_right_driver_joint not found";
+
+    data_->qpos[model_->jnt_qposadr[rdriver]] = 0.42;
+
+    double measured = 0.0;
+    ASSERT_TRUE(mj_kdl::get_joint_position(model_, data_, "g_right_driver_joint", &measured));
+    EXPECT_NEAR(measured, 0.42, 1e-9);
+
+    EXPECT_FALSE(mj_kdl::get_joint_position(model_, data_, "no_such_joint", &measured));
+}
+
 int main(int argc, char *argv[])
 {
     testing::InitGoogleTest(&argc, argv);
