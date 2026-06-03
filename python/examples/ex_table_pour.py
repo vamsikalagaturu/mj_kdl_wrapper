@@ -1,0 +1,352 @@
+#!/usr/bin/env python3
+"""Table pour example ported from src/examples/ex_table_pour.cpp."""
+
+from __future__ import annotations
+
+import argparse
+import math
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+import PyKDL as kdl
+import mj_kdl_wrapper as mjk
+
+ARM = "third_party/menagerie/kinova_gen3/gen3.xml"
+GRIPPER = "third_party/menagerie/robotiq_2f85/2f85.xml"
+TABLE = "src/examples/assets/table.xml"
+BOTTLE = "src/examples/assets/mug.xml"
+RECEIVER = "src/examples/assets/mug_table.xml"
+HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
+TABLE_Z = 0.70
+ROBOT_BACK_X = -0.26
+JUG_X = 0.30
+JUG_Y = 0.14
+RETREAT_X = JUG_X - 0.08
+RETREAT_Y = JUG_Y - 0.08
+BALL_RADIUS = 0.007
+NUM_BALLS = 36
+POUR_TILT_RAD = 1.95
+KP = [120.0, 220.0, 120.0, 220.0, 110.0, 190.0, 90.0]
+KD = [12.0, 22.0, 12.0, 22.0, 11.0, 18.0, 9.0]
+
+
+@dataclass(frozen=True)
+class Phase:
+    name: str
+    target: list[float]
+    duration: float
+    timeout: float
+    settle_tol: float
+    gripper: float
+
+
+def path(value: str, label: str) -> Path:
+    p = Path(value)
+    if not p.exists():
+        raise FileNotFoundError(f"{p} does not exist for {label}; run from the repo root")
+    return p
+
+
+def gripper_attachment(gripper_path: Path) -> mjk.AttachmentSpec:
+    attach = mjk.AttachmentSpec()
+    attach.mjcf_path = str(gripper_path)
+    attach.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
+    attach.prefix = "g_"
+    return attach
+
+
+def bottle_attachment(bottle_path: Path) -> mjk.AttachmentSpec:
+    attach = mjk.AttachmentSpec()
+    attach.mjcf_path = str(bottle_path)
+    attach.attach_to = mjk.AttachTarget(mjk.AttachKind.Body, "g_base")
+    attach.prefix = "pour_"
+    return attach
+
+
+def table_object(table_path: Path) -> mjk.SceneObject:
+    table = mjk.SceneObject()
+    table.name = "table"
+    table.mjcf_path = str(table_path)
+    table.pos = [0.0, 0.0, TABLE_Z]
+    table.fixed = True
+    return table
+
+
+def receiver_object(receiver_path: Path) -> mjk.SceneObject:
+    recv = mjk.SceneObject()
+    recv.name = "recv"
+    recv.mjcf_path = str(receiver_path)
+    recv.pos = [JUG_X, JUG_Y, TABLE_Z]
+    return recv
+
+
+def ball_object(index: int) -> mjk.SceneObject:
+    ball = mjk.SceneObject()
+    ball.name = f"grain_{index:02d}"
+    ball.shape = mjk.Shape.SPHERE
+    ball.size = [BALL_RADIUS, 0.0, 0.0]
+    ball.pos = [0.0, 0.0, TABLE_Z + 0.40 + index * 2.0 * BALL_RADIUS]
+    ball.rgba = [1.0, 0.84, 0.30, 1.0]
+    ball.mass = 0.006
+    ball.condim = mjk.Condim.Torsional
+    ball.friction = [0.5, 0.02, 0.001]
+    return ball
+
+
+def build_scene() -> tuple[mjk.Scene, mjk.Robot]:
+    spec = mjk.SceneSpec()
+    spec.timestep = 0.002
+    spec.add_floor = True
+    spec.add_skybox = True
+    spec.objects = [
+        table_object(path(os.environ.get("MJ_KDL_TABLE", TABLE), "table model")),
+        *[ball_object(i) for i in range(NUM_BALLS)],
+        receiver_object(path(os.environ.get("MJ_KDL_RECEIVER", RECEIVER), "receiver model")),
+    ]
+
+    robot_spec = mjk.RobotSpec()
+    robot_spec.path = str(path(os.environ.get("MJ_KDL_MODEL", ARM), "arm model"))
+    robot_spec.pos = [ROBOT_BACK_X, 0.0, TABLE_Z]
+    robot_spec.attachments = [
+        gripper_attachment(path(os.environ.get("MJ_KDL_GRIPPER", GRIPPER), "gripper model")),
+        bottle_attachment(path(os.environ.get("MJ_KDL_BOTTLE", BOTTLE), "bottle model")),
+    ]
+    spec.robots = [robot_spec]
+
+    scene = mjk.Scene.build(spec)
+    tool = mjk.ToolFrameSpec()
+    tool.tool_body = "g_base"
+    tool.tcp_site = "g_pinch"
+    robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link", tool=tool)
+    return scene, robot
+
+
+def jnt(values: list[float]) -> kdl.JntArray:
+    q = kdl.JntArray(len(values))
+    for i, value in enumerate(values):
+        q[i] = value
+    return q
+
+
+def as_list(q: kdl.JntArray) -> list[float]:
+    return [q[i] for i in range(q.rows())]
+
+
+def clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def clamp_joint(value: float, limit: tuple[float, float]) -> float:
+    low, high = limit
+    if math.isfinite(low) and math.isfinite(high) and high > low:
+        return clamp(value, low, high)
+    return value
+
+
+def solve_position_ik(
+    chain: kdl.Chain,
+    seed_values: list[float],
+    target: kdl.Vector,
+    joint_limits: list[tuple[float, float]],
+) -> list[float]:
+    fk = kdl.ChainFkSolverPos_recursive(chain)
+    ik = kdl.ChainIkSolverVel_wdls(chain)
+    ik.setLambda(0.05)
+    q = jnt(seed_values)
+    dq = kdl.JntArray(q.rows())
+    for _ in range(900):
+        current = kdl.Frame()
+        fk.JntToCart(q, current)
+        dx = kdl.diff(current, kdl.Frame(current.M, target))
+        dx.rot = kdl.Vector.Zero()
+        err = dx.vel.Norm()
+        if err <= 0.004:
+            return as_list(q)
+        if err > 0.05:
+            dx.vel = dx.vel * (0.05 / err)
+        if ik.CartToJnt(q, dx, dq) < 0:
+            raise RuntimeError("PyKDL IK velocity step failed")
+        for i in range(q.rows()):
+            q[i] = clamp_joint(q[i] + dq[i], joint_limits[i])
+    raise RuntimeError("PyKDL IK did not converge")
+
+
+def base_vector(world_x: float, world_y: float, world_z: float) -> kdl.Vector:
+    return kdl.Vector(world_x - ROBOT_BACK_X, world_y, world_z - TABLE_Z)
+
+
+def build_waypoints(robot: mjk.Robot) -> dict[str, list[float]]:
+    chain = robot.kdl_chain()
+    seed = HOME[:]
+
+    def solve(name: str, world_x: float, world_y: float, world_z: float) -> list[float]:
+        nonlocal seed
+        seed = solve_position_ik(
+            chain, seed, base_vector(world_x, world_y, world_z), robot.joint_limits
+        )
+        if len(seed) != robot.n_joints:
+            raise RuntimeError(f"IK produced wrong joint count for {name}")
+        return seed[:]
+
+    q_pre_pour = solve("pre-pour", JUG_X, JUG_Y, TABLE_Z + 0.27)
+    q_pour = solve("pour", JUG_X, JUG_Y, TABLE_Z + 0.20)
+    q_tilt = q_pour[:]
+    q_tilt[-1] = clamp_joint(q_tilt[-1] + POUR_TILT_RAD, robot.joint_limits[-1])
+    q_retreat = solve("retreat", RETREAT_X, RETREAT_Y, TABLE_Z + 0.27)
+    return {
+        "home": HOME[:],
+        "pre_pour": q_pre_pour,
+        "pour": q_pour,
+        "tilt": q_tilt,
+        "retreat": q_retreat,
+    }
+
+
+def apply_pd_gravity(robot: mjk.Robot, target: list[float]) -> None:
+    robot.update()
+    gravity = robot.gravity_torques(-9.81)
+    robot.jnt_trq_cmd = [
+        KP[i] * (target[i] - robot.jnt_pos_msr[i]) - KD[i] * robot.jnt_vel_msr[i] + gravity[i]
+        for i in range(robot.n_joints)
+    ]
+
+
+def max_abs_joint_err(robot: mjk.Robot, target: list[float]) -> float:
+    return max(abs(target[i] - robot.jnt_pos_msr[i]) for i in range(robot.n_joints))
+
+
+def lerp(start: list[float], target: list[float], alpha: float) -> list[float]:
+    return [a + alpha * (b - a) for a, b in zip(start, target)]
+
+
+def place_balls_in_bottle(scene: mjk.Scene, robot: mjk.Robot) -> None:
+    robot.set_joint_pos(HOME, call_forward=True)
+    center = scene.site_frame("pour_center")
+    spacing = 2.0 * BALL_RADIUS
+    for i in range(NUM_BALLS):
+        layer = i // 9
+        slot = i % 9
+        ix = float(slot % 3) - 1.0
+        iy = float(slot // 3) - 1.0
+        local = kdl.Vector(ix * spacing, iy * spacing, -0.026 + layer * spacing)
+        world = center * local
+        scene.set_body_pose(f"grain_{i:02d}", [world.x(), world.y(), world.z()])
+
+
+def balls_in_receiver(scene: mjk.Scene) -> tuple[int, list[float]]:
+    count = 0
+    centroid = [0.0, 0.0, 0.0]
+    for i in range(NUM_BALLS):
+        frame = scene.body_frame(f"grain_{i:02d}")
+        pos = [frame.p.x(), frame.p.y(), frame.p.z()]
+        centroid = [a + b for a, b in zip(centroid, pos)]
+        if (
+            abs(pos[0] - JUG_X) < 0.040
+            and abs(pos[1] - JUG_Y) < 0.040
+            and TABLE_Z + 0.004 < pos[2] < TABLE_Z + 0.13
+        ):
+            count += 1
+    return count, [value / NUM_BALLS for value in centroid]
+
+
+def step_once(robot: mjk.Robot, viewer: mjk.SimulateViewer | None) -> bool:
+    if viewer is not None:
+        return viewer.step()
+    return robot.step()
+
+
+def run_phase(
+    scene: mjk.Scene,
+    robot: mjk.Robot,
+    phase: Phase,
+    viewer: mjk.SimulateViewer | None,
+    recorder: mjk.VideoRecorder | None,
+    record_every: int,
+    step_counter: list[int],
+) -> bool:
+    print(f"State: {phase.name}")
+    robot.update()
+    start = robot.jnt_pos_msr[:]
+    t0 = scene.time()
+    while True:
+        elapsed = scene.time() - t0
+        alpha = clamp(elapsed / phase.duration, 0.0, 1.0) if phase.duration > 0.0 else 1.0
+        apply_pd_gravity(robot, lerp(start, phase.target, alpha))
+        if scene.has_actuator("g_fingers_actuator"):
+            scene.set_actuator_ctrl("g_fingers_actuator", phase.gripper)
+
+        done_time = elapsed >= phase.duration
+        done_pose = phase.settle_tol < 0.0 or max_abs_joint_err(robot, phase.target) <= phase.settle_tol
+        done_timeout = phase.timeout > 0.0 and elapsed >= phase.timeout
+        if (done_time and done_pose) or done_timeout:
+            return True
+        if viewer is not None and not viewer.is_running():
+            return False
+        if not step_once(robot, viewer):
+            return False
+        step_counter[0] += 1
+        if recorder is not None and step_counter[0] % record_every == 0:
+            recorder.record_frame()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--gui", action="store_true")
+    parser.add_argument("--record", nargs="?", const="table_pour.mp4")
+    parser.add_argument("--headless", action="store_true", help=argparse.SUPPRESS)
+    args = parser.parse_args()
+
+    scene, robot = build_scene()
+    recorder = None
+    try:
+        robot.ctrl_mode = mjk.CtrlMode.TORQUE
+        robot.set_joint_pos(HOME, call_forward=True)
+        place_balls_in_bottle(scene, robot)
+        if scene.has_actuator("g_fingers_actuator"):
+            scene.set_actuator_ctrl("g_fingers_actuator", 255.0)
+
+        waypoints = build_waypoints(robot)
+        phases = [
+            Phase("HOME", waypoints["home"], 0.8, 2.0, 0.08, 255.0),
+            Phase("PRE_POUR", waypoints["pre_pour"], 2.0, 4.0, 0.08, 255.0),
+            Phase("POUR", waypoints["pour"], 1.8, 4.0, 0.07, 255.0),
+            Phase("TILT", waypoints["tilt"], 3.0, 5.0, 0.07, 255.0),
+            Phase("POUR_HOLD", waypoints["tilt"], 2.5 if not args.gui else 10.0, 0.0, -1.0, 255.0),
+            Phase("RETREAT", waypoints["retreat"], 1.6, 3.0, 0.08, 255.0),
+            Phase("HOLD", waypoints["retreat"], 1.0 if not args.gui else 10.0, 0.0, -1.0, 255.0),
+        ]
+
+        fps = 60
+        record_every = max(1, int(1.0 / (fps * scene.timestep())))
+        if args.record:
+            recorder = mjk.VideoRecorder.open_preset(
+                scene, args.record, mjk.VideoResolution.R1080p, fps
+            )
+        step_counter = [0]
+        if args.gui:
+            viewer = mjk.SimulateViewer.open(robot, "ex_table_pour.py")
+            try:
+                for phase in phases:
+                    if not run_phase(scene, robot, phase, viewer, recorder, record_every, step_counter):
+                        break
+            finally:
+                viewer.close()
+        else:
+            for phase in phases:
+                if not run_phase(scene, robot, phase, None, recorder, record_every, step_counter):
+                    break
+        in_receiver, centroid = balls_in_receiver(scene)
+        print(f"balls in transparent receiver: {in_receiver}/{NUM_BALLS}")
+        print(f"grain centroid: {[round(v, 3) for v in centroid]} receiver center={[JUG_X, JUG_Y]}")
+        if recorder is not None:
+            print(f"recorded: {args.record}")
+    finally:
+        if recorder is not None:
+            recorder.close()
+        scene.close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

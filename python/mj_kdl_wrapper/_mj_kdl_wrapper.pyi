@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Union
 
 import PyKDL as kdl
 
@@ -121,14 +121,14 @@ class ToolFrameSpec:
 
 
 class ResetOptions:
-    keyframe: str
+    keyframe: int
     use_keyframe: bool
     def __init__(self) -> None: ...
 
 
 class ResetInfo:
     used_keyframe: bool
-    keyframe: str
+    keyframe: int
 
 
 class Scene:
@@ -155,11 +155,14 @@ class Scene:
         pos: Sequence[float],
         quat: Optional[Sequence[float]] = None,
     ) -> None: ...
+    """Set a free body pose. quat is xyzw when provided."""
     def set_actuator_ctrl(self, name: str, value: float) -> None: ...
     def actuator_ctrl(self, name: str) -> float: ...
     def has_actuator(self, name: str) -> bool: ...
     def add_object(self, object: SceneObject) -> None: ...
+    """Rebuild the scene with an added object and rebind existing Robot handles."""
     def remove_object(self, name: str) -> None: ...
+    """Rebuild the scene without the named object and rebind existing Robot handles."""
 
 
 class Robot:
@@ -185,11 +188,18 @@ class Robot:
     def update(self) -> None: ...
     def step(self) -> bool: ...
     def step_n(self, n: int) -> bool: ...
-    def set_joint_pos(self, q: Sequence[float], call_forward: bool = True) -> None: ...
+    def set_joint_pos(
+        self,
+        q: Union[Sequence[float], kdl.JntArray],
+        call_forward: bool = True,
+    ) -> None: ...
     def gravity_torques(self, gravity_z: float = -9.81) -> list[float]: ...
     def kdl_chain(self) -> kdl.Chain: ...
     """Return the wrapper-built chain as a PyKDL.Chain."""
-    def fk_frame(self, q: Optional[Sequence[float]] = None) -> kdl.Frame: ...
+    def fk_frame(
+        self,
+        q: Optional[Union[Sequence[float], kdl.JntArray]] = None,
+    ) -> kdl.Frame: ...
     """Return FK terminal pose as PyKDL.Frame."""
 
 
@@ -249,7 +259,9 @@ class Env:
     ) -> Robot: ...
     def reset(self, options: Optional[ResetOptions] = None) -> ResetInfo: ...
     def add_object(self, object: SceneObject) -> None: ...
+    """Rebuild the environment with an added object and rebind existing Robot handles."""
     def remove_object(self, name: str) -> None: ...
+    """Rebuild the environment without the named object and rebind existing Robot handles."""
     def camera_names(self) -> list[str]: ...
 
 

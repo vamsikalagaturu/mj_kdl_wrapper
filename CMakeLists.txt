@@ -272,31 +272,31 @@ if(BUILD_DOCS)
     COMMAND ${DOXYGEN_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       ${DOXYGEN_AWESOME_DIR}/doxygen-awesome-darkmode-toggle.js
-      ${CMAKE_CURRENT_SOURCE_DIR}/docs/html/doxygen-awesome-darkmode-toggle.js
+      ${CMAKE_CURRENT_BINARY_DIR}/docs/html/doxygen-awesome-darkmode-toggle.js
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       ${DOXYGEN_AWESOME_DIR}/doxygen-awesome-paragraph-link.js
-      ${CMAKE_CURRENT_SOURCE_DIR}/docs/html/doxygen-awesome-paragraph-link.js
+      ${CMAKE_CURRENT_BINARY_DIR}/docs/html/doxygen-awesome-paragraph-link.js
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       ${DOXYGEN_AWESOME_DIR}/doxygen-awesome-interactive-toc.js
-      ${CMAKE_CURRENT_SOURCE_DIR}/docs/html/doxygen-awesome-interactive-toc.js
+      ${CMAKE_CURRENT_BINARY_DIR}/docs/html/doxygen-awesome-interactive-toc.js
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       ${DOXYGEN_AWESOME_DIR}/doxygen-awesome.css
-      ${CMAKE_CURRENT_SOURCE_DIR}/docs/html/doxygen-awesome.css
+      ${CMAKE_CURRENT_BINARY_DIR}/docs/html/doxygen-awesome.css
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       ${DOXYGEN_AWESOME_DIR}/doxygen-awesome-sidebar-only.css
-      ${CMAKE_CURRENT_SOURCE_DIR}/docs/html/doxygen-awesome-sidebar-only.css
+      ${CMAKE_CURRENT_BINARY_DIR}/docs/html/doxygen-awesome-sidebar-only.css
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       ${DOXYGEN_AWESOME_DIR}/doxygen-awesome-sidebar-only-darkmode-toggle.css
-      ${CMAKE_CURRENT_SOURCE_DIR}/docs/html/doxygen-awesome-sidebar-only-darkmode-toggle.css
+      ${CMAKE_CURRENT_BINARY_DIR}/docs/html/doxygen-awesome-sidebar-only-darkmode-toggle.css
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       ${DOXYGEN_AWESOME_DIR}/doxygen-custom/theme-robot.css
-      ${CMAKE_CURRENT_SOURCE_DIR}/docs/html/theme-robot.css
+      ${CMAKE_CURRENT_BINARY_DIR}/docs/html/theme-robot.css
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       ${DOXYGEN_AWESOME_DIR}/doxygen-custom/custom.css
-      ${CMAKE_CURRENT_SOURCE_DIR}/docs/html/custom.css
+      ${CMAKE_CURRENT_BINARY_DIR}/docs/html/custom.css
     COMMAND ${CMAKE_COMMAND} -E copy_directory
       ${CMAKE_CURRENT_SOURCE_DIR}/docs/screenshots
-      ${CMAKE_CURRENT_SOURCE_DIR}/docs/html/docs/screenshots
+      ${CMAKE_CURRENT_BINARY_DIR}/docs/html/docs/screenshots
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Generating API documentation with Doxygen..."
     VERBATIM

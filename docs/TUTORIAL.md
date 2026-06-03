@@ -18,6 +18,7 @@ The wrapper has four layers. Keep them separate and the API stays simple:
 | Runtime environment | `Env` | Own `mjModel`/`mjData`, registered robots, and reset hooks |
 | Robot control handle | `Robot` | KDL chain, joint maps, measured ports, command ports |
 | Visualization/recording | `Viewer`, `VideoRecorder` | Interactive Simulate UI and offscreen MP4 recording |
+| Python package | `mj_kdl_wrapper` | Python wrappers for the same scene, robot, reset, viewer, and recorder concepts |
 
 The important ownership rule:
 
@@ -74,6 +75,7 @@ Useful CMake options:
 | `MUJOCO_ROOT` | `/opt/mujoco-3.8.0` | MuJoCo is installed somewhere else |
 | `FETCH_MENAGERIE` | `OFF` | You want the bundled examples to build robot assets automatically |
 | `BUILD_RECORDER` | `ON` | Turn off if EGL is unavailable and you do not need MP4 recording |
+| `BUILD_PYTHON_BINDINGS` | `OFF` | Turn on for an in-tree CMake build of the Python extension |
 | `BUILD_TESTS` | `ON` | Turn off for a smaller install-only build |
 | `BUILD_DOCS` | `OFF` | Turn on to generate Doxygen HTML docs |
 
@@ -120,6 +122,32 @@ target:
 add_executable(my_sim main.cpp)
 target_link_libraries(my_sim PRIVATE mj_kdl_wrapper)
 ```
+
+## 1.2 Python Bindings
+
+Install the Python package from the repository root:
+
+```bash
+pip install .
+```
+
+The Python API keeps the same ownership model as C++: `Scene` or `Env` owns the
+compiled MuJoCo model/data and `Robot` borrows it. Public object mutations
+(`add_object()` / `remove_object()`) rebind existing Python robot handles, and
+closing a `Scene` or `Env` invalidates dependent robots.
+
+The binding uses the upstream Python packages where they already exist:
+
+- KDL objects are returned as `PyKDL` objects. `body_frame()`, `site_frame()`,
+  and `fk_frame()` return `PyKDL.Frame`; `kdl_chain()` returns `PyKDL.Chain`.
+- `set_joint_pos()` and `fk_frame(q)` accept either Python sequences or
+  `PyKDL.JntArray`.
+- The official `mujoco` Python package is optional and only used by the
+  separate viewer bridge example.
+
+Every C++ `src/examples/ex_*.cpp` file has a same-name Python counterpart in
+`python/examples/`. See [Python bindings](PYTHON_BINDINGS.md) for the full
+Python guide.
 
 ## 2. Start With One Robot Scene
 

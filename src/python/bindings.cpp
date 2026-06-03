@@ -98,6 +98,7 @@ struct PyToolFrameSpec
 
 struct PyScene;
 struct PyEnv;
+struct PyRobot;
 
 AttachTarget to_cpp(const PyAttachTarget &src)
 {
@@ -204,13 +205,57 @@ KDL::JntArray to_jnt_array(const std::vector<double> &values, int expected)
     return out;
 }
 
+KDL::JntArray to_jnt_array(const py::object &values, int expected)
+{
+    if (py::hasattr(values, "rows")) {
+        int rows = values.attr("rows")().cast<int>();
+        if (rows != expected) {
+            throw std::invalid_argument(
+              "expected " + std::to_string(expected) + " joint values, got "
+              + std::to_string(rows)
+            );
+        }
+        KDL::JntArray out(expected);
+        for (int i = 0; i < expected; ++i) out(i) = values[py::int_(i)].cast<double>();
+        return out;
+    }
+    return to_jnt_array(values.cast<std::vector<double>>(), expected);
+}
+
+py::object kdl_frame_to_py(const KDL::Frame &frame)
+{
+    py::module_ kdl = py::module_::import("PyKDL");
+    double      x = 0.0, y = 0.0, z = 0.0, w = 1.0;
+    frame.M.GetQuaternion(x, y, z, w);
+    py::object rotation = kdl.attr("Rotation").attr("Quaternion")(x, y, z, w);
+    py::object vector   = kdl.attr("Vector")(frame.p.x(), frame.p.y(), frame.p.z());
+    return kdl.attr("Frame")(rotation, vector);
+}
+
+py::object kdl_chain_to_py(const KDL::Chain &chain)
+{
+    py::module_::import("PyKDL");
+    try {
+        return py::cast(chain);
+    } catch (const py::cast_error &err) {
+        throw std::runtime_error(
+          std::string("PyKDL did not register a compatible KDL::Chain caster: ") + err.what()
+        );
+    }
+}
+
 struct PyScene : std::enable_shared_from_this<PyScene>
 {
     PySceneSpec spec;
     mjModel    *model = nullptr;
     mjData     *data  = nullptr;
+    std::vector<std::weak_ptr<PyRobot>> robots;
 
     ~PyScene() { close(); }
+
+    void register_robot(const std::shared_ptr<PyRobot> &robot);
+    void reinit_robots();
+    void invalidate_robots();
 
     static std::shared_ptr<PyScene> build(const PySceneSpec &spec)
     {
@@ -225,6 +270,7 @@ struct PyScene : std::enable_shared_from_this<PyScene>
 
     void close()
     {
+        invalidate_robots();
         mj_kdl::destroy_scene(model, data);
         model = nullptr;
         data  = nullptr;
@@ -281,8 +327,7 @@ struct PyScene : std::enable_shared_from_this<PyScene>
         if (!mj_kdl::get_body_frame(model, data, name.c_str(), &frame)) {
             throw std::runtime_error("body not found");
         }
-        py::module_::import("PyKDL");
-        return py::cast(frame);
+        return kdl_frame_to_py(frame);
     }
 
     py::object site_frame(const std::string &name)
@@ -292,8 +337,7 @@ struct PyScene : std::enable_shared_from_this<PyScene>
         if (!mj_kdl::get_site_frame(model, data, name.c_str(), &frame)) {
             throw std::runtime_error("site not found");
         }
-        py::module_::import("PyKDL");
-        return py::cast(frame);
+        return kdl_frame_to_py(frame);
     }
 
     void set_body_pose(
@@ -340,10 +384,11 @@ struct PyScene : std::enable_shared_from_this<PyScene>
             throw std::runtime_error("add_object rebuild failed");
         }
 
-        close();
+        mj_kdl::destroy_scene(model, data);
         spec  = std::move(next_spec);
         model = next_model;
         data  = next_data;
+        reinit_robots();
     }
 
     void remove_object(const std::string &name)
@@ -363,11 +408,13 @@ struct PyScene : std::enable_shared_from_this<PyScene>
             throw std::runtime_error("remove_object rebuild failed");
         }
 
-        close();
+        mj_kdl::destroy_scene(model, data);
         spec  = std::move(next_spec);
         model = next_model;
         data  = next_data;
+        reinit_robots();
     }
+
 };
 
 struct PyRobot
@@ -375,6 +422,11 @@ struct PyRobot
     mj_kdl::Robot            robot;
     std::shared_ptr<PyScene> scene_owner;
     std::shared_ptr<PyEnv>   env_owner;
+    std::string              base_body;
+    std::string              tip_body;
+    std::string              prefix;
+    std::optional<PyToolFrameSpec> tool_spec;
+    bool                     active = false;
 
     ~PyRobot();
 
@@ -390,53 +442,128 @@ struct PyRobot
         auto out         = std::shared_ptr<PyRobot>(new PyRobot());
         out->scene_owner = scene;
         out->init(scene->model, scene->data, base_body, tip_body, prefix, tool);
+        scene->register_robot(out);
         return out;
     }
 
     void init(
       mjModel               *model,
       mjData                *data,
-      const std::string     &base_body,
-      const std::string     &tip_body,
-      const std::string     &prefix,
+      const std::string     &base_body_arg,
+      const std::string     &tip_body_arg,
+      const std::string     &prefix_arg,
       const PyToolFrameSpec *tool
     )
     {
+        active    = false;
+        base_body = base_body_arg;
+        tip_body  = tip_body_arg;
+        prefix    = prefix_arg;
+        std::optional<PyToolFrameSpec> next_tool;
+        if (tool) next_tool = *tool;
+        tool_spec = std::move(next_tool);
+        const PyToolFrameSpec *stored_tool = tool_spec ? &*tool_spec : nullptr;
+
         mj_kdl::ToolFrameSpec        cpp_tool;
         const mj_kdl::ToolFrameSpec *tool_ptr = nullptr;
-        if (tool) {
-            cpp_tool.tool_body = tool->tool_body.empty() ? nullptr : tool->tool_body.c_str();
-            cpp_tool.tcp_site  = tool->tcp_site.empty() ? nullptr : tool->tcp_site.c_str();
+        if (stored_tool) {
+            cpp_tool.tool_body =
+              stored_tool->tool_body.empty() ? nullptr : stored_tool->tool_body.c_str();
+            cpp_tool.tcp_site =
+              stored_tool->tcp_site.empty() ? nullptr : stored_tool->tcp_site.c_str();
             tool_ptr           = &cpp_tool;
         }
         if (!mj_kdl::init_robot_from_mjcf(
-              &robot, model, data, base_body.c_str(), tip_body.c_str(), prefix.c_str(), tool_ptr
+              &robot,
+              model,
+              data,
+              base_body_arg.c_str(),
+              tip_body_arg.c_str(),
+              prefix_arg.c_str(),
+              tool_ptr
             )) {
             throw std::runtime_error("init_robot_from_mjcf failed");
         }
+        active = true;
     }
 
-    void update() { mj_kdl::update(&robot); }
+    void ensure_active() const
+    {
+        if (!active || !robot.model || !robot.data || robot.n_joints <= 0) {
+            throw std::runtime_error("robot is closed");
+        }
+    }
 
-    bool step() { return mj_kdl::step(&robot); }
+    void invalidate()
+    {
+        mj_kdl::cleanup(&robot);
+        active = false;
+    }
+
+    void reinit(mjModel *model, mjData *data)
+    {
+        if (base_body.empty() || tip_body.empty()) {
+            throw std::runtime_error("robot init parameters are missing");
+        }
+        ensure_active();
+        CtrlMode            ctrl_mode = robot.ctrl_mode;
+        bool                paused    = robot.paused;
+        std::vector<double> pos_cmd   = robot.jnt_pos_cmd;
+        std::vector<double> trq_cmd   = robot.jnt_trq_cmd;
+
+        invalidate();
+        init(model, data, base_body, tip_body, prefix, tool_spec ? &*tool_spec : nullptr);
+        robot.ctrl_mode = ctrl_mode;
+        robot.paused    = paused;
+        if (static_cast<int>(pos_cmd.size()) == robot.n_joints) robot.jnt_pos_cmd = pos_cmd;
+        if (static_cast<int>(trq_cmd.size()) == robot.n_joints) robot.jnt_trq_cmd = trq_cmd;
+    }
+
+    void update()
+    {
+        ensure_active();
+        mj_kdl::update(&robot);
+    }
+
+    bool step()
+    {
+        ensure_active();
+        return mj_kdl::step(&robot);
+    }
 
     bool step_n(int n)
     {
+        ensure_active();
         if (n < 0) throw std::invalid_argument("n must be non-negative");
         return mj_kdl::step_n(&robot, n);
     }
 
-    void set_joint_pos(const std::vector<double> &q, bool call_forward)
+    void set_joint_pos(const KDL::JntArray &joints, bool call_forward)
     {
-        KDL::JntArray joints = to_jnt_array(q, robot.n_joints);
+        ensure_active();
+        if (static_cast<int>(joints.rows()) != robot.n_joints) {
+            throw std::invalid_argument(
+              "expected " + std::to_string(robot.n_joints) + " joint values, got "
+              + std::to_string(joints.rows())
+            );
+        }
         mj_kdl::set_joint_pos(&robot, joints, call_forward);
     }
 
-    std::vector<std::pair<double, double>> joint_limits() const { return robot.joint_limits; }
+    void set_joint_pos(const std::vector<double> &q, bool call_forward)
+    {
+        set_joint_pos(to_jnt_array(q, robot.n_joints), call_forward);
+    }
+
+    std::vector<std::pair<double, double>> joint_limits() const
+    {
+        ensure_active();
+        return robot.joint_limits;
+    }
 
     std::vector<double> gravity_torques(double gravity_z) const
     {
-        if (robot.n_joints <= 0) throw std::runtime_error("robot is not initialized");
+        ensure_active();
         KDL::ChainDynParam dyn(robot.chain, KDL::Vector(0.0, 0.0, gravity_z));
         KDL::JntArray      q(robot.n_joints);
         KDL::JntArray      g(robot.n_joints);
@@ -448,12 +575,18 @@ struct PyRobot
         return out;
     }
 
-    py::object fk_frame(const std::vector<double> *q_values) const
+    py::object fk_frame(const KDL::JntArray *q_values) const
     {
-        if (robot.n_joints <= 0) throw std::runtime_error("robot is not initialized");
+        ensure_active();
         KDL::JntArray q(robot.n_joints);
         if (q_values) {
-            q = to_jnt_array(*q_values, robot.n_joints);
+            if (static_cast<int>(q_values->rows()) != robot.n_joints) {
+                throw std::invalid_argument(
+                  "expected " + std::to_string(robot.n_joints) + " joint values, got "
+                  + std::to_string(q_values->rows())
+                );
+            }
+            q = *q_values;
         } else {
             for (int i = 0; i < robot.n_joints; ++i) {
                 q(i) = robot.jnt_pos_msr[static_cast<size_t>(i)];
@@ -463,19 +596,18 @@ struct PyRobot
         KDL::Frame                      frame;
         int                             rc = fk.JntToCart(q, frame);
         if (rc < 0) throw std::runtime_error("KDL::ChainFkSolverPos_recursive::JntToCart failed");
-        py::module_::import("PyKDL");
-        return py::cast(frame);
+        return kdl_frame_to_py(frame);
     }
 
     py::object kdl_chain() const
     {
-        if (robot.n_joints <= 0) throw std::runtime_error("robot is not initialized");
-        py::module_::import("PyKDL");
-        return py::cast(robot.chain);
+        ensure_active();
+        return kdl_chain_to_py(robot.chain);
     }
 
     void set_port(std::vector<double> mj_kdl::Robot::*port, const std::vector<double> &values)
     {
+        ensure_active();
         if (static_cast<int>(values.size()) != robot.n_joints) {
             throw std::invalid_argument(
               "expected " + std::to_string(robot.n_joints) + " joint values, got "
@@ -485,6 +617,37 @@ struct PyRobot
         robot.*port = values;
     }
 };
+
+void PyScene::register_robot(const std::shared_ptr<PyRobot> &robot)
+{
+    robots.push_back(robot);
+}
+
+void PyScene::reinit_robots()
+{
+    auto it = robots.begin();
+    while (it != robots.end()) {
+        if (auto robot = it->lock()) {
+            robot->reinit(model, data);
+            ++it;
+        } else {
+            it = robots.erase(it);
+        }
+    }
+}
+
+void PyScene::invalidate_robots()
+{
+    auto it = robots.begin();
+    while (it != robots.end()) {
+        if (auto robot = it->lock()) {
+            robot->invalidate();
+            ++it;
+        } else {
+            it = robots.erase(it);
+        }
+    }
+}
 
 struct PySimulateViewer
 {
@@ -643,6 +806,7 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
 {
     PySceneSpec spec;
     mj_kdl::Env env;
+    std::vector<std::weak_ptr<PyRobot>> robots;
 
     ~PyEnv() { close(); }
 
@@ -655,7 +819,59 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         return out;
     }
 
-    void close() { mj_kdl::cleanup(&env); }
+    void close()
+    {
+        invalidate_robots();
+        mj_kdl::cleanup(&env);
+    }
+
+    void reinit_robots()
+    {
+        env.robots.clear();
+        auto it = robots.begin();
+        while (it != robots.end()) {
+            if (auto robot = it->lock()) {
+                robot->reinit(env.model, env.data);
+                mj_kdl::env_add_robot(&env, &robot->robot);
+                ++it;
+            } else {
+                it = robots.erase(it);
+            }
+        }
+    }
+
+    void invalidate_robots()
+    {
+        auto it = robots.begin();
+        while (it != robots.end()) {
+            if (auto robot = it->lock()) {
+                robot->invalidate();
+                ++it;
+            } else {
+                it = robots.erase(it);
+            }
+        }
+        env.robots.clear();
+    }
+
+    void rebuild(PySceneSpec next_spec, const char *error_message)
+    {
+        PySceneSpec old_spec = spec;
+        spec                 = std::move(next_spec);
+
+        mj_kdl::Env next_env;
+        SceneSpec   cpp_spec = to_cpp(spec);
+        if (!mj_kdl::init_env(&next_env, &cpp_spec)) {
+            spec = std::move(old_spec);
+            SceneSpec old_cpp_spec = to_cpp(spec);
+            env.spec               = old_cpp_spec;
+            throw std::runtime_error(error_message);
+        }
+
+        mj_kdl::cleanup(&env);
+        env = next_env;
+        reinit_robots();
+    }
 
     std::shared_ptr<PyRobot> create_robot(
       const std::string     &base_body,
@@ -669,6 +885,7 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         out->env_owner = shared_from_this();
         out->init(env.model, env.data, base_body, tip_body, prefix, tool);
         mj_kdl::env_add_robot(&env, &out->robot);
+        robots.push_back(out);
         return out;
     }
 
@@ -681,23 +898,21 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
     void add_object(const PySceneObject &object)
     {
         if (!env.model || !env.data) throw std::runtime_error("env is closed");
-        SceneObject cpp_object = to_cpp(object);
-        if (!mj_kdl::scene_add_object(&env, cpp_object)) {
-            throw std::runtime_error("scene_add_object failed");
-        }
-        spec.objects.push_back(object);
+        PySceneSpec next_spec = spec;
+        next_spec.objects.push_back(object);
+        rebuild(std::move(next_spec), "scene_add_object failed");
     }
 
     void remove_object(const std::string &name)
     {
         if (!env.model || !env.data) throw std::runtime_error("env is closed");
-        if (!mj_kdl::scene_remove_object(&env, name)) {
-            throw std::runtime_error("scene_remove_object failed");
-        }
-        auto it = std::find_if(spec.objects.begin(), spec.objects.end(), [&](const auto &obj) {
+        PySceneSpec next_spec = spec;
+        auto it = std::find_if(next_spec.objects.begin(), next_spec.objects.end(), [&](const auto &obj) {
             return obj.name == name;
         });
-        if (it != spec.objects.end()) spec.objects.erase(it);
+        if (it == next_spec.objects.end()) throw std::runtime_error("object not found");
+        next_spec.objects.erase(it);
+        rebuild(std::move(next_spec), "scene_remove_object failed");
     }
 
     std::vector<std::string> camera_names() const
@@ -713,7 +928,7 @@ PyRobot::~PyRobot()
         auto &robots = env_owner->env.robots;
         robots.erase(std::remove(robots.begin(), robots.end(), &robot), robots.end());
     }
-    mj_kdl::cleanup(&robot);
+    invalidate();
 }
 
 } // namespace
@@ -929,7 +1144,8 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
                 return;
             }
             auto q = quat.cast<std::array<double, 4>>();
-            self.set_body_pose(name, pos, &q);
+            std::array<double, 4> mj_quat = { q[3], q[0], q[1], q[2] };
+            self.set_body_pose(name, pos, &mj_quat);
         },
         py::arg("name"),
         py::arg("pos"),
@@ -959,13 +1175,13 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "add_object",
         &PyScene::add_object,
         py::arg("object"),
-        "Rebuild the scene with an added object."
+        "Rebuild the scene with an added object and rebind existing Robot handles."
       )
       .def(
         "remove_object",
         &PyScene::remove_object,
         py::arg("name"),
-        "Rebuild the scene without the named object."
+        "Rebuild the scene without the named object and rebind existing Robot handles."
       )
       .def_readonly("spec", &PyScene::spec, "Python scene spec used to build this scene.");
 
@@ -1001,7 +1217,9 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def("step_n", &PyRobot::step_n, py::arg("n"), "Run step() n times.")
       .def(
         "set_joint_pos",
-        &PyRobot::set_joint_pos,
+        [](PyRobot &self, const py::object &q, bool call_forward) {
+            self.set_joint_pos(to_jnt_array(q, self.robot.n_joints), call_forward);
+        },
         py::arg("q"),
         py::arg("call_forward") = true,
         "Set measured MuJoCo joint positions."
@@ -1017,7 +1235,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "fk_frame",
         [](const PyRobot &self, const py::object &q) {
             if (q.is_none()) return self.fk_frame(nullptr);
-            auto values = q.cast<std::vector<double>>();
+            KDL::JntArray values = to_jnt_array(q, self.robot.n_joints);
             return self.fk_frame(&values);
         },
         py::arg("q") = py::none(),
@@ -1025,50 +1243,87 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       )
       .def_property(
         "ctrl_mode",
-        [](const PyRobot &self) { return self.robot.ctrl_mode; },
-        [](PyRobot &self, CtrlMode mode) { self.robot.ctrl_mode = mode; }
+        [](const PyRobot &self) {
+            self.ensure_active();
+            return self.robot.ctrl_mode;
+        },
+        [](PyRobot &self, CtrlMode mode) {
+            self.ensure_active();
+            self.robot.ctrl_mode = mode;
+        }
       )
       .def_property(
         "paused",
-        [](const PyRobot &self) { return self.robot.paused; },
-        [](PyRobot &self, bool paused) { self.robot.paused = paused; }
+        [](const PyRobot &self) {
+            self.ensure_active();
+            return self.robot.paused;
+        },
+        [](PyRobot &self, bool paused) {
+            self.ensure_active();
+            self.robot.paused = paused;
+        }
       )
-      .def_property_readonly("n_joints", [](const PyRobot &self) { return self.robot.n_joints; })
       .def_property_readonly(
-        "joint_names", [](const PyRobot &self) { return self.robot.joint_names; }
+        "n_joints",
+        [](const PyRobot &self) {
+            self.ensure_active();
+            return self.robot.n_joints;
+        }
+      )
+      .def_property_readonly(
+        "joint_names",
+        [](const PyRobot &self) {
+            self.ensure_active();
+            return self.robot.joint_names;
+        }
       )
       .def_property_readonly("joint_limits", &PyRobot::joint_limits)
       .def_property(
         "jnt_pos_msr",
-        [](const PyRobot &self) { return self.robot.jnt_pos_msr; },
+        [](const PyRobot &self) {
+            self.ensure_active();
+            return self.robot.jnt_pos_msr;
+        },
         [](PyRobot &self, const std::vector<double> &values) {
             self.set_port(&mj_kdl::Robot::jnt_pos_msr, values);
         }
       )
       .def_property(
         "jnt_vel_msr",
-        [](const PyRobot &self) { return self.robot.jnt_vel_msr; },
+        [](const PyRobot &self) {
+            self.ensure_active();
+            return self.robot.jnt_vel_msr;
+        },
         [](PyRobot &self, const std::vector<double> &values) {
             self.set_port(&mj_kdl::Robot::jnt_vel_msr, values);
         }
       )
       .def_property(
         "jnt_trq_msr",
-        [](const PyRobot &self) { return self.robot.jnt_trq_msr; },
+        [](const PyRobot &self) {
+            self.ensure_active();
+            return self.robot.jnt_trq_msr;
+        },
         [](PyRobot &self, const std::vector<double> &values) {
             self.set_port(&mj_kdl::Robot::jnt_trq_msr, values);
         }
       )
       .def_property(
         "jnt_pos_cmd",
-        [](const PyRobot &self) { return self.robot.jnt_pos_cmd; },
+        [](const PyRobot &self) {
+            self.ensure_active();
+            return self.robot.jnt_pos_cmd;
+        },
         [](PyRobot &self, const std::vector<double> &values) {
             self.set_port(&mj_kdl::Robot::jnt_pos_cmd, values);
         }
       )
       .def_property(
         "jnt_trq_cmd",
-        [](const PyRobot &self) { return self.robot.jnt_trq_cmd; },
+        [](const PyRobot &self) {
+            self.ensure_active();
+            return self.robot.jnt_trq_cmd;
+        },
         [](PyRobot &self, const std::vector<double> &values) {
             self.set_port(&mj_kdl::Robot::jnt_trq_cmd, values);
         }
@@ -1197,13 +1452,13 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "add_object",
         &PyEnv::add_object,
         py::arg("object"),
-        "Rebuild the environment with an added object."
+        "Rebuild the environment with an added object and rebind existing Robot handles."
       )
       .def(
         "remove_object",
         &PyEnv::remove_object,
         py::arg("name"),
-        "Rebuild the environment without the named object."
+        "Rebuild the environment without the named object and rebind existing Robot handles."
       )
       .def("camera_names", &PyEnv::camera_names, "Return names of cameras in the compiled model.")
       .def_readonly("spec", &PyEnv::spec, "Python scene spec used to build this environment.");

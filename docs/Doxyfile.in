@@ -4,14 +4,14 @@
 # Generate docs:
 #   cmake -B build -DBUILD_DOCS=ON
 #   cmake --build build --target docs
-# Output: build/docs/html/index.html
+# Output: @CMAKE_CURRENT_BINARY_DIR@/docs/html/index.html
 
 PROJECT_NAME           = "Mujoco KDL Wrapper"
 PROJECT_NUMBER         = @PROJECT_VERSION@
 PROJECT_BRIEF          = "MuJoCo + KDL bridge for robot kinematics and dynamics"
 PROJECT_LOGO           =
 
-OUTPUT_DIRECTORY       = @CMAKE_CURRENT_SOURCE_DIR@/docs
+OUTPUT_DIRECTORY       = @CMAKE_CURRENT_BINARY_DIR@/docs
 CREATE_SUBDIRS         = NO
 OUTPUT_LANGUAGE        = English
 
@@ -20,14 +20,18 @@ INPUT                  = @CMAKE_CURRENT_SOURCE_DIR@/include \
                          @CMAKE_CURRENT_SOURCE_DIR@/README.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/groups.dox \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/TUTORIAL.md \
+                         @CMAKE_CURRENT_SOURCE_DIR@/docs/PYTHON_BINDINGS.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/HOWTO_urdf_to_mjcf.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/HOWTO_torque_control.md \
+                         @CMAKE_CURRENT_SOURCE_DIR@/python/mj_kdl_wrapper \
+                         @CMAKE_CURRENT_SOURCE_DIR@/python/examples \
                          @CMAKE_CURRENT_SOURCE_DIR@/src/examples \
                          @CMAKE_CURRENT_SOURCE_DIR@/test
 RECURSIVE              = YES
-FILE_PATTERNS          = *.hpp *.h *.cpp *.md
+FILE_PATTERNS          = *.hpp *.h *.cpp *.md *.py *.pyi
+EXTENSION_MAPPING      = pyi=Python
 IMAGE_PATH             = @CMAKE_CURRENT_SOURCE_DIR@/docs/screenshots
-EXCLUDE_PATTERNS       = */third_party/* */build/*
+EXCLUDE_PATTERNS       = */third_party/* */build/* */__pycache__/*
 
 # Use README.md as the main page
 USE_MDFILE_AS_MAINPAGE = @CMAKE_CURRENT_SOURCE_DIR@/README.md

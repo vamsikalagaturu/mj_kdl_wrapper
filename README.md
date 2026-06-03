@@ -81,10 +81,10 @@ cmake --build build --parallel $(nproc)
 
 ## Python bindings
 
-The Python package exposes the headless scene, robot, and environment APIs plus
-the wrapper's custom Simulate UI backend. It uses wrapper-owned MuJoCo
-model/data handles; live interop with official `mujoco.MjModel` / `mujoco.MjData`
-objects is intentionally left for a later phase.
+The Python package exposes the headless scene, robot, environment, Simulate UI,
+and recorder APIs. It uses wrapper-owned MuJoCo model/data handles and returns
+KDL values through upstream `PyKDL` objects instead of defining duplicate KDL
+Python classes.
 
 ```bash
 uv pip install .
@@ -114,20 +114,40 @@ scene.save_xml("scene.xml")
 scene.close()
 ```
 
+`Scene.body_frame()`, `Scene.site_frame()`, and `Robot.fk_frame()` return
+`PyKDL.Frame`; `Robot.kdl_chain()` returns `PyKDL.Chain`; and
+`Robot.set_joint_pos()` / `Robot.fk_frame(q)` accept either Python sequences or
+`PyKDL.JntArray`. `Scene.set_body_pose(..., quat=...)` accepts Python quaternions
+in `xyzw` order and converts to MuJoCo's `wxyz` convention internally.
+
+`Scene.add_object()` / `remove_object()` and `Env.add_object()` /
+`remove_object()` rebuild the underlying MuJoCo model/data and rebind existing
+Python `Robot` handles. Calling `Scene.close()` or `Env.close()` invalidates
+dependent robot handles; later robot use raises `RuntimeError("robot is closed")`.
+
 Run the headless example:
 
 ```bash
 python3 python/examples/basic_scene.py
 ```
 
-Python ports of the C++ position and velocity control examples:
+Every C++ `src/examples/ex_*.cpp` example has a Python counterpart with the same
+base name in `python/examples/`. Examples run headless by default and accept
+`--gui` where a Simulate UI view is useful.
 
 ```bash
 python3 python/examples/ex_pos_ctrl.py
 python3 python/examples/ex_vel_ctrl.py
+python3 python/examples/ex_pick.py
+python3 python/examples/ex_table_pick_place.py
+python3 python/examples/ex_table_pour.py
 ```
 
-Add `--gui` to either command to run it in the custom Simulate UI.
+Add `--gui` to a Python example to run it in the custom Simulate UI when that
+example supports an interactive view.
+
+See [docs/PYTHON_BINDINGS.md](docs/PYTHON_BINDINGS.md) for Python ownership,
+PyKDL interop, runtime mutation, and API documentation notes.
 
 Run the custom Simulate UI with the wrapper panels (`Frames`, `Trace`,
 `Perturb`, `Recorder`, and `RTF`):
@@ -452,6 +472,9 @@ mj_kdl::scene_remove_object(&model, &data, &sc, "red_cube");
 /* model/data are replaced; re-call init_robot_from_*() on the new pointers. */
 ```
 
+In Python, `Scene.add_object()` / `remove_object()` and `Env.add_object()` /
+`remove_object()` perform that rebind step for existing Python `Robot` handles.
+
 ## Viewer controls
 
 | Input | Action |
@@ -479,6 +502,7 @@ recording) are in the MuJoCo panels.
 ## More Documentation
 
 - [Full tutorial](docs/TUTORIAL.md)
+- [Python bindings guide](docs/PYTHON_BINDINGS.md)
 - [Examples guide](src/examples/README.md)
 - [Torque control notes](docs/HOWTO_torque_control.md)
 - [URDF to MJCF notes](docs/HOWTO_urdf_to_mjcf.md)

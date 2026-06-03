@@ -13,8 +13,14 @@ cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DFETCH_MENAGERIE=ON
 cmake --build build --parallel $(nproc)
 ```
 
-Every example accepts `--headless` to skip the GLFW window and run a fixed
-number of physics steps, printing a brief result to stdout.
+Every C++ example accepts `--headless` to skip the GLFW window and run a fixed
+number of physics steps, printing a brief result to stdout. Every
+`src/examples/ex_*.cpp` file also has a same-name Python counterpart in
+`python/examples/`; Python examples run headless by default and accept `--gui`
+where a Simulate UI view is useful.
+
+The Python counterparts use the public Python wrapper and upstream `PyKDL`
+bindings for FK, IK, RNEA, and ACHD instead of re-binding KDL classes locally.
 
 | Example | Scene | Main behavior |
 |---------|-------|---------------|
@@ -146,8 +152,8 @@ State table (durations in seconds):
 | State    | Duration | Timeout | Settle tol | Gripper |
 |----------|----------|---------|------------|---------|
 | HOME     | 1.0      | 2.5     | 0.08 rad   | open    |
-| PREGRASP | 2.0      | 4.0     | 0.08 rad   | open    |
-| GRASP    | 2.0      | 4.0     | 0.06 rad   | open    |
+| PREGRASP | 5.0      | 7.0     | 0.08 rad   | open    |
+| GRASP    | 5.0      | 8.0     | 0.03 rad   | open    |
 | CLOSE    | 1.5      | 2.5     | (none)     | closed  |
 | LIFT     | 3.0      | 5.0     | 0.08 rad   | closed  |
 | HOLD     | 10.0 (GUI) / 1.0 (headless) | same | (none)     | closed  |
