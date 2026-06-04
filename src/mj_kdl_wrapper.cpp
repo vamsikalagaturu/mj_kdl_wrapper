@@ -963,12 +963,23 @@ bool get_body_frame(const mjModel *model, mjData *data, const char *body_name, K
     return true;
 }
 
-bool get_joint_position(const mjModel *model, mjData *data, const char *joint_name, double *out)
+bool get_joint_position(const mjModel *model, mjData *data, const char *name, double *out)
 {
-    if (!model || !data || !joint_name || !out) return false;
+    if (!model || !data || !name || !out) return false;
 
-    const int jid = mj_name2id(model, mjOBJ_JOINT, joint_name);
-    if (jid < 0) return false;
+    int jid = mj_name2id(model, mjOBJ_JOINT, name);
+    if (jid < 0) {
+        // Not a joint name: accept an actuator name and resolve its transmission joint.
+        const int aid = mj_name2id(model, mjOBJ_ACTUATOR, name);
+        if (aid < 0) return false;
+        if (model->actuator_trntype[aid] == mjTRN_JOINT) {
+            jid = model->actuator_trnid[2 * aid];
+        } else if (model->actuator_trntype[aid] == mjTRN_TENDON) {
+            const int tid = model->actuator_trnid[2 * aid];
+            jid = model->wrap_objid[model->tendon_adr[tid]];
+        }
+        if (jid < 0) return false;
+    }
 
     *out = data->qpos[model->jnt_qposadr[jid]];
     return true;

@@ -853,9 +853,11 @@ bool get_body_frame(const mjModel *model, mjData *data, const char *body_name, K
 
 /**
  * @ingroup grp_scene
- * Read a named joint's position (qpos) in physical units (rad or m).
+ * Read a joint's position (qpos) in physical units (rad or m), by joint name.
+ * If the name is not a joint, it is treated as an actuator name and resolved to
+ * its transmission joint (direct joint, or the first tendon-wrapped joint).
  */
-bool get_joint_position(const mjModel *model, mjData *data, const char *joint_name, double *out);
+bool get_joint_position(const mjModel *model, mjData *data, const char *name, double *out);
 
 /**
  * @ingroup grp_scene

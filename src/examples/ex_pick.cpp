@@ -138,7 +138,7 @@ struct StateConfig
     double               timeout;     // force transition if settling runs long
     double               settle_tol;  // rad, < 0 disables pose check
     const KDL::JntArray *q_target;    // interpolation goal (set after IK)
-    double               gripper_cmd; // 0=open, 255=fully closed
+    double               gripper_cmd; // 0=open, 0.8=fully closed
     PickState            next;
 };
 
@@ -169,7 +169,7 @@ int main(int argc, char *argv[])
 
     // scene setup
     const std::string arm_mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-    const std::string grp_mjcf = (root / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+    const std::string grp_mjcf = (root / "src/examples/assets/robotiq_2f85/2f85.xml").string();
 
     mj_kdl::AttachmentSpec gs;
     gs.mjcf_path = grp_mjcf.c_str();
@@ -293,10 +293,10 @@ int main(int argc, char *argv[])
         { .duration = 1.0,           .timeout = 2.5,           .settle_tol =  0.08, .q_target = &q_home,     .gripper_cmd =   0.0, .next = PickState::PREGRASP },
         { .duration = 5.0,           .timeout = 7.0,           .settle_tol =  0.08, .q_target = &q_pregrasp, .gripper_cmd =   0.0, .next = PickState::GRASP    },
         { .duration = 5.0,           .timeout = 8.0,           .settle_tol =  0.03, .q_target = &q_grasp,    .gripper_cmd =   0.0, .next = PickState::CLOSE    },
-        { .duration = 1.5,           .timeout = 2.5,           .settle_tol = -1.0,  .q_target = &q_grasp,    .gripper_cmd = 255.0, .next = PickState::LIFT     },
-        { .duration = 3.0,           .timeout = 5.0,           .settle_tol =  0.08, .q_target = &q_lift,     .gripper_cmd = 255.0, .next = PickState::HOLD     },
-        { .duration = kHoldDuration, .timeout = kHoldDuration, .settle_tol = -1.0,  .q_target = &q_lift,     .gripper_cmd = 255.0, .next = PickState::DONE     },
-        { .duration = 0.0,           .timeout = 0.0,           .settle_tol = -1.0,  .q_target = &q_lift,     .gripper_cmd = 255.0, .next = PickState::DONE     },
+        { .duration = 1.5,           .timeout = 2.5,           .settle_tol = -1.0,  .q_target = &q_grasp,    .gripper_cmd = 0.8, .next = PickState::LIFT     },
+        { .duration = 3.0,           .timeout = 5.0,           .settle_tol =  0.08, .q_target = &q_lift,     .gripper_cmd = 0.8, .next = PickState::HOLD     },
+        { .duration = kHoldDuration, .timeout = kHoldDuration, .settle_tol = -1.0,  .q_target = &q_lift,     .gripper_cmd = 0.8, .next = PickState::DONE     },
+        { .duration = 0.0,           .timeout = 0.0,           .settle_tol = -1.0,  .q_target = &q_lift,     .gripper_cmd = 0.8, .next = PickState::DONE     },
     };
     // clang-format on
 

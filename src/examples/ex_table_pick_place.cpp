@@ -150,7 +150,7 @@ int main(int argc, char *argv[])
     }
 
     const std::string arm_mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-    const std::string grp_mjcf = (root / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+    const std::string grp_mjcf = (root / "src/examples/assets/robotiq_2f85/2f85.xml").string();
     const std::string table_mjcf = (root / "src/examples/assets/table.xml").string();
 
     mj_kdl::AttachmentSpec gripper;
@@ -286,10 +286,10 @@ int main(int argc, char *argv[])
         { .name = "HOME",        .target = &q_home,        .duration = 1.0,                 .timeout = 2.5,                 .settle_tol =  0.08, .gripper_cmd =   0.0 },
         { .name = "PICK_ABOVE",  .target = &q_pick_above,  .duration = 5.0,                 .timeout = 7.0,                 .settle_tol =  0.08, .gripper_cmd =   0.0 },
         { .name = "PICK",        .target = &q_pick,        .duration = 5.0,                 .timeout = 8.0,                 .settle_tol =  0.03, .gripper_cmd =   0.0 },
-        { .name = "CLOSE",       .target = &q_pick,        .duration = 1.5,                 .timeout = 2.5,                 .settle_tol = -1.0,  .gripper_cmd = 255.0 },
-        { .name = "LIFT",        .target = &q_lift,        .duration = 3.0,                 .timeout = 5.0,                 .settle_tol =  0.08, .gripper_cmd = 255.0 },
-        { .name = "PLACE_ABOVE", .target = &q_place_above, .duration = 3.0,                 .timeout = 5.0,                 .settle_tol =  0.08, .gripper_cmd = 255.0 },
-        { .name = "PLACE",       .target = &q_place,       .duration = 5.0,                 .timeout = 8.0,                 .settle_tol =  0.03, .gripper_cmd = 255.0 },
+        { .name = "CLOSE",       .target = &q_pick,        .duration = 1.5,                 .timeout = 2.5,                 .settle_tol = -1.0,  .gripper_cmd = 0.8 },
+        { .name = "LIFT",        .target = &q_lift,        .duration = 3.0,                 .timeout = 5.0,                 .settle_tol =  0.08, .gripper_cmd = 0.8 },
+        { .name = "PLACE_ABOVE", .target = &q_place_above, .duration = 3.0,                 .timeout = 5.0,                 .settle_tol =  0.08, .gripper_cmd = 0.8 },
+        { .name = "PLACE",       .target = &q_place,       .duration = 5.0,                 .timeout = 8.0,                 .settle_tol =  0.03, .gripper_cmd = 0.8 },
         { .name = "OPEN",        .target = &q_place,       .duration = 1.0,                 .timeout = 2.0,                 .settle_tol = -1.0,  .gripper_cmd =   0.0 },
         { .name = "RETREAT",     .target = &q_place_above, .duration = 2.0,                 .timeout = 4.0,                 .settle_tol =  0.08, .gripper_cmd =   0.0 },
         { .name = "HOLD",        .target = &q_place_above, .duration = headless ? 1.0 : 1e9, .timeout = headless ? 1.0 : 1e9, .settle_tol = -1.0,  .gripper_cmd =   0.0 },

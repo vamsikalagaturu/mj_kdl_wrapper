@@ -126,7 +126,7 @@ class MjcfGripperTest : public testing::Test
         const std::string arm_mjcf =
           (root_ / "third_party/menagerie/kinova_gen3/gen3.xml").string();
         const std::string grp_mjcf =
-          (root_ / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+          (root_ / "src/examples/assets/robotiq_2f85/2f85.xml").string();
         if (!fs::exists(arm_mjcf)) {
             GTEST_SKIP() << arm_mjcf << " not found";
             return;
@@ -216,10 +216,18 @@ TEST_F(MjcfGripperTest, JointPositionByName)
     int rdriver = mj_name2id(model_, mjOBJ_JOINT, "g_right_driver_joint");
     ASSERT_GE(rdriver, 0) << "g_right_driver_joint not found";
 
+    int ldriver = mj_name2id(model_, mjOBJ_JOINT, "g_left_driver_joint");
+    ASSERT_GE(ldriver, 0) << "g_left_driver_joint not found";
     data_->qpos[model_->jnt_qposadr[rdriver]] = 0.42;
+    data_->qpos[model_->jnt_qposadr[ldriver]] = 0.42;
 
     double measured = 0.0;
     ASSERT_TRUE(mj_kdl::get_joint_position(model_, data_, "g_right_driver_joint", &measured));
+    EXPECT_NEAR(measured, 0.42, 1e-9);
+
+    // An actuator name resolves to its transmission joint's qpos.
+    measured = 0.0;
+    ASSERT_TRUE(mj_kdl::get_joint_position(model_, data_, "g_fingers_actuator", &measured));
     EXPECT_NEAR(measured, 0.42, 1e-9);
 
     EXPECT_FALSE(mj_kdl::get_joint_position(model_, data_, "no_such_joint", &measured));

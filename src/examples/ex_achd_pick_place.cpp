@@ -270,7 +270,7 @@ int main(int argc, char *argv[])
     }
 
     const std::string arm_mjcf   = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-    const std::string grp_mjcf   = (root / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+    const std::string grp_mjcf   = (root / "src/examples/assets/robotiq_2f85/2f85.xml").string();
     const std::string table_mjcf = (root / "src/examples/assets/table.xml").string();
 
     mj_kdl::AttachmentSpec gripper;
@@ -371,10 +371,10 @@ int main(int argc, char *argv[])
         { "HOME",        home_tcp,                                      1.0,                 2.5, 0.03, 0.05, 0.0   },
         { "PICK_ABOVE",  target_frame(kPickX,  kPickY,  kTableZ + z_above), 8.0,            14.0, 0.04, 0.03, 0.0   },
         { "PICK",        target_frame(kPickX,  kPickY,  kTableZ + z_grasp), 5.0,            12.0, 0.02, 0.03, 0.0   },
-        { "CLOSE",       target_frame(kPickX,  kPickY,  kTableZ + z_grasp), 1.5,             2.5, -1.0, -1.0, 255.0 },
-        { "LIFT",        target_frame(kPickX,  kPickY,  kTableZ + z_lift),  3.0,             8.0, 0.04, 0.03, 255.0 },
-        { "PLACE_ABOVE", target_frame(kPlaceX, kPlaceY, kTableZ + z_above), 5.0,            12.0, 0.04, 0.03, 255.0 },
-        { "PLACE",       target_frame(kPlaceX, kPlaceY, kTableZ + z_grasp), 5.0,            14.0, 0.02, 0.03, 255.0 },
+        { "CLOSE",       target_frame(kPickX,  kPickY,  kTableZ + z_grasp), 1.5,             2.5, -1.0, -1.0, 0.8 },
+        { "LIFT",        target_frame(kPickX,  kPickY,  kTableZ + z_lift),  3.0,             8.0, 0.04, 0.03, 0.8 },
+        { "PLACE_ABOVE", target_frame(kPlaceX, kPlaceY, kTableZ + z_above), 5.0,            12.0, 0.04, 0.03, 0.8 },
+        { "PLACE",       target_frame(kPlaceX, kPlaceY, kTableZ + z_grasp), 5.0,            14.0, 0.02, 0.03, 0.8 },
         { "OPEN",        target_frame(kPlaceX, kPlaceY, kTableZ + z_grasp), 1.0,             2.0, -1.0, -1.0, 0.0   },
         { "RETREAT",     target_frame(kPlaceX, kPlaceY, kTableZ + z_above), 3.0,             6.0, 0.04, 0.08, 0.0   },
         { "HOLD",        target_frame(kPlaceX, kPlaceY, kTableZ + z_above), headless ? 4.0 : 1e9, headless ? 4.0 : 1e9, -1.0, -1.0, 0.0 },

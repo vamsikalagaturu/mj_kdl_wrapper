@@ -145,7 +145,7 @@ int main(int argc, char *argv[])
     }
 
     const std::string arm_mjcf    = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-    const std::string grp_mjcf    = (root / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+    const std::string grp_mjcf    = (root / "src/examples/assets/robotiq_2f85/2f85.xml").string();
     const std::string bottle_mjcf = (root / "src/examples/assets/mug.xml").string();
     const std::string receiver_mjcf = (root / "src/examples/assets/mug_table.xml").string();
     const std::string table_mjcf    = (root / "src/examples/assets/table.xml").string();
@@ -376,7 +376,7 @@ int main(int argc, char *argv[])
             std::snprintf(body_name, sizeof(body_name), "grain_%02d", i);
             mj_kdl::set_body_pose(m, d, body_name, world);
         }
-        d->ctrl[fingers_act] = 255.0;
+        d->ctrl[fingers_act] = 0.8;
     };
 
     double prev_sim_time = 0.0;
@@ -395,43 +395,43 @@ int main(int argc, char *argv[])
           .duration    = 1.0,
           .timeout     = 2.5,
           .settle_tol  = 0.08,
-          .gripper_cmd = 255.0 },
+          .gripper_cmd = 0.8 },
         { .name        = "PRE_POUR",
           .target      = &q_pre_pour,
           .duration    = 4.0,
           .timeout     = 6.5,
           .settle_tol  = 0.08,
-          .gripper_cmd = 255.0 },
+          .gripper_cmd = 0.8 },
         { .name        = "POUR",
           .target      = &q_pour,
           .duration    = 3.5,
           .timeout     = 5.5,
           .settle_tol  = 0.07,
-          .gripper_cmd = 255.0 },
+          .gripper_cmd = 0.8 },
         { .name        = "TILT",
           .target      = &q_tilt,
           .duration    = 7.0,
           .timeout     = 10.0,
           .settle_tol  = 0.07,
-          .gripper_cmd = 255.0 },
+          .gripper_cmd = 0.8 },
         { .name        = "POUR_HOLD",
           .target      = &q_tilt,
           .duration    = headless ? 9.0 : 10.0,
           .timeout     = headless ? 10.0 : 11.0,
           .settle_tol  = -1.0,
-          .gripper_cmd = 255.0 },
+          .gripper_cmd = 0.8 },
         { .name        = "RETREAT",
           .target      = &q_retreat,
           .duration    = 2.0,
           .timeout     = 4.0,
           .settle_tol  = 0.08,
-          .gripper_cmd = 255.0 },
+          .gripper_cmd = 0.8 },
         { .name        = "HOLD",
           .target      = &q_retreat,
           .duration    = headless ? 1.0 : 1e9,
           .timeout     = headless ? 1.0 : 1e9,
           .settle_tol  = -1.0,
-          .gripper_cmd = 255.0 },
+          .gripper_cmd = 0.8 },
     };
 
     mj_kdl::VideoRecorder recorder;
