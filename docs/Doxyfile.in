@@ -20,6 +20,7 @@ INPUT                  = @CMAKE_CURRENT_SOURCE_DIR@/include \
                          @CMAKE_CURRENT_SOURCE_DIR@/README.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/groups.dox \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/TUTORIAL.md \
+                         @CMAKE_CURRENT_SOURCE_DIR@/docs/CPP_API.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/PYTHON_BINDINGS.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/HOWTO_urdf_to_mjcf.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/HOWTO_torque_control.md \
@@ -50,24 +51,21 @@ INLINE_SOURCES         = NO
 STRIP_CODE_COMMENTS    = NO
 REFERENCED_BY_RELATION = YES
 REFERENCES_RELATION    = YES
+TAGFILES               = @MJ_KDL_DOXYGEN_TAGFILES@
+EXTERNAL_GROUPS        = NO
+EXTERNAL_PAGES         = NO
 
 # --- HTML output ---
 GENERATE_HTML          = YES
 HTML_OUTPUT            = html
 HTML_FILE_EXTENSION    = .html
 
-# Doxygen Awesome CSS theme
+# Local Doxygen theme
 HTML_HEADER            = @CMAKE_CURRENT_SOURCE_DIR@/docs/doxygen-custom/header.html
-HTML_EXTRA_STYLESHEET  = @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome.css \
-                         @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome-sidebar-only.css \
-                         @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome-sidebar-only-darkmode-toggle.css \
-                         @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-custom/theme-robot.css \
-                         @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-custom/custom.css
-HTML_EXTRA_FILES       = @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome-darkmode-toggle.js \
-                          @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome-paragraph-link.js \
-                          @CMAKE_CURRENT_SOURCE_DIR@/third_party/doxygen-awesome-css/doxygen-awesome-interactive-toc.js
+HTML_EXTRA_STYLESHEET  = @CMAKE_CURRENT_SOURCE_DIR@/docs/doxygen-custom/mjk-doxygen.css
+HTML_EXTRA_FILES       = @CMAKE_CURRENT_SOURCE_DIR@/docs/doxygen-custom/mjk-doxygen.js
 
-# Required by Doxygen Awesome
+# Navigation
 GENERATE_TREEVIEW      = YES
 DISABLE_INDEX          = NO
 FULL_SIDEBAR           = NO

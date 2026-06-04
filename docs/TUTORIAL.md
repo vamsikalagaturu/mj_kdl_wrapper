@@ -1,9 +1,8 @@
 # Mujoco KDL Wrapper Tutorial
 
-This tutorial builds a simulation application in layers: install the package,
-compile a robot scene, add KDL control, add reset hooks, add objects and cameras,
-use the Simulate UI, record video, and then extend the scene to more robots and
-more complex task assets.
+This tutorial builds a simulation application in layers: compile a robot scene,
+add KDL control, add reset hooks, add objects and cameras, use the Simulate UI,
+record video, and then extend the scene to more robots and more complex task assets.
 
 The snippets assume the package is built with MuJoCo Menagerie available, because
 the examples use the Kinova GEN3 arm and Robotiq 2F-85 gripper.
@@ -38,116 +37,6 @@ Most examples follow this flow:
 6. Start `init_window_sim()` or a headless loop.
 7. In the loop: `step()`, `update()`, compute commands, write command ports.
 8. Cleanup in reverse order: viewer/recorder, robots, env.
-
-## 1. Install Dependencies
-
-Install system dependencies:
-
-```bash
-sudo apt update
-sudo apt install cmake g++ libglfw3-dev libgl-dev libegl-dev liborocos-kdl-dev ffmpeg
-```
-
-Install MuJoCo 3.8.0:
-
-```bash
-wget https://github.com/google-deepmind/mujoco/releases/download/3.8.0/mujoco-3.8.0-linux-x86_64.tar.gz
-sudo tar -xzf mujoco-3.8.0-linux-x86_64.tar.gz -C /opt/
-```
-
-Configure and build:
-
-```bash
-git clone https://github.com/secorolab/mj_kdl_wrapper.git
-cd mj_kdl_wrapper
-
-cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DFETCH_MENAGERIE=ON
-cmake --build build --parallel $(nproc)
-```
-
-The package expects MuJoCo 3.8.0 by default at `/opt/mujoco-3.8.0`. Override it
-with `-DMUJOCO_ROOT=/path/to/mujoco-3.8.0` if needed.
-
-Useful CMake options:
-
-| Option | Default | When to change it |
-|--------|---------|-------------------|
-| `MUJOCO_ROOT` | `/opt/mujoco-3.8.0` | MuJoCo is installed somewhere else |
-| `FETCH_MENAGERIE` | `OFF` | You want the bundled examples to build robot assets automatically |
-| `BUILD_RECORDER` | `ON` | Turn off if EGL is unavailable and you do not need MP4 recording |
-| `BUILD_PYTHON_BINDINGS` | `OFF` | Turn on for an in-tree CMake build of the Python extension |
-| `BUILD_TESTS` | `ON` | Turn off for a smaller install-only build |
-| `BUILD_DOCS` | `OFF` | Turn on to generate Doxygen HTML docs |
-
-Run a smoke test:
-
-```bash
-ctest --test-dir build --output-on-failure
-./build/src/examples/ex_gravity_comp --headless
-```
-
-If you are developing inside a larger workspace, point CMake at this package
-directory explicitly:
-
-```bash
-cmake -S src/mj_kdl_wrapper -B build/mj_kdl_wrapper \
-      -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-      -DFETCH_MENAGERIE=ON
-cmake --build build/mj_kdl_wrapper --parallel $(nproc)
-```
-
-## 1.1 Build A Small External Program
-
-When using the wrapper from another CMake project, link against
-`mj_kdl_wrapper` and include the public header:
-
-```cmake
-cmake_minimum_required(VERSION 3.16)
-project(my_sim LANGUAGES CXX)
-
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-find_package(mj_kdl_wrapper REQUIRED)
-
-add_executable(my_sim main.cpp)
-target_link_libraries(my_sim PRIVATE mj_kdl_wrapper::mj_kdl_wrapper)
-```
-
-If you are building directly inside this repository before install, the example
-targets in `src/examples/CMakeLists.txt` show the same pattern with the in-tree
-target:
-
-```cmake
-add_executable(my_sim main.cpp)
-target_link_libraries(my_sim PRIVATE mj_kdl_wrapper)
-```
-
-## 1.2 Python Bindings
-
-Install the Python package from the repository root:
-
-```bash
-pip install .
-```
-
-The Python API keeps the same ownership model as C++: `Scene` or `Env` owns the
-compiled MuJoCo model/data and `Robot` borrows it. Public object mutations
-(`add_object()` / `remove_object()`) rebind existing Python robot handles, and
-closing a `Scene` or `Env` invalidates dependent robots.
-
-The binding uses the upstream Python packages where they already exist:
-
-- KDL objects are returned as `PyKDL` objects. `body_frame()`, `site_frame()`,
-  and `fk_frame()` return `PyKDL.Frame`; `kdl_chain()` returns `PyKDL.Chain`.
-- `set_joint_pos()` and `fk_frame(q)` accept either Python sequences or
-  `PyKDL.JntArray`.
-- The official `mujoco` Python package is optional and only used by the
-  separate viewer bridge example.
-
-Every C++ `src/examples/ex_*.cpp` file has a same-name Python counterpart in
-`python/examples/`. See [Python bindings](PYTHON_BINDINGS.md) for the full
-Python guide.
 
 ## 2. Start With One Robot Scene
 

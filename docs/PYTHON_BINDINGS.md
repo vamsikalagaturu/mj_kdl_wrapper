@@ -5,30 +5,6 @@ concepts as the C++ wrapper while keeping ownership explicit. It owns MuJoCo
 `mjModel`/`mjData` through `Scene` or `Env` and returns KDL values through the
 upstream `PyKDL` module instead of defining duplicate Python KDL classes.
 
-## Install
-
-Build the package from the repository root:
-
-```bash
-pip install .
-```
-
-For editable development, build with scikit-build-core in the usual way for your
-environment. The wheel build enables `BUILD_PYTHON_BINDINGS` and disables C++
-tests/examples by default; the C++ examples can still be built with CMake.
-
-`PyKDL` must be importable when you call APIs that return or accept KDL objects:
-
-- `Scene.body_frame()` and `Scene.site_frame()` return `PyKDL.Frame`.
-- `Robot.fk_frame()` returns `PyKDL.Frame` and accepts either a Python sequence
-  or `PyKDL.JntArray`.
-- `Robot.kdl_chain()` returns `PyKDL.Chain` so callers can construct the normal
-  PyKDL FK, IK, RNEA, and ACHD solvers.
-
-The official `mujoco` Python package is optional. It is used by
-`python/examples/viewer_scene.py` to open an exported `.mjb` in the official
-viewer, and its MuJoCo version must match `mj_kdl_wrapper.mujoco_version()`.
-
 ## Minimal Scene
 
 ```python
@@ -47,8 +23,11 @@ scene = mjk.Scene.build(spec)
 robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link")
 
 robot.ctrl_mode = mjk.CtrlMode.POSITION
-robot.jnt_pos_cmd = robot.jnt_pos_msr[:]
+robot.jnt_pos_cmd = [0.0] * robot.n_joints
+robot.update()
 robot.step()
+
+scene.save_xml("scene.xml")
 scene.close()
 ```
 
@@ -76,6 +55,10 @@ fk.JntToCart(q, tcp)
 
 `Robot.set_joint_pos()` and `Robot.fk_frame(q)` accept both Python sequences and
 `PyKDL.JntArray`, so examples can stay close to equivalent C++ KDL code.
+
+`Scene.body_frame()` and `Scene.site_frame()` return `PyKDL.Frame`.
+`Robot.kdl_chain()` returns `PyKDL.Chain`, so callers can construct the normal
+PyKDL FK, IK, RNEA, and ACHD solvers.
 
 ## Runtime Mutation And Ownership
 
@@ -105,6 +88,25 @@ leaving Python with dangling MuJoCo pointers.
 `xyzw` order. The binding converts them to MuJoCo's `wxyz` order before calling
 the C++ helper.
 
+## Simulate UI And Viewer Bridge
+
+Run the custom Simulate UI with wrapper panels for `Frames`, `Trace`,
+`Perturb`, `Recorder`, and `RTF`:
+
+```bash
+python3 python/examples/custom_ui_scene.py
+```
+
+Run the official MuJoCo viewer bridge:
+
+```bash
+python3 python/examples/viewer_scene.py
+```
+
+`viewer_scene.py` exports a temporary `.mjb` and opens it in a separate Python
+process, so the installed `mujoco` Python package must match the wrapper-linked
+MuJoCo version reported by `mj_kdl_wrapper.mujoco_version()`.
+
 ## Examples
 
 Every C++ `src/examples/ex_*.cpp` example has a Python counterpart with the
@@ -113,9 +115,12 @@ same base name in `python/examples/`.
 Run headless:
 
 ```bash
+python3 python/examples/ex_pos_ctrl.py
+python3 python/examples/ex_vel_ctrl.py
 python3 python/examples/ex_pick.py
 python3 python/examples/ex_table_pick_place.py
 python3 python/examples/ex_table_pour.py
+python3 python/examples/ex_record.py
 ```
 
 Add `--gui` to open the wrapper Simulate UI where the example supports it:

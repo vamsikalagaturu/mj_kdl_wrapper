@@ -23,6 +23,14 @@
  */
 
 /**
+ * @defgroup grp_env Runtime Environment
+ * @brief Own compiled model/data and synchronize registered robots on reset.
+ *
+ * Use init_env() when an application needs reset hooks or a single owner for
+ * model/data and scene mutation helpers.
+ */
+
+/**
  * @defgroup grp_viewer Visualization
  * @brief GLFW window management and the real-time render/tick loop.
  *

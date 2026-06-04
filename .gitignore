@@ -18,10 +18,9 @@ Makefile
 third_party/menagerie/
 MUJOCO_LOG.TXT
 
-# Third-party dependencies (all fetched at build time)
+# Third-party dependencies and local workspace installs
 install/
 third_party/orocos_kinematics_dynamics/
-third_party/doxygen-awesome-css/
 third_party/lodepng/
 
 # MuJoCo screenshot output

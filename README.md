@@ -15,13 +15,6 @@ A C++ library bridging [MuJoCo 3.8](https://github.com/google-deepmind/mujoco) p
 </tr>
 </table>
 
-## Start Here
-
-For a full step-by-step walkthrough, read [docs/TUTORIAL.md](docs/TUTORIAL.md).
-It starts from installation and gradually builds up robot control, attachments,
-asset-backed objects, reset hooks, cameras, the Simulate UI, recording, and
-multi-robot scenes.
-
 ## Features
 
 - **Unified scene builder** -- `build_scene()` accepts MJCF files and builds floor, skybox, primitive objects, asset-backed objects, and cameras via `mjSpec` with no intermediate XML files
@@ -37,19 +30,46 @@ multi-robot scenes.
 - **Overlay geometry** -- `clear_trace()` / `add_trace_segment()` draw your own lines (e.g. a live end-effector trajectory trace) into the simulate UI's user scene; no-ops in headless mode
 - **Interactive and headless recording** -- Simulate UI recorder controls plus `VideoRecorder` for EGL offscreen MP4 recording
 
-## Dependencies
+## Setup
 
-| Dependency | Version | Install |
-|------------|---------|---------|
-| MuJoCo | 3.8.0 | download to `/opt/mujoco-3.8.0` |
-| GLFW | 3.x | `sudo apt install libglfw3-dev` |
-| OpenGL / EGL | -- | `sudo apt install libgl-dev libegl-dev` |
-| orocos-kdl | -- | `sudo apt install liborocos-kdl-dev` |
-| ffmpeg | -- | `sudo apt install ffmpeg` (for VideoRecorder) |
+The commands below assume Ubuntu or Debian-style packages and install MuJoCo
+3.8.0 at `/opt/mujoco-3.8.0`. Set `MUJOCO_ROOT` if you install it elsewhere.
 
-Only MuJoCo 3.8.0 is supported. CMake checks `mjVERSION_HEADER` and stops at configure time if `MUJOCO_ROOT` points to any other MuJoCo release.
+Only MuJoCo 3.8.0 is supported. CMake checks `mjVERSION_HEADER` and stops at
+configure time if `MUJOCO_ROOT` points to any other MuJoCo release.
 
-### orocos KDL from source (optional)
+### System Packages
+
+```bash
+sudo apt update
+sudo apt install \
+  cmake g++ git python3-dev python3-pip python3-venv \
+  libglfw3-dev libgl-dev libegl-dev liborocos-kdl-dev python3-pykdl \
+  ffmpeg doxygen
+```
+
+`python3-pykdl` is the distro PyKDL package. The Python venv below uses
+`--system-site-packages` so PyKDL is visible inside the venv.
+
+### MuJoCo 3.8.0
+
+```bash
+wget https://github.com/google-deepmind/mujoco/releases/download/3.8.0/mujoco-3.8.0-linux-x86_64.tar.gz
+sudo tar -xzf mujoco-3.8.0-linux-x86_64.tar.gz -C /opt/
+export MUJOCO_ROOT=/opt/mujoco-3.8.0
+```
+
+Persist `MUJOCO_ROOT` in your shell profile if `/opt/mujoco-3.8.0` is not the
+default path you want CMake to use.
+
+### Clone The Repo
+
+```bash
+git clone https://github.com/secorolab/mj_kdl_wrapper.git
+cd mj_kdl_wrapper
+```
+
+### Orocos KDL From Source (Optional)
 
 ```bash
 git clone https://github.com/secorolab/orocos_kinematics_dynamics.git
@@ -62,110 +82,88 @@ cmake --build build_kdl -j$(nproc)
 cmake --install build_kdl
 ```
 
-Then add `-DCMAKE_PREFIX_PATH=~/ws/install` to the build below.
+Then add `-DCMAKE_PREFIX_PATH=~/ws/install` to the CMake configure command.
 
-## Building
+## Build And Install
+
+### Build C++ Library, Examples, Tests, And Docs
 
 ```bash
-wget https://github.com/google-deepmind/mujoco/releases/download/3.8.0/mujoco-3.8.0-linux-x86_64.tar.gz
-tar -xzf mujoco-3.8.0-linux-x86_64.tar.gz -C /opt/
-
-sudo apt install libglfw3-dev libgl-dev libegl-dev liborocos-kdl-dev
-
-git clone https://github.com/secorolab/mj_kdl_wrapper.git
-cd mj_kdl_wrapper
-
-cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake -B build \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DFETCH_MENAGERIE=ON \
+  -DBUILD_DOCS=ON
 cmake --build build --parallel $(nproc)
 ```
 
-## Python bindings
+`FETCH_MENAGERIE=ON` downloads the Kinova GEN3 and Robotiq assets used by the
+examples and tests into `third_party/menagerie/`.
 
-The Python package exposes the headless scene, robot, environment, Simulate UI,
-and recorder APIs. It uses wrapper-owned MuJoCo model/data handles and returns
-KDL values through upstream `PyKDL` objects instead of defining duplicate KDL
-Python classes.
+Run the C++ smoke tests:
 
 ```bash
-uv pip install .
-# or, with pip in your environment:
-pip install .
+ctest --test-dir build --output-on-failure
+./build/src/examples/ex_gravity_comp --headless
 ```
 
-```python
-import mj_kdl_wrapper as mjk
+### Install The C++ Package
 
-spec = mjk.SceneSpec()
-spec.timestep = 0.002
-spec.add_floor = True
-spec.add_skybox = True
-robot_spec = mjk.RobotSpec()
-robot_spec.path = "third_party/menagerie/kinova_gen3/gen3.xml"
-spec.robots = [robot_spec]
-
-scene = mjk.Scene.build(spec)
-robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link")
-
-robot.jnt_pos_cmd = [0.0] * robot.n_joints
-robot.update()
-robot.step()
-
-scene.save_xml("scene.xml")
-scene.close()
-```
-
-`Scene.body_frame()`, `Scene.site_frame()`, and `Robot.fk_frame()` return
-`PyKDL.Frame`; `Robot.kdl_chain()` returns `PyKDL.Chain`; and
-`Robot.set_joint_pos()` / `Robot.fk_frame(q)` accept either Python sequences or
-`PyKDL.JntArray`. `Scene.set_body_pose(..., quat=...)` accepts Python quaternions
-in `xyzw` order and converts to MuJoCo's `wxyz` convention internally.
-
-`Scene.add_object()` / `remove_object()` and `Env.add_object()` /
-`remove_object()` rebuild the underlying MuJoCo model/data and rebind existing
-Python `Robot` handles. Calling `Scene.close()` or `Env.close()` invalidates
-dependent robot handles; later robot use raises `RuntimeError("robot is closed")`.
-
-Run the headless example:
+Install the C++ package if another CMake project should use
+`find_package(mj_kdl_wrapper)`:
 
 ```bash
-python3 python/examples/basic_scene.py
+sudo cmake --install build
 ```
 
-Every C++ `src/examples/ex_*.cpp` example has a Python counterpart with the same
-base name in `python/examples/`. Examples run headless by default and accept
-`--gui` where a Simulate UI view is useful.
+For a user-local install, configure with an explicit prefix first:
 
 ```bash
-python3 python/examples/ex_pos_ctrl.py
-python3 python/examples/ex_vel_ctrl.py
-python3 python/examples/ex_pick.py
-python3 python/examples/ex_table_pick_place.py
-python3 python/examples/ex_table_pour.py
+cmake -B build \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DFETCH_MENAGERIE=ON \
+  -DBUILD_DOCS=ON \
+  -DCMAKE_INSTALL_PREFIX="$HOME/.local"
+cmake --build build --parallel $(nproc)
+cmake --install build
 ```
 
-Add `--gui` to a Python example to run it in the custom Simulate UI when that
-example supports an interactive view.
+### Python Venv
 
-See [docs/PYTHON_BINDINGS.md](docs/PYTHON_BINDINGS.md) for Python ownership,
-PyKDL interop, runtime mutation, and API documentation notes.
-
-Run the custom Simulate UI with the wrapper panels (`Frames`, `Trace`,
-`Perturb`, `Recorder`, and `RTF`):
+From the repository root, create one Python environment for the Python MuJoCo
+package, PyKDL, and the wrapper bindings:
 
 ```bash
-python3 python/examples/custom_ui_scene.py
+python3 -m venv --system-site-packages .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install "mujoco==3.8.0" .
 ```
 
-Run the official MuJoCo viewer bridge. This exports a temporary `.mjb` and
-opens it in a separate Python process, so the installed `mujoco` Python package
-must match the wrapper-linked MuJoCo version reported by
-`mj_kdl_wrapper.mujoco_version()`:
+Run `python -m pip install .` from the `mj_kdl_wrapper` repository root. It
+builds the pybind11 extension through `scikit-build-core` using this repo's
+`pyproject.toml`, then installs the Python package. It does not build the C++
+examples/tests; use the CMake build above for those.
+
+Verify the environment:
 
 ```bash
-python3 python/examples/viewer_scene.py
+python -c "import PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mjk.mujoco_version())"
+python python/examples/basic_scene.py
 ```
 
-Optional flags:
+### Generate Documentation
+
+```bash
+cmake -B build -DBUILD_DOCS=ON
+cmake --build build --target docs
+```
+
+Open `build/docs/html/index.html`. The generated docs include the C++ headers,
+C++ examples, Markdown guides, Python stubs, and Python examples. The docs
+target also generates `build/docs/kdl.tag` and `build/docs/html/kdl/` from the
+installed Orocos KDL headers so KDL types and common solver calls link locally.
+
+### CMake Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -177,335 +175,23 @@ Optional flags:
 | `SHOW_GROUP_PANEL=ON` | OFF | Show the Simulate UI `Group enable` section (hidden by default) |
 
 The repo also carries `third_party/kinova/GEN3_URDF_V12.urdf` for KDL parser
-diagnostics.  The MuJoCo model remains sourced from Menagerie.
+diagnostics. The MuJoCo model remains sourced from Menagerie.
 
-The simulate UI screenshot button (`S` key) is always enabled; it uses an ffmpeg pipe to write PNGs without any third-party lodepng dependency.
-
-The local Simulate UI also includes wrapper-specific controls. In the left
-Simulation panel:
-
-- `RTF` shows the wrapper real-time factor controlled by `,` and `.`.
-- `Recorder` lets you select output path, recording camera, resolution, FPS,
-  and start/stop recording.
-
-The right panel adds debug sections:
-
-- `Frames` -- per-body and per-site coordinate-frame triads (RViz-style),
-  toggled individually, with a `Scale` slider for axis length.
-- `Trace` -- `Trace EE` toggles a trail that follows the robot's TCP site.
-- `Perturb` -- shows the double-clicked `Body` name and a `Drag` selector
-  (`Camera` / `Force` / `Torque`); see [Viewer controls](#viewer-controls).
-
-The `Equality` and `Group enable` sections are hidden by default; build with
-`-DSHOW_EQUALITY_PANEL=ON` / `-DSHOW_GROUP_PANEL=ON` to restore them.
-
-The viewer-only `Frames`, `Trace`, and `Perturb` geometry is not drawn into
-recorded MP4s, which use a separate offscreen scene.
+> [!NOTE]
+> Once the build succeeds, follow the [Tutorial](docs/TUTORIAL.md) to start
+> building scenes, adding robots, KDL control, reset hooks, and more.
 
 ## API
 
-### Load from MJCF
-
-`SceneSpec` has no defaults for `timestep`, `add_floor`, or `add_skybox`:
-those are choices, not values the library can guess. `build_scene` rejects
-`timestep <= 0` at runtime.
-
-```cpp
-#include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
-
-mj_kdl::SceneSpec sc;
-sc.timestep   = 0.002;   // [s]; required, must be > 0
-sc.add_floor  = true;
-sc.add_skybox = true;
-sc.robots.push_back(mj_kdl::RobotSpec{ .path = "third_party/menagerie/kinova_gen3/gen3.xml" });
-
-mjModel *model = nullptr;
-mjData  *data  = nullptr;
-mj_kdl::build_scene(&model, &data, &sc);
-```
-
-### Init KDL chain
-
-```cpp
-mj_kdl::Robot robot;
-mj_kdl::init_robot_from_mjcf(&robot, model, data, "base_link", "bracelet_link");
-
-unsigned n = robot.n_joints;  // 7 for Kinova GEN3
-KDL::ChainDynParam dyn(robot.chain, KDL::Vector(0, 0, -9.81));
-```
-
-When a tool (gripper) is attached, pass a `ToolFrameSpec` so KDL dynamics include the full tool inertia and FK uses the TCP site:
-
-```cpp
-const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base", .tcp_site = "g_pinch" };
-mj_kdl::init_robot_from_mjcf(&robot, model, data, "base_link", "bracelet_link", "", &tool);
-
-// ChainDynParam now accounts for arm + gripper mass.
-KDL::ChainDynParam dyn(robot.chain, KDL::Vector(0, 0, -9.81));
-KDL::JntArray q(n), g(n);
-dyn.JntToGravity(q, g);  // correct for arm + gripper
-```
-
-### Attach a gripper (or any MJCF body)
-
-`AttachTarget` is a tagged pair of `AttachKind { World, Body, Site, Frame }`
-and an element name. The Kinova GEN3 MJCF exports `pinch_site` on the
-bracelet, which already encodes the tool offset and flip, so a gripper
-attaches with no manual `pos`/`euler`:
-
-```cpp
-mj_kdl::AttachmentSpec gs{
-    .mjcf_path          = "third_party/menagerie/robotiq_2f85/2f85.xml",
-    .attach_to          = { mj_kdl::AttachKind::Site, "pinch_site" },
-    .prefix             = "g_",
-    .contact_exclusions = {},
-};
-
-mj_kdl::RobotSpec rs;
-rs.path = "third_party/menagerie/kinova_gen3/gen3.xml";
-rs.attachments.push_back(gs);
-
-mj_kdl::SceneSpec sc;
-sc.timestep   = 0.002;
-sc.add_floor  = true;
-sc.add_skybox = true;
-sc.robots.push_back(rs);
-mj_kdl::build_scene(&model, &data, &sc);
-```
-
-Optional `pos`/`euler` on the spec are **composed** with the site's pose, so
-you can still nudge:
-
-```cpp
-gs.pos[2]   = 0.005;   // +5 mm along the tool z
-gs.euler[2] = 15.0;    // +15 deg about the tool z
-```
-
-If a model has no suitable site, attach by body name instead:
-
-```cpp
-gs.attach_to = { mj_kdl::AttachKind::Body, "bracelet_link" };
-gs.pos[2]    = -0.061525;
-gs.euler[0]  = 180.0;
-```
-
-Chains are supported: push multiple `AttachmentSpec` entries in order
-(mount -> FT sensor -> gripper). Each entry's `attach_to` may reference
-any body, site, or frame added by prior entries.
-
-### Multi-robot scene
-
-```cpp
-mj_kdl::SceneSpec sc;
-sc.timestep   = 0.002;
-sc.add_floor  = true;
-sc.add_skybox = true;
-sc.robots = {
-    mj_kdl::RobotSpec{ .path = "gen3.xml", .pos = { -0.5, 0.0, 0.0 } },
-    mj_kdl::RobotSpec{ .path = "gen3.xml", .prefix = "r2_", .pos = { 0.5, 0.0, 0.0 } },
-};
-mj_kdl::build_scene(&model, &data, &sc);
-
-mj_kdl::Robot robot1, robot2;
-mj_kdl::init_robot_from_mjcf(&robot1, model, data, "base_link", "bracelet_link");
-mj_kdl::init_robot_from_mjcf(&robot2, model, data, "base_link", "bracelet_link", "r2_");
-```
-
-### Table + objects
-
-`SceneObject` and `RobotSpec` share the same `attach_to` field, so the robot
-follows the table's tabletop site without hand-threaded heights. Build
-order in `build_scene` is decorations -> objects (declaration order) ->
-robots -> cameras, so a robot's `attach_to` can reference any prior object
-and a child object's `attach_to` can reference any earlier object in
-`SceneSpec::objects`.
-
-`SceneObject` has no defaults for `shape`, `size`, `rgba`, `mass`, or
-`friction`. For MJCF-backed objects (when `mjcf_path` is set) those fields
-are ignored at runtime; for primitives, `build_scene` runs explicit checks:
-
-- `shape == Shape::Unspecified` -> error, object skipped.
-- `size[i] <= 0` for the relevant dimensions of the shape -> error, skipped.
-- `mass <= 0` on a non-fixed primitive -> error, skipped.
-
-```cpp
-mj_kdl::SceneSpec sc;
-sc.timestep   = 0.002;
-sc.add_floor  = true;
-sc.add_skybox = true;
-
-mj_kdl::SceneObject table{
-    .name      = "table",
-    .mjcf_path = "src/examples/assets/table.xml",  // ships a `table_top` site
-    .pos       = { 0.0, 0.0, 0.7 },                // asset origin = tabletop center
-    .fixed     = true,
-};
-sc.objects.push_back(table);
-
-// scene_object_site_name() yields the compiled site name (prefixed by
-// obj.name + "_"), here "table_table_top".
-std::string mount = mj_kdl::scene_object_site_name(table, "table_top");
-
-sc.robots.push_back(mj_kdl::RobotSpec{
-    .path      = "third_party/menagerie/kinova_gen3/gen3.xml",
-    .attach_to = { mj_kdl::AttachKind::Site, mount.c_str() },
-});
-
-// MJCF-asset SceneObjects expose their root body under obj.name in the
-// compiled scene, so fixed objects can attach to it directly:
-sc.objects.push_back(mj_kdl::SceneObject{
-    .name      = "fixture",
-    .mjcf_path = "fixture.xml",
-    .attach_to = { mj_kdl::AttachKind::Body, "table" },
-    .pos       = { 0.0, 0.0, 0.0 },
-    .fixed     = true,
-});
-
-// MuJoCo restricts freejoints to top-level bodies, so a non-fixed primitive
-// (with a freejoint) must stay world-anchored. Primitives require shape,
-// size, rgba, mass, and friction.
-sc.objects.push_back(mj_kdl::SceneObject{
-    .name     = "red_cube",
-    .shape    = mj_kdl::Shape::BOX,
-    .size     = { 0.03, 0.03, 0.03 },                 // half-extents [m]
-    .pos      = { 0.35, 0.10, 0.73 },                 // world frame; tabletop_z + half_height
-    .rgba     = { 1.0f, 0.0f, 0.0f, 1.0f },
-    .mass     = 0.1,                                  // [kg]
-    .condim   = mj_kdl::Condim::Torsional,            // friction model (Tangential/Torsional/Rolling)
-    .friction = { 0.8, 0.02, 0.001 },                 // [slide, spin, roll]
-});
-
-mj_kdl::build_scene(&model, &data, &sc);
-```
-
-### Control loop
-
-```cpp
-robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
-
-mj_kdl::Viewer viewer;
-mj_kdl::init_window_sim(&viewer, &robot);
-
-KDL::JntArray q(n), g(n);
-while (mj_kdl::step(&robot)) {                       // returns false when window closes
-    mj_kdl::update(&robot);                          // read *_msr, apply *_cmd
-    for (unsigned i = 0; i < n; ++i) q(i) = robot.jnt_pos_msr[i];
-    dyn.JntToGravity(q, g);
-    for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = g(i);
-}
-
-mj_kdl::cleanup(&viewer);
-mj_kdl::cleanup(&robot);
-mj_kdl::destroy_scene(model, data);
-```
-
-### Reset
-
-`reset(Env*)` resets the environment runtime to its initial keyframe, calls an
-optional environment reset hook, re-seeds all registered robots' command ports to
-the current measured state, and clears stale robot forces.  Use the hook to put
-objects, controllers, and task state back at their episode start values:
-
-```cpp
-mj_kdl::Env env;
-mj_kdl::init_env(&env, &scene);
-
-mj_kdl::Robot robot;
-mj_kdl::init_robot_from_mjcf(&robot, env.model, env.data, "base_link", "bracelet_link");
-mj_kdl::env_add_robot(&env, &robot);
-
-env.on_reset = [&](mj_kdl::ResetContext *ctx) {
-    // Restore robot/object/task state after mj_resetData, before mj_forward.
-    mj_kdl::set_joint_pos(&robot, q_home, false);
-    episode_step = 0;
-};
-
-mj_kdl::ResetOptions opts;
-opts.keyframe = 0;
-mj_kdl::ResetInfo info = mj_kdl::reset(&env, &opts);
-```
-
-### Headless video recording
-
-```cpp
-/* Requires BUILD_RECORDER=ON (default) and ffmpeg in PATH. */
-mj_kdl::VideoRecorder vr;
-/* Preset resolutions: R360p, R480p, R720p, R1080p, R2K, R4K */
-mj_kdl::init_video_recorder(&vr, model, "sim.mp4", mj_kdl::VideoResolution::R1080p);
-
-/* Configure camera (optional - defaults to model-fitted free camera). */
-vr.cam.azimuth   = 135.0;
-vr.cam.elevation = -20.0;
-vr.cam.distance  = 2.5;
-
-for (int i = 0; i < 3000; ++i) {
-    mj_kdl::update(&robot);
-    // ... apply control ...
-    mj_kdl::step(&robot);
-    mj_kdl::record_frame(&vr, model, data);
-}
-
-mj_kdl::cleanup(&vr);   // flushes pipe, finalises MP4
-```
-
-Interactive recording is available from the Simulate UI:
-
-1. Open the left Simulation panel.
-2. Scroll to Recorder.
-3. Set `Path`, `Camera`, `Resolution`, and `FPS`.
-4. Press `Start rec`.
-5. Press `Stop rec`.
-
-The recorder camera list includes `Current`, `Free`, `Tracking`, robot MJCF
-cameras, and cameras added through `SceneSpec::cameras`.  When ffmpeg closes
-successfully the terminal prints:
-
-```text
-[mj_kdl] recording saved to <filename>
-```
-
-### Runtime add / remove objects
-
-```cpp
-mj_kdl::scene_add_object(&model, &data, &sc, cube);
-mj_kdl::scene_remove_object(&model, &data, &sc, "red_cube");
-/* model/data are replaced; re-call init_robot_from_*() on the new pointers. */
-```
-
-In Python, `Scene.add_object()` / `remove_object()` and `Env.add_object()` /
-`remove_object()` perform that rebind step for existing Python `Robot` handles.
-
-## Viewer controls
-
-| Input | Action |
-|-------|--------|
-| Left drag | Orbit camera |
-| Right drag | Pan camera |
-| Scroll | Zoom |
-| Double-click body | Select body (name shown in the `Perturb` panel) |
-| `D` | Deselect body |
-| `Space` | Pause / resume |
-| `,` | Decrease wrapper real-time factor |
-| `.` | Increase wrapper real-time factor |
-
-Applying a perturbation force/torque to the selected body, two equivalent ways:
-
-- **Perturb panel** -- set `Drag` to `Force` or `Torque`, then left-drag in the
-  3D view (right-drag still pans the camera). `Shift` drags in the horizontal
-  plane instead of the vertical.
-- **Keyboard + mouse** -- `Ctrl` + right-drag applies force, `Ctrl` + left-drag
-  applies torque.
-
-All other controls (reset, quit, rendering flags, live camera selection, and
-recording) are in the MuJoCo panels.
-
-## More Documentation
-
-- [Full tutorial](docs/TUTORIAL.md)
+- [C++ API guide](docs/CPP_API.md)
 - [Python bindings guide](docs/PYTHON_BINDINGS.md)
-- [Examples guide](src/examples/README.md)
-- [Torque control notes](docs/HOWTO_torque_control.md)
-- [URDF to MJCF notes](docs/HOWTO_urdf_to_mjcf.md)
+- Generated C++ and Python API reference: `build/docs/html/index.html`
+
+## Examples
+
+The example catalog lives in [src/examples/README.md](src/examples/README.md).
+Every C++ `src/examples/ex_*.cpp` example has a same-name Python counterpart in
+`python/examples/`.
 
 ## Tests
 
@@ -515,20 +201,12 @@ ctest --test-dir build --output-on-failure
 
 See [test/README.md](test/README.md) for the full list of tests.
 
-## Examples
+## More Documentation
 
-See [src/examples/README.md](src/examples/README.md) for the full list of examples.
-
-## Documentation
-
-```bash
-# Install Doxygen first
-sudo apt install doxygen
-
-cmake -B build -DBUILD_DOCS=ON
-cmake --build build --target docs
-# Open build/docs/html/index.html
-```
+- [Full tutorial](docs/TUTORIAL.md)
+- [Torque control notes](docs/HOWTO_torque_control.md)
+- [URDF to MJCF notes](docs/HOWTO_urdf_to_mjcf.md)
+- [Examples guide](src/examples/README.md)
 
 ## Assets
 

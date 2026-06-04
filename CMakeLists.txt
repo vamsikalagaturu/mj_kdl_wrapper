@@ -240,26 +240,55 @@ if(FETCH_MENAGERIE)
     endif()
 endif()
 
-# Documentation (Doxygen + Doxygen Awesome CSS)
+# Documentation (Doxygen + local CSS)
 # Build separately:  cmake --build build --target docs
 # Requires:  sudo apt install doxygen
-option(BUILD_DOCS "Generate HTML documentation with Doxygen and Awesome CSS" OFF)
+option(BUILD_DOCS "Generate HTML documentation with Doxygen" OFF)
 if(BUILD_DOCS)
     find_package(Doxygen REQUIRED)
 
-    # Doxygen Awesome CSS - modern responsive theme for Doxygen
-    set(DOXYGEN_AWESOME_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/doxygen-awesome-css)
-    if(NOT EXISTS ${DOXYGEN_AWESOME_DIR}/doxygen-awesome.css)
-        message(STATUS "doxygen-awesome: fetching into ${DOXYGEN_AWESOME_DIR}")
-        include(FetchContent)
-        FetchContent_Declare(
-      doxygen_awesome
-      GIT_REPOSITORY https://github.com/jothepro/doxygen-awesome-css.git
-      GIT_TAG        v2.4.2
-      GIT_SHALLOW    TRUE
-      SOURCE_DIR     ${DOXYGEN_AWESOME_DIR}
-    )
-        FetchContent_MakeAvailable(doxygen_awesome)
+    set(MJ_KDL_KDL_DOXYGEN_INPUT_DIRS)
+    foreach(_kdl_inc IN LISTS orocos_kdl_INCLUDE_DIRS)
+        if(EXISTS "${_kdl_inc}/kdl")
+            list(APPEND MJ_KDL_KDL_DOXYGEN_INPUT_DIRS "${_kdl_inc}/kdl")
+        elseif(EXISTS "${_kdl_inc}/chain.hpp" OR EXISTS "${_kdl_inc}/frames.hpp")
+            list(APPEND MJ_KDL_KDL_DOXYGEN_INPUT_DIRS "${_kdl_inc}")
+        endif()
+    endforeach()
+    if(NOT MJ_KDL_KDL_DOXYGEN_INPUT_DIRS)
+        find_path(MJ_KDL_KDL_INCLUDE_ROOT kdl/chain.hpp
+          PATHS ${orocos_kdl_INCLUDE_DIRS} /usr/include /usr/local/include
+        )
+        if(MJ_KDL_KDL_INCLUDE_ROOT AND EXISTS "${MJ_KDL_KDL_INCLUDE_ROOT}/kdl")
+            list(APPEND MJ_KDL_KDL_DOXYGEN_INPUT_DIRS "${MJ_KDL_KDL_INCLUDE_ROOT}/kdl")
+        endif()
+    endif()
+
+    set(MJ_KDL_DOCS_DEPENDS)
+    set(MJ_KDL_DOXYGEN_TAGFILES)
+    if(MJ_KDL_KDL_DOXYGEN_INPUT_DIRS)
+        list(REMOVE_DUPLICATES MJ_KDL_KDL_DOXYGEN_INPUT_DIRS)
+        string(REPLACE ";" " " MJ_KDL_KDL_DOXYGEN_INPUTS "${MJ_KDL_KDL_DOXYGEN_INPUT_DIRS}")
+        set(MJ_KDL_KDL_TAG_FILE "${CMAKE_CURRENT_BINARY_DIR}/docs/kdl.tag")
+        configure_file(
+          ${CMAKE_CURRENT_SOURCE_DIR}/docs/Doxyfile.kdl.in
+          ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile.kdl
+          @ONLY
+        )
+        add_custom_command(
+          OUTPUT ${MJ_KDL_KDL_TAG_FILE}
+          COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/docs
+          COMMAND ${DOXYGEN_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile.kdl
+          DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile.kdl
+          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+          COMMENT "Generating Orocos KDL Doxygen tag file..."
+          VERBATIM
+        )
+        list(APPEND MJ_KDL_DOCS_DEPENDS ${MJ_KDL_KDL_TAG_FILE})
+        set(MJ_KDL_DOXYGEN_TAGFILES "${MJ_KDL_KDL_TAG_FILE}=kdl/")
+        message(STATUS "Doxygen KDL tag input: ${MJ_KDL_KDL_DOXYGEN_INPUT_DIRS}")
+    else()
+        message(WARNING "Doxygen: KDL headers were not found; external KDL symbols will not be resolved")
     endif()
 
     configure_file(
@@ -269,31 +298,8 @@ if(BUILD_DOCS)
   )
 
     add_custom_target(docs
+    DEPENDS ${MJ_KDL_DOCS_DEPENDS}
     COMMAND ${DOXYGEN_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      ${DOXYGEN_AWESOME_DIR}/doxygen-awesome-darkmode-toggle.js
-      ${CMAKE_CURRENT_BINARY_DIR}/docs/html/doxygen-awesome-darkmode-toggle.js
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      ${DOXYGEN_AWESOME_DIR}/doxygen-awesome-paragraph-link.js
-      ${CMAKE_CURRENT_BINARY_DIR}/docs/html/doxygen-awesome-paragraph-link.js
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      ${DOXYGEN_AWESOME_DIR}/doxygen-awesome-interactive-toc.js
-      ${CMAKE_CURRENT_BINARY_DIR}/docs/html/doxygen-awesome-interactive-toc.js
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      ${DOXYGEN_AWESOME_DIR}/doxygen-awesome.css
-      ${CMAKE_CURRENT_BINARY_DIR}/docs/html/doxygen-awesome.css
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      ${DOXYGEN_AWESOME_DIR}/doxygen-awesome-sidebar-only.css
-      ${CMAKE_CURRENT_BINARY_DIR}/docs/html/doxygen-awesome-sidebar-only.css
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      ${DOXYGEN_AWESOME_DIR}/doxygen-awesome-sidebar-only-darkmode-toggle.css
-      ${CMAKE_CURRENT_BINARY_DIR}/docs/html/doxygen-awesome-sidebar-only-darkmode-toggle.css
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      ${DOXYGEN_AWESOME_DIR}/doxygen-custom/theme-robot.css
-      ${CMAKE_CURRENT_BINARY_DIR}/docs/html/theme-robot.css
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      ${DOXYGEN_AWESOME_DIR}/doxygen-custom/custom.css
-      ${CMAKE_CURRENT_BINARY_DIR}/docs/html/custom.css
     COMMAND ${CMAKE_COMMAND} -E copy_directory
       ${CMAKE_CURRENT_SOURCE_DIR}/docs/screenshots
       ${CMAKE_CURRENT_BINARY_DIR}/docs/html/docs/screenshots
