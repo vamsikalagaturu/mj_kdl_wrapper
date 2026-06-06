@@ -44,14 +44,18 @@ configure time if `MUJOCO_ROOT` points to any other MuJoCo release.
 sudo apt update
 sudo apt install \
   cmake g++ git python3-dev python3-pip python3-venv \
-  libglfw3-dev libgl-dev libegl-dev \
+  libeigen3-dev libglfw3-dev libgl-dev libegl-dev \
   ffmpeg doxygen
 ```
 
+`libeigen3-dev` is required to build the secorolab Orocos KDL fork from source
+for the Python wheel.
+
 The Python install builds Orocos KDL and PyKDL from
-`git@github.com:secorolab/orocos_kinematics_dynamics.git` at
+`https://github.com/secorolab/orocos_kinematics_dynamics.git` at
 `feature/achd_fixed_joint`, so distro `liborocos-kdl-dev` and `python3-pykdl`
-are not required for the wheel.
+are not required for the wheel. The secorolab fork is the only KDL the wheel
+uses; no system KDL is consulted.
 
 ### MuJoCo 3.9.0
 
@@ -135,7 +139,7 @@ Once the system packages above are installed, install directly from GitHub into
 your active Python 3.10+ environment:
 
 ```bash
-uv pip install "git+ssh://git@github.com/vamsikalagaturu/mj_kdl_wrapper.git"
+uv pip install "git+https://github.com/vamsikalagaturu/mj_kdl_wrapper.git"
 ```
 
 The Python build downloads the matching native MuJoCo release automatically if

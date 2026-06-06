@@ -35,7 +35,7 @@ option(
 )
 set(
   MJ_KDL_OROCOS_KDL_GIT_REPOSITORY
-  "git@github.com:secorolab/orocos_kinematics_dynamics.git"
+  "https://github.com/secorolab/orocos_kinematics_dynamics.git"
   CACHE STRING
   "Orocos KDL fork used for Python wheels"
 )
@@ -165,9 +165,18 @@ if(MJ_KDL_FETCH_OROCOS_KDL)
     list(PREPEND CMAKE_PREFIX_PATH "${_MJ_KDL_OROCOS_PREFIX}")
 endif()
 
-find_package(orocos_kdl REQUIRED CONFIG
-  NO_CMAKE_PACKAGE_REGISTRY
-)
+if(MJ_KDL_FETCH_OROCOS_KDL)
+    # When fetching, the pinned secorolab fork is the only allowed KDL. Restrict
+    # the search to its install prefix so a distro liborocos-kdl is never used.
+    find_package(orocos_kdl REQUIRED CONFIG
+      PATHS "${_MJ_KDL_OROCOS_PREFIX}"
+      NO_DEFAULT_PATH
+    )
+else()
+    find_package(orocos_kdl REQUIRED CONFIG
+      NO_CMAKE_PACKAGE_REGISTRY
+    )
+endif()
 
 set(_KDL_PARSER_INSTALL "${CMAKE_SOURCE_DIR}/../../install/kdl_parser")
 get_filename_component(_KDL_PARSER_INSTALL "${_KDL_PARSER_INSTALL}" ABSOLUTE)
