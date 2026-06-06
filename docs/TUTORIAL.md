@@ -1093,6 +1093,6 @@ Run tests:
 ctest --test-dir build --output-on-failure
 ```
 
-The vendored `src/simulate_ui/simulate.cc` is MuJoCo 3.8.0 sample UI code with
+The vendored `src/simulate_ui/simulate.cc` is MuJoCo sample UI code with
 small wrapper UI additions. It is intentionally excluded from clang-tidy style
 cleanup so local changes stay reviewable against upstream.

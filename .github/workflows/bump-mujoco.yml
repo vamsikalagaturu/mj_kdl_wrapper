@@ -1,0 +1,57 @@
+name: Bump MuJoCo
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 8 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get latest MuJoCo release
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(gh api repos/google-deepmind/mujoco/releases/latest --jq '.tag_name' | sed 's/^v//')"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Update version references
+        run: python3 scripts/update_mujoco_version.py "${{ steps.latest.outputs.version }}"
+
+      - name: Stop if already current
+        id: diff
+        run: |
+          if git diff --quiet; then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "changed=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Open bump pull request
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.latest.outputs.version }}
+        run: |
+          branch="bot/bump-mujoco-${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "${branch}"
+          git add cmake/MuJoCoVersion.cmake README.md CLAUDE.md docs/HOWTO_urdf_to_mjcf.md .github/workflows/ci.yml
+          git commit -m "Bump MuJoCo to ${VERSION}"
+          git push --force-with-lease origin "${branch}"
+          if [[ "$(gh pr list --head "${branch}" --state open --json number --jq 'length')" == "0" ]]; then
+            gh pr create \
+              --title "Bump MuJoCo to ${VERSION}" \
+              --body "Automated MuJoCo version bump from google-deepmind/mujoco releases." \
+              --head "${branch}" \
+              --base "${GITHUB_REF_NAME}"
+          fi

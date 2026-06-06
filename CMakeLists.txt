@@ -7,12 +7,84 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+include(cmake/MuJoCoVersion.cmake)
+
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
-# MuJoCo — prefer /opt/mujoco-3.8.0, override with -DMUJOCO_ROOT=...
-set(MUJOCO_ROOT "/opt/mujoco-3.8.0" CACHE PATH "MuJoCo install root")
+set(_MJ_KDL_FETCH_MUJOCO_DEFAULT OFF)
+if(DEFINED SKBUILD)
+  set(_MJ_KDL_FETCH_MUJOCO_DEFAULT ON)
+endif()
+option(
+  MJ_KDL_FETCH_MUJOCO
+  "Download the supported MuJoCo release if MUJOCO_ROOT is not available"
+  ${_MJ_KDL_FETCH_MUJOCO_DEFAULT}
+)
+set(MJ_KDL_MUJOCO_URL "" CACHE STRING "Override MuJoCo release archive URL")
+
+set(_MJ_KDL_FETCH_OROCOS_KDL_DEFAULT OFF)
+if(DEFINED SKBUILD)
+  set(_MJ_KDL_FETCH_OROCOS_KDL_DEFAULT ON)
+endif()
+option(
+  MJ_KDL_FETCH_OROCOS_KDL
+  "Build Orocos KDL and PyKDL from the pinned secorolab fork"
+  ${_MJ_KDL_FETCH_OROCOS_KDL_DEFAULT}
+)
+set(
+  MJ_KDL_OROCOS_KDL_GIT_REPOSITORY
+  "git@github.com:secorolab/orocos_kinematics_dynamics.git"
+  CACHE STRING
+  "Orocos KDL fork used for Python wheels"
+)
+set(
+  MJ_KDL_OROCOS_KDL_GIT_TAG
+  "feature/achd_fixed_joint"
+  CACHE STRING
+  "Orocos KDL fork branch/tag used for Python wheels"
+)
+
+# MuJoCo - prefer /opt/mujoco-<version>, override with -DMUJOCO_ROOT=...
+set(MUJOCO_ROOT "${MJ_KDL_MUJOCO_DEFAULT_ROOT}" CACHE PATH "MuJoCo install root")
+if(MJ_KDL_FETCH_MUJOCO AND NOT EXISTS "${MUJOCO_ROOT}/include/mujoco/mujoco.h")
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        message(FATAL_ERROR
+          "Automatic MuJoCo download is currently supported on Linux only. "
+          "Set MUJOCO_ROOT to an existing MuJoCo ${MJ_KDL_MUJOCO_VERSION} install.")
+    endif()
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+        set(_mj_kdl_mujoco_platform "linux-x86_64")
+    else()
+        message(FATAL_ERROR
+          "Automatic MuJoCo download does not support ${CMAKE_SYSTEM_PROCESSOR}. "
+          "Set MUJOCO_ROOT to an existing MuJoCo ${MJ_KDL_MUJOCO_VERSION} install.")
+    endif()
+    if(NOT MJ_KDL_MUJOCO_URL)
+        set(
+          MJ_KDL_MUJOCO_URL
+          "https://github.com/google-deepmind/mujoco/releases/download/${MJ_KDL_MUJOCO_VERSION}/mujoco-${MJ_KDL_MUJOCO_VERSION}-${_mj_kdl_mujoco_platform}.tar.gz"
+          CACHE STRING
+          "Override MuJoCo release archive URL"
+          FORCE
+        )
+    endif()
+    include(FetchContent)
+    if(POLICY CMP0135)
+      cmake_policy(SET CMP0135 NEW)
+    endif()
+    if(POLICY CMP0169)
+      cmake_policy(SET CMP0169 OLD)
+    endif()
+    message(STATUS "MuJoCo : fetching ${MJ_KDL_MUJOCO_URL}")
+    FetchContent_Declare(
+      mujoco_release
+      URL "${MJ_KDL_MUJOCO_URL}"
+    )
+    FetchContent_Populate(mujoco_release)
+    set(MUJOCO_ROOT "${mujoco_release_SOURCE_DIR}" CACHE PATH "MuJoCo install root" FORCE)
+endif()
 find_path(MUJOCO_INCLUDE_DIR mujoco/mujoco.h
           PATHS "${MUJOCO_ROOT}/include" /usr/local/include /usr/include
           NO_DEFAULT_PATH REQUIRED)
@@ -20,9 +92,10 @@ file(STRINGS "${MUJOCO_INCLUDE_DIR}/mujoco/mujoco.h" MUJOCO_VERSION_HEADER_LINE
      REGEX "^#define mjVERSION_HEADER ")
 string(REGEX REPLACE ".*mjVERSION_HEADER +([0-9]+).*" "\\1" MUJOCO_VERSION_HEADER
        "${MUJOCO_VERSION_HEADER_LINE}")
-if(NOT MUJOCO_VERSION_HEADER STREQUAL "3008000")
+if(NOT MUJOCO_VERSION_HEADER STREQUAL "${MJ_KDL_MUJOCO_VERSION_HEADER}")
     message(FATAL_ERROR
-      "mj_kdl_wrapper requires MuJoCo 3.8.0 (mjVERSION_HEADER 3008000), "
+      "mj_kdl_wrapper requires MuJoCo ${MJ_KDL_MUJOCO_VERSION} "
+      "(mjVERSION_HEADER ${MJ_KDL_MUJOCO_VERSION_HEADER}), "
       "but found ${MUJOCO_VERSION_HEADER} at ${MUJOCO_INCLUDE_DIR}")
 endif()
 find_library(MUJOCO_LIBRARY mujoco
@@ -46,6 +119,50 @@ if(BUILD_RECORDER)
         message(WARNING "EGL library not found; VideoRecorder will be a no-op stub")
         set(BUILD_RECORDER OFF)
     endif()
+endif()
+
+if(MJ_KDL_FETCH_OROCOS_KDL)
+    include(FetchContent)
+    if(POLICY CMP0135)
+      cmake_policy(SET CMP0135 NEW)
+    endif()
+    if(POLICY CMP0169)
+      cmake_policy(SET CMP0169 OLD)
+    endif()
+    message(
+      STATUS
+      "Orocos KDL: fetching ${MJ_KDL_OROCOS_KDL_GIT_REPOSITORY} (${MJ_KDL_OROCOS_KDL_GIT_TAG})"
+    )
+    FetchContent_Declare(
+      orocos_kinematics_dynamics
+      GIT_REPOSITORY "${MJ_KDL_OROCOS_KDL_GIT_REPOSITORY}"
+      GIT_TAG "${MJ_KDL_OROCOS_KDL_GIT_TAG}"
+      GIT_SHALLOW TRUE
+    )
+    FetchContent_Populate(orocos_kinematics_dynamics)
+
+    set(_MJ_KDL_OROCOS_PREFIX "${CMAKE_BINARY_DIR}/orocos_kdl_install")
+    set(_MJ_KDL_OROCOS_BUILD "${CMAKE_BINARY_DIR}/orocos_kdl_build")
+    execute_process(
+      COMMAND
+        "${CMAKE_COMMAND}"
+        -S "${orocos_kinematics_dynamics_SOURCE_DIR}/orocos_kdl"
+        -B "${_MJ_KDL_OROCOS_BUILD}"
+        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        -DCMAKE_INSTALL_PREFIX=${_MJ_KDL_OROCOS_PREFIX}
+        -DENABLE_TESTS=OFF
+        -DENABLE_EXAMPLES=OFF
+      COMMAND_ERROR_IS_FATAL ANY
+    )
+    execute_process(
+      COMMAND
+        "${CMAKE_COMMAND}"
+        --build "${_MJ_KDL_OROCOS_BUILD}"
+        --target install
+        --parallel
+      COMMAND_ERROR_IS_FATAL ANY
+    )
+    list(PREPEND CMAKE_PREFIX_PATH "${_MJ_KDL_OROCOS_PREFIX}")
 endif()
 
 find_package(orocos_kdl REQUIRED CONFIG
@@ -132,8 +249,12 @@ add_library(mj_kdl_wrapper SHARED
 target_include_directories(mj_kdl_wrapper PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
-  ${MUJOCO_INCLUDE_DIR}
 )
+if(IS_ABSOLUTE "${MUJOCO_INCLUDE_DIR}" AND "${MUJOCO_INCLUDE_DIR}" MATCHES "^${CMAKE_BINARY_DIR}")
+    target_include_directories(mj_kdl_wrapper PUBLIC $<BUILD_INTERFACE:${MUJOCO_INCLUDE_DIR}>)
+else()
+    target_include_directories(mj_kdl_wrapper PUBLIC "${MUJOCO_INCLUDE_DIR}")
+endif()
 # orocos_kdl include dirs may live inside the source tree (e.g. a local install/).
 # Wrap in BUILD_INTERFACE only when the path is inside CMAKE_SOURCE_DIR to satisfy
 # CMake's install-interface path check; add other paths (system, workspace) directly.
@@ -171,6 +292,13 @@ endif()
 
 option(BUILD_PYTHON_BINDINGS "Build Python bindings" OFF)
 if(BUILD_PYTHON_BINDINGS)
+    set_target_properties(mj_kdl_wrapper PROPERTIES
+      BUILD_RPATH "${MUJOCO_LIB_DIR}"
+      INSTALL_RPATH "$ORIGIN"
+    )
+    target_compile_definitions(mj_kdl_wrapper PRIVATE MJ_KDL_RELOCATABLE_PLUGINS)
+    target_link_libraries(mj_kdl_wrapper PRIVATE ${CMAKE_DL_LIBS})
+
     find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
     find_package(pybind11 CONFIG QUIET)
     if(NOT pybind11_FOUND)
@@ -184,6 +312,44 @@ if(BUILD_PYTHON_BINDINGS)
             list(APPEND CMAKE_PREFIX_PATH "${_pybind11_cmake_dir}")
         endif()
         find_package(pybind11 CONFIG REQUIRED)
+    endif()
+
+    if(MJ_KDL_FETCH_OROCOS_KDL)
+        set(_MJ_KDL_PYKDL_BUILD "${CMAKE_BINARY_DIR}/python_orocos_kdl_build")
+        set(_MJ_KDL_PYKDL_INSTALL "${CMAKE_BINARY_DIR}/python_orocos_kdl_install")
+        execute_process(
+          COMMAND
+            "${CMAKE_COMMAND}"
+            -S "${orocos_kinematics_dynamics_SOURCE_DIR}/python_orocos_kdl"
+            -B "${_MJ_KDL_PYKDL_BUILD}"
+            -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+            -DCMAKE_INSTALL_PREFIX=${_MJ_KDL_PYKDL_INSTALL}
+            -DCMAKE_PREFIX_PATH=${_MJ_KDL_OROCOS_PREFIX}
+            -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
+            -Dpybind11_DIR=${pybind11_DIR}
+            -DPYTHON_SITE_PACKAGES_INSTALL_DIR=.
+            "-DCMAKE_INSTALL_RPATH=\$ORIGIN/mj_kdl_wrapper"
+          COMMAND_ERROR_IS_FATAL ANY
+        )
+        execute_process(
+          COMMAND
+            "${CMAKE_COMMAND}"
+            --build "${_MJ_KDL_PYKDL_BUILD}"
+            --target install
+            --parallel
+          COMMAND_ERROR_IS_FATAL ANY
+        )
+        file(GLOB _MJ_KDL_PYKDL_MODULES "${_MJ_KDL_PYKDL_INSTALL}/PyKDL*.so")
+        if(NOT _MJ_KDL_PYKDL_MODULES)
+            message(FATAL_ERROR "PyKDL build did not install a PyKDL extension")
+        endif()
+        install(FILES ${_MJ_KDL_PYKDL_MODULES}
+          DESTINATION .
+        )
+        install(DIRECTORY "${_MJ_KDL_OROCOS_PREFIX}/lib/"
+          DESTINATION mj_kdl_wrapper
+          FILES_MATCHING PATTERN "liborocos-kdl.so*"
+        )
     endif()
 
     pybind11_add_module(_mj_kdl_wrapper
@@ -204,6 +370,16 @@ if(BUILD_PYTHON_BINDINGS)
       LIBRARY DESTINATION mj_kdl_wrapper
       RUNTIME DESTINATION mj_kdl_wrapper
     )
+    get_filename_component(MUJOCO_LIBRARY_REALPATH "${MUJOCO_LIBRARY}" REALPATH)
+    install(FILES "${MUJOCO_LIBRARY_REALPATH}"
+      DESTINATION mj_kdl_wrapper
+    )
+    if(EXISTS "${MUJOCO_ROOT}/bin/mujoco_plugin")
+      install(DIRECTORY "${MUJOCO_ROOT}/bin/mujoco_plugin"
+        DESTINATION mj_kdl_wrapper
+        FILES_MATCHING PATTERN "*.so"
+      )
+    endif()
 endif()
 
 # Examples (GUI by default; pass --headless to skip the window)
@@ -314,34 +490,46 @@ endif()
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-install(TARGETS mj_kdl_wrapper
-  EXPORT mj_kdl_wrapperTargets
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-)
-install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-
-install(EXPORT mj_kdl_wrapperTargets
-  FILE mj_kdl_wrapperTargets.cmake
-  NAMESPACE mj_kdl_wrapper::
-  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/mj_kdl_wrapper
+set(_MJ_KDL_INSTALL_CPP_PACKAGE_DEFAULT ON)
+if(DEFINED SKBUILD)
+  set(_MJ_KDL_INSTALL_CPP_PACKAGE_DEFAULT OFF)
+endif()
+option(
+  MJ_KDL_INSTALL_CPP_PACKAGE
+  "Install the C++ library, headers, and CMake package config"
+  ${_MJ_KDL_INSTALL_CPP_PACKAGE_DEFAULT}
 )
 
-configure_package_config_file(
-  cmake/mj_kdl_wrapperConfig.cmake.in
-  ${CMAKE_CURRENT_BINARY_DIR}/mj_kdl_wrapperConfig.cmake
-  INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/mj_kdl_wrapper
-)
+if(MJ_KDL_INSTALL_CPP_PACKAGE)
+    install(TARGETS mj_kdl_wrapper
+      EXPORT mj_kdl_wrapperTargets
+      RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+      LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+      ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    )
+    install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-write_basic_package_version_file(
-  ${CMAKE_CURRENT_BINARY_DIR}/mj_kdl_wrapperConfigVersion.cmake
-  VERSION ${PROJECT_VERSION}
-  COMPATIBILITY SameMajorVersion
-)
+    install(EXPORT mj_kdl_wrapperTargets
+      FILE mj_kdl_wrapperTargets.cmake
+      NAMESPACE mj_kdl_wrapper::
+      DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/mj_kdl_wrapper
+    )
 
-install(FILES
-  ${CMAKE_CURRENT_BINARY_DIR}/mj_kdl_wrapperConfig.cmake
-  ${CMAKE_CURRENT_BINARY_DIR}/mj_kdl_wrapperConfigVersion.cmake
-  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/mj_kdl_wrapper
-)
+    configure_package_config_file(
+      cmake/mj_kdl_wrapperConfig.cmake.in
+      ${CMAKE_CURRENT_BINARY_DIR}/mj_kdl_wrapperConfig.cmake
+      INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/mj_kdl_wrapper
+    )
+
+    write_basic_package_version_file(
+      ${CMAKE_CURRENT_BINARY_DIR}/mj_kdl_wrapperConfigVersion.cmake
+      VERSION ${PROJECT_VERSION}
+      COMPATIBILITY SameMajorVersion
+    )
+
+    install(FILES
+      ${CMAKE_CURRENT_BINARY_DIR}/mj_kdl_wrapperConfig.cmake
+      ${CMAKE_CURRENT_BINARY_DIR}/mj_kdl_wrapperConfigVersion.cmake
+      DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/mj_kdl_wrapper
+    )
+endif()

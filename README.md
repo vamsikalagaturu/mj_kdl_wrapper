@@ -1,6 +1,6 @@
 # Mujoco KDL Wrapper
 
-A C++ library bridging [MuJoCo 3.8](https://github.com/google-deepmind/mujoco) physics simulation with [KDL](https://github.com/orocos/orocos_kinematics_dynamics) for robot kinematics and dynamics.
+A C++ library bridging [MuJoCo 3.9](https://github.com/google-deepmind/mujoco) physics simulation with [KDL](https://github.com/orocos/orocos_kinematics_dynamics) for robot kinematics and dynamics.
 
 ## Screenshots
 
@@ -33,9 +33,9 @@ A C++ library bridging [MuJoCo 3.8](https://github.com/google-deepmind/mujoco) p
 ## Setup
 
 The commands below assume Ubuntu or Debian-style packages and install MuJoCo
-3.8.0 at `/opt/mujoco-3.8.0`. Set `MUJOCO_ROOT` if you install it elsewhere.
+3.9.0 at `/opt/mujoco-3.9.0`. Set `MUJOCO_ROOT` if you install it elsewhere.
 
-Only MuJoCo 3.8.0 is supported. CMake checks `mjVERSION_HEADER` and stops at
+Only MuJoCo 3.9.0 is supported. CMake checks `mjVERSION_HEADER` and stops at
 configure time if `MUJOCO_ROOT` points to any other MuJoCo release.
 
 ### System Packages
@@ -44,22 +44,24 @@ configure time if `MUJOCO_ROOT` points to any other MuJoCo release.
 sudo apt update
 sudo apt install \
   cmake g++ git python3-dev python3-pip python3-venv \
-  libglfw3-dev libgl-dev libegl-dev liborocos-kdl-dev python3-pykdl \
+  libglfw3-dev libgl-dev libegl-dev \
   ffmpeg doxygen
 ```
 
-`python3-pykdl` is the distro PyKDL package. The Python venv below uses
-`--system-site-packages` so PyKDL is visible inside the venv.
+The Python install builds Orocos KDL and PyKDL from
+`git@github.com:secorolab/orocos_kinematics_dynamics.git` at
+`feature/achd_fixed_joint`, so distro `liborocos-kdl-dev` and `python3-pykdl`
+are not required for the wheel.
 
-### MuJoCo 3.8.0
+### MuJoCo 3.9.0
 
 ```bash
-wget https://github.com/google-deepmind/mujoco/releases/download/3.8.0/mujoco-3.8.0-linux-x86_64.tar.gz
-sudo tar -xzf mujoco-3.8.0-linux-x86_64.tar.gz -C /opt/
-export MUJOCO_ROOT=/opt/mujoco-3.8.0
+wget https://github.com/google-deepmind/mujoco/releases/download/3.9.0/mujoco-3.9.0-linux-x86_64.tar.gz
+sudo tar -xzf mujoco-3.9.0-linux-x86_64.tar.gz -C /opt/
+export MUJOCO_ROOT=/opt/mujoco-3.9.0
 ```
 
-Persist `MUJOCO_ROOT` in your shell profile if `/opt/mujoco-3.8.0` is not the
+Persist `MUJOCO_ROOT` in your shell profile if `/opt/mujoco-3.9.0` is not the
 default path you want CMake to use.
 
 ### Clone The Repo
@@ -127,27 +129,33 @@ cmake --build build --parallel $(nproc)
 cmake --install build
 ```
 
-### Python Venv
+### Python Install
 
-From the repository root, create one Python environment for the Python MuJoCo
-package, PyKDL, and the wrapper bindings:
+Once the system packages above are installed, install directly from GitHub into
+your active Python 3.10+ environment:
 
 ```bash
-python3 -m venv --system-site-packages .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install "mujoco==3.8.0" .
+uv pip install "git+ssh://git@github.com/vamsikalagaturu/mj_kdl_wrapper.git"
 ```
 
-Run `python -m pip install .` from the `mj_kdl_wrapper` repository root. It
-builds the pybind11 extension through `scikit-build-core` using this repo's
-`pyproject.toml`, then installs the Python package. It does not build the C++
-examples/tests; use the CMake build above for those.
+The Python build downloads the matching native MuJoCo release automatically if
+`MUJOCO_ROOT` does not already point to a MuJoCo 3.9.0 install. It also builds
+Orocos KDL and PyKDL from the pinned `feature/achd_fixed_joint` branch above,
+bundles their shared libraries into the wheel, and installs the matching
+official `mujoco` Python package from the MuJoCo version in
+`cmake/MuJoCoVersion.cmake`. It does not build the C++ examples/tests; use the
+CMake build above for those.
+
+For a local checkout, use:
+
+```bash
+uv pip install .
+```
 
 Verify the environment:
 
 ```bash
-python -c "import PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mjk.mujoco_version())"
+python -c "import PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mujoco.mj_versionString(), mjk.mujoco_version())"
 python python/examples/basic_scene.py
 ```
 

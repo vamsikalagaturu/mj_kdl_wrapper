@@ -1,6 +1,6 @@
 [build-system]
 requires = [
-  "scikit-build-core>=0.10",
+  "scikit-build-core>=0.11.2",
   "pybind11>=2.13",
 ]
 build-backend = "scikit_build_core.build"
@@ -10,14 +10,15 @@ name = "mj-kdl-wrapper"
 version = "0.1.0"
 description = "Python bindings for mj_kdl_wrapper"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
   { name = "Vamsi Kalagaturu" },
 ]
-dependencies = []
+dynamic = ["dependencies"]
 
 [tool.scikit-build]
+experimental = true
 cmake.args = [
   "-DBUILD_PYTHON_BINDINGS=ON",
   "-DBUILD_TESTS=OFF",
@@ -25,6 +26,14 @@ cmake.args = [
 ]
 wheel.packages = ["python/mj_kdl_wrapper"]
 build-dir = "build/{wheel_tag}"
+sdist.include = [
+  "cmake/MuJoCoVersion.cmake",
+  "python_build/mujoco_dependency.py",
+]
+
+[tool.scikit-build.metadata.dependencies]
+provider = "mujoco_dependency"
+provider-path = "python_build"
 
 [tool.ruff]
 line-length = 100

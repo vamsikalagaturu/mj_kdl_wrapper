@@ -8,8 +8,8 @@ jobs:
   build-and-test:
     runs-on: ubuntu-24.04
     env:
-      MUJOCO_VERSION: 3.8.0
-      MUJOCO_ROOT: /tmp/mujoco-3.8.0
+      MUJOCO_VERSION: 3.9.0
+      MUJOCO_ROOT: /tmp/mujoco-3.9.0
       FETCHCONTENT_BASE_DIR: ${{ github.workspace }}/.fetchcontent
       CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
@@ -59,7 +59,7 @@ jobs:
           path: ${{ env.MUJOCO_ROOT }}
           key: mujoco-${{ runner.os }}-${{ env.MUJOCO_VERSION }}
 
-      - name: Install MuJoCo 3.8.0
+      - name: Install MuJoCo ${{ env.MUJOCO_VERSION }}
         if: steps.cache-mujoco.outputs.cache-hit != 'true'
         run: |
           wget -q "https://github.com/google-deepmind/mujoco/releases/download/${MUJOCO_VERSION}/mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
