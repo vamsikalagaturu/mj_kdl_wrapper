@@ -75,10 +75,16 @@ git clone https://github.com/secorolab/mj_kdl_wrapper.git
 cd mj_kdl_wrapper
 ```
 
-### Orocos KDL From Source (Optional)
+### Orocos KDL From Source (Required)
+
+The C++ build requires the secorolab Orocos KDL fork at
+`feature/achd_fixed_joint`; the distro `liborocos-kdl-dev` does not provide the
+ACHD fixed-joint solver this project depends on. Build and install the fork,
+then point CMake at it.
 
 ```bash
-git clone https://github.com/secorolab/orocos_kinematics_dynamics.git
+git clone --branch feature/achd_fixed_joint \
+  https://github.com/secorolab/orocos_kinematics_dynamics.git
 cd orocos_kinematics_dynamics
 cmake orocos_kdl -B build_kdl \
       -DCMAKE_BUILD_TYPE=Release \
@@ -89,6 +95,9 @@ cmake --install build_kdl
 ```
 
 Then add `-DCMAKE_PREFIX_PATH=~/ws/install` to the CMake configure command.
+
+The Python install handles this automatically and does not need this step; see
+[Python Install](#python-install).
 
 ## Build And Install
 
