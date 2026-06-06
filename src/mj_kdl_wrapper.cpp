@@ -55,6 +55,12 @@ void ensure_plugins_loaded()
 {
     static std::once_flag flag;
     std::call_once(flag, []() {
+        /* MuJoCo's plugin registry is global to the loaded libmujoco. When this
+         * library shares that libmujoco with the official mujoco Python package,
+         * importing mujoco already registers the bundled plugins; loading them
+         * again is a fatal "plugin already registered" error. Only load when the
+         * registry is still empty (e.g. standalone C++ use). */
+        if (mjp_pluginCount() > 0) return;
         const char *env = std::getenv("MUJOCO_PLUGIN_DIR");
         const std::string fallback = default_mujoco_plugin_dir();
         const char       *dir      = env ? env : fallback.c_str();

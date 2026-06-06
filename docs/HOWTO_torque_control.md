@@ -175,11 +175,6 @@ decoupled second-order system: `e_ddot + Kd*e_dot + Kp*e = 0`.
 The KDL chain built by `init_robot_from_mjcf` reads `body_inertia` (principal
 moments) and `body_iquat` (principal-axis orientation) from the compiled MuJoCo
 model and correctly rotates them into the body frame (`I = R * diag(lambda) * R^T`).
-A direct comparison of RNEA gravity torques between the URDF model (parsed via
-`kdl_parser`) and the MuJoCo model is available in `test/urdf_solver_probe.cpp`.
-It is a diagnostic, not a pass/fail unit test: the current Menagerie model and
-`GEN3_URDF_V12.urdf` agree on most link inertias, but the bracelet link differs,
-so gravity torques at the home configuration differ visibly on joints 2, 4, and 6.
 
 Neither model includes reflected motor/gear inertia (armature). For the real
 GEN3 this is the dominant inertia term; for simulation it is irrelevant since
@@ -375,4 +370,3 @@ provide such a layer -- it simulates raw physics -- so the full RNEA is necessar
 - `src/examples/ex_rnea_pick_place.cpp` -- tabletop pick and place (full RNEA)
 - `src/examples/ex_achd_table_slide.cpp` -- ACHD-based Cartesian sliding task
 - `src/examples/ex_dual_arm.cpp` -- two arms, each with gripper
-- `test/urdf_solver_probe.cpp` -- URDF ACHD probe and URDF vs MuJoCo RNEA comparison

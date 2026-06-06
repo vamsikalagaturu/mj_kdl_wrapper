@@ -24,7 +24,6 @@ A C++ library bridging [MuJoCo 3.9](https://github.com/google-deepmind/mujoco) p
 - **Runtime environments** -- `Env` owns model/data, registered robots, and reset hooks for task-specific object/controller state
 - **KDL chain from model** -- `init_robot_from_mjcf()` builds a KDL chain directly from a compiled MuJoCo model
 - **Control ports** -- `update()` reads `qpos`/`qvel`/`qfrc_actuator` into `*_msr` and applies `*_cmd` in POSITION or TORQUE mode
-- **Dynamics probes** -- `test/urdf_solver_probe.cpp` uses the bundled Kinova GEN3 URDF to check ACHD fixed-joint outputs and compare URDF-vs-MuJoCo RNEA torques
 - **Interactive viewer** -- `init_window_sim()` + `step()` gives your code the control loop while the MuJoCo simulate UI runs in a background render thread
 - **Viewer debug panels** -- `Frames` (per-body/site coordinate triads), `Trace` (end-effector trail), and `Perturb` (point-and-drag force/torque on a selected body) sections in the simulate UI
 - **Overlay geometry** -- `clear_trace()` / `add_trace_segment()` draw your own lines (e.g. a live end-effector trajectory trace) into the simulate UI's user scene; no-ops in headless mode
@@ -207,9 +206,6 @@ installed Orocos KDL headers so KDL types and common solver calls link locally.
 | `BUILD_DOCS=ON` | OFF | Generate Doxygen HTML docs (`cmake --build build --target docs`) |
 | `SHOW_EQUALITY_PANEL=ON` | OFF | Show the Simulate UI `Equality` section (hidden by default) |
 | `SHOW_GROUP_PANEL=ON` | OFF | Show the Simulate UI `Group enable` section (hidden by default) |
-
-The repo also carries `third_party/kinova/GEN3_URDF_V12.urdf` for KDL parser
-diagnostics. The MuJoCo model remains sourced from Menagerie.
 
 > [!NOTE]
 > Once the build succeeds, follow the [Tutorial](docs/TUTORIAL.md) to start

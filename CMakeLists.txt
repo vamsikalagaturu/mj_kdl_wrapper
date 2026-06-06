@@ -84,15 +84,15 @@ if(MJ_KDL_FETCH_MUJOCO AND NOT EXISTS "${MUJOCO_ROOT}/include/mujoco/mujoco.h")
     if(POLICY CMP0135)
       cmake_policy(SET CMP0135 NEW)
     endif()
-    if(POLICY CMP0169)
-      cmake_policy(SET CMP0169 OLD)
-    endif()
     message(STATUS "MuJoCo : fetching ${MJ_KDL_MUJOCO_URL}")
+    # Download-only: SOURCE_SUBDIR names a path with no CMakeLists.txt, so
+    # FetchContent_MakeAvailable populates the archive without add_subdirectory.
     FetchContent_Declare(
       mujoco_release
       URL "${MJ_KDL_MUJOCO_URL}"
+      SOURCE_SUBDIR _mj_kdl_no_configure
     )
-    FetchContent_Populate(mujoco_release)
+    FetchContent_MakeAvailable(mujoco_release)
     set(MUJOCO_ROOT "${mujoco_release_SOURCE_DIR}" CACHE PATH "MuJoCo install root" FORCE)
 endif()
 find_path(MUJOCO_INCLUDE_DIR mujoco/mujoco.h
@@ -132,76 +132,54 @@ if(BUILD_RECORDER)
 endif()
 
 if(MJ_KDL_FETCH_OROCOS_KDL)
-    include(FetchContent)
-    if(POLICY CMP0135)
-      cmake_policy(SET CMP0135 NEW)
-    endif()
-    if(POLICY CMP0169)
-      cmake_policy(SET CMP0169 OLD)
-    endif()
+    # Build the pinned secorolab Orocos KDL fork at build time via ExternalProject
+    # (download + configure + build + install, in dependency order). The fork is
+    # the only KDL the wheel uses; the wrapper consumes it through an IMPORTED
+    # target, and PyKDL (built later) consumes its install prefix. No distro
+    # liborocos-kdl and no configure-time builds are involved.
+    include(ExternalProject)
+    set(_MJ_KDL_OROCOS_SRC    "${CMAKE_BINARY_DIR}/orocos_kdl_src")
+    set(_MJ_KDL_OROCOS_PREFIX "${CMAKE_BINARY_DIR}/orocos_kdl_install")
     message(
       STATUS
-      "Orocos KDL: fetching ${MJ_KDL_OROCOS_KDL_GIT_REPOSITORY} (${MJ_KDL_OROCOS_KDL_GIT_TAG})"
+      "Orocos KDL: building ${MJ_KDL_OROCOS_KDL_GIT_REPOSITORY} (${MJ_KDL_OROCOS_KDL_GIT_TAG})"
     )
-    FetchContent_Declare(
-      orocos_kinematics_dynamics
+    ExternalProject_Add(orocos_kdl_ep
       GIT_REPOSITORY "${MJ_KDL_OROCOS_KDL_GIT_REPOSITORY}"
-      GIT_TAG "${MJ_KDL_OROCOS_KDL_GIT_TAG}"
-      GIT_SHALLOW TRUE
-    )
-    FetchContent_Populate(orocos_kinematics_dynamics)
-
-    set(_MJ_KDL_OROCOS_PREFIX "${CMAKE_BINARY_DIR}/orocos_kdl_install")
-    set(_MJ_KDL_OROCOS_BUILD "${CMAKE_BINARY_DIR}/orocos_kdl_build")
-    execute_process(
-      COMMAND
-        "${CMAKE_COMMAND}"
-        -S "${orocos_kinematics_dynamics_SOURCE_DIR}/orocos_kdl"
-        -B "${_MJ_KDL_OROCOS_BUILD}"
+      GIT_TAG        "${MJ_KDL_OROCOS_KDL_GIT_TAG}"
+      GIT_SHALLOW    TRUE
+      SOURCE_DIR     "${_MJ_KDL_OROCOS_SRC}"
+      SOURCE_SUBDIR  orocos_kdl
+      CMAKE_ARGS
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         -DCMAKE_INSTALL_PREFIX=${_MJ_KDL_OROCOS_PREFIX}
         -DENABLE_TESTS=OFF
         -DENABLE_EXAMPLES=OFF
-      COMMAND_ERROR_IS_FATAL ANY
+      BUILD_BYPRODUCTS "${_MJ_KDL_OROCOS_PREFIX}/lib/liborocos-kdl.so"
+      UPDATE_DISCONNECTED TRUE
     )
-    execute_process(
-      COMMAND
-        "${CMAKE_COMMAND}"
-        --build "${_MJ_KDL_OROCOS_BUILD}"
-        --target install
-        --parallel
-      COMMAND_ERROR_IS_FATAL ANY
+    # IMPORTED target the wrapper links against. The install tree is produced by
+    # the ExternalProject build step; create the include dir up front so the path
+    # recorded on the target is valid at configure time.
+    file(MAKE_DIRECTORY "${_MJ_KDL_OROCOS_PREFIX}/include")
+    # KDL public headers include <Eigen/Core>; the installed orocos_kdl config
+    # would normally pull Eigen in, so carry it on the imported target here.
+    find_package(Eigen3 REQUIRED NO_MODULE)
+    add_library(orocos-kdl SHARED IMPORTED GLOBAL)
+    set_target_properties(orocos-kdl PROPERTIES
+      IMPORTED_LOCATION "${_MJ_KDL_OROCOS_PREFIX}/lib/liborocos-kdl.so"
+      INTERFACE_INCLUDE_DIRECTORIES "${_MJ_KDL_OROCOS_PREFIX}/include"
+      INTERFACE_LINK_LIBRARIES Eigen3::Eigen
     )
-    list(PREPEND CMAKE_PREFIX_PATH "${_MJ_KDL_OROCOS_PREFIX}")
-endif()
-
-if(MJ_KDL_FETCH_OROCOS_KDL)
-    # When fetching, the pinned secorolab fork is the only allowed KDL. Restrict
-    # the search to its install prefix so a distro liborocos-kdl is never used.
-    find_package(orocos_kdl REQUIRED CONFIG
-      PATHS "${_MJ_KDL_OROCOS_PREFIX}"
-      NO_DEFAULT_PATH
-    )
+    get_target_property(_mj_kdl_eigen_inc Eigen3::Eigen INTERFACE_INCLUDE_DIRECTORIES)
+    set(orocos_kdl_FOUND        TRUE)
+    set(orocos_kdl_LIBRARIES    orocos-kdl)
+    set(orocos_kdl_INCLUDE_DIRS "${_MJ_KDL_OROCOS_PREFIX}/include" ${_mj_kdl_eigen_inc})
+    set(orocos_kdl_DIR          "secorolab fork (ExternalProject)")
 else()
     find_package(orocos_kdl REQUIRED CONFIG
       NO_CMAKE_PACKAGE_REGISTRY
     )
-endif()
-
-set(_KDL_PARSER_INSTALL "${CMAKE_SOURCE_DIR}/../../install/kdl_parser")
-get_filename_component(_KDL_PARSER_INSTALL "${_KDL_PARSER_INSTALL}" ABSOLUTE)
-find_library(KDL_PARSER_LIB kdl_parser
-  PATHS "${_KDL_PARSER_INSTALL}/lib"
-  NO_DEFAULT_PATH)
-if(KDL_PARSER_LIB)
-  add_library(kdl_parser::kdl_parser SHARED IMPORTED)
-  set_target_properties(kdl_parser::kdl_parser PROPERTIES
-    IMPORTED_LOCATION "${KDL_PARSER_LIB}"
-    INTERFACE_INCLUDE_DIRECTORIES "${_KDL_PARSER_INSTALL}/include"
-  )
-  set(kdl_parser_FOUND TRUE)
-  set(_KDL_PARSER_LIB_DIR "${_KDL_PARSER_INSTALL}/lib")
-  message(STATUS "kdl_parser (local): ${KDL_PARSER_LIB}")
 endif()
 
 if(NOT orocos_kdl_FOUND)
@@ -300,6 +278,12 @@ target_link_libraries(mj_kdl_wrapper PRIVATE
   mujoco_simulate_ui
 )
 
+# When KDL is built via ExternalProject, its headers and library only exist
+# after that build step. Order it before the wrapper compiles/links.
+if(TARGET orocos_kdl_ep)
+    add_dependencies(mj_kdl_wrapper orocos_kdl_ep)
+endif()
+
 target_compile_options(mj_kdl_wrapper PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(mj_kdl_wrapper PRIVATE
   MUJOCO_PLUGIN_DIR="${MUJOCO_ROOT}/bin/mujoco_plugin"
@@ -337,13 +321,17 @@ if(BUILD_PYTHON_BINDINGS)
     endif()
 
     if(MJ_KDL_FETCH_OROCOS_KDL)
-        set(_MJ_KDL_PYKDL_BUILD "${CMAKE_BINARY_DIR}/python_orocos_kdl_build")
+        # Build PyKDL from the same checkout, at build time, against the
+        # ExternalProject-installed Orocos KDL. python_orocos_kdl is a separate
+        # CMake project that find_package()s an installed orocos_kdl, so it must
+        # run after orocos_kdl_ep has installed (enforced via DEPENDS).
         set(_MJ_KDL_PYKDL_INSTALL "${CMAKE_BINARY_DIR}/python_orocos_kdl_install")
-        execute_process(
-          COMMAND
-            "${CMAKE_COMMAND}"
-            -S "${orocos_kinematics_dynamics_SOURCE_DIR}/python_orocos_kdl"
-            -B "${_MJ_KDL_PYKDL_BUILD}"
+        ExternalProject_Add(pykdl_ep
+          DEPENDS          orocos_kdl_ep
+          SOURCE_DIR       "${_MJ_KDL_OROCOS_SRC}"
+          SOURCE_SUBDIR    python_orocos_kdl
+          DOWNLOAD_COMMAND ""
+          CMAKE_ARGS
             -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
             -DCMAKE_INSTALL_PREFIX=${_MJ_KDL_PYKDL_INSTALL}
             -DCMAKE_PREFIX_PATH=${_MJ_KDL_OROCOS_PREFIX}
@@ -351,22 +339,14 @@ if(BUILD_PYTHON_BINDINGS)
             -Dpybind11_DIR=${pybind11_DIR}
             -DPYTHON_SITE_PACKAGES_INSTALL_DIR=.
             "-DCMAKE_INSTALL_RPATH=\$ORIGIN/mj_kdl_wrapper"
-          COMMAND_ERROR_IS_FATAL ANY
+          UPDATE_DISCONNECTED TRUE
         )
-        execute_process(
-          COMMAND
-            "${CMAKE_COMMAND}"
-            --build "${_MJ_KDL_PYKDL_BUILD}"
-            --target install
-            --parallel
-          COMMAND_ERROR_IS_FATAL ANY
-        )
-        file(GLOB _MJ_KDL_PYKDL_MODULES "${_MJ_KDL_PYKDL_INSTALL}/PyKDL*.so")
-        if(NOT _MJ_KDL_PYKDL_MODULES)
-            message(FATAL_ERROR "PyKDL build did not install a PyKDL extension")
-        endif()
-        install(FILES ${_MJ_KDL_PYKDL_MODULES}
+        # Bundle PyKDL (top-level module) and the Orocos KDL shared library from
+        # the ExternalProject install trees. FILES_MATCHING globs at install time,
+        # after both ExternalProject builds have run.
+        install(DIRECTORY "${_MJ_KDL_PYKDL_INSTALL}/"
           DESTINATION .
+          FILES_MATCHING PATTERN "PyKDL*.so"
         )
         install(DIRECTORY "${_MJ_KDL_OROCOS_PREFIX}/lib/"
           DESTINATION mj_kdl_wrapper
@@ -378,6 +358,10 @@ if(BUILD_PYTHON_BINDINGS)
       src/python/bindings.cpp
     )
     target_link_libraries(_mj_kdl_wrapper PRIVATE mj_kdl_wrapper)
+    if(TARGET orocos_kdl_ep)
+        # bindings.cpp includes KDL headers produced by the ExternalProject.
+        add_dependencies(_mj_kdl_wrapper orocos_kdl_ep)
+    endif()
     target_compile_features(_mj_kdl_wrapper PRIVATE cxx_std_20)
     target_compile_options(_mj_kdl_wrapper PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_definitions(_mj_kdl_wrapper PRIVATE
