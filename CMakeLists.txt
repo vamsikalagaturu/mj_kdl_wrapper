@@ -1,5 +1,15 @@
 cmake_minimum_required(VERSION 3.16)
-project(mj_kdl_wrapper VERSION 0.1.0 LANGUAGES CXX)
+
+# Single source of truth for the version: the [project] table in pyproject.toml.
+# Parse it here so the C++ package version and the Python module version cannot
+# drift apart.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/pyproject.toml" _mj_kdl_pyproject)
+if(NOT _mj_kdl_pyproject MATCHES "\n[ \t]*version[ \t]*=[ \t]*\"([0-9]+\\.[0-9]+\\.[0-9]+)\"")
+    message(FATAL_ERROR "Could not parse project version from pyproject.toml")
+endif()
+set(MJ_KDL_VERSION "${CMAKE_MATCH_1}")
+
+project(mj_kdl_wrapper VERSION ${MJ_KDL_VERSION} LANGUAGES CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -301,9 +311,12 @@ endif()
 
 option(BUILD_PYTHON_BINDINGS "Build Python bindings" OFF)
 if(BUILD_PYTHON_BINDINGS)
+    # The wheel does not bundle libmujoco; it reuses the shared library shipped
+    # by the pinned `mujoco` pip package, which installs as a sibling top-level
+    # package (site-packages/mujoco). $ORIGIN/../mujoco resolves to it.
     set_target_properties(mj_kdl_wrapper PROPERTIES
       BUILD_RPATH "${MUJOCO_LIB_DIR}"
-      INSTALL_RPATH "$ORIGIN"
+      INSTALL_RPATH "$ORIGIN;$ORIGIN/../mujoco"
     )
     target_compile_definitions(mj_kdl_wrapper PRIVATE MJ_KDL_RELOCATABLE_PLUGINS)
     target_link_libraries(mj_kdl_wrapper PRIVATE ${CMAKE_DL_LIBS})
@@ -367,9 +380,15 @@ if(BUILD_PYTHON_BINDINGS)
     target_link_libraries(_mj_kdl_wrapper PRIVATE mj_kdl_wrapper)
     target_compile_features(_mj_kdl_wrapper PRIVATE cxx_std_20)
     target_compile_options(_mj_kdl_wrapper PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_definitions(_mj_kdl_wrapper PRIVATE
+      MJ_KDL_WRAPPER_VERSION="${PROJECT_VERSION}"
+    )
+    # The extension calls MuJoCo directly, so libmujoco is a direct dependency
+    # of this module too. DT_RUNPATH is not transitive, so it needs its own
+    # entry for the sibling mujoco pip package alongside $ORIGIN.
     set_target_properties(_mj_kdl_wrapper PROPERTIES
       BUILD_RPATH "$<TARGET_FILE_DIR:mj_kdl_wrapper>"
-      INSTALL_RPATH "$ORIGIN"
+      INSTALL_RPATH "$ORIGIN;$ORIGIN/../mujoco"
     )
     install(TARGETS _mj_kdl_wrapper
       LIBRARY DESTINATION mj_kdl_wrapper
@@ -379,10 +398,9 @@ if(BUILD_PYTHON_BINDINGS)
       LIBRARY DESTINATION mj_kdl_wrapper
       RUNTIME DESTINATION mj_kdl_wrapper
     )
-    get_filename_component(MUJOCO_LIBRARY_REALPATH "${MUJOCO_LIBRARY}" REALPATH)
-    install(FILES "${MUJOCO_LIBRARY_REALPATH}"
-      DESTINATION mj_kdl_wrapper
-    )
+    # libmujoco is intentionally not bundled: the wheel depends on the matching
+    # `mujoco` pip package and links its shared library at runtime via the
+    # $ORIGIN/../mujoco rpath set above. This avoids shipping a second copy.
     if(EXISTS "${MUJOCO_ROOT}/bin/mujoco_plugin")
       install(DIRECTORY "${MUJOCO_ROOT}/bin/mujoco_plugin"
         DESTINATION mj_kdl_wrapper

@@ -154,10 +154,16 @@ uv pip install "git+https://github.com/vamsikalagaturu/mj_kdl_wrapper.git"
 The Python build downloads the matching native MuJoCo release automatically if
 `MUJOCO_ROOT` does not already point to a MuJoCo 3.9.0 install. It also builds
 Orocos KDL and PyKDL from the pinned `feature/achd_fixed_joint` branch above,
-bundles their shared libraries into the wheel, and installs the matching
+bundles the Orocos KDL shared library into the wheel, and installs the matching
 official `mujoco` Python package from the MuJoCo version in
-`cmake/MuJoCoVersion.cmake`. It does not build the C++ examples/tests; use the
-CMake build above for those.
+`cmake/MuJoCoVersion.cmake`. The wrapper reuses that `mujoco` package's native
+library at runtime instead of shipping a second copy. It does not build the C++
+examples/tests; use the CMake build above for those.
+
+The wheel vendors the secorolab PyKDL build as the top-level `PyKDL` module so
+`import PyKDL` resolves to the version that matches the bundled Orocos KDL. In a
+virtual environment this is the PyKDL that gets imported; do not install a second
+`PyKDL`/`python3-pykdl` into the same environment.
 
 For a local checkout, use:
 
@@ -169,7 +175,14 @@ Verify the environment:
 
 ```bash
 python -c "import PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mujoco.mj_versionString(), mjk.mujoco_version())"
-python python/examples/basic_scene.py
+```
+
+The `python/examples/` scripts are not shipped in the wheel; run them from a
+checkout of this repository:
+
+```bash
+git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
+python mj_kdl_wrapper/python/examples/basic_scene.py
 ```
 
 ### Generate Documentation

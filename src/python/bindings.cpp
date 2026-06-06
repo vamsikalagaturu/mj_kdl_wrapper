@@ -18,6 +18,11 @@
 
 namespace py = pybind11;
 
+// Version is injected by CMake from the single source of truth (pyproject.toml).
+#ifndef MJ_KDL_WRAPPER_VERSION
+#define MJ_KDL_WRAPPER_VERSION "0.0.0+unknown"
+#endif
+
 namespace {
 
 using mj_kdl::AttachKind;
@@ -936,7 +941,7 @@ PyRobot::~PyRobot()
 PYBIND11_MODULE(_mj_kdl_wrapper, m)
 {
     m.doc()                      = "Python bindings for mj_kdl_wrapper";
-    m.attr("__version__")        = "0.1.0";
+    m.attr("__version__")        = MJ_KDL_WRAPPER_VERSION;
     m.attr("__mujoco_version__") = mj_versionString();
 
     py::enum_<mj_kdl::LogLevel>(m, "LogLevel")
