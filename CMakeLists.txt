@@ -23,11 +23,11 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
-# MuJoCo: use MUJOCO_ROOT if it points at a MuJoCo install, otherwise download the
+# MuJoCo: use MJ_KDL_MUJOCO_DIR if it points at a MuJoCo install, otherwise download the
 # supported release (on by default). Override the archive URL if needed.
 option(
   MJ_KDL_FETCH_MUJOCO
-  "Download the supported MuJoCo release if MUJOCO_ROOT is not available"
+  "Download the supported MuJoCo release if MJ_KDL_MUJOCO_DIR is not available"
   ON
 )
 set(MJ_KDL_MUJOCO_URL "" CACHE STRING "Override MuJoCo release archive URL")
@@ -35,7 +35,7 @@ set(MJ_KDL_MUJOCO_URL "" CACHE STRING "Override MuJoCo release archive URL")
 # Orocos KDL is always the pinned secorolab fork built from source - it is the
 # only KDL this project uses; no system liborocos-kdl is ever consulted. When ON
 # (default) the pinned git source is cloned; set it OFF and point
-# MJ_KDL_OROCOS_KDL_SOURCE_DIR at a local fork checkout to build that instead.
+# MJ_KDL_OROCOS_KDL_DIR at a local fork checkout to build that instead.
 option(
   MJ_KDL_FETCH_OROCOS_KDL
   "Clone and build the pinned secorolab Orocos KDL fork (the only KDL used)"
@@ -54,25 +54,25 @@ set(
   "Orocos KDL fork branch/tag to build"
 )
 set(
-  MJ_KDL_OROCOS_KDL_SOURCE_DIR ""
+  MJ_KDL_OROCOS_KDL_DIR ""
   CACHE PATH
   "Local Orocos KDL fork source to build instead of cloning the git source"
 )
 
-# MuJoCo - prefer /opt/mujoco-<version>, override with -DMUJOCO_ROOT=...
-set(MUJOCO_ROOT "${MJ_KDL_MUJOCO_DEFAULT_ROOT}" CACHE PATH "MuJoCo install root")
-if(MJ_KDL_FETCH_MUJOCO AND NOT EXISTS "${MUJOCO_ROOT}/include/mujoco/mujoco.h")
+# MuJoCo - prefer /opt/mujoco-<version>, override with -DMJ_KDL_MUJOCO_DIR=...
+set(MJ_KDL_MUJOCO_DIR "${MJ_KDL_MUJOCO_DEFAULT_DIR}" CACHE PATH "MuJoCo install location")
+if(MJ_KDL_FETCH_MUJOCO AND NOT EXISTS "${MJ_KDL_MUJOCO_DIR}/include/mujoco/mujoco.h")
     if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
         message(FATAL_ERROR
           "Automatic MuJoCo download is currently supported on Linux only. "
-          "Set MUJOCO_ROOT to an existing MuJoCo ${MJ_KDL_MUJOCO_VERSION} install.")
+          "Set MJ_KDL_MUJOCO_DIR to an existing MuJoCo ${MJ_KDL_MUJOCO_VERSION} install.")
     endif()
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
         set(_mj_kdl_mujoco_platform "linux-x86_64")
     else()
         message(FATAL_ERROR
           "Automatic MuJoCo download does not support ${CMAKE_SYSTEM_PROCESSOR}. "
-          "Set MUJOCO_ROOT to an existing MuJoCo ${MJ_KDL_MUJOCO_VERSION} install.")
+          "Set MJ_KDL_MUJOCO_DIR to an existing MuJoCo ${MJ_KDL_MUJOCO_VERSION} install.")
     endif()
     if(NOT MJ_KDL_MUJOCO_URL)
         set(
@@ -96,10 +96,10 @@ if(MJ_KDL_FETCH_MUJOCO AND NOT EXISTS "${MUJOCO_ROOT}/include/mujoco/mujoco.h")
       SOURCE_SUBDIR _mj_kdl_no_configure
     )
     FetchContent_MakeAvailable(mujoco_release)
-    set(MUJOCO_ROOT "${mujoco_release_SOURCE_DIR}" CACHE PATH "MuJoCo install root" FORCE)
+    set(MJ_KDL_MUJOCO_DIR "${mujoco_release_SOURCE_DIR}" CACHE PATH "MuJoCo install location" FORCE)
 endif()
 find_path(MUJOCO_INCLUDE_DIR mujoco/mujoco.h
-          PATHS "${MUJOCO_ROOT}/include" /usr/local/include /usr/include
+          PATHS "${MJ_KDL_MUJOCO_DIR}/include" /usr/local/include /usr/include
           NO_DEFAULT_PATH REQUIRED)
 file(STRINGS "${MUJOCO_INCLUDE_DIR}/mujoco/mujoco.h" MUJOCO_VERSION_HEADER_LINE
      REGEX "^#define mjVERSION_HEADER ")
@@ -112,7 +112,7 @@ if(NOT MUJOCO_VERSION_HEADER STREQUAL "${MJ_KDL_MUJOCO_VERSION_HEADER}")
       "but found ${MUJOCO_VERSION_HEADER} at ${MUJOCO_INCLUDE_DIR}")
 endif()
 find_library(MUJOCO_LIBRARY mujoco
-             PATHS "${MUJOCO_ROOT}/lib" /usr/local/lib /usr/lib /usr/lib/x86_64-linux-gnu
+             PATHS "${MJ_KDL_MUJOCO_DIR}/lib" /usr/local/lib /usr/lib /usr/lib/x86_64-linux-gnu
              NO_DEFAULT_PATH REQUIRED)
 get_filename_component(MUJOCO_LIB_DIR "${MUJOCO_LIBRARY}" DIRECTORY)
 list(APPEND CMAKE_BUILD_RPATH "${MUJOCO_LIB_DIR}")
@@ -140,9 +140,9 @@ endif()
 # IMPORTED target and PyKDL (built later) consumes its install prefix.
 include(ExternalProject)
 set(_MJ_KDL_OROCOS_PREFIX "${CMAKE_BINARY_DIR}/orocos_kdl_install")
-if(MJ_KDL_OROCOS_KDL_SOURCE_DIR)
+if(MJ_KDL_OROCOS_KDL_DIR)
   # Build a user-provided local fork checkout (no clone).
-  set(_MJ_KDL_OROCOS_SRC "${MJ_KDL_OROCOS_KDL_SOURCE_DIR}")
+  set(_MJ_KDL_OROCOS_SRC "${MJ_KDL_OROCOS_KDL_DIR}")
   set(_MJ_KDL_OROCOS_DOWNLOAD DOWNLOAD_COMMAND "")
   message(STATUS "Orocos KDL: building local source ${_MJ_KDL_OROCOS_SRC}")
 elseif(MJ_KDL_FETCH_OROCOS_KDL)
@@ -160,7 +160,7 @@ elseif(MJ_KDL_FETCH_OROCOS_KDL)
 else()
   message(FATAL_ERROR
     "No Orocos KDL source. Enable MJ_KDL_FETCH_OROCOS_KDL (default) or set "
-    "MJ_KDL_OROCOS_KDL_SOURCE_DIR to a local fork checkout. No system KDL is used.")
+    "MJ_KDL_OROCOS_KDL_DIR to a local fork checkout. No system KDL is used.")
 endif()
 ExternalProject_Add(orocos_kdl_ep
   ${_MJ_KDL_OROCOS_DOWNLOAD}
@@ -199,7 +199,7 @@ message(STATUS "KDL cfg: ${orocos_kdl_DIR}")
 # simulate.cc without pulling in the full lodepng library.
 set(LODEPNG_STUB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/lodepng_stub)
 
-set(MJ_SIM_DIR "${MUJOCO_ROOT}/simulate")
+set(MJ_SIM_DIR "${MJ_KDL_MUJOCO_DIR}/simulate")
 set(MJ_SIM_LOCAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/simulate_ui")
 set(SIMULATE_UI_SOURCES
   ${MJ_SIM_LOCAL_DIR}/simulate.cc
@@ -287,7 +287,7 @@ endif()
 
 target_compile_options(mj_kdl_wrapper PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(mj_kdl_wrapper PRIVATE
-  MUJOCO_PLUGIN_DIR="${MUJOCO_ROOT}/bin/mujoco_plugin"
+  MUJOCO_PLUGIN_DIR="${MJ_KDL_MUJOCO_DIR}/bin/mujoco_plugin"
 )
 if(BUILD_RECORDER AND EGL_LIBRARY)
     target_link_libraries(mj_kdl_wrapper PUBLIC ${EGL_LIBRARY})
@@ -384,8 +384,8 @@ if(BUILD_PYTHON_BINDINGS)
     # libmujoco is intentionally not bundled: the wheel depends on the matching
     # `mujoco` pip package and links its shared library at runtime via the
     # $ORIGIN/../mujoco rpath set above. This avoids shipping a second copy.
-    if(EXISTS "${MUJOCO_ROOT}/bin/mujoco_plugin")
-      install(DIRECTORY "${MUJOCO_ROOT}/bin/mujoco_plugin"
+    if(EXISTS "${MJ_KDL_MUJOCO_DIR}/bin/mujoco_plugin")
+      install(DIRECTORY "${MJ_KDL_MUJOCO_DIR}/bin/mujoco_plugin"
         DESTINATION mj_kdl_wrapper
         FILES_MATCHING PATTERN "*.so"
       )
@@ -406,13 +406,13 @@ if(BUILD_TESTS)
 endif()
 
 # MuJoCo Menagerie (robot model zoo - used by the examples and tests)
-option(FETCH_MENAGERIE "Download MuJoCo Menagerie into MJ_KDL_MENAGERIE_DIR" OFF)
+option(MJ_KDL_FETCH_MENAGERIE "Download MuJoCo Menagerie into MJ_KDL_MENAGERIE_DIR" OFF)
 set(
   MJ_KDL_MENAGERIE_DIR "${CMAKE_SOURCE_DIR}/third_party/menagerie"
   CACHE PATH
-  "MuJoCo Menagerie location (used as the FETCH_MENAGERIE destination)"
+  "MuJoCo Menagerie location (used as the MJ_KDL_FETCH_MENAGERIE destination)"
 )
-if(FETCH_MENAGERIE)
+if(MJ_KDL_FETCH_MENAGERIE)
     set(MENAGERIE_SOURCE_DIR "${MJ_KDL_MENAGERIE_DIR}")
     if(EXISTS ${MENAGERIE_SOURCE_DIR}/README.md)
         message(STATUS "Menagerie: already present at ${MENAGERIE_SOURCE_DIR}")

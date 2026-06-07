@@ -8,12 +8,12 @@ A C++ library bridging **MuJoCo 3.9** physics simulation with **KDL** (Kinematic
 
 ## Build
 
-Requires: MuJoCo 3.9.0 at `/opt/mujoco-3.9.0` (override with `-DMUJOCO_ROOT=...`), and apt packages `liborocos-kdl-dev libglfw3-dev libgl-dev`. Older MuJoCo releases are not supported; CMake validates the expected `mjVERSION_HEADER` from `cmake/MuJoCoVersion.cmake`.
+Requires: MuJoCo 3.9.0 at `/opt/mujoco-3.9.0` (override with `-DMJ_KDL_MUJOCO_DIR=...`), and apt packages `liborocos-kdl-dev libglfw3-dev libgl-dev`. Older MuJoCo releases are not supported; CMake validates the expected `mjVERSION_HEADER` from `cmake/MuJoCoVersion.cmake`.
 
 **Always build with all flags and verify tests pass before considering any task complete:**
 
 ```bash
-cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTS=ON -DFETCH_MENAGERIE=ON -DBUILD_DOCS=ON
+cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTS=ON -DMJ_KDL_FETCH_MENAGERIE=ON -DBUILD_DOCS=ON
 cmake --build build --parallel $(nproc)
 cmake --build build --target docs
 ctest --test-dir build --output-on-failure
@@ -32,7 +32,7 @@ ctest --test-dir build --output-on-failure
 ./build/test_mjcf_trq_ctrl --gui
 ```
 
-All tests self-skip when `third_party/menagerie` is absent (requires `-DFETCH_MENAGERIE=ON`).
+All tests self-skip when `third_party/menagerie` is absent (requires `-DMJ_KDL_FETCH_MENAGERIE=ON`).
 
 ## Formatting and Linting
 

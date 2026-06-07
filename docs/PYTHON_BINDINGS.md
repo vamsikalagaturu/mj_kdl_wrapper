@@ -15,7 +15,7 @@ uv pip install .                                                            # fr
 What the build does (it does not build the C++ examples/tests; use the CMake
 build for those):
 
-- Downloads the matching native MuJoCo release automatically when `MUJOCO_ROOT`
+- Downloads the matching native MuJoCo release automatically when `MJ_KDL_MUJOCO_DIR`
   does not already point to a MuJoCo 3.9.0 install.
 - Builds the Orocos KDL and PyKDL from the pinned secorolab
   `feature/achd_fixed_joint` fork and bundles the Orocos KDL shared library into

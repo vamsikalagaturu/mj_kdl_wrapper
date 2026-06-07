@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       MUJOCO_VERSION: 3.9.0
-      MUJOCO_ROOT: /tmp/mujoco-3.9.0
+      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.9.0
       FETCHCONTENT_BASE_DIR: ${{ github.workspace }}/.fetchcontent
       CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
@@ -50,7 +50,7 @@ jobs:
         id: cache-mujoco
         uses: actions/cache@v4
         with:
-          path: ${{ env.MUJOCO_ROOT }}
+          path: ${{ env.MJ_KDL_MUJOCO_DIR }}
           key: mujoco-${{ runner.os }}-${{ env.MUJOCO_VERSION }}
 
       - name: Install MuJoCo ${{ env.MUJOCO_VERSION }}
@@ -107,9 +107,9 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DMUJOCO_ROOT="${MUJOCO_ROOT}" \
+            -DMJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}" \
             -DBUILD_TESTS=ON \
-            -DFETCH_MENAGERIE=OFF \
+            -DMJ_KDL_FETCH_MENAGERIE=OFF \
             -DBUILD_DOCS="${docs_flag}" \
             -DFETCHCONTENT_BASE_DIR="${FETCHCONTENT_BASE_DIR}" \
             -DFETCHCONTENT_UPDATES_DISCONNECTED=ON

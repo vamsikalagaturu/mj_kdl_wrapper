@@ -145,7 +145,7 @@ int main(int argc, char *argv[])
     const fs::path root = repo_root();
     if (!fs::exists(root / "third_party/menagerie")) {
         std::cerr << "third_party/menagerie/ not found - run:\n"
-                     "  cmake -B build -DFETCH_MENAGERIE=ON\n";
+                     "  cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON\n";
         return 1;
     }
 

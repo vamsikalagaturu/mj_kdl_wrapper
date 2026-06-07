@@ -31,7 +31,7 @@ A C++ library bridging [MuJoCo 3.9](https://github.com/google-deepmind/mujoco) p
 ## Install
 
 Ubuntu/Debian instructions. Only MuJoCo 3.9.0 is supported (CMake checks
-`mjVERSION_HEADER` and stops if `MUJOCO_ROOT` points at another release).
+`mjVERSION_HEADER` and stops if `MJ_KDL_MUJOCO_DIR` points at another release).
 
 ### System packages
 
@@ -52,7 +52,7 @@ cmake -B build \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DMJ_KDL_FETCH_MUJOCO=ON \
   -DMJ_KDL_FETCH_OROCOS_KDL=ON \
-  -DFETCH_MENAGERIE=ON
+  -DMJ_KDL_FETCH_MENAGERIE=ON
 cmake --build build --parallel $(nproc)
 ctest --test-dir build --output-on-failure
 ```
@@ -60,11 +60,11 @@ ctest --test-dir build --output-on-failure
 The three fetch flags are all ON by default; they are shown above to make the
 sources explicit:
 
-- `MJ_KDL_FETCH_MUJOCO` downloads MuJoCo 3.9.0 unless `MUJOCO_ROOT` points at an
+- `MJ_KDL_FETCH_MUJOCO` downloads MuJoCo 3.9.0 unless `MJ_KDL_MUJOCO_DIR` points at an
   install.
 - `MJ_KDL_FETCH_OROCOS_KDL` clones and builds the secorolab Orocos KDL fork - the
   only KDL used; no system `liborocos-kdl` is consulted.
-- `FETCH_MENAGERIE` downloads the Kinova GEN3 / Robotiq models the examples and
+- `MJ_KDL_FETCH_MENAGERIE` downloads the Kinova GEN3 / Robotiq models the examples and
   tests use.
 
 Point any of these at custom locations with the [CMake options](#cmake-options)
@@ -119,15 +119,15 @@ Paths / sources (override to use your own):
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `MUJOCO_ROOT` | `/opt/mujoco-3.9.0` | Existing MuJoCo install to use |
-| `MJ_KDL_FETCH_MUJOCO` | `ON` | Download MuJoCo when `MUJOCO_ROOT` is not present |
+| `MJ_KDL_MUJOCO_DIR` | `/opt/mujoco-3.9.0` | Existing MuJoCo install to use |
+| `MJ_KDL_FETCH_MUJOCO` | `ON` | Download MuJoCo when `MJ_KDL_MUJOCO_DIR` is not present |
 | `MJ_KDL_MUJOCO_URL` | (release) | MuJoCo archive URL to download |
 | `MJ_KDL_FETCH_OROCOS_KDL` | `ON` | Clone and build the secorolab Orocos KDL fork (the only KDL used) |
 | `MJ_KDL_OROCOS_KDL_GIT_REPOSITORY` | secorolab fork | Orocos KDL git source to build |
 | `MJ_KDL_OROCOS_KDL_GIT_TAG` | `feature/achd_fixed_joint` | Orocos KDL branch/tag to build |
-| `MJ_KDL_OROCOS_KDL_SOURCE_DIR` | (empty) | Local Orocos KDL fork checkout to build instead of cloning |
-| `FETCH_MENAGERIE` | `OFF` | Download MuJoCo Menagerie models |
-| `MJ_KDL_MENAGERIE_DIR` | `third_party/menagerie` | Menagerie location / `FETCH_MENAGERIE` destination |
+| `MJ_KDL_OROCOS_KDL_DIR` | (empty) | Local Orocos KDL fork checkout to build instead of cloning |
+| `MJ_KDL_FETCH_MENAGERIE` | `OFF` | Download MuJoCo Menagerie models |
+| `MJ_KDL_MENAGERIE_DIR` | `third_party/menagerie` | Menagerie location / `MJ_KDL_FETCH_MENAGERIE` destination |
 
 Build toggles:
 

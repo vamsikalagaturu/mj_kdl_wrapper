@@ -6,7 +6,7 @@ Tests use GoogleTest and are registered with CTest.  Build and run:
 git clone https://github.com/secorolab/mj_kdl_wrapper.git
 cd mj_kdl_wrapper
 
-cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTS=ON -DFETCH_MENAGERIE=ON
+cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTS=ON -DMJ_KDL_FETCH_MENAGERIE=ON
 cmake --build build --parallel $(nproc)
 
 # Run all tests
@@ -19,7 +19,7 @@ ctest --test-dir build --output-on-failure
 All tests self-skip if `third_party/menagerie/` is absent.  Fetch it with:
 
 ```bash
-cmake -B build -DFETCH_MENAGERIE=ON
+cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON
 ```
 
 | Test | What it covers |

@@ -1,7 +1,7 @@
 # Examples
 
 All examples use the Kinova GEN3 7-DOF arm and Robotiq 2F-85 gripper from
-MuJoCo Menagerie.  Requires `-DFETCH_MENAGERIE=ON` at configure time.
+MuJoCo Menagerie.  Requires `-DMJ_KDL_FETCH_MENAGERIE=ON` at configure time.
 
 Build from the repo root:
 
@@ -9,7 +9,7 @@ Build from the repo root:
 git clone https://github.com/secorolab/mj_kdl_wrapper.git
 cd mj_kdl_wrapper
 
-cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DFETCH_MENAGERIE=ON
+cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMJ_KDL_FETCH_MENAGERIE=ON
 cmake --build build --parallel $(nproc)
 ```
 
