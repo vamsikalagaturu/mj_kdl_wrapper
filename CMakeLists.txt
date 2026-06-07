@@ -33,9 +33,14 @@ option(
 set(MJ_KDL_MUJOCO_URL "" CACHE STRING "Override MuJoCo release archive URL")
 
 # Orocos KDL is always the pinned secorolab fork built from source - it is the
-# only KDL this project uses; no system liborocos-kdl is ever consulted. Override
-# the git source, or point MJ_KDL_OROCOS_KDL_SOURCE_DIR at a local fork checkout
-# to build that instead of cloning.
+# only KDL this project uses; no system liborocos-kdl is ever consulted. When ON
+# (default) the pinned git source is cloned; set it OFF and point
+# MJ_KDL_OROCOS_KDL_SOURCE_DIR at a local fork checkout to build that instead.
+option(
+  MJ_KDL_FETCH_OROCOS_KDL
+  "Clone and build the pinned secorolab Orocos KDL fork (the only KDL used)"
+  ON
+)
 set(
   MJ_KDL_OROCOS_KDL_GIT_REPOSITORY
   "https://github.com/secorolab/orocos_kinematics_dynamics.git"
@@ -140,7 +145,7 @@ if(MJ_KDL_OROCOS_KDL_SOURCE_DIR)
   set(_MJ_KDL_OROCOS_SRC "${MJ_KDL_OROCOS_KDL_SOURCE_DIR}")
   set(_MJ_KDL_OROCOS_DOWNLOAD DOWNLOAD_COMMAND "")
   message(STATUS "Orocos KDL: building local source ${_MJ_KDL_OROCOS_SRC}")
-else()
+elseif(MJ_KDL_FETCH_OROCOS_KDL)
   set(_MJ_KDL_OROCOS_SRC "${CMAKE_BINARY_DIR}/orocos_kdl_src")
   set(_MJ_KDL_OROCOS_DOWNLOAD
     GIT_REPOSITORY "${MJ_KDL_OROCOS_KDL_GIT_REPOSITORY}"
@@ -152,6 +157,10 @@ else()
     STATUS
     "Orocos KDL: building ${MJ_KDL_OROCOS_KDL_GIT_REPOSITORY} (${MJ_KDL_OROCOS_KDL_GIT_TAG})"
   )
+else()
+  message(FATAL_ERROR
+    "No Orocos KDL source. Enable MJ_KDL_FETCH_OROCOS_KDL (default) or set "
+    "MJ_KDL_OROCOS_KDL_SOURCE_DIR to a local fork checkout. No system KDL is used.")
 endif()
 ExternalProject_Add(orocos_kdl_ep
   ${_MJ_KDL_OROCOS_DOWNLOAD}

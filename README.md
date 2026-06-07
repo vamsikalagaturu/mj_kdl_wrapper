@@ -48,18 +48,24 @@ sudo apt install \
 ```bash
 git clone https://github.com/secorolab/mj_kdl_wrapper.git
 cd mj_kdl_wrapper
-cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DFETCH_MENAGERIE=ON
+cmake -B build \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DMJ_KDL_FETCH_MUJOCO=ON \
+  -DMJ_KDL_FETCH_OROCOS_KDL=ON \
+  -DFETCH_MENAGERIE=ON
 cmake --build build --parallel $(nproc)
 ctest --test-dir build --output-on-failure
 ```
 
-The build fetches everything it needs by default:
+The three fetch flags are all ON by default; they are shown above to make the
+sources explicit:
 
-- **MuJoCo 3.9.0** is downloaded unless `MUJOCO_ROOT` points at an install.
-- The **secorolab Orocos KDL fork** is always built from source - it is the only
-  KDL used; no system `liborocos-kdl` is consulted.
-- `-DFETCH_MENAGERIE=ON` downloads the Kinova GEN3 / Robotiq models the examples
-  and tests use.
+- `MJ_KDL_FETCH_MUJOCO` downloads MuJoCo 3.9.0 unless `MUJOCO_ROOT` points at an
+  install.
+- `MJ_KDL_FETCH_OROCOS_KDL` clones and builds the secorolab Orocos KDL fork - the
+  only KDL used; no system `liborocos-kdl` is consulted.
+- `FETCH_MENAGERIE` downloads the Kinova GEN3 / Robotiq models the examples and
+  tests use.
 
 Point any of these at custom locations with the [CMake options](#cmake-options)
 below. Install for use from another CMake project via
@@ -116,6 +122,7 @@ Paths / sources (override to use your own):
 | `MUJOCO_ROOT` | `/opt/mujoco-3.9.0` | Existing MuJoCo install to use |
 | `MJ_KDL_FETCH_MUJOCO` | `ON` | Download MuJoCo when `MUJOCO_ROOT` is not present |
 | `MJ_KDL_MUJOCO_URL` | (release) | MuJoCo archive URL to download |
+| `MJ_KDL_FETCH_OROCOS_KDL` | `ON` | Clone and build the secorolab Orocos KDL fork (the only KDL used) |
 | `MJ_KDL_OROCOS_KDL_GIT_REPOSITORY` | secorolab fork | Orocos KDL git source to build |
 | `MJ_KDL_OROCOS_KDL_GIT_TAG` | `feature/achd_fixed_joint` | Orocos KDL branch/tag to build |
 | `MJ_KDL_OROCOS_KDL_SOURCE_DIR` | (empty) | Local Orocos KDL fork checkout to build instead of cloning |
