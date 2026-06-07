@@ -798,6 +798,23 @@ struct PyVideoRecorder
         );
     }
 
+    void set_free_camera(
+      double                        distance,
+      double                        azimuth,
+      double                        elevation,
+      const std::array<double, 3> &lookat
+    )
+    {
+        if (!active) throw std::runtime_error("recorder is closed");
+        recorder.cam.type      = mjCAMERA_FREE;
+        recorder.cam.distance  = distance;
+        recorder.cam.azimuth   = azimuth;
+        recorder.cam.elevation = elevation;
+        recorder.cam.lookat[0] = lookat[0];
+        recorder.cam.lookat[1] = lookat[1];
+        recorder.cam.lookat[2] = lookat[2];
+    }
+
     void close()
     {
         if (!active) return;
@@ -1414,6 +1431,16 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         &PyVideoRecorder::use_camera,
         py::arg("name") = "",
         "Switch to a named camera; empty name restores default."
+      )
+      .def(
+        "set_free_camera",
+        &PyVideoRecorder::set_free_camera,
+        py::arg("distance"),
+        py::arg("azimuth"),
+        py::arg("elevation"),
+        py::arg("lookat") = std::array<double, 3> { 0.0, 0.0, 0.0 },
+        "Configure the free orbit camera (distance, azimuth/elevation in degrees, "
+        "lookat point). Call between frames to orbit."
       )
       .def("close", &PyVideoRecorder::close, "Finalize and close the recorder.");
 

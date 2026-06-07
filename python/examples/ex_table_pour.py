@@ -27,6 +27,7 @@ RETREAT_Y = JUG_Y - 0.08
 BALL_RADIUS = 0.007
 NUM_BALLS = 36
 POUR_TILT_RAD = 1.95
+IK_TOL = 3e-3
 KP = [120.0, 220.0, 120.0, 220.0, 110.0, 190.0, 90.0]
 KD = [12.0, 22.0, 12.0, 22.0, 11.0, 18.0, 9.0]
 
@@ -144,56 +145,64 @@ def clamp_joint(value: float, limit: tuple[float, float]) -> float:
     return value
 
 
-def solve_position_ik(
-    chain: kdl.Chain,
-    seed_values: list[float],
-    target: kdl.Vector,
-    joint_limits: list[tuple[float, float]],
-) -> list[float]:
-    fk = kdl.ChainFkSolverPos_recursive(chain)
-    ik = kdl.ChainIkSolverVel_wdls(chain)
-    ik.setLambda(0.05)
-    q = jnt(seed_values)
-    dq = kdl.JntArray(q.rows())
-    for _ in range(900):
-        current = kdl.Frame()
-        fk.JntToCart(q, current)
-        dx = kdl.diff(current, kdl.Frame(current.M, target))
-        dx.rot = kdl.Vector.Zero()
-        err = dx.vel.Norm()
-        if err <= 0.004:
-            return as_list(q)
-        if err > 0.05:
-            dx.vel = dx.vel * (0.05 / err)
-        if ik.CartToJnt(q, dx, dq) < 0:
-            raise RuntimeError("PyKDL IK velocity step failed")
-        for i in range(q.rows()):
-            q[i] = clamp_joint(q[i] + dq[i], joint_limits[i])
-    raise RuntimeError("PyKDL IK did not converge")
+def joint_limit_arrays(robot: mjk.Robot) -> tuple[kdl.JntArray, kdl.JntArray]:
+    q_min = kdl.JntArray(robot.n_joints)
+    q_max = kdl.JntArray(robot.n_joints)
+    for i, (low, high) in enumerate(robot.joint_limits):
+        if math.isfinite(low) and math.isfinite(high) and high > low:
+            q_min[i], q_max[i] = low, high
+        else:
+            q_min[i], q_max[i] = -2.0 * math.pi, 2.0 * math.pi
+    return q_min, q_max
 
 
-def base_vector(world_x: float, world_y: float, world_z: float) -> kdl.Vector:
-    return kdl.Vector(world_x - ROBOT_BACK_X, world_y, world_z - TABLE_Z)
-
-
-def build_waypoints(robot: mjk.Robot) -> dict[str, list[float]]:
+def build_waypoints(scene: mjk.Scene, robot: mjk.Robot) -> dict[str, list[float]]:
     chain = robot.kdl_chain()
-    seed = HOME[:]
+    n = robot.n_joints
+    fk = kdl.ChainFkSolverPos_recursive(chain)
+    q_min, q_max = joint_limit_arrays(robot)
+    ik_vel = kdl.ChainIkSolverVel_pinv(chain)
+    ik_nr = kdl.ChainIkSolverPos_NR_JL(chain, q_min, q_max, fk, ik_vel, 2000, 1e-5)
+    ik_lma = kdl.ChainIkSolverPos_LMA(chain, 1e-5, 2000)
 
-    def solve(name: str, world_x: float, world_y: float, world_z: float) -> list[float]:
-        nonlocal seed
-        seed = solve_position_ik(
-            chain, seed, base_vector(world_x, world_y, world_z), robot.joint_limits
-        )
-        if len(seed) != robot.n_joints:
-            raise RuntimeError(f"IK produced wrong joint count for {name}")
-        return seed[:]
+    q_home = jnt(HOME)
+    home_fk = kdl.Frame()
+    fk.JntToCart(q_home, home_fk)
+    # Carry the bottle at the home orientation, tilted slightly forward.
+    carry_tcp = home_fk.M * kdl.Rotation.RotY(-0.05)
 
-    q_pre_pour = solve("pre-pour", JUG_X, JUG_Y, TABLE_Z + 0.27)
-    q_pour = solve("pour", JUG_X, JUG_Y, TABLE_Z + 0.20)
+    world_T_base = kdl.Frame(kdl.Rotation.Identity(), kdl.Vector(ROBOT_BACK_X, 0.0, TABLE_Z))
+    base_T_world = world_T_base.Inverse()
+
+    # Constant TCP->outlet offset, measured at the live home configuration.
+    robot.set_joint_pos(HOME, call_forward=False)
+    world_T_outlet = scene.site_frame("pour_outlet")
+    world_T_tcp = scene.site_frame("g_pinch")
+    tcp_outlet = world_T_tcp.Inverse() * world_T_outlet.p
+
+    def outlet_target_to_tcp_target(tcp_rot: kdl.Rotation, outlet_pos: kdl.Vector) -> kdl.Frame:
+        return kdl.Frame(tcp_rot, outlet_pos - tcp_rot * tcp_outlet)
+
+    def solve(name: str, seed_values: list[float], outlet_pos: kdl.Vector) -> list[float]:
+        target = base_T_world * outlet_target_to_tcp_target(carry_tcp, outlet_pos)
+        seed = jnt(seed_values)
+        out = kdl.JntArray(n)
+        ok = ik_nr.CartToJnt(seed, target, out) >= 0
+        if not ok:
+            ok = ik_lma.CartToJnt(seed, target, out) >= 0
+        if not ok:
+            raise RuntimeError(f"IK failed for {name}")
+        fk_out = kdl.Frame()
+        fk.JntToCart(out, fk_out)
+        if (target.p - fk_out.p).Norm() > IK_TOL:
+            raise RuntimeError(f"IK pose error for {name}")
+        return as_list(out)
+
+    q_pre_pour = solve("pre-pour", HOME, kdl.Vector(JUG_X, JUG_Y, TABLE_Z + 0.27))
+    q_pour = solve("pour", q_pre_pour, kdl.Vector(JUG_X, JUG_Y, TABLE_Z + 0.20))
+    q_retreat = solve("retreat", q_pour, kdl.Vector(RETREAT_X, RETREAT_Y, TABLE_Z + 0.27))
     q_tilt = q_pour[:]
     q_tilt[-1] = clamp_joint(q_tilt[-1] + POUR_TILT_RAD, robot.joint_limits[-1])
-    q_retreat = solve("retreat", RETREAT_X, RETREAT_Y, TABLE_Z + 0.27)
     return {
         "home": HOME[:],
         "pre_pour": q_pre_pour,
@@ -306,7 +315,7 @@ def main() -> int:
         if scene.has_actuator("g_fingers_actuator"):
             scene.set_actuator_ctrl("g_fingers_actuator", 255.0)
 
-        waypoints = build_waypoints(robot)
+        waypoints = build_waypoints(scene, robot)
         phases = [
             Phase("HOME", waypoints["home"], 0.8, 2.0, 0.08, 255.0),
             Phase("PRE_POUR", waypoints["pre_pour"], 2.0, 4.0, 0.08, 255.0),
