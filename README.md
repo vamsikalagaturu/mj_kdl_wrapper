@@ -62,16 +62,15 @@ git clone https://github.com/secorolab/mj_kdl_wrapper.git
 cd mj_kdl_wrapper
 cmake -B build \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DMJ_KDL_FETCH_OROCOS_KDL=ON \
   -DFETCH_MENAGERIE=ON
 cmake --build build --parallel $(nproc)
 ctest --test-dir build --output-on-failure
 ```
 
-- `-DMJ_KDL_FETCH_OROCOS_KDL=ON` downloads and builds the secorolab Orocos KDL
-  fork (`feature/achd_fixed_joint`, required for the ACHD fixed-joint solver) and
-  links it; no system `liborocos-kdl-dev` is used. To use your own KDL install
-  instead, omit the flag and pass `-DCMAKE_PREFIX_PATH=/path/to/install`.
+- The build always downloads and builds the pinned secorolab Orocos KDL fork
+  (`feature/achd_fixed_joint`, the only KDL this project uses; no system
+  `liborocos-kdl` is consulted). Override the source with
+  `-DMJ_KDL_OROCOS_KDL_GIT_REPOSITORY=...` / `-DMJ_KDL_OROCOS_KDL_GIT_TAG=...`.
 - `-DFETCH_MENAGERIE=ON` downloads the Kinova GEN3 / Robotiq assets the examples
   and tests use into `third_party/menagerie/`.
 - Add `-DMJ_KDL_FETCH_MUJOCO=ON` if you did not set `MUJOCO_ROOT`.
@@ -125,7 +124,6 @@ installed Orocos KDL headers so KDL types and common solver calls link locally.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `MJ_KDL_FETCH_OROCOS_KDL=ON` | OFF | Download and build the secorolab Orocos KDL fork instead of using a system install |
 | `MJ_KDL_FETCH_MUJOCO=ON` | OFF | Download the supported MuJoCo release if `MUJOCO_ROOT` is not set |
 | `FETCH_MENAGERIE=ON` | OFF | Download MuJoCo Menagerie robot models into `third_party/menagerie/` |
 | `BUILD_RECORDER=ON` | ON | Enable `VideoRecorder` (EGL + ffmpeg headless recording) |

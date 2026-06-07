@@ -108,7 +108,6 @@ jobs:
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DMUJOCO_ROOT="${MUJOCO_ROOT}" \
-            -DMJ_KDL_FETCH_OROCOS_KDL=ON \
             -DBUILD_TESTS=ON \
             -DFETCH_MENAGERIE=OFF \
             -DBUILD_DOCS="${docs_flag}" \
