@@ -170,16 +170,10 @@ For a local checkout, use:
 uv pip install .
 ```
 
-To also fetch the MuJoCo Menagerie models the examples need (Kinova GEN3,
-Robotiq 2F-85), install with the `menagerie` extra:
-
-```bash
-uv pip install "git+https://github.com/vamsikalagaturu/mj_kdl_wrapper.git[menagerie]"
-```
-
-This pulls [`robot_descriptions`](https://github.com/robot-descriptions/robot_descriptions.py),
-which downloads and caches the models on first use. Pre-fetch them with the
-installed console script:
+The examples need the MuJoCo Menagerie models (Kinova GEN3, Robotiq 2F-85).
+Fetch them with the installed console script, which shallow-clones the official
+[MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie) into a
+local cache (requires `git`):
 
 ```bash
 mj-kdl-fetch-menagerie
@@ -192,9 +186,9 @@ python -c "import PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mujoco.mj_versionS
 ```
 
 The `python/examples/` scripts are not shipped in the wheel; run them from a
-checkout of this repository. With the `menagerie` extra installed they resolve
-the arm/gripper models automatically (no `third_party/menagerie` checkout
-needed); examples that also use tabletop assets read those from
+checkout of this repository. Once the models are fetched (or a
+`third_party/menagerie` checkout exists) the examples resolve the arm/gripper
+models automatically; examples that also use tabletop assets read those from
 `src/examples/`, so run them from the repo root:
 
 ```bash
@@ -203,9 +197,20 @@ cd mj_kdl_wrapper
 python python/examples/ex_gravity_comp.py
 ```
 
-Model resolution order is: `MJ_KDL_MODEL` / `MJ_KDL_GRIPPER` (or
-`MJ_KDL_MENAGERIE` pointing at a Menagerie checkout) -> a local
-`third_party/menagerie` -> `robot_descriptions`.
+Model resolution order is: `MJ_KDL_MODEL` / `MJ_KDL_GRIPPER` (per-model
+overrides) -> `MJ_KDL_MENAGERIE` (a Menagerie checkout) -> a local
+`third_party/menagerie` -> the `mj-kdl-fetch-menagerie` cache.
+
+Only the official MuJoCo Menagerie is provided here. To use a different source
+(for example the [`robot_descriptions`](https://github.com/robot-descriptions/robot_descriptions.py)
+package or your own MJCF exports), point the env vars above at those files
+yourself, e.g.:
+
+```bash
+pip install robot_descriptions
+export MJ_KDL_MODEL="$(python -c 'from robot_descriptions import gen3_mj_description as m; print(m.MJCF_PATH)')"
+export MJ_KDL_GRIPPER="$(python -c 'from robot_descriptions import robotiq_2f85_mj_description as m; print(m.MJCF_PATH)')"
+```
 
 ### Generate Documentation
 
