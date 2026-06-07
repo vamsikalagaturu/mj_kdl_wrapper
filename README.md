@@ -17,17 +17,16 @@ A C++ library bridging [MuJoCo 3.9](https://github.com/google-deepmind/mujoco) p
 
 ## Features
 
-- **Unified scene builder** -- `build_scene()` accepts MJCF files and builds floor, skybox, primitive objects, asset-backed objects, and cameras via `mjSpec` with no intermediate XML files
-- **Ordered attachment chains** -- `AttachmentSpec` attaches any MJCF body (mount, FT sensor, gripper, arm on a mobile base) under any named body, site, or frame via a tagged `AttachTarget`; chains of arbitrary length are applied in declaration order
-- **Relative placement everywhere** -- `RobotSpec.attach_to` and `SceneObject.attach_to` accept the same tagged `AttachTarget`, so a robot can be mounted on a site exported by a prior scene object (e.g. a tabletop site) without hand-threading world-frame heights
-- **Multi-robot scenes** -- place multiple robots with independent KDL chains in one shared simulation via `SceneSpec::robots`
-- **Runtime environments** -- `Env` owns model/data, registered robots, and reset hooks for task-specific object/controller state
-- **KDL chain from model** -- `init_robot_from_mjcf()` builds a KDL chain directly from a compiled MuJoCo model
-- **Control ports** -- `update()` reads `qpos`/`qvel`/`qfrc_actuator` into `*_msr` and applies `*_cmd` in POSITION or TORQUE mode
-- **Interactive viewer** -- `init_window_sim()` + `step()` gives your code the control loop while the MuJoCo simulate UI runs in a background render thread
-- **Viewer debug panels** -- `Frames` (per-body/site coordinate triads), `Trace` (end-effector trail), and `Perturb` (point-and-drag force/torque on a selected body) sections in the simulate UI
-- **Overlay geometry** -- `clear_trace()` / `add_trace_segment()` draw your own lines (e.g. a live end-effector trajectory trace) into the simulate UI's user scene; no-ops in headless mode
-- **Interactive and headless recording** -- Simulate UI recorder controls plus `VideoRecorder` for EGL offscreen MP4 recording
+- **Scene builder** -- compose MJCF robots, grippers, objects, and cameras into one
+  MuJoCo scene via `mjSpec`, with ordered attachment chains and relative placement.
+- **Multi-robot** -- multiple robots with independent KDL chains in one simulation.
+- **KDL from the model** -- builds the KDL chain directly from the compiled MuJoCo model.
+- **Control** -- POSITION / TORQUE ports plus KDL FK, IK, RNEA, and ACHD solvers.
+- **Runtime environments** -- `Env` with reset hooks for task setup and replay.
+- **Interactive viewer** -- MuJoCo simulate UI with Frames / Trace / Perturb panels
+  and overlay lines.
+- **Recording** -- interactive and headless EGL + ffmpeg MP4 capture.
+- **Python bindings** -- the same API from Python via `pip install`, returning PyKDL types.
 
 ## Install
 
@@ -44,40 +43,28 @@ sudo apt install \
   ffmpeg doxygen
 ```
 
-### MuJoCo 3.9.0
-
-Install it once and point `MUJOCO_ROOT` at it, or pass `-DMJ_KDL_FETCH_MUJOCO=ON`
-to let CMake download it.
-
-```bash
-wget https://github.com/google-deepmind/mujoco/releases/download/3.9.0/mujoco-3.9.0-linux-x86_64.tar.gz
-sudo tar -xzf mujoco-3.9.0-linux-x86_64.tar.gz -C /opt/
-export MUJOCO_ROOT=/opt/mujoco-3.9.0
-```
-
 ### C++ library, examples, and tests
 
 ```bash
 git clone https://github.com/secorolab/mj_kdl_wrapper.git
 cd mj_kdl_wrapper
-cmake -B build \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DFETCH_MENAGERIE=ON
+cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DFETCH_MENAGERIE=ON
 cmake --build build --parallel $(nproc)
 ctest --test-dir build --output-on-failure
 ```
 
-- The build always downloads and builds the pinned secorolab Orocos KDL fork
-  (`feature/achd_fixed_joint`, the only KDL this project uses; no system
-  `liborocos-kdl` is consulted). Override the source with
-  `-DMJ_KDL_OROCOS_KDL_GIT_REPOSITORY=...` / `-DMJ_KDL_OROCOS_KDL_GIT_TAG=...`.
-- `-DFETCH_MENAGERIE=ON` downloads the Kinova GEN3 / Robotiq assets the examples
-  and tests use into `third_party/menagerie/`.
-- Add `-DMJ_KDL_FETCH_MUJOCO=ON` if you did not set `MUJOCO_ROOT`.
+The build fetches everything it needs by default:
 
-Install it for use from another CMake project via `find_package(mj_kdl_wrapper)`
-(add `-DCMAKE_INSTALL_PREFIX="$HOME/.local"` at configure time for a user-local
-install):
+- **MuJoCo 3.9.0** is downloaded unless `MUJOCO_ROOT` points at an install.
+- The **secorolab Orocos KDL fork** is always built from source - it is the only
+  KDL used; no system `liborocos-kdl` is consulted.
+- `-DFETCH_MENAGERIE=ON` downloads the Kinova GEN3 / Robotiq models the examples
+  and tests use.
+
+Point any of these at custom locations with the [CMake options](#cmake-options)
+below. Install for use from another CMake project via
+`find_package(mj_kdl_wrapper)` (add `-DCMAKE_INSTALL_PREFIX="$HOME/.local"` for a
+user-local prefix):
 
 ```bash
 cmake --install build
@@ -122,16 +109,29 @@ installed Orocos KDL headers so KDL types and common solver calls link locally.
 
 ### CMake Options
 
+Paths / sources (override to use your own):
+
 | Flag | Default | Description |
 |------|---------|-------------|
-| `MJ_KDL_FETCH_MUJOCO=ON` | OFF | Download the supported MuJoCo release if `MUJOCO_ROOT` is not set |
-| `FETCH_MENAGERIE=ON` | OFF | Download MuJoCo Menagerie robot models into `third_party/menagerie/` |
-| `BUILD_RECORDER=ON` | ON | Enable `VideoRecorder` (EGL + ffmpeg headless recording) |
-| `BUILD_EXAMPLES=ON` | ON | Build the `src/examples/ex_*` programs |
-| `BUILD_TESTS=ON` | ON | Build and register GoogleTest tests with CTest |
-| `BUILD_DOCS=ON` | OFF | Generate Doxygen HTML docs (`cmake --build build --target docs`) |
-| `SHOW_EQUALITY_PANEL=ON` | OFF | Show the Simulate UI `Equality` section (hidden by default) |
-| `SHOW_GROUP_PANEL=ON` | OFF | Show the Simulate UI `Group enable` section (hidden by default) |
+| `MUJOCO_ROOT` | `/opt/mujoco-3.9.0` | Existing MuJoCo install to use |
+| `MJ_KDL_FETCH_MUJOCO` | `ON` | Download MuJoCo when `MUJOCO_ROOT` is not present |
+| `MJ_KDL_MUJOCO_URL` | (release) | MuJoCo archive URL to download |
+| `MJ_KDL_OROCOS_KDL_GIT_REPOSITORY` | secorolab fork | Orocos KDL git source to build |
+| `MJ_KDL_OROCOS_KDL_GIT_TAG` | `feature/achd_fixed_joint` | Orocos KDL branch/tag to build |
+| `MJ_KDL_OROCOS_KDL_SOURCE_DIR` | (empty) | Local Orocos KDL fork checkout to build instead of cloning |
+| `FETCH_MENAGERIE` | `OFF` | Download MuJoCo Menagerie models |
+| `MJ_KDL_MENAGERIE_DIR` | `third_party/menagerie` | Menagerie location / `FETCH_MENAGERIE` destination |
+
+Build toggles:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `BUILD_RECORDER` | `ON` | Enable `VideoRecorder` (EGL + ffmpeg headless recording) |
+| `BUILD_EXAMPLES` | `ON` | Build the `src/examples/ex_*` programs |
+| `BUILD_TESTS` | `ON` | Build and register GoogleTest tests with CTest |
+| `BUILD_DOCS` | `OFF` | Generate Doxygen HTML docs (`cmake --build build --target docs`) |
+| `SHOW_EQUALITY_PANEL` | `OFF` | Show the Simulate UI `Equality` section |
+| `SHOW_GROUP_PANEL` | `OFF` | Show the Simulate UI `Group enable` section |
 
 > [!NOTE]
 > Once the build succeeds, follow the [Tutorial](docs/TUTORIAL.md) to start

@@ -23,20 +23,19 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
-set(_MJ_KDL_FETCH_MUJOCO_DEFAULT OFF)
-if(DEFINED SKBUILD)
-  set(_MJ_KDL_FETCH_MUJOCO_DEFAULT ON)
-endif()
+# MuJoCo: use MUJOCO_ROOT if it points at a MuJoCo install, otherwise download the
+# supported release (on by default). Override the archive URL if needed.
 option(
   MJ_KDL_FETCH_MUJOCO
   "Download the supported MuJoCo release if MUJOCO_ROOT is not available"
-  ${_MJ_KDL_FETCH_MUJOCO_DEFAULT}
+  ON
 )
 set(MJ_KDL_MUJOCO_URL "" CACHE STRING "Override MuJoCo release archive URL")
 
 # Orocos KDL is always the pinned secorolab fork built from source - it is the
-# only KDL this project uses; no system liborocos-kdl is ever consulted. Only the
-# repository/tag are configurable.
+# only KDL this project uses; no system liborocos-kdl is ever consulted. Override
+# the git source, or point MJ_KDL_OROCOS_KDL_SOURCE_DIR at a local fork checkout
+# to build that instead of cloning.
 set(
   MJ_KDL_OROCOS_KDL_GIT_REPOSITORY
   "https://github.com/secorolab/orocos_kinematics_dynamics.git"
@@ -48,6 +47,11 @@ set(
   "feature/achd_fixed_joint"
   CACHE STRING
   "Orocos KDL fork branch/tag to build"
+)
+set(
+  MJ_KDL_OROCOS_KDL_SOURCE_DIR ""
+  CACHE PATH
+  "Local Orocos KDL fork source to build instead of cloning the git source"
 )
 
 # MuJoCo - prefer /opt/mujoco-<version>, override with -DMUJOCO_ROOT=...
@@ -130,16 +134,27 @@ endif()
 # no system liborocos-kdl is ever consulted. The wrapper consumes it through an
 # IMPORTED target and PyKDL (built later) consumes its install prefix.
 include(ExternalProject)
-set(_MJ_KDL_OROCOS_SRC    "${CMAKE_BINARY_DIR}/orocos_kdl_src")
 set(_MJ_KDL_OROCOS_PREFIX "${CMAKE_BINARY_DIR}/orocos_kdl_install")
-message(
-  STATUS
-  "Orocos KDL: building ${MJ_KDL_OROCOS_KDL_GIT_REPOSITORY} (${MJ_KDL_OROCOS_KDL_GIT_TAG})"
-)
+if(MJ_KDL_OROCOS_KDL_SOURCE_DIR)
+  # Build a user-provided local fork checkout (no clone).
+  set(_MJ_KDL_OROCOS_SRC "${MJ_KDL_OROCOS_KDL_SOURCE_DIR}")
+  set(_MJ_KDL_OROCOS_DOWNLOAD DOWNLOAD_COMMAND "")
+  message(STATUS "Orocos KDL: building local source ${_MJ_KDL_OROCOS_SRC}")
+else()
+  set(_MJ_KDL_OROCOS_SRC "${CMAKE_BINARY_DIR}/orocos_kdl_src")
+  set(_MJ_KDL_OROCOS_DOWNLOAD
+    GIT_REPOSITORY "${MJ_KDL_OROCOS_KDL_GIT_REPOSITORY}"
+    GIT_TAG        "${MJ_KDL_OROCOS_KDL_GIT_TAG}"
+    GIT_SHALLOW    TRUE
+    UPDATE_DISCONNECTED TRUE
+  )
+  message(
+    STATUS
+    "Orocos KDL: building ${MJ_KDL_OROCOS_KDL_GIT_REPOSITORY} (${MJ_KDL_OROCOS_KDL_GIT_TAG})"
+  )
+endif()
 ExternalProject_Add(orocos_kdl_ep
-  GIT_REPOSITORY "${MJ_KDL_OROCOS_KDL_GIT_REPOSITORY}"
-  GIT_TAG        "${MJ_KDL_OROCOS_KDL_GIT_TAG}"
-  GIT_SHALLOW    TRUE
+  ${_MJ_KDL_OROCOS_DOWNLOAD}
   SOURCE_DIR     "${_MJ_KDL_OROCOS_SRC}"
   SOURCE_SUBDIR  orocos_kdl
   CMAKE_ARGS
@@ -148,7 +163,6 @@ ExternalProject_Add(orocos_kdl_ep
     -DENABLE_TESTS=OFF
     -DENABLE_EXAMPLES=OFF
   BUILD_BYPRODUCTS "${_MJ_KDL_OROCOS_PREFIX}/lib/liborocos-kdl.so"
-  UPDATE_DISCONNECTED TRUE
 )
 # IMPORTED target the wrapper links against. The install tree is produced by the
 # ExternalProject build step; create the include dir up front so the path
@@ -229,11 +243,12 @@ if(IS_ABSOLUTE "${MUJOCO_INCLUDE_DIR}" AND "${MUJOCO_INCLUDE_DIR}" MATCHES "^${C
 else()
     target_include_directories(mj_kdl_wrapper PUBLIC "${MUJOCO_INCLUDE_DIR}")
 endif()
-# orocos_kdl include dirs may live inside the source tree (e.g. a local install/).
-# Wrap in BUILD_INTERFACE only when the path is inside CMAKE_SOURCE_DIR to satisfy
-# CMake's install-interface path check; add other paths (system, workspace) directly.
+# The fetched orocos_kdl include dir lives in the build (or source) tree. Wrap
+# such paths in BUILD_INTERFACE so the installed CMake export stays valid; add
+# external paths (e.g. system Eigen) directly.
 foreach(_kdl_inc IN LISTS orocos_kdl_INCLUDE_DIRS)
-    if(IS_ABSOLUTE "${_kdl_inc}" AND "${_kdl_inc}" MATCHES "^${CMAKE_SOURCE_DIR}")
+    if(IS_ABSOLUTE "${_kdl_inc}" AND
+       ("${_kdl_inc}" MATCHES "^${CMAKE_SOURCE_DIR}" OR "${_kdl_inc}" MATCHES "^${CMAKE_BINARY_DIR}"))
         target_include_directories(mj_kdl_wrapper PUBLIC $<BUILD_INTERFACE:${_kdl_inc}>)
     else()
         target_include_directories(mj_kdl_wrapper PUBLIC "${_kdl_inc}")
@@ -381,10 +396,15 @@ if(BUILD_TESTS)
     add_subdirectory(test)
 endif()
 
-# MuJoCo Menagerie (robot model zoo - needed for test_kinova_gen3_menagerie)
-option(FETCH_MENAGERIE "Download MuJoCo Menagerie into third_party/menagerie" OFF)
+# MuJoCo Menagerie (robot model zoo - used by the examples and tests)
+option(FETCH_MENAGERIE "Download MuJoCo Menagerie into MJ_KDL_MENAGERIE_DIR" OFF)
+set(
+  MJ_KDL_MENAGERIE_DIR "${CMAKE_SOURCE_DIR}/third_party/menagerie"
+  CACHE PATH
+  "MuJoCo Menagerie location (used as the FETCH_MENAGERIE destination)"
+)
 if(FETCH_MENAGERIE)
-    set(MENAGERIE_SOURCE_DIR ${CMAKE_SOURCE_DIR}/third_party/menagerie)
+    set(MENAGERIE_SOURCE_DIR "${MJ_KDL_MENAGERIE_DIR}")
     if(EXISTS ${MENAGERIE_SOURCE_DIR}/README.md)
         message(STATUS "Menagerie: already present at ${MENAGERIE_SOURCE_DIR}")
     else()
