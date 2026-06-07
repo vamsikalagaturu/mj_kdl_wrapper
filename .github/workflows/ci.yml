@@ -120,6 +120,22 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build and test the Python bindings
+        # Reuses the cached MuJoCo and the Menagerie checkout fetched above.
+        run: |
+          pip install uv
+          uv venv .venv
+          . .venv/bin/activate
+          uv pip install . --config-settings=cmake.define.MJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}"
+          uv pip install pytest
+          pytest -q python/tests
+          python python/examples/ex_gravity_comp.py
+
       - name: Build docs
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: cmake --build build --target docs
@@ -129,45 +145,6 @@ jobs:
         uses: actions/upload-pages-artifact@v5
         with:
           path: docs/html
-
-  python-bindings:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y \
-            git \
-            libeigen3-dev \
-            libglfw3-dev \
-            libgl-dev \
-            libegl-dev
-          pip install uv
-
-      - name: Build and install the wheel
-        # Under scikit-build the build downloads MuJoCo and builds the secorolab
-        # Orocos KDL + PyKDL automatically.
-        run: |
-          uv venv .venv
-          . .venv/bin/activate
-          uv pip install .
-
-      - name: Fetch Menagerie models
-        run: |
-          git clone --depth 1 https://github.com/google-deepmind/mujoco_menagerie.git third_party/menagerie
-
-      - name: Test and smoke an example
-        run: |
-          . .venv/bin/activate
-          uv pip install pytest
-          pytest -q python/tests
-          python python/examples/ex_gravity_comp.py
 
   deploy-docs:
     needs: build-and-test
