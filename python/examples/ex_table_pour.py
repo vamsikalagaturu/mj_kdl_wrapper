@@ -42,6 +42,10 @@ class Phase:
     gripper: float
 
 
+class ResetRequested(Exception):
+    """Raised when the simulate UI reset is detected, to restart the sequence."""
+
+
 def path(value: str, label: str) -> Path:
     p = Path(value)
     if not p.exists():
@@ -95,7 +99,7 @@ def ball_object(index: int) -> mjk.SceneObject:
     return ball
 
 
-def build_scene() -> tuple[mjk.Scene, mjk.Robot]:
+def build_env() -> tuple[mjk.Env, mjk.Robot]:
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
@@ -115,12 +119,12 @@ def build_scene() -> tuple[mjk.Scene, mjk.Robot]:
     ]
     spec.robots = [robot_spec]
 
-    scene = mjk.Scene.build(spec)
+    env = mjk.Env.build(spec)
     tool = mjk.ToolFrameSpec()
     tool.tool_body = "g_base"
     tool.tcp_site = "g_pinch"
-    robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link", tool=tool)
-    return scene, robot
+    robot = env.create_robot("base_link", "bracelet_link", tool=tool)
+    return env, robot
 
 
 def jnt(values: list[float]) -> kdl.JntArray:
@@ -156,7 +160,7 @@ def joint_limit_arrays(robot: mjk.Robot) -> tuple[kdl.JntArray, kdl.JntArray]:
     return q_min, q_max
 
 
-def build_waypoints(scene: mjk.Scene, robot: mjk.Robot) -> dict[str, list[float]]:
+def build_waypoints(env: mjk.Env, robot: mjk.Robot) -> dict[str, list[float]]:
     chain = robot.kdl_chain()
     n = robot.n_joints
     fk = kdl.ChainFkSolverPos_recursive(chain)
@@ -176,8 +180,8 @@ def build_waypoints(scene: mjk.Scene, robot: mjk.Robot) -> dict[str, list[float]
 
     # Constant TCP->outlet offset, measured at the live home configuration.
     robot.set_joint_pos(HOME, call_forward=False)
-    world_T_outlet = scene.site_frame("pour_outlet")
-    world_T_tcp = scene.site_frame("g_pinch")
+    world_T_outlet = env.site_frame("pour_outlet")
+    world_T_tcp = env.site_frame("g_pinch")
     tcp_outlet = world_T_tcp.Inverse() * world_T_outlet.p
 
     def outlet_target_to_tcp_target(tcp_rot: kdl.Rotation, outlet_pos: kdl.Vector) -> kdl.Frame:
@@ -229,9 +233,9 @@ def lerp(start: list[float], target: list[float], alpha: float) -> list[float]:
     return [a + alpha * (b - a) for a, b in zip(start, target)]
 
 
-def place_balls_in_bottle(scene: mjk.Scene, robot: mjk.Robot) -> None:
+def place_balls_in_bottle(env: mjk.Env, robot: mjk.Robot) -> None:
     robot.set_joint_pos(HOME, call_forward=True)
-    center = scene.site_frame("pour_center")
+    center = env.site_frame("pour_center")
     spacing = 2.0 * BALL_RADIUS
     for i in range(NUM_BALLS):
         layer = i // 9
@@ -240,14 +244,14 @@ def place_balls_in_bottle(scene: mjk.Scene, robot: mjk.Robot) -> None:
         iy = float(slot // 3) - 1.0
         local = kdl.Vector(ix * spacing, iy * spacing, -0.026 + layer * spacing)
         world = center * local
-        scene.set_body_pose(f"grain_{i:02d}", [world.x(), world.y(), world.z()])
+        env.set_body_pose(f"grain_{i:02d}", [world.x(), world.y(), world.z()])
 
 
-def balls_in_receiver(scene: mjk.Scene) -> tuple[int, list[float]]:
+def balls_in_receiver(env: mjk.Env) -> tuple[int, list[float]]:
     count = 0
     centroid = [0.0, 0.0, 0.0]
     for i in range(NUM_BALLS):
-        frame = scene.body_frame(f"grain_{i:02d}")
+        frame = env.body_frame(f"grain_{i:02d}")
         pos = [frame.p.x(), frame.p.y(), frame.p.z()]
         centroid = [a + b for a, b in zip(centroid, pos)]
         if (
@@ -266,24 +270,25 @@ def step_once(robot: mjk.Robot, viewer: mjk.SimulateViewer | None) -> bool:
 
 
 def run_phase(
-    scene: mjk.Scene,
+    env: mjk.Env,
     robot: mjk.Robot,
     phase: Phase,
     viewer: mjk.SimulateViewer | None,
     recorder: mjk.VideoRecorder | None,
     record_every: int,
     step_counter: list[int],
+    state: dict,
 ) -> bool:
     print(f"State: {phase.name}")
     robot.update()
     start = robot.jnt_pos_msr[:]
-    t0 = scene.time()
+    t0 = env.time()
     while True:
-        elapsed = scene.time() - t0
+        elapsed = env.time() - t0
         alpha = clamp(elapsed / phase.duration, 0.0, 1.0) if phase.duration > 0.0 else 1.0
         apply_pd_gravity(robot, lerp(start, phase.target, alpha))
-        if scene.has_actuator("g_fingers_actuator"):
-            scene.set_actuator_ctrl("g_fingers_actuator", phase.gripper)
+        if env.has_actuator("g_fingers_actuator"):
+            env.set_actuator_ctrl("g_fingers_actuator", phase.gripper)
 
         done_time = elapsed >= phase.duration
         done_pose = phase.settle_tol < 0.0 or max_abs_joint_err(robot, phase.target) <= phase.settle_tol
@@ -294,6 +299,11 @@ def run_phase(
             return False
         if not step_once(robot, viewer):
             return False
+        if viewer is not None and env.time() < state["prev"] - 1e-6:  # UI reset pressed
+            env.reset()
+            state["prev"] = env.time()
+            raise ResetRequested()
+        state["prev"] = env.time()
         step_counter[0] += 1
         if recorder is not None and step_counter[0] % record_every == 0:
             recorder.record_frame()
@@ -306,16 +316,20 @@ def main() -> int:
     parser.add_argument("--headless", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
-    scene, robot = build_scene()
+    env, robot = build_env()
     recorder = None
     try:
         robot.ctrl_mode = mjk.CtrlMode.TORQUE
-        robot.set_joint_pos(HOME, call_forward=True)
-        place_balls_in_bottle(scene, robot)
-        if scene.has_actuator("g_fingers_actuator"):
-            scene.set_actuator_ctrl("g_fingers_actuator", 255.0)
 
-        waypoints = build_waypoints(scene, robot)
+        def on_reset(ctx):
+            place_balls_in_bottle(env, robot)  # also re-homes the arm
+            if env.has_actuator("g_fingers_actuator"):
+                env.set_actuator_ctrl("g_fingers_actuator", 255.0)
+
+        env.on_reset = on_reset
+        env.reset()
+
+        waypoints = build_waypoints(env, robot)
         phases = [
             Phase("HOME", waypoints["home"], 0.8, 2.0, 0.08, 255.0),
             Phase("PRE_POUR", waypoints["pre_pour"], 2.0, 4.0, 0.08, 255.0),
@@ -327,25 +341,37 @@ def main() -> int:
         ]
 
         fps = 60
-        record_every = max(1, int(1.0 / (fps * scene.timestep())))
+        record_every = max(1, int(1.0 / (fps * env.timestep())))
         if args.record:
             recorder = mjk.VideoRecorder.open_preset(
-                scene, args.record, mjk.VideoResolution.R1080p, fps
+                env, args.record, mjk.VideoResolution.R1080p, fps
             )
         step_counter = [0]
+        state = {"prev": env.time()}
         if args.gui:
             viewer = mjk.SimulateViewer.open(robot, "ex_table_pour.py")
             try:
-                for phase in phases:
-                    if not run_phase(scene, robot, phase, viewer, recorder, record_every, step_counter):
+                while viewer.is_running():
+                    try:
+                        for phase in phases:
+                            if not run_phase(
+                                env, robot, phase, viewer, recorder, record_every, step_counter, state
+                            ):
+                                raise StopIteration
+                        break
+                    except ResetRequested:
+                        continue
+                    except StopIteration:
                         break
             finally:
                 viewer.close()
         else:
             for phase in phases:
-                if not run_phase(scene, robot, phase, None, recorder, record_every, step_counter):
+                if not run_phase(
+                    env, robot, phase, None, recorder, record_every, step_counter, state
+                ):
                     break
-        in_receiver, centroid = balls_in_receiver(scene)
+        in_receiver, centroid = balls_in_receiver(env)
         print(f"balls in transparent receiver: {in_receiver}/{NUM_BALLS}")
         print(f"grain centroid: {[round(v, 3) for v in centroid]} receiver center={[JUG_X, JUG_Y]}")
         if recorder is not None:
@@ -353,7 +379,7 @@ def main() -> int:
     finally:
         if recorder is not None:
             recorder.close()
-        scene.close()
+        env.close()
     return 0
 
 

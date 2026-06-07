@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Dual-arm example ported from src/examples/ex_dual_arm.cpp."""
+"""Dual-arm example ported from src/examples/ex_dual_arm.cpp.
+
+Two Kinova GEN3 arms, each with a Robotiq 2F-85 gripper, in one scene. Both run
+joint-space impedance to the home pose. An Env on_reset hook re-homes both arms.
+"""
 
 from __future__ import annotations
 
@@ -68,7 +72,7 @@ def main() -> int:
     right.attachments = [attach]
     spec.robots = [left, right]
 
-    scene = mjk.Scene.build(spec)
+    env = mjk.Env.build(spec)
     try:
         tool1 = mjk.ToolFrameSpec()
         tool1.tool_body = "g_base"
@@ -76,32 +80,42 @@ def main() -> int:
         tool2 = mjk.ToolFrameSpec()
         tool2.tool_body = "r2_g_base"
         tool2.tcp_site = "r2_g_pinch"
-        arm1 = mjk.Robot.from_scene(scene, "base_link", "bracelet_link", tool=tool1)
-        arm2 = mjk.Robot.from_scene(scene, "r2_base_link", "r2_bracelet_link", tool=tool2)
+        arm1 = env.create_robot("base_link", "bracelet_link", tool=tool1)
+        arm2 = env.create_robot("r2_base_link", "r2_bracelet_link", tool=tool2)
         for robot in (arm1, arm2):
             robot.ctrl_mode = mjk.CtrlMode.TORQUE
-            robot.set_joint_pos(HOME_POSE, call_forward=False)
+
+        def on_reset(ctx):
+            arm1.set_joint_pos(HOME_POSE, call_forward=False)
+            arm2.set_joint_pos(HOME_POSE, call_forward=False)
+
+        env.on_reset = on_reset
+        env.reset()
 
         def step():
             apply(arm1, HOME_POSE)
             apply(arm2, HOME_POSE)
-            grip = 255.0 if math.fmod(scene.time(), 6.0) < 3.0 else 0.0
+            grip = 255.0 if math.fmod(env.time(), 6.0) < 3.0 else 0.0
             for name in ("g_fingers_actuator", "r2_g_fingers_actuator"):
-                if scene.has_actuator(name):
-                    scene.set_actuator_ctrl(name, grip)
+                if env.has_actuator(name):
+                    env.set_actuator_ctrl(name, grip)
 
         if args.gui:
             viewer = mjk.SimulateViewer.open(arm1, "ex_dual_arm.py")
+            prev = env.time()
             try:
                 while viewer.is_running():
+                    if env.time() < prev - 1e-6:
+                        env.reset()
+                    prev = env.time()
                     step()
                     if not viewer.step():
                         break
             finally:
                 viewer.close()
         else:
-            end = scene.time() + 1.2
-            while scene.time() < end:
+            end = env.time() + 1.2
+            while env.time() < end:
                 step()
                 arm1.step()
             arm1_frame = arm1.fk_frame()
@@ -111,7 +125,7 @@ def main() -> int:
             print(f"arm1 EE: {[round(x, 4) for x in arm1_pos]}")
             print(f"arm2 EE: {[round(x, 4) for x in arm2_pos]}")
     finally:
-        scene.close()
+        env.close()
     return 0
 
 

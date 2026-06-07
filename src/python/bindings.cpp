@@ -735,67 +735,57 @@ struct PySimulateViewer
 
 struct PyVideoRecorder
 {
-    mj_kdl::VideoRecorder    recorder;
-    std::shared_ptr<PyScene> scene_owner;
-    bool                     active = false;
+    mj_kdl::VideoRecorder     recorder;
+    // Live accessors to the owning Scene or Env model/data; the closures also
+    // keep the owner alive for the recorder's lifetime.
+    std::function<mjModel *()> model_fn;
+    std::function<mjData *()>  data_fn;
+    bool                       active = false;
 
     ~PyVideoRecorder() { close(); }
 
-    static std::shared_ptr<PyVideoRecorder> open(
-      const std::shared_ptr<PyScene> &scene,
-      const std::string              &out_path,
-      int                             width,
-      int                             height,
-      int                             fps
-    )
-    {
-        if (!scene || !scene->model || !scene->data) throw std::runtime_error("scene is closed");
-        auto out         = std::shared_ptr<PyVideoRecorder>(new PyVideoRecorder());
-        out->scene_owner = scene;
-        if (!mj_kdl::init_video_recorder(
-              &out->recorder, scene->model, out_path.c_str(), width, height, fps
-            )) {
-            throw std::runtime_error("init_video_recorder failed");
-        }
-        out->active = true;
-        return out;
-    }
+    mjModel *model() const { return model_fn ? model_fn() : nullptr; }
+    mjData  *data() const { return data_fn ? data_fn() : nullptr; }
 
-    static std::shared_ptr<PyVideoRecorder> open_preset(
-      const std::shared_ptr<PyScene> &scene,
-      const std::string              &out_path,
-      mj_kdl::VideoResolution         resolution,
-      int                             fps
+    // Build a recorder bound to model/data accessors. width<=0 selects a preset.
+    static std::shared_ptr<PyVideoRecorder> make(
+      std::function<mjModel *()>  model_fn,
+      std::function<mjData *()>   data_fn,
+      const std::string          &out_path,
+      int                         width,
+      int                         height,
+      mj_kdl::VideoResolution     resolution,
+      bool                        use_preset,
+      int                         fps
     )
     {
-        if (!scene || !scene->model || !scene->data) throw std::runtime_error("scene is closed");
-        auto out         = std::shared_ptr<PyVideoRecorder>(new PyVideoRecorder());
-        out->scene_owner = scene;
-        if (!mj_kdl::init_video_recorder(
-              &out->recorder, scene->model, out_path.c_str(), resolution, fps
-            )) {
-            throw std::runtime_error("init_video_recorder failed");
-        }
+        mjModel *m = model_fn ? model_fn() : nullptr;
+        mjData  *d = data_fn ? data_fn() : nullptr;
+        if (!m || !d) throw std::runtime_error("scene/env is closed");
+        auto out      = std::shared_ptr<PyVideoRecorder>(new PyVideoRecorder());
+        out->model_fn = std::move(model_fn);
+        out->data_fn  = std::move(data_fn);
+        bool ok       = use_preset
+                          ? mj_kdl::init_video_recorder(&out->recorder, m, out_path.c_str(), resolution, fps)
+                          : mj_kdl::init_video_recorder(&out->recorder, m, out_path.c_str(), width, height, fps);
+        if (!ok) throw std::runtime_error("init_video_recorder failed");
         out->active = true;
         return out;
     }
 
     bool record_frame()
     {
-        if (!active || !scene_owner || !scene_owner->model || !scene_owner->data) {
-            throw std::runtime_error("recorder is closed");
-        }
-        return mj_kdl::record_frame(&recorder, scene_owner->model, scene_owner->data);
+        mjModel *m = model();
+        mjData  *d = data();
+        if (!active || !m || !d) throw std::runtime_error("recorder is closed");
+        return mj_kdl::record_frame(&recorder, m, d);
     }
 
     bool use_camera(const std::string &name)
     {
-        if (!active || !scene_owner || !scene_owner->model) {
-            throw std::runtime_error("recorder is closed");
-        }
-        return mj_kdl::use_camera(
-          &recorder, scene_owner->model, name.empty() ? nullptr : name.c_str()
-        );
+        mjModel *m = model();
+        if (!active || !m) throw std::runtime_error("recorder is closed");
+        return mj_kdl::use_camera(&recorder, m, name.empty() ? nullptr : name.c_str());
     }
 
     void set_free_camera(
@@ -819,8 +809,9 @@ struct PyVideoRecorder
     {
         if (!active) return;
         mj_kdl::cleanup(&recorder);
-        active = false;
-        scene_owner.reset();
+        active   = false;
+        model_fn = nullptr;
+        data_fn  = nullptr;
     }
 };
 
@@ -829,8 +820,20 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
     PySceneSpec spec;
     mj_kdl::Env env;
     std::vector<std::weak_ptr<PyRobot>> robots;
+    py::object  reset_callback; // Python callable invoked by reset(), or None
 
     ~PyEnv() { close(); }
+
+    // Route the C++ reset hook to the stored Python callable. Re-wired after any
+    // init_env (build/rebuild) because Env::on_reset is reset by init_env.
+    void wire_reset_hook()
+    {
+        env.on_reset = [this](mj_kdl::ResetContext *ctx) {
+            if (!reset_callback || reset_callback.is_none()) return;
+            py::gil_scoped_acquire gil;
+            reset_callback(ctx);
+        };
+    }
 
     static std::shared_ptr<PyEnv> build(const PySceneSpec &spec)
     {
@@ -838,6 +841,7 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         out->spec          = spec;
         SceneSpec cpp_spec = to_cpp(out->spec);
         if (!mj_kdl::init_env(&out->env, &cpp_spec)) throw std::runtime_error("init_env failed");
+        out->wire_reset_hook();
         return out;
     }
 
@@ -893,6 +897,7 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         mj_kdl::cleanup(&env);
         env = next_env;
         reinit_robots();
+        wire_reset_hook();
     }
 
     std::shared_ptr<PyRobot> create_robot(
@@ -941,6 +946,86 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
     {
         if (!env.model) throw std::runtime_error("env is closed");
         return mj_kdl::get_camera_names(env.model);
+    }
+
+    double time() const
+    {
+        if (!env.data) throw std::runtime_error("env is closed");
+        return env.data->time;
+    }
+
+    double timestep() const
+    {
+        if (!env.model) throw std::runtime_error("env is closed");
+        return env.model->opt.timestep;
+    }
+
+    py::object body_frame(const std::string &name)
+    {
+        if (!env.model || !env.data) throw std::runtime_error("env is closed");
+        KDL::Frame frame;
+        if (!mj_kdl::get_body_frame(env.model, env.data, name.c_str(), &frame)) {
+            throw std::runtime_error("body not found");
+        }
+        return kdl_frame_to_py(frame);
+    }
+
+    py::object site_frame(const std::string &name)
+    {
+        if (!env.model || !env.data) throw std::runtime_error("env is closed");
+        KDL::Frame frame;
+        if (!mj_kdl::get_site_frame(env.model, env.data, name.c_str(), &frame)) {
+            throw std::runtime_error("site not found");
+        }
+        return kdl_frame_to_py(frame);
+    }
+
+    void set_body_pose(
+      const std::string           &name,
+      const std::array<double, 3> &pos,
+      const std::array<double, 4> *quat
+    )
+    {
+        if (!env.model || !env.data) throw std::runtime_error("env is closed");
+        mj_kdl::set_body_pose(
+          env.model, env.data, name.c_str(), pos.data(), quat ? quat->data() : nullptr
+        );
+    }
+
+    void set_actuator_ctrl(const std::string &name, double value)
+    {
+        if (!env.model || !env.data) throw std::runtime_error("env is closed");
+        int id = mj_name2id(env.model, mjOBJ_ACTUATOR, name.c_str());
+        if (id < 0) throw std::runtime_error("actuator not found: " + name);
+        env.data->ctrl[id] = value;
+    }
+
+    double actuator_ctrl(const std::string &name) const
+    {
+        if (!env.model || !env.data) throw std::runtime_error("env is closed");
+        int id = mj_name2id(env.model, mjOBJ_ACTUATOR, name.c_str());
+        if (id < 0) throw std::runtime_error("actuator not found: " + name);
+        return env.data->ctrl[id];
+    }
+
+    bool has_actuator(const std::string &name) const
+    {
+        if (!env.model) throw std::runtime_error("env is closed");
+        return mj_name2id(env.model, mjOBJ_ACTUATOR, name.c_str()) >= 0;
+    }
+
+    void save_xml(const std::string &path) const
+    {
+        if (!env.model) throw std::runtime_error("env is closed");
+        if (!mj_kdl::save_model_xml(env.model, path.c_str())) {
+            throw std::runtime_error("save_model_xml failed");
+        }
+    }
+
+    void save_binary(const std::string &path) const
+    {
+        if (!env.model) throw std::runtime_error("env is closed");
+        mj_saveModel(env.model, path.c_str(), nullptr, 0);
     }
 };
 
@@ -1118,6 +1203,22 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
     py::class_<mj_kdl::ResetInfo>(m, "ResetInfo")
       .def_readonly("used_keyframe", &mj_kdl::ResetInfo::used_keyframe)
       .def_readonly("keyframe", &mj_kdl::ResetInfo::keyframe);
+
+    py::class_<mj_kdl::ResetContext>(
+      m, "ResetContext", "Context passed to Env.on_reset after MuJoCo data is reset."
+    )
+      .def_property_readonly(
+        "options",
+        [](const mj_kdl::ResetContext &c) {
+            return c.options ? *c.options : mj_kdl::ResetOptions {};
+        },
+        "Reset options that triggered this reset."
+      )
+      .def_property_readonly(
+        "info",
+        [](const mj_kdl::ResetContext &c) { return c.info ? *c.info : mj_kdl::ResetInfo {}; },
+        "Reset result (keyframe used, etc.)."
+      );
 
     py::class_<PyScene, std::shared_ptr<PyScene>>(
       m, "Scene", "Owned MuJoCo model/data built from SceneSpec."
@@ -1349,6 +1450,30 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         [](PyRobot &self, const std::vector<double> &values) {
             self.set_port(&mj_kdl::Robot::jnt_trq_cmd, values);
         }
+      )
+      .def_property_readonly(
+        "has_tcp_frame",
+        [](const PyRobot &self) {
+            self.ensure_active();
+            return self.robot.has_tcp_frame;
+        },
+        "Whether an authored TCP site terminates the KDL chain."
+      )
+      .def_property_readonly(
+        "tcp_site",
+        [](const PyRobot &self) {
+            self.ensure_active();
+            return self.robot.tcp_site;
+        },
+        "Name of the TCP site, or empty if none."
+      )
+      .def_property_readonly(
+        "tip_to_tcp",
+        [](const PyRobot &self) {
+            self.ensure_active();
+            return kdl_frame_to_py(self.robot.tip_T_tcp);
+        },
+        "Transform from the KDL tip frame to the TCP frame as a PyKDL.Frame."
       );
 
     py::class_<PySimulateViewer, std::shared_ptr<PySimulateViewer>>(
@@ -1403,27 +1528,91 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         }
       );
 
+    auto scene_model_fn = [](const std::shared_ptr<PyScene> &s) {
+        return std::function<mjModel *()>([s]() { return s->model; });
+    };
+    auto scene_data_fn = [](const std::shared_ptr<PyScene> &s) {
+        return std::function<mjData *()>([s]() { return s->data; });
+    };
+    auto env_model_fn = [](const std::shared_ptr<PyEnv> &e) {
+        return std::function<mjModel *()>([e]() { return e->env.model; });
+    };
+    auto env_data_fn = [](const std::shared_ptr<PyEnv> &e) {
+        return std::function<mjData *()>([e]() { return e->env.data; });
+    };
+
     py::class_<PyVideoRecorder, std::shared_ptr<PyVideoRecorder>>(
-      m, "VideoRecorder", "Offscreen MuJoCo video recorder for a Scene."
+      m, "VideoRecorder", "Offscreen MuJoCo video recorder for a Scene or Env."
     )
       .def_static(
         "open",
-        &PyVideoRecorder::open,
+        [scene_model_fn, scene_data_fn](
+          const std::shared_ptr<PyScene> &scene, const std::string &out, int w, int h, int fps
+        ) {
+            return PyVideoRecorder::make(
+              scene_model_fn(scene), scene_data_fn(scene), out, w, h,
+              mj_kdl::VideoResolution::R720p, false, fps
+            );
+        },
         py::arg("scene"),
         py::arg("out_path"),
         py::arg("width")  = 1280,
         py::arg("height") = 720,
         py::arg("fps")    = 60,
-        "Open an offscreen video recorder with explicit dimensions."
+        "Open an offscreen recorder for a Scene with explicit dimensions."
+      )
+      .def_static(
+        "open",
+        [env_model_fn, env_data_fn](
+          const std::shared_ptr<PyEnv> &env, const std::string &out, int w, int h, int fps
+        ) {
+            return PyVideoRecorder::make(
+              env_model_fn(env), env_data_fn(env), out, w, h,
+              mj_kdl::VideoResolution::R720p, false, fps
+            );
+        },
+        py::arg("env"),
+        py::arg("out_path"),
+        py::arg("width")  = 1280,
+        py::arg("height") = 720,
+        py::arg("fps")    = 60,
+        "Open an offscreen recorder for an Env with explicit dimensions."
       )
       .def_static(
         "open_preset",
-        &PyVideoRecorder::open_preset,
+        [scene_model_fn, scene_data_fn](
+          const std::shared_ptr<PyScene> &scene,
+          const std::string             &out,
+          mj_kdl::VideoResolution        res,
+          int                            fps
+        ) {
+            return PyVideoRecorder::make(
+              scene_model_fn(scene), scene_data_fn(scene), out, 0, 0, res, true, fps
+            );
+        },
         py::arg("scene"),
         py::arg("out_path"),
         py::arg("resolution") = mj_kdl::VideoResolution::R720p,
         py::arg("fps")        = 60,
-        "Open an offscreen video recorder with a resolution preset."
+        "Open an offscreen recorder for a Scene with a resolution preset."
+      )
+      .def_static(
+        "open_preset",
+        [env_model_fn, env_data_fn](
+          const std::shared_ptr<PyEnv> &env,
+          const std::string            &out,
+          mj_kdl::VideoResolution       res,
+          int                           fps
+        ) {
+            return PyVideoRecorder::make(
+              env_model_fn(env), env_data_fn(env), out, 0, 0, res, true, fps
+            );
+        },
+        py::arg("env"),
+        py::arg("out_path"),
+        py::arg("resolution") = mj_kdl::VideoResolution::R720p,
+        py::arg("fps")        = 60,
+        "Open an offscreen recorder for an Env with a resolution preset."
       )
       .def("record_frame", &PyVideoRecorder::record_frame, "Render and append one frame.")
       .def(
@@ -1493,6 +1682,39 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "Rebuild the environment without the named object and rebind existing Robot handles."
       )
       .def("camera_names", &PyEnv::camera_names, "Return names of cameras in the compiled model.")
+      .def_property(
+        "on_reset",
+        [](const PyEnv &self) { return self.reset_callback; },
+        [](PyEnv &self, const py::object &cb) {
+            if (!cb.is_none() && !PyCallable_Check(cb.ptr())) {
+                throw std::invalid_argument("on_reset must be callable or None");
+            }
+            self.reset_callback = cb;
+        },
+        "Callable invoked by reset() after MuJoCo data is reset and before robots "
+        "are synchronized. Receives a ResetContext. Set to None to clear."
+      )
+      .def("time", &PyEnv::time, "Current MuJoCo simulation time.")
+      .def("timestep", &PyEnv::timestep, "Configured simulation timestep.")
+      .def("body_frame", &PyEnv::body_frame, py::arg("name"), "Return a body world pose as PyKDL.Frame.")
+      .def("site_frame", &PyEnv::site_frame, py::arg("name"), "Return a site world pose as PyKDL.Frame.")
+      .def(
+        "set_body_pose",
+        [](PyEnv &self, const std::string &name, const std::array<double, 3> &pos, const py::object &quat) {
+            if (quat.is_none()) return self.set_body_pose(name, pos, nullptr);
+            auto q = quat.cast<std::array<double, 4>>();
+            return self.set_body_pose(name, pos, &q);
+        },
+        py::arg("name"),
+        py::arg("pos"),
+        py::arg("quat") = py::none(),
+        "Set a body pose (position and optional xyzw quaternion)."
+      )
+      .def("set_actuator_ctrl", &PyEnv::set_actuator_ctrl, py::arg("name"), py::arg("value"), "Set an actuator ctrl value by name.")
+      .def("actuator_ctrl", &PyEnv::actuator_ctrl, py::arg("name"), "Return an actuator ctrl value by name.")
+      .def("has_actuator", &PyEnv::has_actuator, py::arg("name"), "Whether the compiled model has the named actuator.")
+      .def("save_xml", &PyEnv::save_xml, py::arg("path"), "Save the compiled model to an MJCF XML file.")
+      .def("save_binary", &PyEnv::save_binary, py::arg("path"), "Save the compiled model to a MuJoCo binary file.")
       .def_readonly("spec", &PyEnv::spec, "Python scene spec used to build this environment.");
 
     m.def("set_log_level", &mj_kdl::set_log_level, py::arg("level"), "Set wrapper log level.");

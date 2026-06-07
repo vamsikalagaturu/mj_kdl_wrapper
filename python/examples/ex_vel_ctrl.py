@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Joint velocity-control example ported from src/examples/ex_vel_ctrl.cpp."""
+"""Joint velocity-control example ported from src/examples/ex_vel_ctrl.cpp.
+
+gen3.xml has POSITION actuators, so velocity control integrates a clamped
+velocity command into the position setpoint each step. An Env on_reset hook
+re-homes the arm and restarts the motion so the simulate-UI reset replays it.
+"""
 
 from __future__ import annotations
 
@@ -23,43 +28,18 @@ def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
-def build_robot(model_path: Path) -> tuple[mjk.Scene, mjk.Robot]:
+def build_env(model_path: Path) -> tuple[mjk.Env, mjk.Robot]:
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
     spec.add_skybox = True
-
     robot_spec = mjk.RobotSpec()
     robot_spec.path = str(model_path)
     spec.robots = [robot_spec]
-
-    scene = mjk.Scene.build(spec)
-    robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link")
+    env = mjk.Env.build(spec)
+    robot = env.create_robot("base_link", "bracelet_link")
     robot.ctrl_mode = mjk.CtrlMode.POSITION
-    robot.set_joint_pos(HOME_POSE, call_forward=False)
-    robot.jnt_pos_cmd = HOME_POSE[:]
-    return scene, robot
-
-
-def control_step(robot: mjk.Robot, dt: float, arrived: bool) -> bool:
-    robot.update()
-    if arrived:
-        return True
-
-    pos_cmd = robot.jnt_pos_cmd
-    max_err = 0.0
-    for i in range(robot.n_joints):
-        err = TARGET_POSE[i] - robot.jnt_pos_msr[i]
-        max_err = max(max_err, abs(err))
-        vel = clamp(KV * err, -MAX_VEL, MAX_VEL)
-        pos_cmd[i] += vel * dt
-
-    if max_err < TOL:
-        robot.jnt_pos_cmd = robot.jnt_pos_msr
-        return True
-
-    robot.jnt_pos_cmd = pos_cmd
-    return False
+    return env, robot
 
 
 def main() -> int:
@@ -74,33 +54,58 @@ def main() -> int:
             f"or set {MODEL_ENV_VAR}."
         )
 
-    scene, robot = build_robot(model_path)
+    env, robot = build_env(model_path)
     try:
-        dt = scene.spec.timestep
-        sim_time = 0.0
-        arrived = False
+        dt = env.timestep()
+        state = {"arrived": False}
+
+        def on_reset(ctx):
+            robot.set_joint_pos(HOME_POSE, call_forward=False)
+            robot.jnt_pos_cmd = HOME_POSE[:]
+            state["arrived"] = False
+
+        env.on_reset = on_reset
+        env.reset()
+
+        def control_step() -> None:
+            robot.update()
+            if state["arrived"]:
+                return
+            pos_cmd = robot.jnt_pos_cmd
+            max_err = 0.0
+            for i in range(robot.n_joints):
+                err = TARGET_POSE[i] - robot.jnt_pos_msr[i]
+                max_err = max(max_err, abs(err))
+                pos_cmd[i] += clamp(KV * err, -MAX_VEL, MAX_VEL) * dt
+            if max_err < TOL:
+                robot.jnt_pos_cmd = robot.jnt_pos_msr
+                state["arrived"] = True
+            else:
+                robot.jnt_pos_cmd = pos_cmd
 
         if args.gui:
             viewer = mjk.SimulateViewer.open(robot, "ex_vel_ctrl.py")
+            prev = env.time()
             try:
                 while viewer.is_running():
-                    arrived = control_step(robot, dt, arrived)
+                    if env.time() < prev - 1e-6:
+                        env.reset()
+                    prev = env.time()
+                    control_step()
                     if not viewer.step():
                         break
-                    sim_time += dt
             finally:
                 viewer.close()
         else:
-            while sim_time < 5.0 and not arrived:
-                arrived = control_step(robot, dt, arrived)
+            end = env.time() + 5.0
+            while env.time() < end and not state["arrived"]:
+                control_step()
                 robot.step()
-                sim_time += dt
-
             max_err = max(abs(TARGET_POSE[i] - robot.jnt_pos_msr[i]) for i in range(robot.n_joints))
-            status = "converged" if arrived else "timeout"
+            status = "converged" if state["arrived"] else "timeout"
             print(f"max joint error: {max_err:.4f} rad  ({status})")
     finally:
-        scene.close()
+        env.close()
 
     return 0
 

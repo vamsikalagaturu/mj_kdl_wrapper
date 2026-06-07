@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""RNEA computed-torque pick-place example using PyKDL directly."""
+"""RNEA computed-torque pick-place example using PyKDL directly.
+
+Ported from src/examples/ex_rnea_pick_place.cpp. Full computed-torque control
+via KDL ChainIdSolver_RNE. An Env on_reset hook re-homes the arm, re-poses the
+cube, and opens the gripper so the simulate-UI reset replays the task.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +22,11 @@ HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 KP = [100.0, 200.0, 100.0, 200.0, 100.0, 200.0, 100.0]
 KD = [20.0, 28.0, 20.0, 28.0, 20.0, 28.0, 20.0]
 SURFACE_Z = 0.70
+CUBE_START = [0.40, 0.0, SURFACE_Z + 0.02]
+
+
+class ResetRequested(Exception):
+    """Raised when the simulate UI reset is detected, to restart the sequence."""
 
 
 def path(value: str) -> Path:
@@ -26,7 +36,7 @@ def path(value: str) -> Path:
     return p
 
 
-def build_scene() -> tuple[mjk.Scene, mjk.Robot]:
+def build_env() -> tuple[mjk.Env, mjk.Robot]:
     table = mjk.SceneObject()
     table.name = "table"
     table.mjcf_path = str(path(os.environ.get("MJ_KDL_TABLE", TABLE)))
@@ -36,7 +46,7 @@ def build_scene() -> tuple[mjk.Scene, mjk.Robot]:
     cube.name = "cube"
     cube.shape = mjk.Shape.BOX
     cube.size = [0.02, 0.02, 0.02]
-    cube.pos = [0.40, 0.0, SURFACE_Z + 0.02]
+    cube.pos = CUBE_START[:]
     cube.rgba = [0.1, 0.35, 1.0, 1.0]
     cube.mass = 0.1
     cube.friction = [1.0, 0.005, 0.0001]
@@ -55,12 +65,12 @@ def build_scene() -> tuple[mjk.Scene, mjk.Robot]:
     robot_spec.pos = [0.0, 0.0, SURFACE_Z]
     robot_spec.attachments = [attach]
     spec.robots = [robot_spec]
-    scene = mjk.Scene.build(spec)
+    env = mjk.Env.build(spec)
     tool = mjk.ToolFrameSpec()
     tool.tool_body = "g_base"
     tool.tcp_site = "g_pinch"
-    robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link", tool=tool)
-    return scene, robot
+    robot = env.create_robot("base_link", "bracelet_link", tool=tool)
+    return env, robot
 
 
 def jnt(values: list[float]) -> kdl.JntArray:
@@ -74,9 +84,7 @@ def as_list(q: kdl.JntArray) -> list[float]:
     return [q[i] for i in range(q.rows())]
 
 
-def solve_position_ik(
-    chain: kdl.Chain, seed_values: list[float], target: kdl.Vector
-) -> list[float]:
+def solve_position_ik(chain: kdl.Chain, seed_values: list[float], target: kdl.Vector) -> list[float]:
     fk = kdl.ChainFkSolverPos_recursive(chain)
     ik = kdl.ChainIkSolverVel_wdls(chain)
     ik.setLambda(0.05)
@@ -116,9 +124,7 @@ def waypoints(chain: kdl.Chain) -> dict[str, list[float]]:
     }
 
 
-def rnea_controller(
-    robot: mjk.Robot, solver: kdl.ChainIdSolver_RNE, chain: kdl.Chain, target: list[float]
-) -> None:
+def rnea_controller(robot, solver, chain, target: list[float]) -> None:
     robot.update()
     q = jnt(robot.jnt_pos_msr)
     qdot = jnt(robot.jnt_vel_msr)
@@ -132,17 +138,31 @@ def rnea_controller(
     robot.jnt_trq_cmd = as_list(tau)
 
 
-def run_phase(scene, robot, solver, chain, phase) -> bool:
+def step_once(env, robot, viewer, state) -> bool:
+    ok = viewer.step() if viewer is not None else robot.step()
+    if not ok:
+        return False
+    if viewer is not None and env.time() < state["prev"] - 1e-6:
+        env.reset()
+        state["prev"] = env.time()
+        raise ResetRequested()
+    state["prev"] = env.time()
+    return True
+
+
+def run_phase(env, robot, solver, chain, phase, viewer, state) -> bool:
     print(f"State: {phase['name']}")
     start = robot.jnt_pos_msr[:]
-    t0 = scene.time()
-    while scene.time() - t0 < phase["duration"]:
-        a = max(0.0, min(1.0, (scene.time() - t0) / phase["duration"]))
+    t0 = env.time()
+    while env.time() - t0 < phase["duration"]:
+        a = max(0.0, min(1.0, (env.time() - t0) / phase["duration"]))
         target = [x + a * (y - x) for x, y in zip(start, phase["target"])]
         rnea_controller(robot, solver, chain, target)
-        if scene.has_actuator("g_fingers_actuator"):
-            scene.set_actuator_ctrl("g_fingers_actuator", phase["gripper"])
-        if not robot.step():
+        if env.has_actuator("g_fingers_actuator"):
+            env.set_actuator_ctrl("g_fingers_actuator", phase["gripper"])
+        if viewer is not None and not viewer.is_running():
+            return False
+        if not step_once(env, robot, viewer, state):
             return False
     return True
 
@@ -152,11 +172,21 @@ def main() -> int:
     parser.add_argument("--gui", action="store_true")
     args = parser.parse_args()
 
-    scene, robot = build_scene()
+    env, robot = build_env()
     try:
         chain = robot.kdl_chain()
         solver = kdl.ChainIdSolver_RNE(chain, kdl.Vector(0.0, 0.0, -9.81))
         robot.ctrl_mode = mjk.CtrlMode.TORQUE
+
+        def on_reset(ctx):
+            robot.set_joint_pos(HOME, call_forward=False)
+            env.set_body_pose("cube", CUBE_START)
+            if env.has_actuator("g_fingers_actuator"):
+                env.set_actuator_ctrl("g_fingers_actuator", 0.0)
+
+        env.on_reset = on_reset
+        env.reset()
+
         q = waypoints(chain)
         phases = [
             {"name": "HOME", "target": q["home"], "duration": 0.8, "gripper": 0.0},
@@ -169,23 +199,31 @@ def main() -> int:
             {"name": "OPEN", "target": q["place"], "duration": 0.8, "gripper": 0.0},
             {"name": "RETREAT", "target": q["place_above"], "duration": 1.2, "gripper": 0.0},
         ]
+        state = {"prev": env.time()}
         if args.gui:
             viewer = mjk.SimulateViewer.open(robot, "ex_rnea_pick_place.py")
             try:
-                for phase in phases:
-                    if not viewer.is_running() or not run_phase(scene, robot, solver, chain, phase):
+                while viewer.is_running():
+                    try:
+                        for phase in phases:
+                            if not run_phase(env, robot, solver, chain, phase, viewer, state):
+                                raise StopIteration
+                        break
+                    except ResetRequested:
+                        continue
+                    except StopIteration:
                         break
             finally:
                 viewer.close()
         else:
             for phase in phases:
-                if not run_phase(scene, robot, solver, chain, phase):
+                if not run_phase(env, robot, solver, chain, phase, None, state):
                     break
-        cube_frame = scene.body_frame("cube")
+        cube_frame = env.body_frame("cube")
         cube_pos = [cube_frame.p.x(), cube_frame.p.y(), cube_frame.p.z()]
         print(f"cube final position: {[round(x, 3) for x in cube_pos]}")
     finally:
-        scene.close()
+        env.close()
     return 0
 
 

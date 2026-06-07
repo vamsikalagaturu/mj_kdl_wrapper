@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""ACHD table-slide example using PyKDL's Vereshchagin solver directly."""
+"""ACHD table-slide example using PyKDL's Vereshchagin solver directly.
+
+Ported from src/examples/ex_achd_table_slide.cpp. Slides the TCP along +X under
+an acceleration-constrained hybrid-dynamics controller. An Env on_reset hook
+restores the start pose (and re-primes the PID) so the simulate-UI reset replays
+the slide.
+"""
 
 from __future__ import annotations
 
@@ -28,7 +34,7 @@ def path(value: str) -> Path:
     return p
 
 
-def build_scene() -> tuple[mjk.Scene, mjk.Robot]:
+def build_env() -> tuple[mjk.Env, mjk.Robot]:
     table = mjk.SceneObject()
     table.name = "table"
     table.mjcf_path = str(path(os.environ.get("MJ_KDL_TABLE", TABLE)))
@@ -48,12 +54,12 @@ def build_scene() -> tuple[mjk.Scene, mjk.Robot]:
     robot_spec.pos = [0.0, 0.0, TABLE_Z]
     robot_spec.attachments = [attach]
     spec.robots = [robot_spec]
-    scene = mjk.Scene.build(spec)
+    env = mjk.Env.build(spec)
     tool = mjk.ToolFrameSpec()
     tool.tool_body = "g_base"
     tool.tcp_site = "g_pinch"
-    robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link", tool=tool)
-    return scene, robot
+    robot = env.create_robot("base_link", "bracelet_link", tool=tool)
+    return env, robot
 
 
 def jnt(values: list[float]) -> kdl.JntArray:
@@ -61,10 +67,6 @@ def jnt(values: list[float]) -> kdl.JntArray:
     for i, v in enumerate(values):
         out[i] = v
     return out
-
-
-def as_list(values: kdl.JntArray) -> list[float]:
-    return [values[i] for i in range(values.rows())]
 
 
 def clamp_abs(value: float, limit: float) -> float:
@@ -122,7 +124,7 @@ def main() -> int:
     parser.add_argument("--gui", action="store_true")
     args = parser.parse_args()
 
-    scene, robot = build_scene()
+    env, robot = build_env()
     try:
         chain = robot.kdl_chain()
         fk = kdl.ChainFkSolverPos_recursive(chain)
@@ -131,38 +133,52 @@ def main() -> int:
         )
         rnea = kdl.ChainIdSolver_RNE(chain, kdl.Vector(0.0, 0.0, -9.81))
         robot.ctrl_mode = mjk.CtrlMode.TORQUE
-        robot.set_joint_pos(TABLE_POSE, call_forward=False)
-        robot.update()
-        q = jnt(TABLE_POSE)
-        start = kdl.Frame()
-        fk.JntToCart(q, start)
-        target = kdl.Frame(start.M, start.p + kdl.Vector(MOVE_X, 0.0, 0.0))
+
         err_prev = [0.0] * 5
         first_pid = [True]
 
-        def run():
-            end = scene.time() + 2.0
-            while scene.time() < end:
-                achd_step(robot, chain, fk, achd, rnea, target, err_prev, first_pid)
-                if scene.has_actuator("g_fingers_actuator"):
-                    scene.set_actuator_ctrl("g_fingers_actuator", 255.0)
-                if not robot.step():
-                    break
+        def on_reset(ctx):
+            robot.set_joint_pos(TABLE_POSE, call_forward=False)
+            first_pid[0] = True  # re-prime PID after a reset
+
+        env.on_reset = on_reset
+        env.reset()
+
+        robot.update()
+        start = kdl.Frame()
+        fk.JntToCart(jnt(TABLE_POSE), start)
+        target = kdl.Frame(start.M, start.p + kdl.Vector(MOVE_X, 0.0, 0.0))
+
+        def step():
+            achd_step(robot, chain, fk, achd, rnea, target, err_prev, first_pid)
+            if env.has_actuator("g_fingers_actuator"):
+                env.set_actuator_ctrl("g_fingers_actuator", 255.0)
 
         if args.gui:
             viewer = mjk.SimulateViewer.open(robot, "ex_achd_table_slide.py")
+            prev = env.time()
             try:
-                run()
+                while viewer.is_running():
+                    if env.time() < prev - 1e-6:
+                        env.reset()
+                    prev = env.time()
+                    step()
+                    if not viewer.step():
+                        break
             finally:
                 viewer.close()
         else:
-            run()
+            end = env.time() + 2.0
+            while env.time() < end:
+                step()
+                if not robot.step():
+                    break
         print(f"tcp target x shift: {MOVE_X:.3f} m")
         final_frame = robot.fk_frame()
         final_pos = [final_frame.p.x(), final_frame.p.y(), final_frame.p.z()]
         print(f"final bracelet frame: {[round(x, 3) for x in final_pos]}")
     finally:
-        scene.close()
+        env.close()
     return 0
 
 

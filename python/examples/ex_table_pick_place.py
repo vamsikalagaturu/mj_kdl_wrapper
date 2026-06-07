@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Table pick-place example ported from src/examples/ex_table_pick_place.cpp."""
+"""Table pick-place example ported from src/examples/ex_table_pick_place.cpp.
+
+Picks a cube from one table location and places it at another using joint
+impedance control. An Env on_reset hook re-homes the arm, re-poses the cube,
+and opens the gripper so the simulate-UI reset replays the task.
+"""
 
 from __future__ import annotations
 
@@ -24,6 +29,11 @@ PLACE_X = 0.40
 PLACE_Y = 0.24
 KP = [100.0, 200.0, 100.0, 200.0, 100.0, 200.0, 100.0]
 KD = [10.0, 20.0, 10.0, 20.0, 10.0, 20.0, 10.0]
+CUBE_START = [PICK_X, PICK_Y, SURFACE_Z + CUBE_HALF_SIZE]
+
+
+class ResetRequested(Exception):
+    """Raised when the simulate UI reset is detected, to restart the sequence."""
 
 
 @dataclass(frozen=True)
@@ -65,7 +75,7 @@ def cube_object() -> mjk.SceneObject:
     cube.name = "cube"
     cube.shape = mjk.Shape.BOX
     cube.size = [CUBE_HALF_SIZE, CUBE_HALF_SIZE, CUBE_HALF_SIZE]
-    cube.pos = [PICK_X, PICK_Y, SURFACE_Z + CUBE_HALF_SIZE]
+    cube.pos = CUBE_START[:]
     cube.rgba = [0.1, 0.35, 1.0, 1.0]
     cube.mass = 0.1
     cube.condim = mjk.Condim.Torsional
@@ -73,7 +83,7 @@ def cube_object() -> mjk.SceneObject:
     return cube
 
 
-def build_scene() -> tuple[mjk.Scene, mjk.Robot]:
+def build_env() -> tuple[mjk.Env, mjk.Robot]:
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
@@ -91,12 +101,12 @@ def build_scene() -> tuple[mjk.Scene, mjk.Robot]:
     ]
     spec.robots = [robot_spec]
 
-    scene = mjk.Scene.build(spec)
+    env = mjk.Env.build(spec)
     tool = mjk.ToolFrameSpec()
     tool.tool_body = "g_base"
     tool.tcp_site = "g_pinch"
-    robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link", tool=tool)
-    return scene, robot
+    robot = env.create_robot("base_link", "bracelet_link", tool=tool)
+    return env, robot
 
 
 def jnt(values: list[float]) -> kdl.JntArray:
@@ -151,9 +161,9 @@ def solve_position_ik(
     raise RuntimeError("PyKDL IK did not converge")
 
 
-def build_waypoints(scene: mjk.Scene, robot: mjk.Robot) -> dict[str, list[float]]:
+def build_waypoints(env: mjk.Env, robot: mjk.Robot) -> dict[str, list[float]]:
     chain = robot.kdl_chain()
-    target_rot = (scene.body_frame("bracelet_link").Inverse() * scene.site_frame("g_pinch")).M
+    target_rot = (env.body_frame("bracelet_link").Inverse() * env.site_frame("g_pinch")).M
     seed = HOME[:]
 
     def solve(x: float, y: float, z: float) -> list[float]:
@@ -193,28 +203,37 @@ def lerp(start: list[float], target: list[float], alpha: float) -> list[float]:
     return [a + alpha * (b - a) for a, b in zip(start, target)]
 
 
-def step_once(robot: mjk.Robot, viewer: mjk.SimulateViewer | None) -> bool:
-    if viewer is not None:
-        return viewer.step()
-    return robot.step()
+def step_once(
+    env: mjk.Env, robot: mjk.Robot, viewer: mjk.SimulateViewer | None, state: dict
+) -> bool:
+    ok = viewer.step() if viewer is not None else robot.step()
+    if not ok:
+        return False
+    if viewer is not None and env.time() < state["prev"] - 1e-6:
+        env.reset()
+        state["prev"] = env.time()
+        raise ResetRequested()
+    state["prev"] = env.time()
+    return True
 
 
 def run_phase(
-    scene: mjk.Scene,
+    env: mjk.Env,
     robot: mjk.Robot,
     phase: Phase,
     viewer: mjk.SimulateViewer | None,
+    state: dict,
 ) -> bool:
     print(f"State: {phase.name}")
     robot.update()
     start = robot.jnt_pos_msr[:]
-    t0 = scene.time()
+    t0 = env.time()
     while True:
-        elapsed = scene.time() - t0
+        elapsed = env.time() - t0
         alpha = clamp(elapsed / phase.duration, 0.0, 1.0) if phase.duration > 0.0 else 1.0
         apply_pd_gravity(robot, lerp(start, phase.target, alpha))
-        if scene.has_actuator("g_fingers_actuator"):
-            scene.set_actuator_ctrl("g_fingers_actuator", phase.gripper)
+        if env.has_actuator("g_fingers_actuator"):
+            env.set_actuator_ctrl("g_fingers_actuator", phase.gripper)
 
         done_time = elapsed >= phase.duration
         done_pose = phase.settle_tol < 0.0 or max_abs_joint_err(robot, phase.target) <= phase.settle_tol
@@ -223,7 +242,7 @@ def run_phase(
             return True
         if viewer is not None and not viewer.is_running():
             return False
-        if not step_once(robot, viewer):
+        if not step_once(env, robot, viewer, state):
             return False
 
 
@@ -233,12 +252,20 @@ def main() -> int:
     parser.add_argument("--headless", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
-    scene, robot = build_scene()
+    env, robot = build_env()
     try:
         robot.ctrl_mode = mjk.CtrlMode.TORQUE
-        robot.set_joint_pos(HOME, call_forward=True)
-        scene.set_body_pose("cube", [PICK_X, PICK_Y, SURFACE_Z + CUBE_HALF_SIZE])
-        waypoints = build_waypoints(scene, robot)
+
+        def on_reset(ctx):
+            robot.set_joint_pos(HOME, call_forward=False)
+            env.set_body_pose("cube", CUBE_START)
+            if env.has_actuator("g_fingers_actuator"):
+                env.set_actuator_ctrl("g_fingers_actuator", 0.0)
+
+        env.on_reset = on_reset
+        env.reset()
+
+        waypoints = build_waypoints(env, robot)
         phases = [
             Phase("HOME", waypoints["home"], 1.0, 2.5, 0.08, 0.0),
             Phase("PICK_ABOVE", waypoints["pick_above"], 5.0, 7.0, 0.08, 0.0),
@@ -251,24 +278,32 @@ def main() -> int:
             Phase("RETREAT", waypoints["place_above"], 2.0, 4.0, 0.08, 0.0),
             Phase("HOLD", waypoints["place_above"], 1.0 if not args.gui else 10.0, 0.0, -1.0, 0.0),
         ]
+        state = {"prev": env.time()}
         if args.gui:
             viewer = mjk.SimulateViewer.open(robot, "ex_table_pick_place.py")
             try:
-                for phase in phases:
-                    if not run_phase(scene, robot, phase, viewer):
+                while viewer.is_running():
+                    try:
+                        for phase in phases:
+                            if not run_phase(env, robot, phase, viewer, state):
+                                raise StopIteration
+                        break
+                    except ResetRequested:
+                        continue
+                    except StopIteration:
                         break
             finally:
                 viewer.close()
         else:
             for phase in phases:
-                if not run_phase(scene, robot, phase, None):
+                if not run_phase(env, robot, phase, None, state):
                     break
-        cube = scene.body_frame("cube")
+        cube = env.body_frame("cube")
         cube_pos = [cube.p.x(), cube.p.y(), cube.p.z()]
         place_err = math.hypot(cube_pos[0] - PLACE_X, cube_pos[1] - PLACE_Y)
         print(f"cube final position: {[round(v, 3) for v in cube_pos]} xy_error={place_err:.3f}")
     finally:
-        scene.close()
+        env.close()
     return 0
 
 

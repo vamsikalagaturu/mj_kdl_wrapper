@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional, Sequence, Union
+from typing import Callable, Optional, Sequence, Union
 
 import PyKDL as kdl
 
@@ -131,6 +131,14 @@ class ResetInfo:
     keyframe: int
 
 
+class ResetContext:
+    """Context passed to Env.on_reset after MuJoCo data is reset."""
+    @property
+    def options(self) -> ResetOptions: ...
+    @property
+    def info(self) -> ResetInfo: ...
+
+
 class Scene:
     """Owned MuJoCo model/data built from SceneSpec."""
     spec: SceneSpec
@@ -201,6 +209,12 @@ class Robot:
         q: Optional[Union[Sequence[float], kdl.JntArray]] = None,
     ) -> kdl.Frame: ...
     """Return FK terminal pose as PyKDL.Frame."""
+    @property
+    def has_tcp_frame(self) -> bool: ...
+    @property
+    def tcp_site(self) -> str: ...
+    @property
+    def tip_to_tcp(self) -> kdl.Frame: ...
 
 
 class SimulateViewer:
@@ -223,10 +237,10 @@ class SimulateViewer:
 
 
 class VideoRecorder:
-    """Offscreen MuJoCo video recorder for a Scene."""
+    """Offscreen MuJoCo video recorder for a Scene or Env."""
     @staticmethod
     def open(
-        scene: Scene,
+        scene: Union["Scene", "Env"],
         out_path: str,
         width: int = 1280,
         height: int = 720,
@@ -234,7 +248,7 @@ class VideoRecorder:
     ) -> "VideoRecorder": ...
     @staticmethod
     def open_preset(
-        scene: Scene,
+        scene: Union["Scene", "Env"],
         out_path: str,
         resolution: VideoResolution = VideoResolution.R720p,
         fps: int = 60,
@@ -254,6 +268,7 @@ class VideoRecorder:
 class Env:
     """Resettable scene environment that keeps registered Robot handles synchronized."""
     spec: SceneSpec
+    on_reset: Optional[Callable[[ResetContext], None]]
     @staticmethod
     def build(spec: SceneSpec) -> "Env": ...
     def close(self) -> None: ...
@@ -270,6 +285,21 @@ class Env:
     def remove_object(self, name: str) -> None: ...
     """Rebuild the environment without the named object and rebind existing Robot handles."""
     def camera_names(self) -> list[str]: ...
+    def time(self) -> float: ...
+    def timestep(self) -> float: ...
+    def body_frame(self, name: str) -> kdl.Frame: ...
+    def site_frame(self, name: str) -> kdl.Frame: ...
+    def set_body_pose(
+        self,
+        name: str,
+        pos: Sequence[float],
+        quat: Optional[Sequence[float]] = None,
+    ) -> None: ...
+    def set_actuator_ctrl(self, name: str, value: float) -> None: ...
+    def actuator_ctrl(self, name: str) -> float: ...
+    def has_actuator(self, name: str) -> bool: ...
+    def save_xml(self, path: str) -> None: ...
+    def save_binary(self, path: str) -> None: ...
 
 
 __version__: str

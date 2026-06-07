@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Joint-space impedance example ported from src/examples/ex_impedance.cpp."""
+"""Joint-space impedance example ported from src/examples/ex_impedance.cpp.
+
+tau = Kp*(q_home - q) - Kd*qdot + g_kdl, applied in TORQUE mode, with the
+gripper cycling open/closed. An Env on_reset hook re-homes the arm.
+"""
 
 from __future__ import annotations
 
@@ -35,7 +39,7 @@ def attachment_gripper(path: Path) -> mjk.AttachmentSpec:
     return spec
 
 
-def build_scene(model_path: Path, gripper_path: Path) -> tuple[mjk.Scene, mjk.Robot]:
+def build_env(model_path: Path, gripper_path: Path) -> tuple[mjk.Env, mjk.Robot]:
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
@@ -44,12 +48,12 @@ def build_scene(model_path: Path, gripper_path: Path) -> tuple[mjk.Scene, mjk.Ro
     robot_spec.path = str(model_path)
     robot_spec.attachments = [attachment_gripper(gripper_path)]
     spec.robots = [robot_spec]
-    scene = mjk.Scene.build(spec)
+    env = mjk.Env.build(spec)
     tool = mjk.ToolFrameSpec()
     tool.tool_body = "g_base"
     tool.tcp_site = "g_pinch"
-    robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link", tool=tool)
-    return scene, robot
+    robot = env.create_robot("base_link", "bracelet_link", tool=tool)
+    return env, robot
 
 
 def apply_pd_gravity(robot: mjk.Robot, target: list[float]) -> None:
@@ -61,19 +65,23 @@ def apply_pd_gravity(robot: mjk.Robot, target: list[float]) -> None:
     ]
 
 
-def run_loop(scene: mjk.Scene, robot: mjk.Robot, step_fn, *, duration: float, gui: bool) -> None:
+def run_loop(env: mjk.Env, robot: mjk.Robot, step_fn, *, duration: float, gui: bool) -> None:
     if gui:
         viewer = mjk.SimulateViewer.open(robot, "ex_impedance.py")
+        prev = env.time()
         try:
             while viewer.is_running():
+                if env.time() < prev - 1e-6:
+                    env.reset()
+                prev = env.time()
                 step_fn()
                 if not viewer.step():
                     break
         finally:
             viewer.close()
         return
-    end = scene.time() + duration
-    while scene.time() < end:
+    end = env.time() + duration
+    while env.time() < end:
         step_fn()
         robot.step()
 
@@ -83,25 +91,26 @@ def main() -> int:
     parser.add_argument("--gui", action="store_true")
     args = parser.parse_args()
 
-    scene, robot = build_scene(
+    env, robot = build_env(
         path_from_arg(os.environ.get(MODEL_ENV_VAR, DEFAULT_MODEL), "arm model"),
         path_from_arg(os.environ.get(GRIPPER_ENV_VAR, DEFAULT_GRIPPER), "gripper model"),
     )
     try:
         robot.ctrl_mode = mjk.CtrlMode.TORQUE
-        robot.set_joint_pos(HOME_POSE, call_forward=False)
+        env.on_reset = lambda ctx: robot.set_joint_pos(HOME_POSE, call_forward=False)
+        env.reset()
 
         def step():
             apply_pd_gravity(robot, HOME_POSE)
-            if scene.has_actuator("g_fingers_actuator"):
-                scene.set_actuator_ctrl(
-                    "g_fingers_actuator", 255.0 if math.fmod(scene.time(), 6.0) < 3.0 else 0.0
+            if env.has_actuator("g_fingers_actuator"):
+                env.set_actuator_ctrl(
+                    "g_fingers_actuator", 255.0 if math.fmod(env.time(), 6.0) < 3.0 else 0.0
                 )
 
-        run_loop(scene, robot, step, duration=3.0, gui=args.gui)
+        run_loop(env, robot, step, duration=3.0, gui=args.gui)
         print(f"final q: {[round(x, 4) for x in robot.jnt_pos_msr]}")
     finally:
-        scene.close()
+        env.close()
     return 0
 
 

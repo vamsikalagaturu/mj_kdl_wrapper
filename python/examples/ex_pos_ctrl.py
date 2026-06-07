@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Joint position-control example ported from src/examples/ex_pos_ctrl.cpp."""
+"""Joint position-control example ported from src/examples/ex_pos_ctrl.cpp.
+
+Drives the arm from home to a target with linearly interpolated position
+setpoints. An Env on_reset hook re-homes the arm and restarts the motion clock
+so the simulate-UI reset button replays the motion.
+"""
 
 from __future__ import annotations
 
@@ -21,31 +26,18 @@ def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
-def build_robot(model_path: Path) -> tuple[mjk.Scene, mjk.Robot]:
+def build_env(model_path: Path) -> tuple[mjk.Env, mjk.Robot]:
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
     spec.add_skybox = True
-
     robot_spec = mjk.RobotSpec()
     robot_spec.path = str(model_path)
     spec.robots = [robot_spec]
-
-    scene = mjk.Scene.build(spec)
-    robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link")
+    env = mjk.Env.build(spec)
+    robot = env.create_robot("base_link", "bracelet_link")
     robot.ctrl_mode = mjk.CtrlMode.POSITION
-    robot.set_joint_pos(HOME_POSE, call_forward=False)
-    robot.jnt_pos_cmd = HOME_POSE[:]
-    return scene, robot
-
-
-def control_step(robot: mjk.Robot, sim_time: float) -> None:
-    robot.update()
-    alpha = clamp(sim_time / MOTION_DURATION, 0.0, 1.0)
-    robot.jnt_pos_cmd = [
-        HOME_POSE[i] + alpha * (TARGET_POSE[i] - HOME_POSE[i])
-        for i in range(robot.n_joints)
-    ]
+    return env, robot
 
 
 def main() -> int:
@@ -60,31 +52,49 @@ def main() -> int:
             f"or set {MODEL_ENV_VAR}."
         )
 
-    scene, robot = build_robot(model_path)
+    env, robot = build_env(model_path)
     try:
-        dt = scene.spec.timestep
-        sim_time = 0.0
+        # t_start is reset on every env reset so the trajectory replays from home.
+        state = {"t_start": 0.0}
+
+        def on_reset(ctx):
+            robot.set_joint_pos(HOME_POSE, call_forward=False)
+            robot.jnt_pos_cmd = HOME_POSE[:]
+            state["t_start"] = env.time()
+
+        env.on_reset = on_reset
+        env.reset()
+
+        def control_step():
+            robot.update()
+            alpha = clamp((env.time() - state["t_start"]) / MOTION_DURATION, 0.0, 1.0)
+            robot.jnt_pos_cmd = [
+                HOME_POSE[i] + alpha * (TARGET_POSE[i] - HOME_POSE[i])
+                for i in range(robot.n_joints)
+            ]
 
         if args.gui:
             viewer = mjk.SimulateViewer.open(robot, "ex_pos_ctrl.py")
+            prev = env.time()
             try:
                 while viewer.is_running():
-                    control_step(robot, sim_time)
+                    if env.time() < prev - 1e-6:
+                        env.reset()
+                    prev = env.time()
+                    control_step()
                     if not viewer.step():
                         break
-                    sim_time += dt
             finally:
                 viewer.close()
         else:
-            while sim_time < MOTION_DURATION + 1.0:
-                control_step(robot, sim_time)
+            end = env.time() + MOTION_DURATION + 1.0
+            while env.time() < end:
+                control_step()
                 robot.step()
-                sim_time += dt
-
             max_err = max(abs(TARGET_POSE[i] - robot.jnt_pos_msr[i]) for i in range(robot.n_joints))
             print(f"max joint error at end: {max_err:.4f} rad")
     finally:
-        scene.close()
+        env.close()
 
     return 0
 

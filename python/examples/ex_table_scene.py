@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Table-scene example ported from src/examples/ex_table_scene.cpp."""
+"""Table-scene example ported from src/examples/ex_table_scene.cpp.
+
+Arm + gripper on a table with free objects. The arm runs KDL gravity
+compensation and the gripper cycles open/closed. An Env on_reset hook re-homes
+the arm so the simulate-UI reset button restores the scene.
+"""
 
 from __future__ import annotations
 
@@ -79,9 +84,7 @@ def scene_objects(table_path):
     ]
 
 
-def build_scene(
-    model_path: Path, gripper_path: Path, table_path: Path
-) -> tuple[mjk.Scene, mjk.Robot]:
+def build_env(model_path: Path, gripper_path: Path, table_path: Path) -> tuple[mjk.Env, mjk.Robot]:
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
@@ -103,27 +106,31 @@ def build_scene(
     side.euler = [0.0, -68.0, 0.0]
     side.fovy = 45.0
     spec.cameras = [overview, side]
-    scene = mjk.Scene.build(spec)
+    env = mjk.Env.build(spec)
     tool = mjk.ToolFrameSpec()
     tool.tool_body = "g_base"
     tool.tcp_site = "g_pinch"
-    robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link", tool=tool)
-    return scene, robot
+    robot = env.create_robot("base_link", "bracelet_link", tool=tool)
+    return env, robot
 
 
-def run_loop(scene: mjk.Scene, robot: mjk.Robot, step_fn, *, duration: float, gui: bool) -> None:
+def run_loop(env: mjk.Env, robot: mjk.Robot, step_fn, *, duration: float, gui: bool) -> None:
     if gui:
         viewer = mjk.SimulateViewer.open(robot, "ex_table_scene.py")
+        prev = env.time()
         try:
             while viewer.is_running():
+                if env.time() < prev - 1e-6:
+                    env.reset()
+                prev = env.time()
                 step_fn()
                 if not viewer.step():
                     break
         finally:
             viewer.close()
         return
-    end = scene.time() + duration
-    while scene.time() < end:
+    end = env.time() + duration
+    while env.time() < end:
         step_fn()
         robot.step()
 
@@ -133,29 +140,31 @@ def main() -> int:
     parser.add_argument("--gui", action="store_true")
     args = parser.parse_args()
 
-    scene, robot = build_scene(
+    env, robot = build_env(
         path_from_arg(os.environ.get(MODEL_ENV_VAR, DEFAULT_MODEL), "arm model"),
         path_from_arg(os.environ.get(GRIPPER_ENV_VAR, DEFAULT_GRIPPER), "gripper model"),
         path_from_arg(os.environ.get(TABLE_ENV_VAR, DEFAULT_TABLE), "table model"),
     )
     try:
         robot.ctrl_mode = mjk.CtrlMode.TORQUE
-        robot.set_joint_pos(HOME_POSE, call_forward=False)
-        top = scene.site_frame(mjk.scene_object_site_name(scene.spec.objects[0], "table_top"))
+        env.on_reset = lambda ctx: robot.set_joint_pos(HOME_POSE, call_forward=False)
+        env.reset()
+
+        top = env.site_frame(mjk.scene_object_site_name(env.spec.objects[0], "table_top"))
         print(f"table top z = {top.p.z():.3f}")
-        print(f"cameras: {' '.join(scene.camera_names())}")
+        print(f"cameras: {' '.join(env.camera_names())}")
 
         def step():
             robot.update()
             robot.jnt_trq_cmd = robot.gravity_torques(-9.81)
-            if scene.has_actuator("g_fingers_actuator"):
-                scene.set_actuator_ctrl(
-                    "g_fingers_actuator", 255.0 if math.fmod(scene.time(), 6.0) < 3.0 else 0.0
+            if env.has_actuator("g_fingers_actuator"):
+                env.set_actuator_ctrl(
+                    "g_fingers_actuator", 255.0 if math.fmod(env.time(), 6.0) < 3.0 else 0.0
                 )
 
-        run_loop(scene, robot, step, duration=1.0, gui=args.gui)
+        run_loop(env, robot, step, duration=1.0, gui=args.gui)
     finally:
-        scene.close()
+        env.close()
     return 0
 
 
