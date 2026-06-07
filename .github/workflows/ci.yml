@@ -15,19 +15,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Checkout orocos_kinematics_dynamics
-        run: |
-          git clone --depth 1 --branch feature/achd_fixed_joint \
-            https://github.com/secorolab/orocos_kinematics_dynamics.git \
-            "${{ github.workspace }}/../orocos_kinematics_dynamics"
-
       - name: Install dependencies
         run: |
           sudo apt-get update -q
           sudo apt-get install -y \
             ccache \
             ninja-build \
-            liborocos-kdl-dev \
+            libeigen3-dev \
             libglfw3-dev \
             libgl-dev \
             libegl-dev
@@ -114,6 +108,7 @@ jobs:
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DMUJOCO_ROOT="${MUJOCO_ROOT}" \
+            -DMJ_KDL_FETCH_OROCOS_KDL=ON \
             -DBUILD_TESTS=ON \
             -DFETCH_MENAGERIE=OFF \
             -DBUILD_DOCS="${docs_flag}" \
@@ -135,6 +130,45 @@ jobs:
         uses: actions/upload-pages-artifact@v5
         with:
           path: docs/html
+
+  python-bindings:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y \
+            git \
+            libeigen3-dev \
+            libglfw3-dev \
+            libgl-dev \
+            libegl-dev
+          pip install uv
+
+      - name: Build and install the wheel
+        # Under scikit-build the build downloads MuJoCo and builds the secorolab
+        # Orocos KDL + PyKDL automatically.
+        run: |
+          uv venv .venv
+          . .venv/bin/activate
+          uv pip install .
+
+      - name: Fetch Menagerie models
+        run: |
+          git clone --depth 1 https://github.com/google-deepmind/mujoco_menagerie.git third_party/menagerie
+
+      - name: Test and smoke an example
+        run: |
+          . .venv/bin/activate
+          uv pip install pytest
+          pytest -q python/tests
+          python python/examples/ex_gravity_comp.py
 
   deploy-docs:
     needs: build-and-test

@@ -29,15 +29,12 @@ A C++ library bridging [MuJoCo 3.9](https://github.com/google-deepmind/mujoco) p
 - **Overlay geometry** -- `clear_trace()` / `add_trace_segment()` draw your own lines (e.g. a live end-effector trajectory trace) into the simulate UI's user scene; no-ops in headless mode
 - **Interactive and headless recording** -- Simulate UI recorder controls plus `VideoRecorder` for EGL offscreen MP4 recording
 
-## Setup
+## Install
 
-The commands below assume Ubuntu or Debian-style packages and install MuJoCo
-3.9.0 at `/opt/mujoco-3.9.0`. Set `MUJOCO_ROOT` if you install it elsewhere.
+Ubuntu/Debian instructions. Only MuJoCo 3.9.0 is supported (CMake checks
+`mjVERSION_HEADER` and stops if `MUJOCO_ROOT` points at another release).
 
-Only MuJoCo 3.9.0 is supported. CMake checks `mjVERSION_HEADER` and stops at
-configure time if `MUJOCO_ROOT` points to any other MuJoCo release.
-
-### System Packages
+### System packages
 
 ```bash
 sudo apt update
@@ -47,16 +44,10 @@ sudo apt install \
   ffmpeg doxygen
 ```
 
-`libeigen3-dev` is required to build the secorolab Orocos KDL fork from source
-for the Python wheel.
-
-The Python install builds Orocos KDL and PyKDL from
-`https://github.com/secorolab/orocos_kinematics_dynamics.git` at
-`feature/achd_fixed_joint`, so distro `liborocos-kdl-dev` and `python3-pykdl`
-are not required for the wheel. The secorolab fork is the only KDL the wheel
-uses; no system KDL is consulted.
-
 ### MuJoCo 3.9.0
+
+Install it once and point `MUJOCO_ROOT` at it, or pass `-DMJ_KDL_FETCH_MUJOCO=ON`
+to let CMake download it.
 
 ```bash
 wget https://github.com/google-deepmind/mujoco/releases/download/3.9.0/mujoco-3.9.0-linux-x86_64.tar.gz
@@ -64,153 +55,59 @@ sudo tar -xzf mujoco-3.9.0-linux-x86_64.tar.gz -C /opt/
 export MUJOCO_ROOT=/opt/mujoco-3.9.0
 ```
 
-Persist `MUJOCO_ROOT` in your shell profile if `/opt/mujoco-3.9.0` is not the
-default path you want CMake to use.
-
-### Clone The Repo
+### C++ library, examples, and tests
 
 ```bash
 git clone https://github.com/secorolab/mj_kdl_wrapper.git
 cd mj_kdl_wrapper
-```
-
-### Orocos KDL From Source (Required)
-
-The C++ build requires the secorolab Orocos KDL fork at
-`feature/achd_fixed_joint`; the distro `liborocos-kdl-dev` does not provide the
-ACHD fixed-joint solver this project depends on. Build and install the fork,
-then point CMake at it.
-
-```bash
-git clone --branch feature/achd_fixed_joint \
-  https://github.com/secorolab/orocos_kinematics_dynamics.git
-cd orocos_kinematics_dynamics
-cmake orocos_kdl -B build_kdl \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_INSTALL_PREFIX=~/ws/install \
-      -DENABLE_TESTS=OFF -DENABLE_EXAMPLES=OFF
-cmake --build build_kdl -j$(nproc)
-cmake --install build_kdl
-```
-
-Then add `-DCMAKE_PREFIX_PATH=~/ws/install` to the CMake configure command.
-
-The Python install handles this automatically and does not need this step; see
-[Python Install](#python-install).
-
-## Build And Install
-
-### Build C++ Library, Examples, Tests, And Docs
-
-```bash
 cmake -B build \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DFETCH_MENAGERIE=ON \
-  -DBUILD_DOCS=ON
+  -DMJ_KDL_FETCH_OROCOS_KDL=ON \
+  -DFETCH_MENAGERIE=ON
 cmake --build build --parallel $(nproc)
-```
-
-`FETCH_MENAGERIE=ON` downloads the Kinova GEN3 and Robotiq assets used by the
-examples and tests into `third_party/menagerie/`.
-
-Run the C++ smoke tests:
-
-```bash
 ctest --test-dir build --output-on-failure
-./build/src/examples/ex_gravity_comp --headless
 ```
 
-### Install The C++ Package
+- `-DMJ_KDL_FETCH_OROCOS_KDL=ON` downloads and builds the secorolab Orocos KDL
+  fork (`feature/achd_fixed_joint`, required for the ACHD fixed-joint solver) and
+  links it; no system `liborocos-kdl-dev` is used. To use your own KDL install
+  instead, omit the flag and pass `-DCMAKE_PREFIX_PATH=/path/to/install`.
+- `-DFETCH_MENAGERIE=ON` downloads the Kinova GEN3 / Robotiq assets the examples
+  and tests use into `third_party/menagerie/`.
+- Add `-DMJ_KDL_FETCH_MUJOCO=ON` if you did not set `MUJOCO_ROOT`.
 
-Install the C++ package if another CMake project should use
-`find_package(mj_kdl_wrapper)`:
+Install it for use from another CMake project via `find_package(mj_kdl_wrapper)`
+(add `-DCMAKE_INSTALL_PREFIX="$HOME/.local"` at configure time for a user-local
+install):
 
 ```bash
-sudo cmake --install build
-```
-
-For a user-local install, configure with an explicit prefix first:
-
-```bash
-cmake -B build \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DFETCH_MENAGERIE=ON \
-  -DBUILD_DOCS=ON \
-  -DCMAKE_INSTALL_PREFIX="$HOME/.local"
-cmake --build build --parallel $(nproc)
 cmake --install build
 ```
 
 ### Python Install
 
-Once the system packages above are installed, install directly from GitHub into
-your active Python 3.10+ environment:
+Install into an active Python 3.10+ environment. The build bundles the native
+dependencies (MuJoCo, the secorolab Orocos KDL fork, and PyKDL); see the
+[Python bindings guide](docs/PYTHON_BINDINGS.md) for what it does and how model
+paths are resolved.
 
 ```bash
-uv pip install "git+https://github.com/vamsikalagaturu/mj_kdl_wrapper.git"
+uv pip install "git+https://github.com/vamsikalagaturu/mj_kdl_wrapper.git"  # from GitHub
+uv pip install .                                                            # from a checkout
 ```
 
-The Python build downloads the matching native MuJoCo release automatically if
-`MUJOCO_ROOT` does not already point to a MuJoCo 3.9.0 install. It also builds
-Orocos KDL and PyKDL from the pinned `feature/achd_fixed_joint` branch above,
-bundles the Orocos KDL shared library into the wheel, and installs the matching
-official `mujoco` Python package from the MuJoCo version in
-`cmake/MuJoCoVersion.cmake`. The wrapper reuses that `mujoco` package's native
-library at runtime instead of shipping a second copy. It does not build the C++
-examples/tests; use the CMake build above for those.
-
-The wheel vendors the secorolab PyKDL build as the top-level `PyKDL` module so
-`import PyKDL` resolves to the version that matches the bundled Orocos KDL. In a
-virtual environment this is the PyKDL that gets imported; do not install a second
-`PyKDL`/`python3-pykdl` into the same environment.
-
-For a local checkout, use:
-
-```bash
-uv pip install .
-```
-
-The examples need the MuJoCo Menagerie models (Kinova GEN3, Robotiq 2F-85).
-Fetch them with the installed console script, which shallow-clones the official
-[MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie) into a
-local cache (requires `git`):
+Fetch the MuJoCo Menagerie models the examples use (requires `git`), verify, and
+run an example from a checkout:
 
 ```bash
 mj-kdl-fetch-menagerie
-```
-
-Verify the environment:
-
-```bash
 python -c "import PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mujoco.mj_versionString(), mjk.mujoco_version())"
-```
-
-The `python/examples/` scripts are not shipped in the wheel; run them from a
-checkout of this repository. Once the models are fetched (or a
-`third_party/menagerie` checkout exists) the examples resolve the arm/gripper
-models automatically; examples that also use tabletop assets read those from
-`src/examples/`, so run them from the repo root:
-
-```bash
-git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
-cd mj_kdl_wrapper
 python python/examples/ex_gravity_comp.py
 ```
 
-Model resolution order is: `MJ_KDL_MODEL` / `MJ_KDL_GRIPPER` (per-model
-overrides) -> `MJ_KDL_MENAGERIE` (a Menagerie checkout) -> a local
-`third_party/menagerie` -> the `mj-kdl-fetch-menagerie` cache.
-
-Only the official MuJoCo Menagerie is provided here. To use a different source
-(for example the [`robot_descriptions`](https://github.com/robot-descriptions/robot_descriptions.py)
-package or your own MJCF exports), point the env vars above at those files
-yourself, e.g.:
-
-```bash
-pip install robot_descriptions
-export MJ_KDL_MODEL="$(python -c 'from robot_descriptions import gen3_mj_description as m; print(m.MJCF_PATH)')"
-export MJ_KDL_GRIPPER="$(python -c 'from robot_descriptions import robotiq_2f85_mj_description as m; print(m.MJCF_PATH)')"
-```
+The `python/examples/` scripts are not shipped in the wheel, so run them from a
+checkout. Model resolution, environment variables, and using other model sources
+are documented in the [Python bindings guide](docs/PYTHON_BINDINGS.md).
 
 ### Generate Documentation
 
@@ -228,8 +125,11 @@ installed Orocos KDL headers so KDL types and common solver calls link locally.
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `MJ_KDL_FETCH_OROCOS_KDL=ON` | OFF | Download and build the secorolab Orocos KDL fork instead of using a system install |
+| `MJ_KDL_FETCH_MUJOCO=ON` | OFF | Download the supported MuJoCo release if `MUJOCO_ROOT` is not set |
+| `FETCH_MENAGERIE=ON` | OFF | Download MuJoCo Menagerie robot models into `third_party/menagerie/` |
 | `BUILD_RECORDER=ON` | ON | Enable `VideoRecorder` (EGL + ffmpeg headless recording) |
-| `FETCH_MENAGERIE=ON` | OFF | Download MuJoCo Menagerie robot models |
+| `BUILD_EXAMPLES=ON` | ON | Build the `src/examples/ex_*` programs |
 | `BUILD_TESTS=ON` | ON | Build and register GoogleTest tests with CTest |
 | `BUILD_DOCS=ON` | OFF | Generate Doxygen HTML docs (`cmake --build build --target docs`) |
 | `SHOW_EQUALITY_PANEL=ON` | OFF | Show the Simulate UI `Equality` section (hidden by default) |

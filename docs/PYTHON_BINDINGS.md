@@ -5,6 +5,60 @@ concepts as the C++ wrapper while keeping ownership explicit. It owns MuJoCo
 `mjModel`/`mjData` through `Scene` or `Env` and returns KDL values through the
 upstream `PyKDL` module instead of defining duplicate Python KDL classes.
 
+## Installation
+
+```bash
+uv pip install "git+https://github.com/vamsikalagaturu/mj_kdl_wrapper.git"  # from GitHub
+uv pip install .                                                            # from a checkout
+```
+
+What the build does (it does not build the C++ examples/tests; use the CMake
+build for those):
+
+- Downloads the matching native MuJoCo release automatically when `MUJOCO_ROOT`
+  does not already point to a MuJoCo 3.9.0 install.
+- Builds the Orocos KDL and PyKDL from the pinned secorolab
+  `feature/achd_fixed_joint` fork and bundles the Orocos KDL shared library into
+  the wheel. PyKDL is vendored as the top-level `PyKDL` module so `import PyKDL`
+  matches the bundled Orocos KDL. In a virtual environment that is the `PyKDL`
+  imported; do not install a second `PyKDL` / `python3-pykdl` alongside it.
+- Pins and installs the matching official `mujoco` Python package (from
+  `cmake/MuJoCoVersion.cmake`) and reuses that package's native `libmujoco` at
+  runtime rather than shipping a second copy.
+
+## Models For The Examples
+
+The examples need the MuJoCo Menagerie models (Kinova GEN3, Robotiq 2F-85).
+Fetch them with the installed console script, which shallow-clones the official
+[MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie) (requires
+`git`) into a cache under `${XDG_CACHE_HOME:-~/.cache}/mj_kdl_wrapper/menagerie`:
+
+```bash
+mj-kdl-fetch-menagerie            # default cache
+mj-kdl-fetch-menagerie --dest DIR # or a directory you choose
+```
+
+`mj_kdl_wrapper.menagerie.model_path(name)` resolves a model in this order:
+
+1. `MJ_KDL_MODEL` / `MJ_KDL_GRIPPER` - per-model file overrides.
+2. `MJ_KDL_MENAGERIE` - a MuJoCo Menagerie checkout root.
+3. A local `third_party/menagerie` checkout (next to the cwd or the repo).
+4. The `mj-kdl-fetch-menagerie` cache.
+
+Only the official MuJoCo Menagerie is provided here. To use a different source
+(for example the
+[`robot_descriptions`](https://github.com/robot-descriptions/robot_descriptions.py)
+package or your own MJCF exports), point the env vars above at those files:
+
+```bash
+pip install robot_descriptions
+export MJ_KDL_MODEL="$(python -c 'from robot_descriptions import gen3_mj_description as m; print(m.MJCF_PATH)')"
+export MJ_KDL_GRIPPER="$(python -c 'from robot_descriptions import robotiq_2f85_mj_description as m; print(m.MJCF_PATH)')"
+```
+
+The tabletop examples additionally read assets from `src/examples/`, so run them
+from a checkout of this repository.
+
 ## Minimal Scene
 
 ```python
@@ -16,7 +70,7 @@ spec.add_floor = True
 spec.add_skybox = True
 
 robot_spec = mjk.RobotSpec()
-robot_spec.path = "third_party/menagerie/kinova_gen3/gen3.xml"
+robot_spec.path = mjk.menagerie.model_path("kinova_gen3")  # resolves a fetched/local model
 spec.robots = [robot_spec]
 
 scene = mjk.Scene.build(spec)
