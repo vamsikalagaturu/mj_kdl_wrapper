@@ -141,8 +141,8 @@ def main() -> int:
     args = parser.parse_args()
 
     env, robot = build_env(
-        path_from_arg(os.environ.get(MODEL_ENV_VAR, DEFAULT_MODEL), "arm model"),
-        path_from_arg(os.environ.get(GRIPPER_ENV_VAR, DEFAULT_GRIPPER), "gripper model"),
+        path_from_arg(mjk.menagerie.model_path("kinova_gen3", env_var=MODEL_ENV_VAR), "arm model"),
+        path_from_arg(mjk.menagerie.model_path("robotiq_2f85", env_var=GRIPPER_ENV_VAR), "gripper model"),
         path_from_arg(os.environ.get(TABLE_ENV_VAR, DEFAULT_TABLE), "table model"),
     )
     try:

@@ -53,8 +53,8 @@ def main() -> int:
     parser.add_argument("--gui", action="store_true")
     args = parser.parse_args()
 
-    arm_path = path_from_arg(os.environ.get(MODEL_ENV_VAR, DEFAULT_MODEL), "arm model")
-    gripper_path = path_from_arg(os.environ.get(GRIPPER_ENV_VAR, DEFAULT_GRIPPER), "gripper model")
+    arm_path = path_from_arg(mjk.menagerie.model_path("kinova_gen3", env_var=MODEL_ENV_VAR), "arm model")
+    gripper_path = path_from_arg(mjk.menagerie.model_path("robotiq_2f85", env_var=GRIPPER_ENV_VAR), "gripper model")
     attach = attachment_gripper(gripper_path)
 
     spec = mjk.SceneSpec()

@@ -65,7 +65,7 @@ def main() -> int:
         else:
             print(f"Unknown argument '{arg}'; using 1080p", file=sys.stderr)
 
-    model_path = resolve_model(os.environ.get(MODEL_ENV_VAR, DEFAULT_MODEL))
+    model_path = resolve_model(mjk.menagerie.model_path("kinova_gen3", env_var=MODEL_ENV_VAR))
     scene, robot = build_scene(model_path)
     recorder = None
     try:

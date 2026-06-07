@@ -170,6 +170,21 @@ For a local checkout, use:
 uv pip install .
 ```
 
+To also fetch the MuJoCo Menagerie models the examples need (Kinova GEN3,
+Robotiq 2F-85), install with the `menagerie` extra:
+
+```bash
+uv pip install "git+https://github.com/vamsikalagaturu/mj_kdl_wrapper.git[menagerie]"
+```
+
+This pulls [`robot_descriptions`](https://github.com/robot-descriptions/robot_descriptions.py),
+which downloads and caches the models on first use. Pre-fetch them with the
+installed console script:
+
+```bash
+mj-kdl-fetch-menagerie
+```
+
 Verify the environment:
 
 ```bash
@@ -177,12 +192,20 @@ python -c "import PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mujoco.mj_versionS
 ```
 
 The `python/examples/` scripts are not shipped in the wheel; run them from a
-checkout of this repository:
+checkout of this repository. With the `menagerie` extra installed they resolve
+the arm/gripper models automatically (no `third_party/menagerie` checkout
+needed); examples that also use tabletop assets read those from
+`src/examples/`, so run them from the repo root:
 
 ```bash
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
-python mj_kdl_wrapper/python/examples/basic_scene.py
+cd mj_kdl_wrapper
+python python/examples/ex_gravity_comp.py
 ```
+
+Model resolution order is: `MJ_KDL_MODEL` / `MJ_KDL_GRIPPER` (or
+`MJ_KDL_MENAGERIE` pointing at a Menagerie checkout) -> a local
+`third_party/menagerie` -> `robot_descriptions`.
 
 ### Generate Documentation
 

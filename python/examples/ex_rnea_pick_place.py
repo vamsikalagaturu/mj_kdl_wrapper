@@ -52,7 +52,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     cube.friction = [1.0, 0.005, 0.0001]
 
     attach = mjk.AttachmentSpec()
-    attach.mjcf_path = str(path(os.environ.get("MJ_KDL_GRIPPER", GRIPPER)))
+    attach.mjcf_path = str(path(mjk.menagerie.model_path("robotiq_2f85", env_var="MJ_KDL_GRIPPER")))
     attach.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
     attach.prefix = "g_"
     spec = mjk.SceneSpec()
@@ -61,7 +61,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     spec.add_skybox = True
     spec.objects = [table, cube]
     robot_spec = mjk.RobotSpec()
-    robot_spec.path = str(path(os.environ.get("MJ_KDL_MODEL", ARM)))
+    robot_spec.path = str(path(mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")))
     robot_spec.pos = [0.0, 0.0, SURFACE_Z]
     robot_spec.attachments = [attach]
     spec.robots = [robot_spec]

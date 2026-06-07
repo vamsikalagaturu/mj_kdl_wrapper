@@ -31,6 +31,14 @@ classifiers = [
 ]
 dynamic = ["dependencies"]
 
+[project.optional-dependencies]
+# Fetches the MuJoCo Menagerie models (Kinova GEN3, Robotiq 2F-85) the examples
+# need, via robot_descriptions (downloads and caches on first use).
+menagerie = ["robot_descriptions>=1.9"]
+
+[project.scripts]
+mj-kdl-fetch-menagerie = "mj_kdl_wrapper.menagerie:main"
+
 [project.urls]
 Homepage = "https://github.com/vamsikalagaturu/mj_kdl_wrapper"
 Repository = "https://github.com/vamsikalagaturu/mj_kdl_wrapper"

@@ -34,7 +34,7 @@ def build_scene(model_path: Path) -> mjk.Scene:
 
 
 def main() -> int:
-    model_path = resolve_model_path(os.environ.get(MODEL_ENV_VAR, DEFAULT_MODEL))
+    model_path = resolve_model_path(mjk.menagerie.model_path("kinova_gen3", env_var=MODEL_ENV_VAR))
     if not model_path.exists():
         raise FileNotFoundError(
             f"{model_path} does not exist. Run from a directory where that relative path exists "

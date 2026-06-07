@@ -14,7 +14,7 @@ TITLE = "mj_kdl_wrapper Python UI"
 
 
 def main() -> int:
-    model_path = Path(os.environ.get(MODEL_ENV_VAR, DEFAULT_MODEL))
+    model_path = Path(mjk.menagerie.model_path("kinova_gen3", env_var=MODEL_ENV_VAR))
     if not model_path.exists():
         raise FileNotFoundError(
             f"{model_path} does not exist. Run from a directory where that relative path exists "

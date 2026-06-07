@@ -94,10 +94,10 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     ]
 
     robot_spec = mjk.RobotSpec()
-    robot_spec.path = str(path(os.environ.get("MJ_KDL_MODEL", ARM), "arm model"))
+    robot_spec.path = str(path(mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL"), "arm model"))
     robot_spec.pos = [0.0, 0.0, SURFACE_Z]
     robot_spec.attachments = [
-        gripper_attachment(path(os.environ.get("MJ_KDL_GRIPPER", GRIPPER), "gripper model"))
+        gripper_attachment(path(mjk.menagerie.model_path("robotiq_2f85", env_var="MJ_KDL_GRIPPER"), "gripper model"))
     ]
     spec.robots = [robot_spec]
 

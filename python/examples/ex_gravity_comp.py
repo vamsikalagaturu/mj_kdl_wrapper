@@ -64,7 +64,7 @@ def main() -> int:
     parser.add_argument("--gui", action="store_true")
     args = parser.parse_args()
 
-    model_path = path_from_arg(os.environ.get(MODEL_ENV_VAR, DEFAULT_MODEL), "arm model")
+    model_path = path_from_arg(mjk.menagerie.model_path("kinova_gen3", env_var=MODEL_ENV_VAR), "arm model")
     env, robot = build_env(model_path)
     try:
         robot.ctrl_mode = mjk.CtrlMode.TORQUE

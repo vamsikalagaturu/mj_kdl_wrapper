@@ -47,7 +47,7 @@ def main() -> int:
     parser.add_argument("--gui", action="store_true", help="Open the custom Simulate UI.")
     args = parser.parse_args()
 
-    model_path = Path(os.environ.get(MODEL_ENV_VAR, DEFAULT_MODEL))
+    model_path = Path(mjk.menagerie.model_path("kinova_gen3", env_var=MODEL_ENV_VAR))
     if not model_path.exists():
         raise FileNotFoundError(
             f"{model_path} does not exist. Run from a directory where that relative path exists "
