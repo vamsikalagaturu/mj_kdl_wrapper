@@ -1,6 +1,6 @@
 # Mujoco KDL Wrapper
 
-A C++ library bridging [MuJoCo 3.9](https://github.com/google-deepmind/mujoco) physics simulation with [KDL](https://github.com/orocos/orocos_kinematics_dynamics) for robot kinematics and dynamics.
+A C++ library bridging [MuJoCo](https://github.com/google-deepmind/mujoco) physics simulation with [KDL](https://github.com/orocos/orocos_kinematics_dynamics) for robot kinematics and dynamics.
 
 ## Screenshots
 
@@ -30,8 +30,21 @@ A C++ library bridging [MuJoCo 3.9](https://github.com/google-deepmind/mujoco) p
 
 ## Install
 
-Ubuntu/Debian instructions. Only MuJoCo 3.9.0 is supported (CMake checks
-`mjVERSION_HEADER` and stops if `MJ_KDL_MUJOCO_DIR` points at another release).
+Ubuntu/Debian instructions. Supported dependency versions are listed below.
+CMake checks `mjVERSION_HEADER` and stops if `MJ_KDL_MUJOCO_DIR` points at an
+unsupported MuJoCo release.
+
+### Dependency Versions
+
+| Dependency | Version / source | Notes |
+|------------|------------------|-------|
+| MuJoCo | `3.9.0` from `cmake/MuJoCoVersion.cmake` | Native library and pinned `mujoco` Python package must match |
+| Orocos KDL | secorolab fork, `feature/achd_fixed_joint` | Built from source; system `liborocos-kdl` is not used |
+| CMake | `>=3.16` | Required to configure the C++ build |
+| C++ compiler | C++20-capable | `CMAKE_CXX_STANDARD` is set to 20 |
+| Python | `>=3.10` | Required for the Python package |
+| scikit-build-core | `>=0.11.2` | Python build backend |
+| pybind11 | `>=2.13` | Python binding build dependency |
 
 ### System packages
 
@@ -60,8 +73,8 @@ ctest --test-dir build --output-on-failure
 The three fetch flags are all ON by default; they are shown above to make the
 sources explicit:
 
-- `MJ_KDL_FETCH_MUJOCO` downloads MuJoCo 3.9.0 unless `MJ_KDL_MUJOCO_DIR` points at an
-  install.
+- `MJ_KDL_FETCH_MUJOCO` downloads the supported MuJoCo release unless
+  `MJ_KDL_MUJOCO_DIR` points at an install.
 - `MJ_KDL_FETCH_OROCOS_KDL` clones and builds the secorolab Orocos KDL fork - the
   only KDL used; no system `liborocos-kdl` is consulted.
 - `MJ_KDL_FETCH_MENAGERIE` downloads the Kinova GEN3 / Robotiq models the examples and
@@ -78,8 +91,8 @@ cmake --install build
 
 ### Python Install
 
-Install into an active Python 3.10+ environment. The build bundles the native
-dependencies (MuJoCo, the secorolab Orocos KDL fork, and PyKDL); see the
+Install into an active supported Python environment. The build bundles the
+native dependencies (MuJoCo, the secorolab Orocos KDL fork, and PyKDL); see the
 [Python bindings guide](docs/PYTHON_BINDINGS.md) for what it does and how model
 paths are resolved.
 
@@ -119,7 +132,7 @@ Paths / sources (override to use your own):
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `MJ_KDL_MUJOCO_DIR` | `/opt/mujoco-3.9.0` | Existing MuJoCo install to use |
+| `MJ_KDL_MUJOCO_DIR` | `/opt/mujoco-${MJ_KDL_MUJOCO_VERSION}` | Existing MuJoCo install to use |
 | `MJ_KDL_FETCH_MUJOCO` | `ON` | Download MuJoCo when `MJ_KDL_MUJOCO_DIR` is not present |
 | `MJ_KDL_MUJOCO_URL` | (release) | MuJoCo archive URL to download |
 | `MJ_KDL_FETCH_OROCOS_KDL` | `ON` | Clone and build the secorolab Orocos KDL fork (the only KDL used) |
