@@ -154,8 +154,9 @@ Build toggles:
 | `SHOW_GROUP_PANEL` | `OFF` | Show the Simulate UI `Group enable` section |
 
 > [!NOTE]
-> Once the build succeeds, follow the [Tutorial](docs/TUTORIAL.md) to start
-> building scenes, adding robots, KDL control, reset hooks, and more.
+> Once the build succeeds, follow the [C++ tutorial](docs/TUTORIAL.md) or
+> [Python tutorial](docs/PYTHON_TUTORIAL.md) to start building scenes, adding
+> robots, KDL control, reset hooks, and more.
 
 ## API
 
@@ -179,7 +180,8 @@ See [test/README.md](test/README.md) for the full list of tests.
 
 ## More Documentation
 
-- [Full tutorial](docs/TUTORIAL.md)
+- [C++ tutorial](docs/TUTORIAL.md)
+- [Python tutorial](docs/PYTHON_TUTORIAL.md)
 - [Torque control notes](docs/HOWTO_torque_control.md)
 - [URDF to MJCF notes](docs/HOWTO_urdf_to_mjcf.md)
 - [Examples guide](src/examples/README.md)

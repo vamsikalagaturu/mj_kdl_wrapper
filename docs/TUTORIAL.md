@@ -1,6 +1,6 @@
-# Mujoco KDL Wrapper Tutorial
+# C++ Tutorial
 
-This tutorial builds a simulation application in layers: compile a robot scene,
+This tutorial builds a C++ simulation application in layers: compile a robot scene,
 add KDL control, add reset hooks, add objects and cameras, use the Simulate UI,
 record video, and then extend the scene to more robots and more complex task assets.
 
@@ -159,7 +159,7 @@ robot.ctrl_mode = mj_kdl::CtrlMode::POSITION;
 mj_kdl::Viewer viewer;
 mj_kdl::init_window_sim(&viewer, &robot, "position control");
 
-while (mj_kdl::step(&viewer, env.model, env.data)) {
+while (mj_kdl::step(&robot)) {
     mj_kdl::update(&robot);
 
     for (int i = 0; i < robot.n_joints; ++i) {
@@ -183,7 +183,7 @@ KDL::ChainDynParam dyn(robot.chain, KDL::Vector(0.0, 0.0, scene.gravity_z));
 KDL::JntArray q(robot.n_joints);
 KDL::JntArray g(robot.n_joints);
 
-while (mj_kdl::step(&viewer, env.model, env.data)) {
+while (mj_kdl::step(&robot)) {
     mj_kdl::update(&robot);
 
     for (int i = 0; i < robot.n_joints; ++i) {
@@ -486,7 +486,7 @@ The full viewer path is:
 mj_kdl::Viewer viewer;
 mj_kdl::init_window_sim(&viewer, &robot, "task");
 
-while (mj_kdl::step(&viewer, env.model, env.data)) {
+while (mj_kdl::step(&robot)) {
     mj_kdl::update(&robot);
     // control...
 }
@@ -955,7 +955,7 @@ mj_kdl::Viewer viewer;
 mj_kdl::init_window_sim(&viewer, &robot, "table pick-place");
 mj_kdl::use_camera(&viewer, env.model, "task");
 
-while (mj_kdl::step(&viewer, env.model, env.data)) {
+while (mj_kdl::step(&robot)) {
     mj_kdl::update(&robot);
     run_state_machine();
     apply_impedance_command();

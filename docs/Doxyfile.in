@@ -20,6 +20,7 @@ INPUT                  = @CMAKE_CURRENT_SOURCE_DIR@/include \
                          @CMAKE_CURRENT_SOURCE_DIR@/README.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/groups.dox \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/TUTORIAL.md \
+                         @CMAKE_CURRENT_SOURCE_DIR@/docs/PYTHON_TUTORIAL.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/CPP_API.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/PYTHON_BINDINGS.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/HOWTO_urdf_to_mjcf.md \

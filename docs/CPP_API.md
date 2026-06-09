@@ -26,6 +26,29 @@ mjData  *data  = nullptr;
 mj_kdl::build_scene(&model, &data, &sc);
 ```
 
+`save_model_xml(model, path)` writes the most recently compiled model back to
+MJCF. Use it when you want to build a combined scene once and reload the merged
+model later through MuJoCo. `destroy_scene(model, data)` frees the pair returned
+by `build_scene()`.
+
+```cpp
+mj_kdl::save_model_xml(model, "combined_scene.xml");
+mj_saveModel(model, "combined_scene.mjb", nullptr, 0);
+```
+
+Set wrapper log verbosity globally when debugging scene construction:
+
+```cpp
+mj_kdl::set_log_level(mj_kdl::LogLevel::INFO);
+```
+
+The raw `mjSpec` helpers (`add_skybox_to_spec()`, `add_floor_to_spec()`,
+`add_objects_to_spec()`, `compile_and_make_data()`, and
+`ensure_plugins_loaded()`) exist for advanced callers that build MuJoCo specs
+directly. Most users should go through `SceneSpec` and `build_scene()` so
+plugins, decorations, objects, robots, cameras, compilation, and ownership all
+follow the same path.
+
 ## Init A KDL Chain
 
 ```cpp
@@ -35,6 +58,11 @@ mj_kdl::init_robot_from_mjcf(&robot, model, data, "base_link", "bracelet_link");
 unsigned n = robot.n_joints;  // 7 for Kinova GEN3
 KDL::ChainDynParam dyn(robot.chain, KDL::Vector(0, 0, -9.81));
 ```
+
+`Robot` borrows `model` and `data`; it never frees them. After init, the port
+vectors are sized to `n_joints` and ordered like the KDL chain. Use
+`joint_names` and `joint_limits` to inspect that mapping before writing
+controllers.
 
 When a tool or gripper is attached, pass a `ToolFrameSpec` so KDL dynamics
 include the full tool inertia and FK uses the TCP site:
@@ -176,6 +204,45 @@ mj_kdl::build_scene(&model, &data, &sc);
 MuJoCo restricts free joints to top-level bodies, so a non-fixed primitive with
 a free joint must stay world-anchored.
 
+## Cameras And Poses
+
+Add fixed world cameras through `SceneSpec::cameras`. `pos` and `fovy` are
+required; `euler` defaults to identity.
+
+```cpp
+sc.cameras.push_back(mj_kdl::CameraSpec{
+    .name = "overview",
+    .pos  = { 1.8, -2.0, 1.4 },
+    .fovy = 45.0,
+});
+```
+
+After building, `get_camera_names()` returns robot MJCF cameras and cameras
+added through the scene spec. `use_camera()` switches a viewer or recorder to a
+fixed camera; pass `nullptr` or `""` to return to the free camera.
+
+```cpp
+for (const auto &name : mj_kdl::get_camera_names(model)) {
+    LOG_INFO("camera: " << name);
+}
+mj_kdl::use_camera(&viewer, model, "overview");
+mj_kdl::use_camera(&vr, model, "overview");
+```
+
+Use `get_body_frame()` and `get_site_frame()` to read world poses as
+`KDL::Frame`; both call `mj_forward()` before reading MuJoCo pose arrays.
+`set_body_pose()` teleports a free body and zeroes its velocity. The quaternion,
+when supplied in C++, uses MuJoCo order `[w, x, y, z]`.
+
+```cpp
+KDL::Frame tcp;
+mj_kdl::get_site_frame(model, data, "g_pinch", &tcp);
+
+const double pos[3]  = { 0.45, 0.0, 0.75 };
+const double quat[4] = { 1.0, 0.0, 0.0, 0.0 };
+mj_kdl::set_body_pose(model, data, "red_cube", pos, quat);
+```
+
 ## Control Loop
 
 ```cpp
@@ -197,6 +264,21 @@ mj_kdl::cleanup(&robot);
 mj_kdl::destroy_scene(model, data);
 ```
 
+`update(&robot)` does both halves of the port synchronization: it reads MuJoCo
+joint state into `jnt_pos_msr`, `jnt_vel_msr`, and `jnt_trq_msr`, then applies
+the command ports. In `POSITION` mode it writes `jnt_pos_cmd` to actuator
+controls. In `TORQUE` mode it writes `jnt_trq_cmd` to `qfrc_applied` and
+neutralizes position actuators at the current joint positions.
+
+Use `set_joint_pos(&robot, q, call_forward)` to seed joint state directly in
+KDL order. With `call_forward=true`, body/site poses are updated immediately.
+
+```cpp
+KDL::JntArray q_home(robot.n_joints);
+for (unsigned i = 0; i < robot.n_joints; ++i) q_home(i) = 0.0;
+mj_kdl::set_joint_pos(&robot, q_home);
+```
+
 ## Reset
 
 `reset(Env*)` resets the environment runtime to its initial keyframe, calls an
@@ -206,7 +288,7 @@ put objects, controllers, and task state back at their episode start values:
 
 ```cpp
 mj_kdl::Env env;
-mj_kdl::init_env(&env, &scene);
+mj_kdl::init_env(&env, &sc);
 
 mj_kdl::Robot robot;
 mj_kdl::init_robot_from_mjcf(&robot, env.model, env.data, "base_link", "bracelet_link");
@@ -220,6 +302,14 @@ env.on_reset = [&](mj_kdl::ResetContext *ctx) {
 mj_kdl::ResetOptions opts;
 opts.keyframe = 0;
 mj_kdl::ResetInfo info = mj_kdl::reset(&env, &opts);
+```
+
+Use `Env` when runtime rebuilds or episode resets should keep robot handles
+synchronized. Register every borrowed robot with `env_add_robot()`. Cleanup
+destroys only the environment-owned model/data and clears registrations:
+
+```cpp
+mj_kdl::cleanup(&env);
 ```
 
 ## Headless Video Recording
@@ -262,9 +352,41 @@ mj_kdl::scene_remove_object(&model, &data, &sc, "red_cube");
 // model/data are replaced; re-call init_robot_from_*() on the new pointers.
 ```
 
-In Python, `Scene.add_object()`, `Scene.remove_object()`, `Env.add_object()`,
-and `Env.remove_object()` perform that rebind step for existing Python `Robot`
+Prefer the `Env` overloads when registered robot handles should be re-initialized
+automatically:
+
+```cpp
+mj_kdl::scene_add_object(&env, cube);
+mj_kdl::scene_remove_object(&env, "red_cube");
+```
+
+With raw `mjModel**` / `mjData**` overloads, any `Robot` that borrowed the old
+pointers is stale until you call `init_robot_from_mjcf()` again. In Python,
+`Scene.add_object()`, `Scene.remove_object()`, `Env.add_object()`, and
+`Env.remove_object()` perform that rebind step for existing Python `Robot`
 handles. See [Python Bindings](PYTHON_BINDINGS.md) for Python ownership rules.
+
+## Manual Viewer Loop
+
+`init_window_sim()` opens the full Simulate UI in a background render thread and
+lets `step(&robot)` handle physics, rendering, pause, perturbation, and pacing.
+For a lower-level GLFW window, use `init_window()`, drive MuJoCo yourself, and
+call `render()`:
+
+```cpp
+mj_kdl::Viewer viewer;
+mj_kdl::init_window(&viewer, &robot);
+
+while (mj_kdl::is_running(&viewer)) {
+    mj_step(model, data);
+    mj_kdl::render(&viewer, model, data);
+}
+
+mj_kdl::cleanup(&viewer);
+```
+
+Use `step(&viewer, model, data)` for multi-robot or no-robot loops where the
+viewer should own the same pacing behavior as the Simulate UI path.
 
 ## Viewer Controls
 
