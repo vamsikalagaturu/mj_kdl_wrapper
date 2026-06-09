@@ -86,7 +86,7 @@ manual `pos` or `euler`:
 
 ```cpp
 mj_kdl::AttachmentSpec gripper{
-    .mjcf_path          = "third_party/menagerie/robotiq_2f85/2f85.xml",
+    .mjcf_path          = "assets/robotiq_2f85/2f85.xml",
     .attach_to          = { mj_kdl::AttachKind::Site, "pinch_site" },
     .prefix             = "g_",
     .contact_exclusions = {},
@@ -166,7 +166,7 @@ sc.add_skybox = true;
 
 mj_kdl::SceneObject table{
     .name      = "table",
-    .mjcf_path = "src/examples/assets/table.xml",  // ships a table_top site
+    .mjcf_path = "assets/table.xml",  // ships a table_top site
     .pos       = { 0.0, 0.0, 0.7 },
     .fixed     = true,
 };
@@ -364,7 +364,7 @@ With raw `mjModel**` / `mjData**` overloads, any `Robot` that borrowed the old
 pointers is stale until you call `init_robot_from_mjcf()` again. In Python,
 `Scene.add_object()`, `Scene.remove_object()`, `Env.add_object()`, and
 `Env.remove_object()` perform that rebind step for existing Python `Robot`
-handles. See [Python Bindings](PYTHON_BINDINGS.md) for Python ownership rules.
+ handles. See [Python API guide](python.md) for Python ownership rules.
 
 ## Manual Viewer Loop
 

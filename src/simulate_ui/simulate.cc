@@ -28,7 +28,7 @@
 #include <type_traits>
 #include <utility>
 
-#include "lodepng.h"
+#include "mj_kdl_wrapper/image_io.hpp"
 #include <mujoco/mjdata.h>
 #include <mujoco/mjui.h>
 #include <mujoco/mjvisualize.h>
@@ -3179,7 +3179,7 @@ void Simulate::Render() {
     // "screenshot.png" for now.
     const std::string path = GetSavePath("screenshot.png");
     if (!path.empty()) {
-      if (lodepng::encode(path, rgb.get(), w, h, LCT_RGB)) {
+      if (!mj_kdl::write_png_rgb(path, rgb.get(), w, h)) {
         mju_error("could not save screenshot");
       } else {
         std::printf("saved screenshot: %s\n", path.c_str());

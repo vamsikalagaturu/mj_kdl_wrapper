@@ -1,13 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-# Single source of truth for the version: the [project] table in pyproject.toml.
-# Parse it here so the C++ package version and the Python module version cannot
-# drift apart.
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/pyproject.toml" _mj_kdl_pyproject)
-if(NOT _mj_kdl_pyproject MATCHES "\n[ \t]*version[ \t]*=[ \t]*\"([0-9]+\\.[0-9]+\\.[0-9]+)\"")
-    message(FATAL_ERROR "Could not parse project version from pyproject.toml")
-endif()
-set(MJ_KDL_VERSION "${CMAKE_MATCH_1}")
+include(cmake/Versions.cmake)
 
 project(mj_kdl_wrapper VERSION ${MJ_KDL_VERSION} LANGUAGES CXX)
 
@@ -16,8 +9,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-
-include(cmake/MuJoCoVersion.cmake)
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
@@ -195,10 +186,7 @@ message(STATUS "KDL inc: ${orocos_kdl_INCLUDE_DIRS}")
 message(STATUS "KDL cfg: ${orocos_kdl_DIR}")
 
 
-# lodepng stub + ffmpeg-backed encoder -- satisfies the lodepng::encode() call in
-# simulate.cc without pulling in the full lodepng library.
-set(LODEPNG_STUB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/lodepng_stub)
-
+# ffmpeg-backed PNG writer used by the local Simulate UI screenshot path.
 set(MJ_SIM_DIR "${MJ_KDL_MUJOCO_DIR}/simulate")
 set(MJ_SIM_LOCAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/simulate_ui")
 set(SIMULATE_UI_SOURCES
@@ -206,9 +194,9 @@ set(SIMULATE_UI_SOURCES
   ${MJ_SIM_DIR}/glfw_adapter.cc
   ${MJ_SIM_DIR}/glfw_dispatch.cc
   ${MJ_SIM_DIR}/platform_ui_adapter.cc
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/lodepng_ffmpeg.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/image_io.cpp
 )
-message(STATUS "lodepng: using ffmpeg-backed stub - UI screenshots enabled")
+message(STATUS "image_io: using ffmpeg-backed PNG writer for UI screenshots")
 
 # Optional viewer UI sections (hidden by default)
 option(SHOW_EQUALITY_PANEL "Show the Equality UI section in the viewer" OFF)
@@ -216,6 +204,7 @@ option(SHOW_GROUP_PANEL    "Show the Group-enable UI section in the viewer" OFF)
 
 add_library(mujoco_simulate_ui STATIC ${SIMULATE_UI_SOURCES})
 target_include_directories(mujoco_simulate_ui PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${MJ_SIM_LOCAL_DIR}
   ${MJ_SIM_DIR}
   ${MUJOCO_INCLUDE_DIR}
@@ -224,9 +213,6 @@ target_link_libraries(mujoco_simulate_ui PUBLIC
   ${MUJOCO_LIBRARY}
   glfw
   OpenGL::GL
-)
-target_include_directories(mujoco_simulate_ui PRIVATE
-  ${LODEPNG_STUB_DIR}
 )
 target_compile_options(mujoco_simulate_ui PRIVATE -w)
 if(SHOW_EQUALITY_PANEL)
@@ -266,7 +252,6 @@ endforeach()
 target_include_directories(mj_kdl_wrapper PRIVATE
   ${MJ_SIM_LOCAL_DIR}
   ${MJ_SIM_DIR}
-  ${LODEPNG_STUB_DIR}
 )
 
 target_link_libraries(mj_kdl_wrapper PUBLIC
@@ -354,7 +339,7 @@ if(BUILD_PYTHON_BINDINGS)
     )
 
     pybind11_add_module(_mj_kdl_wrapper
-      src/python/bindings.cpp
+      python/src/bindings.cpp
     )
     target_link_libraries(_mj_kdl_wrapper PRIVATE mj_kdl_wrapper)
     if(TARGET orocos_kdl_ep)
@@ -462,7 +447,7 @@ if(BUILD_DOCS)
         string(REPLACE ";" " " MJ_KDL_KDL_DOXYGEN_INPUTS "${MJ_KDL_KDL_DOXYGEN_INPUT_DIRS}")
         set(MJ_KDL_KDL_TAG_FILE "${CMAKE_CURRENT_BINARY_DIR}/docs/kdl.tag")
         configure_file(
-          ${CMAKE_CURRENT_SOURCE_DIR}/docs/Doxyfile.kdl.in
+          ${CMAKE_CURRENT_SOURCE_DIR}/docs/doxygen/Doxyfile.kdl.in
           ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile.kdl
           @ONLY
         )
@@ -483,7 +468,7 @@ if(BUILD_DOCS)
     endif()
 
     configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/docs/Doxyfile.in
+    ${CMAKE_CURRENT_SOURCE_DIR}/docs/doxygen/Doxyfile.in
     ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile
     @ONLY
   )

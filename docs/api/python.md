@@ -101,7 +101,7 @@ without manual pose offsets:
 
 ```python
 gripper = mjk.AttachmentSpec()
-gripper.mjcf_path = mjk.menagerie.model_path("robotiq_2f85")
+gripper.mjcf_path = "assets/robotiq_2f85/2f85.xml"
 gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
 gripper.prefix = "g_"
 
@@ -157,7 +157,7 @@ geometry fields are ignored at runtime.
 ```python
 table = mjk.SceneObject()
 table.name = "table"
-table.mjcf_path = "src/examples/assets/table.xml"
+table.mjcf_path = "assets/table.xml"
 table.pos = [0.0, 0.0, 0.7]
 table.fixed = True
 

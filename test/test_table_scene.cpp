@@ -87,7 +87,7 @@ class TableSceneTest : public testing::Test
             GTEST_SKIP() << mjcf_ << " not found";
             return;
         }
-        std::string table_mjcf = (root / "src/examples/assets/table.xml").string();
+        std::string table_mjcf = (root / "assets/table.xml").string();
 
         // Table asset origin is the tabletop surface center; only the table
         // itself carries a world-frame z. Robot and objects derive their

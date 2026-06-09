@@ -26,6 +26,9 @@ jobs:
             libgl-dev \
             libegl-dev
 
+      - name: Check version metadata
+        run: python3 scripts/check_versions.py
+
       - name: Install docs dependencies
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |

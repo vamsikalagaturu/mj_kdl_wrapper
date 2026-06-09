@@ -18,13 +18,15 @@ OUTPUT_LANGUAGE        = English
 # --- Input ---
 INPUT                  = @CMAKE_CURRENT_SOURCE_DIR@/include \
                          @CMAKE_CURRENT_SOURCE_DIR@/README.md \
-                         @CMAKE_CURRENT_SOURCE_DIR@/docs/groups.dox \
-                         @CMAKE_CURRENT_SOURCE_DIR@/docs/TUTORIAL.md \
-                         @CMAKE_CURRENT_SOURCE_DIR@/docs/PYTHON_TUTORIAL.md \
-                         @CMAKE_CURRENT_SOURCE_DIR@/docs/CPP_API.md \
-                         @CMAKE_CURRENT_SOURCE_DIR@/docs/PYTHON_BINDINGS.md \
-                         @CMAKE_CURRENT_SOURCE_DIR@/docs/HOWTO_urdf_to_mjcf.md \
-                         @CMAKE_CURRENT_SOURCE_DIR@/docs/HOWTO_torque_control.md \
+                         @CMAKE_CURRENT_SOURCE_DIR@/docs/doxygen/groups.dox \
+                         @CMAKE_CURRENT_SOURCE_DIR@/docs/index.md \
+                         @CMAKE_CURRENT_SOURCE_DIR@/docs/tutorials/cpp.md \
+                         @CMAKE_CURRENT_SOURCE_DIR@/docs/tutorials/python.md \
+                         @CMAKE_CURRENT_SOURCE_DIR@/docs/api/cpp.md \
+                         @CMAKE_CURRENT_SOURCE_DIR@/docs/api/python.md \
+                         @CMAKE_CURRENT_SOURCE_DIR@/docs/examples.md \
+                         @CMAKE_CURRENT_SOURCE_DIR@/docs/howto/urdf_to_mjcf.md \
+                         @CMAKE_CURRENT_SOURCE_DIR@/docs/howto/torque_control.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/python/mj_kdl_wrapper \
                          @CMAKE_CURRENT_SOURCE_DIR@/python/examples \
                          @CMAKE_CURRENT_SOURCE_DIR@/src/examples \
@@ -62,15 +64,16 @@ HTML_OUTPUT            = html
 HTML_FILE_EXTENSION    = .html
 
 # Local Doxygen theme
-HTML_HEADER            = @CMAKE_CURRENT_SOURCE_DIR@/docs/doxygen-custom/header.html
-HTML_EXTRA_STYLESHEET  = @CMAKE_CURRENT_SOURCE_DIR@/docs/doxygen-custom/mjk-doxygen.css
-HTML_EXTRA_FILES       = @CMAKE_CURRENT_SOURCE_DIR@/docs/doxygen-custom/mjk-doxygen.js
+HTML_HEADER            = @CMAKE_CURRENT_SOURCE_DIR@/docs/doxygen/custom/header.html
+HTML_EXTRA_STYLESHEET  = @CMAKE_CURRENT_SOURCE_DIR@/docs/doxygen/custom/mjk-doxygen.css
+HTML_EXTRA_FILES       = @CMAKE_CURRENT_SOURCE_DIR@/docs/doxygen/custom/mjk-doxygen.js
 
 # Navigation
 GENERATE_TREEVIEW      = YES
 DISABLE_INDEX          = NO
 FULL_SIDEBAR           = NO
 HTML_COLORSTYLE        = LIGHT
+HTML_COPY_CLIPBOARD    = NO
 
 # --- LaTeX / other formats ---
 GENERATE_LATEX         = NO

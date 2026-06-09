@@ -1,7 +1,8 @@
 # Examples
 
-All examples use the Kinova GEN3 7-DOF arm and Robotiq 2F-85 gripper from
-MuJoCo Menagerie.  Requires `-DMJ_KDL_FETCH_MENAGERIE=ON` at configure time.
+Most examples use the Kinova GEN3 7-DOF arm from MuJoCo Menagerie and the
+bundled Robotiq 2F-85 gripper under `assets/robotiq_2f85`. Configure with
+`-DMJ_KDL_FETCH_MENAGERIE=ON` to fetch the Kinova model automatically.
 
 Build from the repo root:
 

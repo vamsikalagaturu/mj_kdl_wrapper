@@ -17,8 +17,8 @@ import PyKDL as kdl
 import mj_kdl_wrapper as mjk
 
 ARM = "third_party/menagerie/kinova_gen3/gen3.xml"
-GRIPPER = "third_party/menagerie/robotiq_2f85/2f85.xml"
-TABLE = "src/examples/assets/table.xml"
+GRIPPER = "assets/robotiq_2f85/2f85.xml"
+TABLE = "assets/table.xml"
 TABLE_POSE = [-0.00258, 1.43, 3.14, -1.70, -0.018, 1.74, 1.57]
 TABLE_Z = 0.447
 MOVE_X = 0.20
@@ -41,7 +41,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     table.pos = [0.0, 0.0, TABLE_Z]
     table.fixed = True
     attach = mjk.AttachmentSpec()
-    attach.mjcf_path = str(path(mjk.menagerie.model_path("robotiq_2f85", env_var="MJ_KDL_GRIPPER")))
+    attach.mjcf_path = str(path(os.environ.get("MJ_KDL_GRIPPER", GRIPPER)))
     attach.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
     attach.prefix = "g_"
     spec = mjk.SceneSpec()

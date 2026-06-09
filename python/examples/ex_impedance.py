@@ -15,7 +15,7 @@ from pathlib import Path
 import mj_kdl_wrapper as mjk
 
 DEFAULT_MODEL = "third_party/menagerie/kinova_gen3/gen3.xml"
-DEFAULT_GRIPPER = "third_party/menagerie/robotiq_2f85/2f85.xml"
+DEFAULT_GRIPPER = "assets/robotiq_2f85/2f85.xml"
 MODEL_ENV_VAR = "MJ_KDL_MODEL"
 GRIPPER_ENV_VAR = "MJ_KDL_GRIPPER"
 HOME_POSE = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
@@ -93,7 +93,7 @@ def main() -> int:
 
     env, robot = build_env(
         path_from_arg(mjk.menagerie.model_path("kinova_gen3", env_var=MODEL_ENV_VAR), "arm model"),
-        path_from_arg(mjk.menagerie.model_path("robotiq_2f85", env_var=GRIPPER_ENV_VAR), "gripper model"),
+        path_from_arg(os.environ.get(GRIPPER_ENV_VAR, DEFAULT_GRIPPER), "gripper model"),
     )
     try:
         robot.ctrl_mode = mjk.CtrlMode.TORQUE

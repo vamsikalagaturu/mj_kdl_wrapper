@@ -212,7 +212,7 @@ the gripper offset and 180-degree flip. So the gripper attachment is just:
 
 ```cpp
 mj_kdl::AttachmentSpec gripper{
-    .mjcf_path = "third_party/menagerie/robotiq_2f85/2f85.xml",
+    .mjcf_path = "assets/robotiq_2f85/2f85.xml",
     .attach_to = { mj_kdl::AttachKind::Site, "pinch_site" },
     .prefix    = "g_",
 };
@@ -275,7 +275,7 @@ mj_kdl::AttachmentSpec sensor{
 };
 
 mj_kdl::AttachmentSpec gripper{
-    .mjcf_path = "third_party/menagerie/robotiq_2f85/2f85.xml",
+    .mjcf_path = "assets/robotiq_2f85/2f85.xml",
     .attach_to = { mj_kdl::AttachKind::Body, "ft_tool" },
     .prefix    = "g_",
 };
@@ -317,7 +317,7 @@ primitives, `build_scene` runs explicit checks:
 ```cpp
 mj_kdl::SceneObject table{
     .name      = "table",
-    .mjcf_path = "src/examples/assets/table.xml",
+    .mjcf_path = "assets/table.xml",
     .pos       = { 0.0, 0.0, 0.7 },
     .fixed     = true,
 };
@@ -649,7 +649,7 @@ the tool offset and 180-degree flip, so no `pos`/`euler` are needed:
 
 ```cpp
 mj_kdl::AttachmentSpec gripper{
-    .mjcf_path = "third_party/menagerie/robotiq_2f85/2f85.xml",
+    .mjcf_path = "assets/robotiq_2f85/2f85.xml",
     .attach_to = { mj_kdl::AttachKind::Site, "pinch_site" },
     .prefix    = "g_",
 };
@@ -661,7 +661,7 @@ tabletop surface center, so placing it at `z = 0.7` makes the top surface `0.7 m
 ```cpp
 mj_kdl::SceneObject table{
     .name      = "table",
-    .mjcf_path = "src/examples/assets/table.xml",
+    .mjcf_path = "assets/table.xml",
     .pos       = { 0.0, 0.0, 0.7 },
     .fixed     = true,
 };
@@ -1026,7 +1026,7 @@ The included examples show how these pieces combine:
 - `ex_dual_arm`: two prefixed robots in one scene.
 - `ex_record`: headless MP4 recording.
 
-Read `src/examples/README.md` for behavior summaries and expected outputs.
+Read `../examples.md` for behavior summaries and expected outputs.
 
 ## 15. Modify A Running Scene
 

@@ -16,8 +16,8 @@ import PyKDL as kdl
 import mj_kdl_wrapper as mjk
 
 ARM = "third_party/menagerie/kinova_gen3/gen3.xml"
-GRIPPER = "third_party/menagerie/robotiq_2f85/2f85.xml"
-TABLE = "src/examples/assets/table.xml"
+GRIPPER = "assets/robotiq_2f85/2f85.xml"
+TABLE = "assets/table.xml"
 HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 SURFACE_Z = 0.70
 KP_LIN, KD_LIN = 160.0, 30.0
@@ -55,7 +55,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     cube.friction = [0.8, 0.02, 0.001]
 
     attach = mjk.AttachmentSpec()
-    attach.mjcf_path = str(path(mjk.menagerie.model_path("robotiq_2f85", env_var="MJ_KDL_GRIPPER")))
+    attach.mjcf_path = str(path(os.environ.get("MJ_KDL_GRIPPER", GRIPPER)))
     attach.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
     attach.prefix = "g_"
 

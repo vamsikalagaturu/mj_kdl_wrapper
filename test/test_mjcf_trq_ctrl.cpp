@@ -41,7 +41,7 @@ class MjcfTrqCtrlTest : public testing::Test
         const std::string arm_mjcf =
           (root_ / "third_party/menagerie/kinova_gen3/gen3.xml").string();
         const std::string grp_mjcf =
-          (root_ / "src/examples/assets/robotiq_2f85/2f85.xml").string();
+          (root_ / "assets/robotiq_2f85/2f85.xml").string();
         if (!fs::exists(arm_mjcf)) {
             GTEST_SKIP() << arm_mjcf << " not found";
             return;

@@ -29,7 +29,9 @@ classifiers = [
   "Topic :: Scientific/Engineering",
   "Topic :: Scientific/Engineering :: Physics",
 ]
-dynamic = ["dependencies"]
+dependencies = [
+  "mujoco==3.9.0",
+]
 
 [project.scripts]
 mj-kdl-fetch-menagerie = "mj_kdl_wrapper.menagerie:main"
@@ -50,13 +52,8 @@ cmake.args = [
 wheel.packages = ["python/mj_kdl_wrapper"]
 build-dir = "build/{wheel_tag}"
 sdist.include = [
-  "cmake/MuJoCoVersion.cmake",
-  "python_build/mujoco_dependency.py",
+  "cmake/Versions.cmake",
 ]
-
-[tool.scikit-build.metadata.dependencies]
-provider = "mujoco_dependency"
-provider-path = "python_build"
 
 [tool.ruff]
 line-length = 100

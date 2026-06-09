@@ -56,7 +56,7 @@ import mj_kdl_wrapper as mjk
 
 
 HOME_POSE = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
-TABLE_PATH = Path("src/examples/assets/table.xml")
+TABLE_PATH = Path("assets/table.xml")
 SURFACE_Z = 0.7
 CUBE_HALF = 0.025
 
@@ -70,7 +70,7 @@ def require_path(path: str | Path, label: str) -> str:
 
 def make_gripper() -> mjk.AttachmentSpec:
     gripper = mjk.AttachmentSpec()
-    gripper.mjcf_path = require_path(mjk.menagerie.model_path("robotiq_2f85"), "gripper model")
+    gripper.mjcf_path = require_path("assets/robotiq_2f85/2f85.xml", "gripper model")
     gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
     gripper.prefix = "g_"
     return gripper
@@ -299,7 +299,7 @@ accumulated robot spec. They are applied in order.
 
 ```python
 gripper = mjk.AttachmentSpec()
-gripper.mjcf_path = mjk.menagerie.model_path("robotiq_2f85")
+gripper.mjcf_path = "assets/robotiq_2f85/2f85.xml"
 gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
 gripper.prefix = "g_"
 
@@ -342,7 +342,7 @@ the KDL chain. `tcp_site` becomes the terminal frame for FK and task-space code.
 ```python
 table = mjk.SceneObject()
 table.name = "table"
-table.mjcf_path = "src/examples/assets/table.xml"
+table.mjcf_path = "assets/table.xml"
 table.pos = [0.0, 0.0, 0.7]
 table.fixed = True
 
@@ -525,7 +525,7 @@ spec.add_skybox = True
 
 table = mjk.SceneObject()
 table.name = "table"
-table.mjcf_path = "src/examples/assets/table.xml"
+table.mjcf_path = "assets/table.xml"
 table.pos = [0.0, 0.0, 0.7]
 table.fixed = True
 
@@ -541,7 +541,7 @@ cube.friction = [0.8, 0.02, 0.001]
 spec.objects = [table, cube]
 
 gripper = mjk.AttachmentSpec()
-gripper.mjcf_path = mjk.menagerie.model_path("robotiq_2f85")
+gripper.mjcf_path = "assets/robotiq_2f85/2f85.xml"
 gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
 gripper.prefix = "g_"
 
@@ -704,5 +704,5 @@ The included Python examples mirror the C++ examples:
 - `ex_dual_arm`: two prefixed robots in one scene.
 - `ex_record`: headless MP4 recording.
 
-Read the corresponding files in `python/examples/` when you want complete,
+Read the corresponding files in `../../python/examples/` when you want complete,
 runnable versions of the patterns above.

@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
-VERSION_FILE = ROOT / "cmake" / "MuJoCoVersion.cmake"
+VERSION_FILE = ROOT / "cmake" / "Versions.cmake"
 
 
 def read_supported_version() -> str:
@@ -62,8 +62,9 @@ def main() -> int:
     for relpath in [
         "README.md",
         "CLAUDE.md",
-        "docs/HOWTO_urdf_to_mjcf.md",
+        "docs/howto/urdf_to_mjcf.md",
         ".github/workflows/ci.yml",
+        "pyproject.toml",
     ]:
         replace(ROOT / relpath, common)
 

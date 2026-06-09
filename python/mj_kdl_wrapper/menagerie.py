@@ -1,4 +1,4 @@
-"""Locate (and optionally fetch) the MuJoCo Menagerie models used by the examples.
+"""Locate (and optionally fetch) MuJoCo Menagerie models.
 
 The only model source this package provides is the official MuJoCo Menagerie
 (https://github.com/google-deepmind/mujoco_menagerie). Resolution order:
@@ -6,6 +6,11 @@ The only model source this package provides is the official MuJoCo Menagerie
 1. ``MJ_KDL_MENAGERIE`` env var (a Menagerie checkout root), if set.
 2. A ``third_party/menagerie`` checkout next to the current dir or the repo.
 3. The local cache populated by ``mj-kdl-fetch-menagerie`` (or :func:`fetch`).
+
+Examples use this helper for the Kinova GEN3 arm. The Robotiq 2F-85 gripper used
+by examples is bundled under the repository-level ``assets/`` directory, but the
+Menagerie name remains available here for users that want to resolve an external
+checkout explicitly.
 
 Other model sources (e.g. the ``robot_descriptions`` package, your own URDF/MJCF
 exports) are not provided here, but you can use them by pointing ``MJ_KDL_MODEL``

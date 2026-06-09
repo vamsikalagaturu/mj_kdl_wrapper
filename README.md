@@ -38,7 +38,7 @@ unsupported MuJoCo release.
 
 | Dependency | Version / source | Notes |
 |------------|------------------|-------|
-| MuJoCo | `3.9.0` from `cmake/MuJoCoVersion.cmake` | Native library and pinned `mujoco` Python package must match |
+| MuJoCo | `3.9.0` from `cmake/Versions.cmake` | Native library and pinned `mujoco` Python package must match |
 | Orocos KDL | secorolab fork, `feature/achd_fixed_joint` | Built from source; system `liborocos-kdl` is not used |
 | CMake | `>=3.16` | Required to configure the C++ build |
 | C++ compiler | C++20-capable | `CMAKE_CXX_STANDARD` is set to 20 |
@@ -77,11 +77,11 @@ sources explicit:
   `MJ_KDL_MUJOCO_DIR` points at an install.
 - `MJ_KDL_FETCH_OROCOS_KDL` clones and builds the secorolab Orocos KDL fork - the
   only KDL used; no system `liborocos-kdl` is consulted.
-- `MJ_KDL_FETCH_MENAGERIE` downloads the Kinova GEN3 / Robotiq models the examples and
-  tests use.
+- `MJ_KDL_FETCH_MENAGERIE` downloads the Kinova GEN3 models the examples and
+  tests use. The Robotiq gripper is bundled under `assets/robotiq_2f85`.
 
-Point any of these at custom locations with the [CMake options](#cmake-options)
-below. Install for use from another CMake project via
+Point any of these at custom locations with the CMake options below. Install for
+use from another CMake project via
 `find_package(mj_kdl_wrapper)` (add `-DCMAKE_INSTALL_PREFIX="$HOME/.local"` for a
 user-local prefix):
 
@@ -93,7 +93,7 @@ cmake --install build
 
 Install into an active supported Python environment. The build bundles the
 native dependencies (MuJoCo, the secorolab Orocos KDL fork, and PyKDL); see the
-[Python bindings guide](docs/PYTHON_BINDINGS.md) for what it does and how model
+[Python API guide](docs/api/python.md) for what it does and how model
 paths are resolved.
 
 ```bash
@@ -112,7 +112,7 @@ python python/examples/ex_gravity_comp.py
 
 The `python/examples/` scripts are not shipped in the wheel, so run them from a
 checkout. Model resolution, environment variables, and using other model sources
-are documented in the [Python bindings guide](docs/PYTHON_BINDINGS.md).
+are documented in the [Python API guide](docs/api/python.md).
 
 ### Generate Documentation
 
@@ -154,19 +154,19 @@ Build toggles:
 | `SHOW_GROUP_PANEL` | `OFF` | Show the Simulate UI `Group enable` section |
 
 > [!NOTE]
-> Once the build succeeds, follow the [C++ tutorial](docs/TUTORIAL.md) or
-> [Python tutorial](docs/PYTHON_TUTORIAL.md) to start building scenes, adding
+> Once the build succeeds, follow the [C++ tutorial](docs/tutorials/cpp.md) or
+> [Python tutorial](docs/tutorials/python.md) to start building scenes, adding
 > robots, KDL control, reset hooks, and more.
 
 ## API
 
-- [C++ API guide](docs/CPP_API.md)
-- [Python bindings guide](docs/PYTHON_BINDINGS.md)
+- [C++ API guide](docs/api/cpp.md)
+- [Python API guide](docs/api/python.md)
 - Generated C++ and Python API reference: `build/docs/html/index.html`
 
 ## Examples
 
-The example catalog lives in [src/examples/README.md](src/examples/README.md).
+The example catalog lives in [docs/examples.md](docs/examples.md).
 Every C++ `src/examples/ex_*.cpp` example has a same-name Python counterpart in
 `python/examples/`.
 
@@ -180,15 +180,17 @@ See [test/README.md](test/README.md) for the full list of tests.
 
 ## More Documentation
 
-- [C++ tutorial](docs/TUTORIAL.md)
-- [Python tutorial](docs/PYTHON_TUTORIAL.md)
-- [Torque control notes](docs/HOWTO_torque_control.md)
-- [URDF to MJCF notes](docs/HOWTO_urdf_to_mjcf.md)
-- [Examples guide](src/examples/README.md)
+- [C++ tutorial](docs/tutorials/cpp.md)
+- [Python tutorial](docs/tutorials/python.md)
+- [Torque control notes](docs/howto/torque_control.md)
+- [URDF to MJCF notes](docs/howto/urdf_to_mjcf.md)
+- [Examples guide](docs/examples.md)
 
 ## Assets
 
 | Path | Description |
 |------|-------------|
 | `third_party/menagerie/kinova_gen3/gen3.xml` | Kinova GEN3 7-DOF arm (MuJoCo Menagerie) |
-| `third_party/menagerie/robotiq_2f85/2f85.xml` | Robotiq 2F-85 gripper (MuJoCo Menagerie) |
+| `assets/robotiq_2f85/2f85.xml` | Local Robotiq 2F-85 gripper asset used by examples/tests |
+| `assets/table.xml` | Table asset with authored `table_top` site |
+| `assets/mug.xml`, `assets/mug_table.xml` | Pouring example assets |

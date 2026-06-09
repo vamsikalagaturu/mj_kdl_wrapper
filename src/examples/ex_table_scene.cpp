@@ -95,8 +95,8 @@ int main(int argc, char *argv[])
     }
 
     const std::string mjcf     = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-    const std::string grp_mjcf = (root / "src/examples/assets/robotiq_2f85/2f85.xml").string();
-    const std::string table_mjcf = (root / "src/examples/assets/table.xml").string();
+    const std::string grp_mjcf = (root / "assets/robotiq_2f85/2f85.xml").string();
+    const std::string table_mjcf = (root / "assets/table.xml").string();
 
     mj_kdl::SceneSpec sc;
     sc.timestep   = 0.002;

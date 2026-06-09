@@ -8,7 +8,7 @@ A C++ library bridging **MuJoCo 3.9** physics simulation with **KDL** (Kinematic
 
 ## Build
 
-Requires: MuJoCo 3.9.0 at `/opt/mujoco-3.9.0` (override with `-DMJ_KDL_MUJOCO_DIR=...`), and apt packages `liborocos-kdl-dev libglfw3-dev libgl-dev`. Older MuJoCo releases are not supported; CMake validates the expected `mjVERSION_HEADER` from `cmake/MuJoCoVersion.cmake`.
+Requires: MuJoCo 3.9.0 at `/opt/mujoco-3.9.0` (override with `-DMJ_KDL_MUJOCO_DIR=...` or use `-DMJ_KDL_FETCH_MUJOCO=ON`), apt packages `libglfw3-dev libgl-dev`, and the secorolab Orocos KDL fork. CMake fetches and builds the KDL fork by default; system `liborocos-kdl` is not used. Older MuJoCo releases are not supported; CMake validates the expected `mjVERSION_HEADER` from `cmake/Versions.cmake`.
 
 **Always build with all flags and verify tests pass before considering any task complete:**
 

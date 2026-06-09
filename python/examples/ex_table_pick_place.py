@@ -18,8 +18,8 @@ import PyKDL as kdl
 import mj_kdl_wrapper as mjk
 
 ARM = "third_party/menagerie/kinova_gen3/gen3.xml"
-GRIPPER = "third_party/menagerie/robotiq_2f85/2f85.xml"
-TABLE = "src/examples/assets/table.xml"
+GRIPPER = "assets/robotiq_2f85/2f85.xml"
+TABLE = "assets/table.xml"
 HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 SURFACE_Z = 0.70
 CUBE_HALF_SIZE = 0.02
@@ -97,7 +97,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     robot_spec.path = str(path(mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL"), "arm model"))
     robot_spec.pos = [0.0, 0.0, SURFACE_Z]
     robot_spec.attachments = [
-        gripper_attachment(path(mjk.menagerie.model_path("robotiq_2f85", env_var="MJ_KDL_GRIPPER"), "gripper model"))
+        gripper_attachment(path(os.environ.get("MJ_KDL_GRIPPER", GRIPPER), "gripper model"))
     ]
     spec.robots = [robot_spec]
 
