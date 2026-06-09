@@ -119,8 +119,25 @@ def main() -> int:
         help="Destination directory for the Menagerie checkout (default: user cache).",
     )
     args = parser.parse_args()
-    for name, path in fetch(args.dest).items():
-        print(f"{name}: {path}")
+
+    target = Path(args.dest) if args.dest is not None else _cache_dir()
+    if (target / ".git").exists():
+        print(f"Using existing MuJoCo Menagerie checkout: {target}")
+    else:
+        print(f"Fetching MuJoCo Menagerie from {MENAGERIE_REPO}")
+        print(f"Destination: {target}")
+
+    resolved = fetch(target)
+
+    print("Resolved models:")
+    for name, path in resolved.items():
+        print(f"  {name}: {path}")
+    print()
+    print("Model lookup uses this order:")
+    print("  1. MJ_KDL_MENAGERIE environment variable")
+    print("  2. third_party/menagerie in the current checkout")
+    print(f"  3. user cache: {_cache_dir()}")
+    print(f"Set MJ_KDL_MENAGERIE={target} to force this checkout.")
     return 0
 
 

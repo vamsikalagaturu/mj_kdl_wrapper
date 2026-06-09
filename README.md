@@ -59,7 +59,7 @@ sudo apt install \
 ### C++ library, examples, and tests
 
 ```bash
-git clone https://github.com/secorolab/mj_kdl_wrapper.git
+git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
 cd mj_kdl_wrapper
 cmake -B build \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
@@ -108,6 +108,13 @@ run an example from a checkout:
 mj-kdl-fetch-menagerie
 python -c "import PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mujoco.mj_versionString(), mjk.mujoco_version())"
 python python/examples/ex_gravity_comp.py
+```
+
+Use `--dest` to choose the Menagerie checkout location:
+
+```bash
+mj-kdl-fetch-menagerie --dest /path/to/menagerie
+export MJ_KDL_MENAGERIE=/path/to/menagerie
 ```
 
 The `python/examples/` scripts are not shipped in the wheel, so run them from a

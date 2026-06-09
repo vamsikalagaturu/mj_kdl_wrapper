@@ -7,7 +7,7 @@ bundled Robotiq 2F-85 gripper under `assets/robotiq_2f85`. Configure with
 Build from the repo root:
 
 ```bash
-git clone https://github.com/secorolab/mj_kdl_wrapper.git
+git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
 cd mj_kdl_wrapper
 
 cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMJ_KDL_FETCH_MENAGERIE=ON

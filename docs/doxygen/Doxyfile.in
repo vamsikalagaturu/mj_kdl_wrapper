@@ -73,7 +73,7 @@ GENERATE_TREEVIEW      = YES
 DISABLE_INDEX          = NO
 FULL_SIDEBAR           = NO
 HTML_COLORSTYLE        = LIGHT
-HTML_COPY_CLIPBOARD    = NO
+HTML_COPY_CLIPBOARD    = YES
 
 # --- LaTeX / other formats ---
 GENERATE_LATEX         = NO

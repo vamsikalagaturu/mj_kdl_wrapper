@@ -553,7 +553,8 @@ span.tt,
 }
 
 table.markdownTable,
-table.doxtable {
+table.doxtable,
+table.directory {
   border-collapse: collapse;
   border: 1px solid var(--mjk-border);
 }
@@ -561,15 +562,58 @@ table.doxtable {
 table.markdownTable td,
 table.markdownTable th,
 table.doxtable td,
-table.doxtable th {
+table.doxtable th,
+table.directory td,
+table.directory th {
   border: 1px solid var(--mjk-border);
   padding: 8px 10px;
 }
 
 table.markdownTable th,
-table.doxtable th {
+table.doxtable th,
+table.directory th {
   background: var(--mjk-panel-soft);
   color: var(--mjk-text);
+}
+
+table.markdownTable tr,
+table.doxtable tr,
+table.directory tr,
+table.directory tr.even,
+table.directory tr.odd,
+dl.classindex,
+dl.classindex.even,
+dl.classindex.odd {
+  background: var(--mjk-panel) !important;
+  color: var(--mjk-text) !important;
+}
+
+table.markdownTable tr:nth-child(even),
+table.doxtable tr:nth-child(even),
+table.directory tr.even,
+dl.classindex.even {
+  background: var(--mjk-panel-soft) !important;
+}
+
+table.directory td.entry,
+table.directory td.desc,
+table.directory td.desc p,
+table.directory .levels,
+.classindex dd,
+.classindex dd a,
+.classindex dd a:visited {
+  color: var(--mjk-text) !important;
+}
+
+table.directory td.desc {
+  color: var(--mjk-muted) !important;
+}
+
+table.directory .icona,
+table.directory .icon,
+table.directory .iconfolder,
+table.directory .icondoc {
+  color: var(--mjk-text) !important;
 }
 
 #side-nav,
