@@ -1,4 +1,4 @@
-# Python API Guide
+# Python Bindings API Guide {#page_api_python}
 
 This page collects the Python wrapper usage notes that are too detailed for the
 README. For complete function signatures, see the generated stubs in

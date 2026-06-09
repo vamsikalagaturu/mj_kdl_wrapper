@@ -1,4 +1,4 @@
-# C++ API Guide
+# C++ API Guide {#page_api_cpp}
 
 This page collects the C++ wrapper usage notes that are too detailed for the
 README. For complete function signatures, see the generated Doxygen API pages

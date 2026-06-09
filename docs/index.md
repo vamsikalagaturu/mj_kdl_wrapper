@@ -1,9 +1,9 @@
-# Documentation
+# Documentation {#page_documentation}
 
-- [C++ tutorial](tutorials/cpp.md)
-- [Python tutorial](tutorials/python.md)
-- [C++ API guide](api/cpp.md)
-- [Python API guide](api/python.md)
-- [Examples](examples.md)
-- [Torque control notes](howto/torque_control.md)
-- [URDF to MJCF notes](howto/urdf_to_mjcf.md)
+- [C++ Tutorial](@ref page_tutorial_cpp)
+- [Python Tutorial](@ref page_tutorial_python)
+- [C++ API Guide](@ref page_api_cpp)
+- [Python Bindings API Guide](@ref page_api_python)
+- [Examples](@ref page_examples)
+- [Torque Control and Tool Inertia](@ref page_howto_torque_control)
+- [Importing a URDF Robot](@ref page_howto_urdf)

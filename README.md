@@ -93,7 +93,7 @@ cmake --install build
 
 Install into an active supported Python environment. The build bundles the
 native dependencies (MuJoCo, the secorolab Orocos KDL fork, and PyKDL); see the
-[Python API guide](docs/api/python.md) for what it does and how model
+[Python Bindings API Guide](docs/api/python.md) for what it does and how model
 paths are resolved.
 
 ```bash
@@ -112,7 +112,7 @@ python python/examples/ex_gravity_comp.py
 
 The `python/examples/` scripts are not shipped in the wheel, so run them from a
 checkout. Model resolution, environment variables, and using other model sources
-are documented in the [Python API guide](docs/api/python.md).
+are documented in the [Python Bindings API Guide](docs/api/python.md).
 
 ### Generate Documentation
 
@@ -161,7 +161,7 @@ Build toggles:
 ## API
 
 - [C++ API guide](docs/api/cpp.md)
-- [Python API guide](docs/api/python.md)
+- [Python Bindings API Guide](docs/api/python.md)
 - Generated C++ and Python API reference: `build/docs/html/index.html`
 
 ## Examples

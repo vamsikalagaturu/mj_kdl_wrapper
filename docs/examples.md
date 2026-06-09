@@ -1,4 +1,4 @@
-# Examples
+# Examples {#page_examples}
 
 Most examples use the Kinova GEN3 7-DOF arm from MuJoCo Menagerie and the
 bundled Robotiq 2F-85 gripper under `assets/robotiq_2f85`. Configure with

@@ -1,4 +1,4 @@
-# C++ Tutorial
+# C++ Tutorial {#page_tutorial_cpp}
 
 This tutorial builds a C++ simulation application in layers: compile a robot scene,
 add KDL control, add reset hooks, add objects and cameras, use the Simulate UI,

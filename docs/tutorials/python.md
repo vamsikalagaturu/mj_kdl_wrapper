@@ -1,4 +1,4 @@
-# Python Tutorial
+# Python Tutorial {#page_tutorial_python}
 
 This tutorial builds a Python simulation application in layers: create a scene,
 initialize a KDL-backed robot handle, run position and torque control, add
