@@ -124,7 +124,7 @@ class MjcfPickTest : public testing::Test
         const std::string arm_mjcf =
           (root_ / "third_party/menagerie/kinova_gen3/gen3.xml").string();
         const std::string grp_mjcf =
-          (root_ / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+          (root_ / "src/examples/assets/robotiq_2f85/2f85.xml").string();
         if (!fs::exists(arm_mjcf)) {
             GTEST_SKIP() << arm_mjcf << " not found";
             return;
@@ -367,10 +367,10 @@ TEST_F(MjcfPickTest, CubeLifted)
     snap();
     run_phase(q_enter, q_grasp_, 5.0, 8.0, 0.03, 0.0); // GRASP
     snap();
-    run_phase(q_enter, q_grasp_, 1.5, 2.5, -1.0, 255.0); // CLOSE
+    run_phase(q_enter, q_grasp_, 1.5, 2.5, -1.0, 0.8); // CLOSE
     snap();
-    run_phase(q_enter, q_lift_, 3.0, 5.0, 0.08, 255.0); // LIFT
-    run_phase(q_lift_, q_lift_, 1.0, 1.0, -1.0, 255.0); // HOLD
+    run_phase(q_enter, q_lift_, 3.0, 5.0, 0.08, 0.8); // LIFT
+    run_phase(q_lift_, q_lift_, 1.0, 1.0, -1.0, 0.8); // HOLD
 
     int    qadr   = model_->jnt_qposadr[cube_jnt_];
     double cube_z = data_->qpos[qadr + 2];

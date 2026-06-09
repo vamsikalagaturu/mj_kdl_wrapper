@@ -163,7 +163,7 @@ int main(int argc, char *argv[])
     }
 
     const std::string arm_mjcf   = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-    const std::string grp_mjcf   = (root / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+    const std::string grp_mjcf   = (root / "src/examples/assets/robotiq_2f85/2f85.xml").string();
     const std::string table_mjcf = (root / "src/examples/assets/table.xml").string();
 
     mj_kdl::AttachmentSpec gripper;
@@ -297,10 +297,10 @@ int main(int argc, char *argv[])
         { "HOME",        &q_home,        1.0,                 2.5,                  0.08,  0.0   },
         { "PICK_ABOVE",  &q_pick_above,  5.0,                 7.0,                  0.08,  0.0   },
         { "PICK",        &q_pick,        5.0,                 8.0,                  0.03,  0.0   },
-        { "CLOSE",       &q_pick,        1.5,                 2.5,                 -1.0,  255.0  },
-        { "LIFT",        &q_lift,        3.0,                 5.0,                  0.08, 255.0  },
-        { "PLACE_ABOVE", &q_place_above, 3.0,                 5.0,                  0.08, 255.0  },
-        { "PLACE",       &q_place,       5.0,                 8.0,                  0.03, 255.0  },
+        { "CLOSE",       &q_pick,        1.5,                 2.5,                 -1.0,  0.8  },
+        { "LIFT",        &q_lift,        3.0,                 5.0,                  0.08, 0.8  },
+        { "PLACE_ABOVE", &q_place_above, 3.0,                 5.0,                  0.08, 0.8  },
+        { "PLACE",       &q_place,       5.0,                 8.0,                  0.03, 0.8  },
         { "OPEN",        &q_place,       1.0,                 2.0,                 -1.0,   0.0   },
         { "RETREAT",     &q_place_above, 2.0,                 4.0,                  0.08,  0.0   },
         { "HOLD",        &q_place_above, headless ? 1.0 : 1e9, headless ? 1.0 : 1e9, -1.0,  0.0  },

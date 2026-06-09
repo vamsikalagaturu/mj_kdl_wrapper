@@ -88,7 +88,7 @@ the actuator handles the PD tracking internally.
 
 **What it does:**
 - Holds the arm at the home pose using a joint-space impedance controller.
-- Gripper cycles fully closed and open every 3 s (`fmod(t, 6) < 3 ? 255 : 0`).
+- Gripper cycles fully closed and open every 3 s (`fmod(t, 6) < 3 ? 0.8 : 0`).
 - KDL chain is built with `tool_body = "g_base"` so gripper inertia is lumped
   into the last segment — gravity compensation is correct for the full arm+gripper mass.
 
@@ -119,7 +119,7 @@ with five free objects: 3 boxes (red, green, blue) and 2 spheres (orange, purple
 
 ```
 tau[i] = JntToGravity(q)[i]          // gravity from scene's gravity_z
-gripper_ctrl = fmod(t, 6) < 3 ? 255.0 : 0.0
+gripper_ctrl = fmod(t, 6) < 3 ? 0.8 : 0.0
 ```
 
 **Headless output:** `EE drift after 500 steps: X.XXX mm`

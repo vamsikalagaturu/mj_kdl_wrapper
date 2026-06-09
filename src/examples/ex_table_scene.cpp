@@ -95,7 +95,7 @@ int main(int argc, char *argv[])
     }
 
     const std::string mjcf     = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-    const std::string grp_mjcf = (root / "third_party/menagerie/robotiq_2f85/2f85.xml").string();
+    const std::string grp_mjcf = (root / "src/examples/assets/robotiq_2f85/2f85.xml").string();
     const std::string table_mjcf = (root / "src/examples/assets/table.xml").string();
 
     mj_kdl::SceneSpec sc;
@@ -204,7 +204,7 @@ int main(int argc, char *argv[])
 
     env.on_reset = [&](mj_kdl::ResetContext *) {
         mj_kdl::set_joint_pos(&robot, q_home, false);
-        if (fingers_act >= 0) data->ctrl[fingers_act] = 255.0;
+        if (fingers_act >= 0) data->ctrl[fingers_act] = 0.8;
     };
 
     mj_kdl::reset(&env);
@@ -216,7 +216,7 @@ int main(int argc, char *argv[])
         dyn.JntToGravity(q, g);
         for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = g(i);
         if (fingers_act >= 0)
-            data->ctrl[fingers_act] = (std::fmod(data->time, 6.0) < 3.0) ? 255.0 : 0.0;
+            data->ctrl[fingers_act] = (std::fmod(data->time, 6.0) < 3.0) ? 0.8 : 0.0;
     };
 
     if (headless) {
