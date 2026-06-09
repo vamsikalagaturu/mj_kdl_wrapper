@@ -96,6 +96,10 @@ native dependencies (MuJoCo, the secorolab Orocos KDL fork, and PyKDL); see the
 [Python Bindings API Guide](docs/api/python.md) for what it does and how model
 paths are resolved.
 
+PyKDL is bundled inside the `mj-kdl-wrapper` wheel as a top-level extension
+module. It imports as `PyKDL`, but it does not appear as a separate package in
+`pip list` / `uv pip list`.
+
 ```bash
 uv pip install "git+https://github.com/vamsikalagaturu/mj_kdl_wrapper.git"  # from GitHub
 uv pip install .                                                            # from a checkout

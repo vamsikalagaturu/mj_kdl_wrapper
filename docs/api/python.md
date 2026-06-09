@@ -8,6 +8,11 @@ The Python package exposes the same scene, robot, reset, viewer, and recorder
 concepts as the C++ wrapper. It owns MuJoCo `mjModel`/`mjData` through `Scene`
 or `Env` and returns KDL values through the upstream `PyKDL` module.
 
+The wheel bundles `PyKDL` as a top-level extension module built from the same
+Orocos KDL fork as the wrapper. `import PyKDL` works after installation, but
+`PyKDL` does not appear in `pip list` / `uv pip list` because it is not installed
+as a separate Python distribution with its own `.dist-info`.
+
 ## Model Paths
 
 `mj_kdl_wrapper.menagerie.model_path(name)` resolves bundled-example model
