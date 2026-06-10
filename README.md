@@ -109,7 +109,8 @@ See the full list in [CMake Options](#cmake-options); the common ones:
 |-------|-----|
 | Use an existing MuJoCo install | `-DMJ_KDL_MUJOCO_DIR=/opt/mujoco-3.9.0` |
 | Clone the KDL fork somewhere specific | `-DMJ_KDL_OROCOS_KDL_DIR=~/src/orocos_kinematics_dynamics` |
-| Reuse a prebuilt KDL (no clone/rebuild/bundle) | `-DMJ_KDL_OROCOS_KDL_INSTALL_DIR=$HOME/.local` |
+| Reuse a prebuilt KDL by prefix (no clone/rebuild/bundle) | `-DMJ_KDL_OROCOS_KDL_INSTALL_DIR=$HOME/.local` |
+| Consume KDL via its CMake package on `CMAKE_PREFIX_PATH` | `-DMJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON` |
 | Keep bundled KDL out of the install prefix | `-DMJ_KDL_INSTALL_BUNDLED_KDL=OFF` |
 | Choose build / install locations | `cmake -B <build-dir> -DCMAKE_INSTALL_PREFIX=<prefix>` |
 
@@ -282,31 +283,49 @@ packages that use the system KDL (`kdl_parser`, `tf2_kdl`, and the libraries
 behind `robot_state_publisher`). Communicate over topics/services. Each process
 then loads exactly one KDL and one `PyKDL`. This is the recommended default.
 
-**One copy across the workspace.** If you must use the wrapper and a system-KDL
-package in the *same* process, build the secorolab fork once as a workspace
-package so its install overlays `/opt/ros`, then build `mj_kdl_wrapper` against
-that shared prefix instead of building/bundling its own. Point
-`MJ_KDL_OROCOS_KDL_INSTALL_DIR` at the prefix; this skips the ExternalProject
-build and skips all bundling, so exactly one `liborocos-kdl` and one `PyKDL` exist
-in the overlay:
+**One KDL across the workspace (recommended for multi-package workspaces).** Build
+the secorolab fork as its own workspace package, then have `mj_kdl_wrapper` (and
+any other package) consume it via `find_package(orocos_kdl)`. There is then
+exactly one `liborocos-kdl` in the overlay, shared by everyone - no private copy
+inside the wrapper. Lay the workspace out as:
+
+```
+ros2_ws/src/
+  orocos_kinematics_dynamics/   # the secorolab fork (provides the orocos_kdl package)
+  mj_kdl_wrapper/
+```
 
 ```bash
-# Workspace already provides the fork at <ws>/install (its bin/lib/include).
+cd ~/ros2_ws
+source /opt/ros/jazzy/setup.bash
+
+# 1. Build the fork's C++ KDL as the shared package
+colcon build --packages-select orocos_kdl --cmake-args -DENABLE_TESTS=OFF
+source install/setup.bash
+
+# 2. Build the wrapper against it (no clone, no rebuild, no bundling)
 colcon build --packages-select mj_kdl_wrapper \
   --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-               -DMJ_KDL_OROCOS_KDL_INSTALL_DIR=$PWD/install \
+               -DMJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON \
                -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF
 ```
 
-For the Python wheel built this way, pass the same define through
-scikit-build-core so it skips the bundled PyKDL:
+`mj_kdl_wrapper` then links `install/orocos_kdl/lib/liborocos-kdl.so` and ships no
+KDL of its own; other packages just `find_package(orocos_kdl)`. (The wrapper
+checkout carries a `third_party/COLCON_IGNORE`, so the fork it may have cloned
+there for standalone builds is never picked up as a duplicate workspace package.)
 
-```bash
-pip install . --config-settings=cmake.define.MJ_KDL_OROCOS_KDL_INSTALL_DIR=/path/to/ws/install
-```
+Step 1 must precede step 2 so the `orocos_kdl` package is on `CMAKE_PREFIX_PATH`
+when the wrapper configures; add `<depend>orocos_kdl</depend>` to a consuming
+package's own `package.xml` for automatic colcon ordering.
 
-`import PyKDL` then resolves to the single workspace copy on `sys.path`. The
-prefix must be the secorolab fork, not the stock distro KDL.
+If you instead already have the fork installed at a plain prefix, point at it
+directly with `-DMJ_KDL_OROCOS_KDL_INSTALL_DIR=<prefix>` (same effect, no
+`find_package`).
+
+PyKDL: in ROS 2 the Python side uses the system `python3-pykdl` (the
+[ROS 2 Python](#ros-2-python) venv flow) or the bundled wheel; the fork's
+`python_orocos_kdl` is a catkin package and is not part of this C++ overlay.
 
 ### Generate Documentation
 
@@ -334,6 +353,7 @@ Paths / sources (override to use your own):
 | `MJ_KDL_OROCOS_KDL_GIT_TAG` | `feature/achd_fixed_joint` | Orocos KDL branch/tag to build |
 | `MJ_KDL_OROCOS_KDL_DIR` | `third_party/orocos_kinematics_dynamics` | Fork source/clone destination; built in place if already present, else cloned here when fetch is ON. Point elsewhere (e.g. `~/test/src`) to clone/build there |
 | `MJ_KDL_OROCOS_KDL_INSTALL_DIR` | (empty) | Pre-installed Orocos KDL prefix to consume (skips building and bundling the fork; for ROS 2 / a single shared workspace KDL) |
+| `MJ_KDL_OROCOS_KDL_FROM_PACKAGE` | `OFF` | Consume Orocos KDL via `find_package(orocos_kdl)` on `CMAKE_PREFIX_PATH` (colcon overlay or any prefix); skips building and bundling the fork |
 | `MJ_KDL_FETCH_MENAGERIE` | `OFF` | Download MuJoCo Menagerie models |
 | `MJ_KDL_MENAGERIE_DIR` | `third_party/menagerie` | Menagerie location / `MJ_KDL_FETCH_MENAGERIE` destination |
 
