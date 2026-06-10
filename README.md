@@ -34,13 +34,20 @@ Ubuntu/Debian instructions. Supported dependency versions are listed below.
 CMake checks `mjVERSION_HEADER` and stops if `MJ_KDL_MUJOCO_DIR` points at an
 unsupported MuJoCo release.
 
-Pick the workflow that matches how you consume the library:
+Pick the workflow that matches how you consume the library. The standalone
+workflows need no ROS; the ROS 2 section is entirely separate.
+
+Standalone (no ROS):
 
 | Use case | Build system | Section |
 |----------|--------------|---------|
-| C++ (plain CMake) | `cmake` / `find_package` | [C++ library, examples, and tests](#c-library-examples-and-tests) |
-| Python | `pip install` (single command) | [Python Install](#python-install) |
-| C++ and Python | both of the above, same tree | independent; run either |
+| C++ | `cmake` / `find_package` | [C++ (CMake)](#c-cmake) |
+| Python | `pip install` (single command) | [Python](#python) |
+
+ROS 2:
+
+| Use case | Build system | Section |
+|----------|--------------|---------|
 | ROS 2 C++ | `colcon` (no separate package) | [ROS 2 C++](#ros-2-c) |
 | ROS 2 Python | `colcon` + venv `--system-site-packages` | [ROS 2 Python](#ros-2-python) |
 | ROS 2 C++ and Python | `colcon` + venv, sourced together | [ROS 2 C++ and Python together](#ros-2-c-and-python-together) |
@@ -67,51 +74,70 @@ sudo apt install \
   ffmpeg doxygen
 ```
 
-### C++ library, examples, and tests
+### C++ (CMake)
+
+A standard CMake project. The default build is self-contained: it downloads
+MuJoCo, clones and builds the Orocos KDL fork, and (with the menagerie flag)
+fetches the robot models - no system MuJoCo or KDL is used.
 
 ```bash
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
 cd mj_kdl_wrapper
-cmake -B build \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DMJ_KDL_FETCH_MUJOCO=ON \
-  -DMJ_KDL_FETCH_OROCOS_KDL=ON \
-  -DMJ_KDL_FETCH_MENAGERIE=ON
+cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMJ_KDL_FETCH_MENAGERIE=ON
 cmake --build build --parallel $(nproc)
 ctest --test-dir build --output-on-failure
 ```
 
-The three fetch flags are all ON by default; they are shown above to make the
-sources explicit:
-
-- `MJ_KDL_FETCH_MUJOCO` downloads the supported MuJoCo release unless
-  `MJ_KDL_MUJOCO_DIR` points at an install.
-- `MJ_KDL_FETCH_OROCOS_KDL` clones and builds the secorolab Orocos KDL fork - the
-  only KDL used; no system `liborocos-kdl` is consulted. The clone lands in
-  `MJ_KDL_OROCOS_KDL_DIR` (default `third_party/orocos_kinematics_dynamics`) and
-  persists across builds; set that flag to clone elsewhere.
-- `MJ_KDL_FETCH_MENAGERIE` downloads the Kinova GEN3 models the examples and
-  tests use. The Robotiq gripper is bundled under `assets/robotiq_2f85`.
-
-Point any of these at custom locations with the CMake options below. Install for
-use from another CMake project via
-`find_package(mj_kdl_wrapper)` (add `-DCMAKE_INSTALL_PREFIX="$HOME/.local"` for a
-user-local prefix):
+#### Install
 
 ```bash
-cmake --install build
+cmake --install build           # add -DCMAKE_INSTALL_PREFIX="$HOME/.local" to configure first
 ```
 
-The install is self-contained: the Orocos KDL fork built during the build (its
-library, headers, and CMake package config) is installed into the same prefix,
-and the wrapper is rpath'd to `$ORIGIN` so it loads that co-installed KDL. As a
-result, other packages in the prefix can `find_package(orocos_kdl)` directly, and
-`find_package(mj_kdl_wrapper)` pulls KDL in transitively. Disable with
-`-DMJ_KDL_INSTALL_BUNDLED_KDL=OFF` to keep KDL out of a shared prefix (e.g.
-`/usr/local`) where it could shadow a distro KDL. (MuJoCo is not bundled into the
-prefix; consumers still resolve it from `MJ_KDL_MUJOCO_DIR` / the pip package.)
+The install is self-contained: the Orocos KDL fork (library, headers, and its
+CMake package config) is installed into the same prefix and the wrapper is
+rpath'd to `$ORIGIN`, so other projects in the prefix can `find_package(orocos_kdl)`
+directly and `find_package(mj_kdl_wrapper)` pulls KDL in transitively. No build
+tree or `LD_LIBRARY_PATH` is needed at runtime. (MuJoCo is not bundled; consumers
+resolve it from `MJ_KDL_MUJOCO_DIR` / the pip package.)
 
-### Python Install
+#### Where the dependencies come from
+
+Each dependency is fetched by default but can point at something you already have.
+See the full list in [CMake Options](#cmake-options); the common ones:
+
+| To... | Set |
+|-------|-----|
+| Use an existing MuJoCo install | `-DMJ_KDL_MUJOCO_DIR=/opt/mujoco-3.9.0` |
+| Clone the KDL fork somewhere specific | `-DMJ_KDL_OROCOS_KDL_DIR=~/src/orocos_kinematics_dynamics` |
+| Reuse a prebuilt KDL (no clone/rebuild/bundle) | `-DMJ_KDL_OROCOS_KDL_INSTALL_DIR=$HOME/.local` |
+| Keep bundled KDL out of the install prefix | `-DMJ_KDL_INSTALL_BUNDLED_KDL=OFF` |
+| Choose build / install locations | `cmake -B <build-dir> -DCMAKE_INSTALL_PREFIX=<prefix>` |
+
+#### One shared KDL across several projects
+
+When multiple projects need KDL, build the fork once into a shared prefix and
+point everyone at it, so there is exactly one `liborocos-kdl` (avoids duplicate
+copies and rebuilds):
+
+```bash
+# 1. Build the fork once into the shared prefix
+cmake -S <kdl-src>/orocos_kdl -B build/orocos_kdl \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=$HOME/.local
+cmake --build build/orocos_kdl --parallel $(nproc) && cmake --install build/orocos_kdl
+
+# 2. Build the wrapper (and any sibling) against that shared KDL
+cmake -B build -DCMAKE_INSTALL_PREFIX=$HOME/.local \
+  -DMJ_KDL_OROCOS_KDL_INSTALL_DIR=$HOME/.local
+cmake --build build --parallel $(nproc) && cmake --install build
+```
+
+By default the wrapper bundles its own KDL, which is correct for a single
+project; switch to the shared prefix only when several projects link KDL (and
+especially if two may load it in one process - see [One shared KDL](#one-shared-kdl)
+for the ROS 2 case).
+
+### Python
 
 Install into an active supported Python environment. The build bundles the
 native dependencies (MuJoCo, the secorolab Orocos KDL fork, and PyKDL); see the
@@ -126,6 +152,19 @@ module. It imports as `PyKDL`, but it does not appear as a separate package in
 uv pip install "git+https://github.com/vamsikalagaturu/mj_kdl_wrapper.git"  # from GitHub
 uv pip install .                                                            # from a checkout
 ```
+
+This is an isolated, self-contained build independent of any C++ build tree: it
+recompiles the wrapper, builds and bundles its own KDL + PyKDL, and pins
+`mujoco==3.9.0`. Build options (all optional):
+
+| To... | Add |
+|-------|-----|
+| Editable install (dev) | `uv pip install -e . --config-settings=editable.rebuild=true` |
+| Put the build dir outside the source tree | `--config-settings=build-dir=/path/build_py/{wheel_tag}` |
+| Reuse a prebuilt KDL+PyKDL prefix (skip bundling) | `--config-settings=cmake.define.MJ_KDL_OROCOS_KDL_INSTALL_DIR=/prefix` |
+
+The shared-KDL option needs a prefix that also ships `PyKDL`; a C++-only install
+prefix has KDL but no `PyKDL`, so the default (bundle) is right for standalone use.
 
 Fetch the MuJoCo Menagerie models the examples use (requires `git`), verify, and
 run an example from a checkout:
