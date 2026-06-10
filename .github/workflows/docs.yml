@@ -18,8 +18,15 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y \
-            ninja-build doxygen \
+            ninja-build \
             libeigen3-dev libglfw3-dev libgl-dev libegl-dev
+
+      - name: Install Doxygen 1.16.1
+        run: |
+          wget -q "https://github.com/doxygen/doxygen/releases/download/Release_1_16_1/doxygen-1.16.1.linux.bin.tar.gz" -O /tmp/doxygen.tar.gz
+          tar xzf /tmp/doxygen.tar.gz -C /tmp
+          sudo cp /tmp/doxygen-1.16.1/bin/doxygen /usr/local/bin/
+          doxygen --version
 
       - name: Cache MuJoCo
         id: cache-mujoco
