@@ -49,6 +49,18 @@ set(
   CACHE PATH
   "Local Orocos KDL fork source to build instead of cloning the git source"
 )
+# Consume an already-installed Orocos KDL prefix instead of building the fork.
+# Intended for ROS 2 / colcon, where the secorolab fork is a workspace package
+# and a single shared liborocos-kdl (and PyKDL) must be used everywhere to avoid
+# loading two copies with the same SONAME in one process. When set, no
+# ExternalProject build runs and nothing is bundled; the prefix must contain the
+# secorolab fork. Takes precedence over MJ_KDL_OROCOS_KDL_DIR and
+# MJ_KDL_FETCH_OROCOS_KDL.
+set(
+  MJ_KDL_OROCOS_KDL_INSTALL_DIR ""
+  CACHE PATH
+  "Pre-installed Orocos KDL prefix to consume (skips building/bundling the fork)"
+)
 
 # MuJoCo - prefer /opt/mujoco-<version>, override with -DMJ_KDL_MUJOCO_DIR=...
 set(MJ_KDL_MUJOCO_DIR "${MJ_KDL_MUJOCO_DEFAULT_DIR}" CACHE PATH "MuJoCo install location")
@@ -130,6 +142,29 @@ endif()
 # no system liborocos-kdl is ever consulted. The wrapper consumes it through an
 # IMPORTED target and PyKDL (built later) consumes its install prefix.
 include(ExternalProject)
+if(MJ_KDL_OROCOS_KDL_INSTALL_DIR)
+  # Consume a pre-installed Orocos KDL (e.g. a colcon workspace overlay). No
+  # ExternalProject build, no bundling: a single shared liborocos-kdl is used by
+  # the wrapper and by any other package in the same workspace/process.
+  find_path(MJ_KDL_OROCOS_KDL_INCLUDE_DIR kdl/chain.hpp
+            PATHS "${MJ_KDL_OROCOS_KDL_INSTALL_DIR}/include"
+            NO_DEFAULT_PATH REQUIRED)
+  find_library(MJ_KDL_OROCOS_KDL_LIBRARY orocos-kdl
+               PATHS "${MJ_KDL_OROCOS_KDL_INSTALL_DIR}/lib"
+               NO_DEFAULT_PATH REQUIRED)
+  find_package(Eigen3 REQUIRED NO_MODULE)
+  add_library(orocos-kdl SHARED IMPORTED GLOBAL)
+  set_target_properties(orocos-kdl PROPERTIES
+    IMPORTED_LOCATION "${MJ_KDL_OROCOS_KDL_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${MJ_KDL_OROCOS_KDL_INCLUDE_DIR}"
+    INTERFACE_LINK_LIBRARIES Eigen3::Eigen
+  )
+  get_target_property(_mj_kdl_eigen_inc Eigen3::Eigen INTERFACE_INCLUDE_DIRECTORIES)
+  set(orocos_kdl_LIBRARIES    orocos-kdl)
+  set(orocos_kdl_INCLUDE_DIRS "${MJ_KDL_OROCOS_KDL_INCLUDE_DIR}" ${_mj_kdl_eigen_inc})
+  set(orocos_kdl_DIR          "installed: ${MJ_KDL_OROCOS_KDL_INSTALL_DIR}")
+  message(STATUS "Orocos KDL: using installed prefix ${MJ_KDL_OROCOS_KDL_INSTALL_DIR}")
+else()
 set(_MJ_KDL_OROCOS_PREFIX "${CMAKE_BINARY_DIR}/orocos_kdl_install")
 if(MJ_KDL_OROCOS_KDL_DIR)
   # Build a user-provided local fork checkout (no clone).
@@ -180,6 +215,7 @@ get_target_property(_mj_kdl_eigen_inc Eigen3::Eigen INTERFACE_INCLUDE_DIRECTORIE
 set(orocos_kdl_LIBRARIES    orocos-kdl)
 set(orocos_kdl_INCLUDE_DIRS "${_MJ_KDL_OROCOS_PREFIX}/include" ${_mj_kdl_eigen_inc})
 set(orocos_kdl_DIR          "secorolab fork (ExternalProject)")
+endif()
 
 message(STATUS "KDL    : ${orocos_kdl_LIBRARIES}")
 message(STATUS "KDL inc: ${orocos_kdl_INCLUDE_DIRS}")
@@ -306,37 +342,43 @@ if(BUILD_PYTHON_BINDINGS)
         find_package(pybind11 CONFIG REQUIRED)
     endif()
 
-    # Build PyKDL from the same checkout, at build time, against the
-    # ExternalProject-installed Orocos KDL. python_orocos_kdl is a separate CMake
-    # project that find_package()s an installed orocos_kdl, so it must run after
-    # orocos_kdl_ep has installed (enforced via DEPENDS).
-    set(_MJ_KDL_PYKDL_INSTALL "${CMAKE_BINARY_DIR}/python_orocos_kdl_install")
-    ExternalProject_Add(pykdl_ep
-      DEPENDS          orocos_kdl_ep
-      SOURCE_DIR       "${_MJ_KDL_OROCOS_SRC}"
-      SOURCE_SUBDIR    python_orocos_kdl
-      DOWNLOAD_COMMAND ""
-      CMAKE_ARGS
-        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-        -DCMAKE_INSTALL_PREFIX=${_MJ_KDL_PYKDL_INSTALL}
-        -DCMAKE_PREFIX_PATH=${_MJ_KDL_OROCOS_PREFIX}
-        -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
-        -Dpybind11_DIR=${pybind11_DIR}
-        -DPYTHON_SITE_PACKAGES_INSTALL_DIR=.
-        "-DCMAKE_INSTALL_RPATH=\$ORIGIN/mj_kdl_wrapper"
-      UPDATE_DISCONNECTED TRUE
-    )
-    # Bundle PyKDL (top-level module) and the Orocos KDL shared library from the
-    # ExternalProject install trees. FILES_MATCHING globs at install time, after
-    # both ExternalProject builds have run.
-    install(DIRECTORY "${_MJ_KDL_PYKDL_INSTALL}/"
-      DESTINATION .
-      FILES_MATCHING PATTERN "PyKDL*.so"
-    )
-    install(DIRECTORY "${_MJ_KDL_OROCOS_PREFIX}/lib/"
-      DESTINATION mj_kdl_wrapper
-      FILES_MATCHING PATTERN "liborocos-kdl.so*"
-    )
+    # PyKDL and liborocos-kdl are built and bundled only when this build owns the
+    # KDL (ExternalProject). When MJ_KDL_OROCOS_KDL_INSTALL_DIR is set the KDL and
+    # its PyKDL come from that shared prefix, so we neither build nor bundle them -
+    # the goal there is exactly one copy across the workspace/process.
+    if(NOT MJ_KDL_OROCOS_KDL_INSTALL_DIR)
+        # Build PyKDL from the same checkout, at build time, against the
+        # ExternalProject-installed Orocos KDL. python_orocos_kdl is a separate CMake
+        # project that find_package()s an installed orocos_kdl, so it must run after
+        # orocos_kdl_ep has installed (enforced via DEPENDS).
+        set(_MJ_KDL_PYKDL_INSTALL "${CMAKE_BINARY_DIR}/python_orocos_kdl_install")
+        ExternalProject_Add(pykdl_ep
+          DEPENDS          orocos_kdl_ep
+          SOURCE_DIR       "${_MJ_KDL_OROCOS_SRC}"
+          SOURCE_SUBDIR    python_orocos_kdl
+          DOWNLOAD_COMMAND ""
+          CMAKE_ARGS
+            -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+            -DCMAKE_INSTALL_PREFIX=${_MJ_KDL_PYKDL_INSTALL}
+            -DCMAKE_PREFIX_PATH=${_MJ_KDL_OROCOS_PREFIX}
+            -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
+            -Dpybind11_DIR=${pybind11_DIR}
+            -DPYTHON_SITE_PACKAGES_INSTALL_DIR=.
+            "-DCMAKE_INSTALL_RPATH=\$ORIGIN/mj_kdl_wrapper"
+          UPDATE_DISCONNECTED TRUE
+        )
+        # Bundle PyKDL (top-level module) and the Orocos KDL shared library from the
+        # ExternalProject install trees. FILES_MATCHING globs at install time, after
+        # both ExternalProject builds have run.
+        install(DIRECTORY "${_MJ_KDL_PYKDL_INSTALL}/"
+          DESTINATION .
+          FILES_MATCHING PATTERN "PyKDL*.so"
+        )
+        install(DIRECTORY "${_MJ_KDL_OROCOS_PREFIX}/lib/"
+          DESTINATION mj_kdl_wrapper
+          FILES_MATCHING PATTERN "liborocos-kdl.so*"
+        )
+    endif()
 
     pybind11_add_module(_mj_kdl_wrapper
       python/src/bindings.cpp

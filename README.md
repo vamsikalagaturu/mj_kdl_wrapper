@@ -34,6 +34,17 @@ Ubuntu/Debian instructions. Supported dependency versions are listed below.
 CMake checks `mjVERSION_HEADER` and stops if `MJ_KDL_MUJOCO_DIR` points at an
 unsupported MuJoCo release.
 
+Pick the workflow that matches how you consume the library:
+
+| Use case | Build system | Section |
+|----------|--------------|---------|
+| C++ (plain CMake) | `cmake` / `find_package` | [C++ library, examples, and tests](#c-library-examples-and-tests) |
+| Python | `pip install` (single command) | [Python Install](#python-install) |
+| C++ and Python | both of the above, same tree | independent; run either |
+| ROS 2 C++ | `colcon` (no separate package) | [ROS 2 C++](#ros-2-c) |
+| ROS 2 Python | `colcon` + venv `--system-site-packages` | [ROS 2 Python](#ros-2-python) |
+| ROS 2 C++ and Python | `colcon` + venv, sourced together | [ROS 2 C++ and Python together](#ros-2-c-and-python-together) |
+
 ### Dependency Versions
 
 | Dependency | Version / source | Notes |
@@ -125,6 +136,134 @@ The `python/examples/` scripts are not shipped in the wheel, so run them from a
 checkout. Model resolution, environment variables, and using other model sources
 are documented in the [Python Bindings API Guide](docs/api/python.md).
 
+### ROS 2 (Jazzy / colcon)
+
+This is a plain CMake project; it is not built on `ament_cmake`. colcon can still
+build it: the `colcon-cmake` extension (part of `python3-colcon-common-extensions`,
+installed with ROS 2) discovers any directory with a `CMakeLists.txt` and builds
+it as a `cmake`-type package named after the `project()` call. A minimal
+`package.xml` (build type `cmake`) is included so the package also participates in
+colcon dependency ordering, `rosdep`, and `ros2 pkg list`. Plain CMake and pip
+builds ignore `package.xml`, so the non-ROS workflows above are unchanged.
+
+> [!IMPORTANT]
+> KDL in ROS 2: this project requires the secorolab Orocos KDL fork (not the
+> system KDL). By default the colcon build builds and bundles its own private copy
+> of `liborocos-kdl` and `PyKDL`. ROS 2 also ships system Orocos KDL and
+> `python3-pykdl` with the **same SONAME and module name**. Loading two copies in
+> one process is unsafe (the loader keeps only one; the other's symbols are
+> silently dropped). See [One shared KDL](#one-shared-kdl) below before mixing this
+> with KDL-using ROS packages.
+
+Inside the running container, open a shell and install the build dependencies once
+(see [System packages](#system-packages)):
+
+```bash
+docker exec -it jazzy bash
+sudo apt update && sudo apt install \
+  cmake g++ git python3-dev python3-pip python3-venv \
+  libeigen3-dev libglfw3-dev libgl-dev libegl-dev ffmpeg
+```
+
+#### ROS 2 C++
+
+No separate package is required - the existing CMake target is what colcon builds.
+Drop the repo into a workspace `src/` and build:
+
+```bash
+mkdir -p ~/ros2_ws/src
+git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git ~/ros2_ws/src/mj_kdl_wrapper
+cd ~/ros2_ws
+source /opt/ros/jazzy/setup.bash
+colcon build --packages-select mj_kdl_wrapper \
+  --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF
+source install/setup.bash
+```
+
+Your own rclcpp package then consumes it normally:
+
+```cmake
+find_package(mj_kdl_wrapper REQUIRED)
+target_link_libraries(my_node mj_kdl_wrapper::mj_kdl_wrapper)
+```
+
+Add `<depend>mj_kdl_wrapper</depend>` to that package's `package.xml` so colcon
+builds this first.
+
+#### ROS 2 Python
+
+Yes, use a venv - but it must be created with `--system-site-packages`. `rclpy` is
+only importable from the interpreter ROS 2 was built against (the container's
+system Python 3.12); a plain isolated venv cannot see it. `--system-site-packages`
+lets the venv import system ROS 2 packages while keeping the wheel and its pinned
+deps (`mujoco==3.9.0`) inside the venv:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+python3 -m venv --system-site-packages ~/ros2_ws/.venv-ros
+source ~/ros2_ws/.venv-ros/bin/activate
+pip install "git+https://github.com/vamsikalagaturu/mj_kdl_wrapper.git"
+python -c "import rclpy, PyKDL, mujoco, mj_kdl_wrapper as mjk; print('ros2 + ', mjk.mujoco_version())"
+```
+
+> [!NOTE]
+> The wheel bundles its own `PyKDL`, which takes precedence over the system
+> `python3-pykdl` on the venv `sys.path`. If you suspect the wrong one is loaded,
+> check `python -c "import PyKDL; print(PyKDL.__file__)"` - it should point inside
+> the venv `site-packages`, not `/opt/ros`.
+
+#### ROS 2 C++ and Python together
+
+Nothing extra is needed. Build the C++ side with colcon, then layer the Python
+venv on top in the same shell. Order matters: source ROS 2 and the workspace
+first, then activate the venv so it inherits the ROS 2 environment.
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source ~/ros2_ws/install/setup.bash       # C++ target + workspace overlay
+source ~/ros2_ws/.venv-ros/bin/activate   # Python wheel + mujoco, with rclpy visible
+```
+
+#### One shared KDL
+
+The default build ships a private secorolab `liborocos-kdl` / `PyKDL`. That is
+correct and self-contained for standalone use, but in ROS 2 it collides with the
+system KDL (and `python3-pykdl`): both have SONAME `liborocos-kdl.so.1.5` and the
+`PyKDL` module name, so a single process can only hold one. Two strategies:
+
+**Default - process isolation (no build changes).** The collision only exists
+*within one process*, and ROS 2 is multi-process. Keep the MuJoCo + KDL work in
+its own node and do not link `mj_kdl_wrapper` into the same executable as ROS
+packages that use the system KDL (`kdl_parser`, `tf2_kdl`, and the libraries
+behind `robot_state_publisher`). Communicate over topics/services. Each process
+then loads exactly one KDL and one `PyKDL`. This is the recommended default.
+
+**One copy across the workspace.** If you must use the wrapper and a system-KDL
+package in the *same* process, build the secorolab fork once as a workspace
+package so its install overlays `/opt/ros`, then build `mj_kdl_wrapper` against
+that shared prefix instead of building/bundling its own. Point
+`MJ_KDL_OROCOS_KDL_INSTALL_DIR` at the prefix; this skips the ExternalProject
+build and skips all bundling, so exactly one `liborocos-kdl` and one `PyKDL` exist
+in the overlay:
+
+```bash
+# Workspace already provides the fork at <ws>/install (its bin/lib/include).
+colcon build --packages-select mj_kdl_wrapper \
+  --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+               -DMJ_KDL_OROCOS_KDL_INSTALL_DIR=$PWD/install \
+               -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF
+```
+
+For the Python wheel built this way, pass the same define through
+scikit-build-core so it skips the bundled PyKDL:
+
+```bash
+pip install . --config-settings=cmake.define.MJ_KDL_OROCOS_KDL_INSTALL_DIR=/path/to/ws/install
+```
+
+`import PyKDL` then resolves to the single workspace copy on `sys.path`. The
+prefix must be the secorolab fork, not the stock distro KDL.
+
 ### Generate Documentation
 
 ```bash
@@ -150,6 +289,7 @@ Paths / sources (override to use your own):
 | `MJ_KDL_OROCOS_KDL_GIT_REPOSITORY` | secorolab fork | Orocos KDL git source to build |
 | `MJ_KDL_OROCOS_KDL_GIT_TAG` | `feature/achd_fixed_joint` | Orocos KDL branch/tag to build |
 | `MJ_KDL_OROCOS_KDL_DIR` | (empty) | Local Orocos KDL fork checkout to build instead of cloning |
+| `MJ_KDL_OROCOS_KDL_INSTALL_DIR` | (empty) | Pre-installed Orocos KDL prefix to consume (skips building and bundling the fork; for ROS 2 / a single shared workspace KDL) |
 | `MJ_KDL_FETCH_MENAGERIE` | `OFF` | Download MuJoCo Menagerie models |
 | `MJ_KDL_MENAGERIE_DIR` | `third_party/menagerie` | Menagerie location / `MJ_KDL_FETCH_MENAGERIE` destination |
 
