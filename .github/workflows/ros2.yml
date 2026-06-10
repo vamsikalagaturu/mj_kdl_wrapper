@@ -1,0 +1,51 @@
+name: ros2
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  colcon:
+    runs-on: ubuntu-24.04
+    container:
+      image: ros:jazzy
+    env:
+      MUJOCO_VERSION: 3.9.0
+      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.9.0
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update -q
+          apt-get install -y \
+            git wget cmake g++ \
+            libeigen3-dev libglfw3-dev libgl-dev libegl-dev ffmpeg \
+            python3-colcon-common-extensions
+
+      - name: Install MuJoCo ${{ env.MUJOCO_VERSION }}
+        run: |
+          wget -q "https://github.com/google-deepmind/mujoco/releases/download/${MUJOCO_VERSION}/mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
+          tar xzf "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz" -C /tmp
+          rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
+
+      - name: Checkout the wrapper into the workspace
+        uses: actions/checkout@v4
+        with:
+          path: ws/src/mj_kdl_wrapper
+
+      - name: Clone the Orocos KDL fork
+        run: |
+          git clone --depth 1 -b feature/achd_fixed_joint \
+            https://github.com/secorolab/orocos_kinematics_dynamics.git \
+            ws/src/orocos_kinematics_dynamics
+
+      - name: colcon build (KDL first, then the wrapper against it)
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          cd ws
+          colcon build --packages-select orocos_kdl --cmake-args -DENABLE_TESTS=OFF
+          source install/setup.bash
+          colcon build --packages-select mj_kdl_wrapper \
+            --cmake-args -DMJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON \
+                         -DMJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}" \
+                         -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF

@@ -1,4 +1,4 @@
-name: CI
+name: build
 
 on:
   push:
@@ -19,21 +19,11 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y \
-            ccache \
-            ninja-build \
-            libeigen3-dev \
-            libglfw3-dev \
-            libgl-dev \
-            libegl-dev
+            ccache ninja-build \
+            libeigen3-dev libglfw3-dev libgl-dev libegl-dev
 
       - name: Check version metadata
         run: python3 scripts/check_versions.py
-
-      - name: Install docs dependencies
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: |
-          sudo apt-get install -y \
-            doxygen
 
       - name: Cache MuJoCo
         id: cache-mujoco
@@ -62,23 +52,16 @@ jobs:
         if: steps.cache-menagerie.outputs.cache-hit != 'true'
         run: |
           mkdir -p third_party
-          if [[ -d third_party/menagerie/.git ]]; then
-            echo "Using restored MuJoCo Menagerie cache"
-          elif [[ -d third_party/menagerie ]]; then
-            echo "third_party/menagerie already exists but is not a git checkout"
-            exit 1
-          else
+          [ -d third_party/menagerie/.git ] || \
             git clone --depth 1 https://github.com/google-deepmind/mujoco_menagerie.git third_party/menagerie
-          fi
 
       - name: Cache ccache
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ github.sha }}
+          key: ccache-build-${{ runner.os }}-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.os }}-${{ github.ref_name }}-
-            ccache-${{ runner.os }}-
+            ccache-build-${{ runner.os }}-
 
       - name: Cache FetchContent deps
         uses: actions/cache@v4
@@ -88,18 +71,14 @@ jobs:
 
       - name: Configure
         run: |
-          docs_flag=OFF
-          if [[ "${GITHUB_REF}" == "refs/heads/main" && "${GITHUB_EVENT_NAME}" == "push" ]]; then
-            docs_flag=ON
-          fi
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DMJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}" \
             -DBUILD_TESTS=ON \
+            -DBUILD_DOCS=OFF \
             -DMJ_KDL_FETCH_MENAGERIE=OFF \
-            -DBUILD_DOCS="${docs_flag}" \
             -DFETCHCONTENT_BASE_DIR="${FETCHCONTENT_BASE_DIR}" \
             -DFETCHCONTENT_UPDATES_DISCONNECTED=ON
 
@@ -108,44 +87,3 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Build and test the Python bindings
-        # Reuses the cached MuJoCo and the Menagerie checkout fetched above.
-        run: |
-          pip install uv
-          uv venv .venv
-          . .venv/bin/activate
-          uv pip install . --config-settings=cmake.define.MJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}"
-          uv pip install pytest
-          pytest -q python/tests
-          python python/examples/ex_gravity_comp.py
-
-      - name: Build docs
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: cmake --build build --target docs
-
-      - name: Upload Pages artifact
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: docs/html
-
-  deploy-docs:
-    needs: build-and-test
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-24.04
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deploy
-        uses: actions/deploy-pages@v5

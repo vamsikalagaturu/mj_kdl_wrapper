@@ -1,5 +1,10 @@
 # Mujoco KDL Wrapper
 
+[![build](https://github.com/vamsikalagaturu/mj_kdl_wrapper/actions/workflows/build.yml/badge.svg)](https://github.com/vamsikalagaturu/mj_kdl_wrapper/actions/workflows/build.yml)
+[![docs](https://github.com/vamsikalagaturu/mj_kdl_wrapper/actions/workflows/docs.yml/badge.svg)](https://github.com/vamsikalagaturu/mj_kdl_wrapper/actions/workflows/docs.yml)
+[![python](https://github.com/vamsikalagaturu/mj_kdl_wrapper/actions/workflows/python.yml/badge.svg)](https://github.com/vamsikalagaturu/mj_kdl_wrapper/actions/workflows/python.yml)
+[![ros2](https://github.com/vamsikalagaturu/mj_kdl_wrapper/actions/workflows/ros2.yml/badge.svg)](https://github.com/vamsikalagaturu/mj_kdl_wrapper/actions/workflows/ros2.yml)
+
 A C++ library bridging [MuJoCo](https://github.com/google-deepmind/mujoco) physics simulation with [KDL](https://github.com/orocos/orocos_kinematics_dynamics) for robot kinematics and dynamics.
 
 ## Screenshots
@@ -56,21 +61,25 @@ cmake --build build --parallel $(nproc)
 cmake --install build          # optional; self-contained, bundles KDL into the prefix
 ```
 
-To share one KDL across several projects, build the fork separately into a prefix
-and point the wrapper at it (instead of bundling its own):
+To share one KDL across several projects, set up a `ws/` folder, build the fork
+once into `ws/install`, and point the wrapper (and any sibling) at it instead of
+bundling its own:
 
 ```bash
+mkdir -p ws && cd ws
 git clone -b feature/achd_fixed_joint \
   https://github.com/secorolab/orocos_kinematics_dynamics.git
+git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
+
 cmake -S orocos_kinematics_dynamics/orocos_kdl -B build/orocos_kdl \
-  -DCMAKE_INSTALL_PREFIX="$HOME/.local" -DENABLE_TESTS=OFF
+  -DCMAKE_INSTALL_PREFIX="$PWD/install" -DENABLE_TESTS=OFF
 cmake --build build/orocos_kdl --parallel $(nproc)
 cmake --install build/orocos_kdl
 
-cmake -B build -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
-  -DMJ_KDL_OROCOS_KDL_INSTALL_DIR="$HOME/.local"
-cmake --build build --parallel $(nproc)
-cmake --install build
+cmake -S mj_kdl_wrapper -B build/mj_kdl_wrapper \
+  -DCMAKE_INSTALL_PREFIX="$PWD/install" -DMJ_KDL_OROCOS_KDL_INSTALL_DIR="$PWD/install"
+cmake --build build/mj_kdl_wrapper --parallel $(nproc)
+cmake --install build/mj_kdl_wrapper
 ```
 
 The [standalone guide](docs/install/standalone.md) covers tests, custom

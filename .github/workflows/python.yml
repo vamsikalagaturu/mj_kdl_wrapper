@@ -1,0 +1,69 @@
+name: python
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  bindings:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    env:
+      MUJOCO_VERSION: 3.9.0
+      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.9.0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y \
+            libeigen3-dev libglfw3-dev libgl-dev libegl-dev
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache MuJoCo
+        id: cache-mujoco
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MJ_KDL_MUJOCO_DIR }}
+          key: mujoco-${{ runner.os }}-${{ env.MUJOCO_VERSION }}
+
+      - name: Install MuJoCo ${{ env.MUJOCO_VERSION }}
+        if: steps.cache-mujoco.outputs.cache-hit != 'true'
+        run: |
+          wget -q "https://github.com/google-deepmind/mujoco/releases/download/${MUJOCO_VERSION}/mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
+          tar xzf "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz" -C /tmp
+          rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
+
+      - name: Cache MuJoCo Menagerie
+        id: cache-menagerie
+        uses: actions/cache@v4
+        with:
+          path: third_party/menagerie
+          key: menagerie-${{ runner.os }}-v1
+          restore-keys: |
+            menagerie-${{ runner.os }}-
+
+      - name: Fetch MuJoCo Menagerie
+        if: steps.cache-menagerie.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p third_party
+          [ -d third_party/menagerie/.git ] || \
+            git clone --depth 1 https://github.com/google-deepmind/mujoco_menagerie.git third_party/menagerie
+
+      - name: Build and test the Python bindings
+        run: |
+          pip install uv
+          uv venv .venv
+          . .venv/bin/activate
+          uv pip install . --config-settings=cmake.define.MJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}"
+          uv pip install pytest
+          python -c "import PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mujoco.mj_versionString(), mjk.mujoco_version())"
+          pytest -q python/tests

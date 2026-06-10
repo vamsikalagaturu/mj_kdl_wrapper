@@ -76,7 +76,7 @@ What happens during configure/build:
 ### Install
 
 ```bash
-cmake -B build -DCMAKE_INSTALL_PREFIX="$HOME/.local"   # choose the prefix at configure time
+cmake -B build -DCMAKE_INSTALL_PREFIX="$HOME/ws"   # choose the prefix at configure time
 cmake --build build --parallel $(nproc)
 cmake --install build
 ```
@@ -122,7 +122,7 @@ Each dependency is fetched by default, or can point at something you already hav
 | Skip the MuJoCo download | `-DMJ_KDL_FETCH_MUJOCO=OFF` (then set `MJ_KDL_MUJOCO_DIR`) |
 | Clone the KDL fork somewhere specific | `-DMJ_KDL_OROCOS_KDL_DIR=~/src/orocos_kinematics_dynamics` |
 | Build a different KDL branch/tag | `-DMJ_KDL_OROCOS_KDL_GIT_TAG=<ref>` |
-| Reuse a prebuilt KDL by prefix | `-DMJ_KDL_OROCOS_KDL_INSTALL_DIR=$HOME/.local` |
+| Reuse a prebuilt KDL by prefix | `-DMJ_KDL_OROCOS_KDL_INSTALL_DIR=$HOME/ws` |
 | Consume KDL via its CMake package | `-DMJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON` |
 | Keep bundled KDL out of the install prefix | `-DMJ_KDL_INSTALL_BUNDLED_KDL=OFF` |
 | Fetch Menagerie models | `-DMJ_KDL_FETCH_MENAGERIE=ON` |
@@ -142,13 +142,13 @@ rebuilds):
 ```bash
 # 1. Build the fork once into the shared prefix
 cmake -S <kdl-src>/orocos_kdl -B build/orocos_kdl \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=$HOME/.local
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=$HOME/ws
 cmake --build build/orocos_kdl --parallel $(nproc)
 cmake --install build/orocos_kdl
 
 # 2. Build the wrapper (and any sibling) against that shared KDL
-cmake -B build -DCMAKE_INSTALL_PREFIX=$HOME/.local \
-  -DMJ_KDL_OROCOS_KDL_INSTALL_DIR=$HOME/.local
+cmake -B build -DCMAKE_INSTALL_PREFIX=$HOME/ws \
+  -DMJ_KDL_OROCOS_KDL_INSTALL_DIR=$HOME/ws
 cmake --build build --parallel $(nproc)
 cmake --install build
 ```
