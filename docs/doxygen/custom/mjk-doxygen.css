@@ -120,6 +120,12 @@ body {
   line-height: 1.55;
 }
 
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 body,
 #container,
 #doc-content {
@@ -282,7 +288,6 @@ a:hover {
   background: var(--mjk-panel);
   border: 1px solid var(--mjk-border);
   border-radius: 8px;
-  box-sizing: border-box;
   box-shadow: var(--mjk-shadow);
   margin: 20px 28px 40px;
   max-width: 1380px;
@@ -336,6 +341,25 @@ span.lineno {
 
 #container {
   grid-template-columns: auto !important;
+  min-width: 0;
+  max-width: 100%;
+}
+
+#doc-content,
+.contents,
+.textblock,
+.memdoc,
+.memproto,
+.memitem,
+.memberdecls,
+.directory,
+.dyncontent {
+  min-width: 0;
+  max-width: 100%;
+}
+
+#doc-content {
+  overflow-x: hidden !important;
 }
 
 #page-nav,
@@ -557,6 +581,10 @@ table.doxtable,
 table.directory {
   border-collapse: collapse;
   border: 1px solid var(--mjk-border);
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  width: 100%;
 }
 
 table.markdownTable td,
@@ -607,6 +635,30 @@ table.directory .levels,
 
 table.directory td.desc {
   color: var(--mjk-muted) !important;
+}
+
+.memberdecls,
+.memproto,
+.memdoc,
+.directory {
+  overflow-x: auto;
+}
+
+.memItemLeft,
+.memItemRight,
+.memTemplParams,
+.mdescLeft,
+.mdescRight,
+.paramname,
+.fieldname,
+.fieldtype,
+.fielddoc,
+.mlabel,
+.el,
+.elRef,
+a.el,
+a.elRef {
+  overflow-wrap: anywhere;
 }
 
 table.directory .icona,
@@ -799,9 +851,22 @@ html[data-theme="dark"] img.footer {
 
 img {
   max-width: 100%;
+  height: auto;
 }
 
 @media (max-width: 760px) {
+  #side-nav,
+  #splitbar {
+    display: none !important;
+    width: 0 !important;
+  }
+
+  #doc-content {
+    left: 0 !important;
+    margin-left: 0 !important;
+    width: 100% !important;
+  }
+
   #projectrow {
     align-items: flex-start;
     flex-direction: column;
@@ -814,6 +879,34 @@ img {
     border-right: 0;
     margin: 0;
     padding: 18px;
+    width: 100%;
+  }
+
+  table.memberdecls,
+  table.memberdecls tbody,
+  table.memberdecls tr,
+  table.memberdecls td {
+    display: block;
+    width: 100% !important;
+  }
+
+  .memItemLeft,
+  .memItemRight,
+  .mdescLeft,
+  .mdescRight {
+    text-align: left !important;
+    white-space: normal !important;
+  }
+
+  .memItemLeft {
+    border-right: 1px solid var(--mjk-border) !important;
+    border-bottom: 0 !important;
+    padding-right: 10px !important;
+  }
+
+  .memItemRight {
+    border-left: 1px solid var(--mjk-border) !important;
+    padding-left: 10px !important;
   }
 }
 
