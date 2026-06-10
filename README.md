@@ -87,7 +87,9 @@ sources explicit:
 - `MJ_KDL_FETCH_MUJOCO` downloads the supported MuJoCo release unless
   `MJ_KDL_MUJOCO_DIR` points at an install.
 - `MJ_KDL_FETCH_OROCOS_KDL` clones and builds the secorolab Orocos KDL fork - the
-  only KDL used; no system `liborocos-kdl` is consulted.
+  only KDL used; no system `liborocos-kdl` is consulted. The clone lands in
+  `MJ_KDL_OROCOS_KDL_DIR` (default `third_party/orocos_kinematics_dynamics`) and
+  persists across builds; set that flag to clone elsewhere.
 - `MJ_KDL_FETCH_MENAGERIE` downloads the Kinova GEN3 models the examples and
   tests use. The Robotiq gripper is bundled under `assets/robotiq_2f85`.
 
@@ -288,7 +290,7 @@ Paths / sources (override to use your own):
 | `MJ_KDL_FETCH_OROCOS_KDL` | `ON` | Clone and build the secorolab Orocos KDL fork (the only KDL used) |
 | `MJ_KDL_OROCOS_KDL_GIT_REPOSITORY` | secorolab fork | Orocos KDL git source to build |
 | `MJ_KDL_OROCOS_KDL_GIT_TAG` | `feature/achd_fixed_joint` | Orocos KDL branch/tag to build |
-| `MJ_KDL_OROCOS_KDL_DIR` | (empty) | Local Orocos KDL fork checkout to build instead of cloning |
+| `MJ_KDL_OROCOS_KDL_DIR` | `third_party/orocos_kinematics_dynamics` | Fork source/clone destination; built in place if already present, else cloned here when fetch is ON. Point elsewhere (e.g. `~/test/src`) to clone/build there |
 | `MJ_KDL_OROCOS_KDL_INSTALL_DIR` | (empty) | Pre-installed Orocos KDL prefix to consume (skips building and bundling the fork; for ROS 2 / a single shared workspace KDL) |
 | `MJ_KDL_FETCH_MENAGERIE` | `OFF` | Download MuJoCo Menagerie models |
 | `MJ_KDL_MENAGERIE_DIR` | `third_party/menagerie` | Menagerie location / `MJ_KDL_FETCH_MENAGERIE` destination |

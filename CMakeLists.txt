@@ -44,10 +44,15 @@ set(
   CACHE STRING
   "Orocos KDL fork branch/tag to build"
 )
+# Source/clone destination for the fork. Defaults to a persistent checkout under
+# third_party/ (like the Menagerie checkout). If this directory already holds the
+# fork source it is built in place with no clone; otherwise, when
+# MJ_KDL_FETCH_OROCOS_KDL is ON, the git source is cloned into it. Point it
+# elsewhere (e.g. ~/test/src) to clone/build there instead.
 set(
-  MJ_KDL_OROCOS_KDL_DIR ""
+  MJ_KDL_OROCOS_KDL_DIR "${CMAKE_SOURCE_DIR}/third_party/orocos_kinematics_dynamics"
   CACHE PATH
-  "Local Orocos KDL fork source to build instead of cloning the git source"
+  "Orocos KDL fork source/clone destination (cloned here if absent and fetch is ON)"
 )
 # Consume an already-installed Orocos KDL prefix instead of building the fork.
 # Intended for ROS 2 / colcon, where the secorolab fork is a workspace package
@@ -166,13 +171,15 @@ if(MJ_KDL_OROCOS_KDL_INSTALL_DIR)
   message(STATUS "Orocos KDL: using installed prefix ${MJ_KDL_OROCOS_KDL_INSTALL_DIR}")
 else()
 set(_MJ_KDL_OROCOS_PREFIX "${CMAKE_BINARY_DIR}/orocos_kdl_install")
-if(MJ_KDL_OROCOS_KDL_DIR)
-  # Build a user-provided local fork checkout (no clone).
-  set(_MJ_KDL_OROCOS_SRC "${MJ_KDL_OROCOS_KDL_DIR}")
+set(_MJ_KDL_OROCOS_SRC "${MJ_KDL_OROCOS_KDL_DIR}")
+if(EXISTS "${_MJ_KDL_OROCOS_SRC}/orocos_kdl/CMakeLists.txt")
+  # Source already present (manual checkout or an earlier fetch): build in place,
+  # no clone.
   set(_MJ_KDL_OROCOS_DOWNLOAD DOWNLOAD_COMMAND "")
-  message(STATUS "Orocos KDL: building local source ${_MJ_KDL_OROCOS_SRC}")
+  message(STATUS "Orocos KDL: building existing source ${_MJ_KDL_OROCOS_SRC}")
 elseif(MJ_KDL_FETCH_OROCOS_KDL)
-  set(_MJ_KDL_OROCOS_SRC "${CMAKE_BINARY_DIR}/orocos_kdl_src")
+  # Clone the fork into MJ_KDL_OROCOS_KDL_DIR (default: third_party/...), then
+  # build it. The checkout persists across builds like the Menagerie checkout.
   set(_MJ_KDL_OROCOS_DOWNLOAD
     GIT_REPOSITORY "${MJ_KDL_OROCOS_KDL_GIT_REPOSITORY}"
     GIT_TAG        "${MJ_KDL_OROCOS_KDL_GIT_TAG}"
@@ -181,12 +188,14 @@ elseif(MJ_KDL_FETCH_OROCOS_KDL)
   )
   message(
     STATUS
-    "Orocos KDL: building ${MJ_KDL_OROCOS_KDL_GIT_REPOSITORY} (${MJ_KDL_OROCOS_KDL_GIT_TAG})"
+    "Orocos KDL: cloning ${MJ_KDL_OROCOS_KDL_GIT_REPOSITORY} "
+    "(${MJ_KDL_OROCOS_KDL_GIT_TAG}) into ${_MJ_KDL_OROCOS_SRC}"
   )
 else()
   message(FATAL_ERROR
-    "No Orocos KDL source. Enable MJ_KDL_FETCH_OROCOS_KDL (default) or set "
-    "MJ_KDL_OROCOS_KDL_DIR to a local fork checkout. No system KDL is used.")
+    "No Orocos KDL source at ${_MJ_KDL_OROCOS_SRC} and MJ_KDL_FETCH_OROCOS_KDL "
+    "is OFF. Enable the fetch, point MJ_KDL_OROCOS_KDL_DIR at a fork checkout, "
+    "or set MJ_KDL_OROCOS_KDL_INSTALL_DIR. No system KDL is used.")
 endif()
 ExternalProject_Add(orocos_kdl_ep
   ${_MJ_KDL_OROCOS_DOWNLOAD}
