@@ -50,7 +50,6 @@ ROS 2:
 |----------|--------------|---------|
 | ROS 2 C++ | `colcon` (no separate package) | [ROS 2 C++](#ros-2-c) |
 | ROS 2 Python | `colcon` + venv `--system-site-packages` | [ROS 2 Python](#ros-2-python) |
-| ROS 2 C++ and Python | `colcon` + venv, sourced together | [ROS 2 C++ and Python together](#ros-2-c-and-python-together) |
 
 ### Dependency Versions
 
@@ -261,18 +260,6 @@ python -c "import rclpy, PyKDL, mujoco, mj_kdl_wrapper as mjk; print('ros2 + ', 
 > `python3-pykdl` on the venv `sys.path`. If you suspect the wrong one is loaded,
 > check `python -c "import PyKDL; print(PyKDL.__file__)"` - it should point inside
 > the venv `site-packages`, not `/opt/ros`.
-
-#### ROS 2 C++ and Python together
-
-Nothing extra is needed. Build the C++ side with colcon, then layer the Python
-venv on top in the same shell. Order matters: source ROS 2 and the workspace
-first, then activate the venv so it inherits the ROS 2 environment.
-
-```bash
-source /opt/ros/jazzy/setup.bash
-source ~/ros2_ws/install/setup.bash       # C++ target + workspace overlay
-source ~/ros2_ws/.venv-ros/bin/activate   # Python wheel + mujoco, with rclpy visible
-```
 
 #### One shared KDL
 
