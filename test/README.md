@@ -6,7 +6,7 @@ Tests use GoogleTest and are registered with CTest.  Build and run:
 git clone https://github.com/secorolab/mj_kdl_wrapper.git
 cd mj_kdl_wrapper
 
-cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTS=ON -DFETCH_MENAGERIE=ON
+cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTS=ON -DMJ_KDL_FETCH_MENAGERIE=ON
 cmake --build build --parallel $(nproc)
 
 # Run all tests
@@ -19,7 +19,7 @@ ctest --test-dir build --output-on-failure
 All tests self-skip if `third_party/menagerie/` is absent.  Fetch it with:
 
 ```bash
-cmake -B build -DFETCH_MENAGERIE=ON
+cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON
 ```
 
 | Test | What it covers |
@@ -101,22 +101,3 @@ converges from home to the target pose within the configured joint tolerance.
 - KDL chain has 7 joints.
 - IK error < 2 mm for each waypoint.
 - Full pick sequence: cube lifted > 0.20 m.
-
-### urdf_solver_probe
-
-Standalone diagnostic binary, built when `kdl_parser` is available.  It uses the
-repo-local Kinova URDF at `third_party/kinova/GEN3_URDF_V12.urdf` by default.
-
-- Parses `base_link -> EndEffector_Link` and runs
-  `ChainHdSolver_Vereshchagin_Fixed_Joint` with 6 Cartesian constraints at the
-  home pose.
-- Parses `base_link -> Bracelet_Link`, builds the equivalent MuJoCo-derived
-  KDL chain, and prints side-by-side RNEA gravity torques.
-
-Run directly:
-
-```bash
-./build/test/urdf_solver_probe
-# or with an explicit URDF path
-./build/test/urdf_solver_probe /path/to/GEN3_URDF_V12.urdf
-```

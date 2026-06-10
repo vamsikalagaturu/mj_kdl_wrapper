@@ -1,0 +1,59 @@
+[build-system]
+requires = [
+  "scikit-build-core>=0.11.2",
+  "pybind11>=2.13",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "mj-kdl-wrapper"
+version = "0.1.0"
+description = "Python bindings for mj_kdl_wrapper: MuJoCo physics with Orocos KDL kinematics and dynamics"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Vamsi Kalagaturu" },
+]
+keywords = ["mujoco", "kdl", "orocos", "kinematics", "dynamics", "robotics", "simulation"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: C++",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+  "mujoco==3.9.0",
+]
+
+[project.scripts]
+mj-kdl-fetch-menagerie = "mj_kdl_wrapper.menagerie:main"
+
+[project.urls]
+Homepage = "https://github.com/vamsikalagaturu/mj_kdl_wrapper"
+Repository = "https://github.com/vamsikalagaturu/mj_kdl_wrapper"
+Documentation = "https://github.com/vamsikalagaturu/mj_kdl_wrapper#readme"
+Issues = "https://github.com/vamsikalagaturu/mj_kdl_wrapper/issues"
+
+[tool.scikit-build]
+experimental = true
+cmake.args = [
+  "-DBUILD_PYTHON_BINDINGS=ON",
+  "-DBUILD_TESTS=OFF",
+  "-DBUILD_EXAMPLES=OFF",
+]
+wheel.packages = ["python/mj_kdl_wrapper"]
+build-dir = "build/{wheel_tag}"
+sdist.include = [
+  "cmake/Versions.cmake",
+]
+
+[tool.ruff]
+line-length = 100

@@ -1,7 +1,16 @@
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
-find_dependency(OpenGL REQUIRED)
+
+# The wrapper's exported target links the imported targets these packages provide
+# (glfw, OpenGL::GL, orocos-kdl). Recreate them for consumers. When the install is
+# self-contained the Orocos KDL fork lives in this same prefix, so make sure it is
+# searched.
+list(APPEND CMAKE_PREFIX_PATH "${PACKAGE_PREFIX_DIR}")
+
+find_dependency(OpenGL)
+find_dependency(glfw3)
+find_dependency(orocos_kdl)
 
 include("${CMAKE_CURRENT_LIST_DIR}/mj_kdl_wrapperTargets.cmake")
 

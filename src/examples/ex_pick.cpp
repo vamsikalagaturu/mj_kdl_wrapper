@@ -169,7 +169,7 @@ int main(int argc, char *argv[])
 
     // scene setup
     const std::string arm_mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-    const std::string grp_mjcf = (root / "src/examples/assets/robotiq_2f85/2f85.xml").string();
+    const std::string grp_mjcf = (root / "assets/robotiq_2f85/2f85.xml").string();
 
     mj_kdl::AttachmentSpec gs;
     gs.mjcf_path = grp_mjcf.c_str();

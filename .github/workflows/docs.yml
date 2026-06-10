@@ -1,0 +1,78 @@
+name: docs
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  docs:
+    runs-on: ubuntu-24.04
+    env:
+      MUJOCO_VERSION: 3.9.0
+      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.9.0
+      FETCHCONTENT_BASE_DIR: ${{ github.workspace }}/.fetchcontent
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y \
+            ninja-build doxygen \
+            libeigen3-dev libglfw3-dev libgl-dev libegl-dev
+
+      - name: Cache MuJoCo
+        id: cache-mujoco
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MJ_KDL_MUJOCO_DIR }}
+          key: mujoco-${{ runner.os }}-${{ env.MUJOCO_VERSION }}
+
+      - name: Install MuJoCo ${{ env.MUJOCO_VERSION }}
+        if: steps.cache-mujoco.outputs.cache-hit != 'true'
+        run: |
+          wget -q "https://github.com/google-deepmind/mujoco/releases/download/${MUJOCO_VERSION}/mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
+          tar xzf "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz" -C /tmp
+          rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
+
+      - name: Cache FetchContent deps
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.FETCHCONTENT_BASE_DIR }}
+          key: fetchcontent-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}" \
+            -DBUILD_TESTS=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            -DMJ_KDL_FETCH_MENAGERIE=OFF \
+            -DBUILD_DOCS=ON \
+            -DFETCHCONTENT_BASE_DIR="${FETCHCONTENT_BASE_DIR}" \
+            -DFETCHCONTENT_UPDATES_DISCONNECTED=ON
+
+      - name: Build docs
+        run: cmake --build build --target docs
+
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: build/docs/html
+
+  deploy-docs:
+    needs: docs
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v5

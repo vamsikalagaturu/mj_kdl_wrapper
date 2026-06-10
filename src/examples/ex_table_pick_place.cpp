@@ -145,13 +145,13 @@ int main(int argc, char *argv[])
     const fs::path root = repo_root();
     if (!fs::exists(root / "third_party/menagerie")) {
         std::cerr << "third_party/menagerie/ not found - run:\n"
-                     "  cmake -B build -DFETCH_MENAGERIE=ON\n";
+                     "  cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON\n";
         return 1;
     }
 
     const std::string arm_mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-    const std::string grp_mjcf = (root / "src/examples/assets/robotiq_2f85/2f85.xml").string();
-    const std::string table_mjcf = (root / "src/examples/assets/table.xml").string();
+    const std::string grp_mjcf = (root / "assets/robotiq_2f85/2f85.xml").string();
+    const std::string table_mjcf = (root / "assets/table.xml").string();
 
     mj_kdl::AttachmentSpec gripper;
     gripper.mjcf_path = grp_mjcf.c_str();

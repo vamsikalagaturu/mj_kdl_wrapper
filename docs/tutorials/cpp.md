@@ -1,9 +1,8 @@
-# Mujoco KDL Wrapper Tutorial
+# C++ Tutorial {#page_tutorial_cpp}
 
-This tutorial builds a simulation application in layers: install the package,
-compile a robot scene, add KDL control, add reset hooks, add objects and cameras,
-use the Simulate UI, record video, and then extend the scene to more robots and
-more complex task assets.
+This tutorial builds a C++ simulation application in layers: compile a robot scene,
+add KDL control, add reset hooks, add objects and cameras, use the Simulate UI,
+record video, and then extend the scene to more robots and more complex task assets.
 
 The snippets assume the package is built with MuJoCo Menagerie available, because
 the examples use the Kinova GEN3 arm and Robotiq 2F-85 gripper.
@@ -18,6 +17,7 @@ The wrapper has four layers. Keep them separate and the API stays simple:
 | Runtime environment | `Env` | Own `mjModel`/`mjData`, registered robots, and reset hooks |
 | Robot control handle | `Robot` | KDL chain, joint maps, measured ports, command ports |
 | Visualization/recording | `Viewer`, `VideoRecorder` | Interactive Simulate UI and offscreen MP4 recording |
+| Python package | `mj_kdl_wrapper` | Python wrappers for the same scene, robot, reset, viewer, and recorder concepts |
 
 The important ownership rule:
 
@@ -37,89 +37,6 @@ Most examples follow this flow:
 6. Start `init_window_sim()` or a headless loop.
 7. In the loop: `step()`, `update()`, compute commands, write command ports.
 8. Cleanup in reverse order: viewer/recorder, robots, env.
-
-## 1. Install Dependencies
-
-Install system dependencies:
-
-```bash
-sudo apt update
-sudo apt install cmake g++ libglfw3-dev libgl-dev libegl-dev liborocos-kdl-dev ffmpeg
-```
-
-Install MuJoCo 3.8.0:
-
-```bash
-wget https://github.com/google-deepmind/mujoco/releases/download/3.8.0/mujoco-3.8.0-linux-x86_64.tar.gz
-sudo tar -xzf mujoco-3.8.0-linux-x86_64.tar.gz -C /opt/
-```
-
-Configure and build:
-
-```bash
-git clone https://github.com/secorolab/mj_kdl_wrapper.git
-cd mj_kdl_wrapper
-
-cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DFETCH_MENAGERIE=ON
-cmake --build build --parallel $(nproc)
-```
-
-The package expects MuJoCo 3.8.0 by default at `/opt/mujoco-3.8.0`. Override it
-with `-DMUJOCO_ROOT=/path/to/mujoco-3.8.0` if needed.
-
-Useful CMake options:
-
-| Option | Default | When to change it |
-|--------|---------|-------------------|
-| `MUJOCO_ROOT` | `/opt/mujoco-3.8.0` | MuJoCo is installed somewhere else |
-| `FETCH_MENAGERIE` | `OFF` | You want the bundled examples to build robot assets automatically |
-| `BUILD_RECORDER` | `ON` | Turn off if EGL is unavailable and you do not need MP4 recording |
-| `BUILD_TESTS` | `ON` | Turn off for a smaller install-only build |
-| `BUILD_DOCS` | `OFF` | Turn on to generate Doxygen HTML docs |
-
-Run a smoke test:
-
-```bash
-ctest --test-dir build --output-on-failure
-./build/src/examples/ex_gravity_comp --headless
-```
-
-If you are developing inside a larger workspace, point CMake at this package
-directory explicitly:
-
-```bash
-cmake -S src/mj_kdl_wrapper -B build/mj_kdl_wrapper \
-      -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-      -DFETCH_MENAGERIE=ON
-cmake --build build/mj_kdl_wrapper --parallel $(nproc)
-```
-
-## 1.1 Build A Small External Program
-
-When using the wrapper from another CMake project, link against
-`mj_kdl_wrapper` and include the public header:
-
-```cmake
-cmake_minimum_required(VERSION 3.16)
-project(my_sim LANGUAGES CXX)
-
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-find_package(mj_kdl_wrapper REQUIRED)
-
-add_executable(my_sim main.cpp)
-target_link_libraries(my_sim PRIVATE mj_kdl_wrapper::mj_kdl_wrapper)
-```
-
-If you are building directly inside this repository before install, the example
-targets in `src/examples/CMakeLists.txt` show the same pattern with the in-tree
-target:
-
-```cmake
-add_executable(my_sim main.cpp)
-target_link_libraries(my_sim PRIVATE mj_kdl_wrapper)
-```
 
 ## 2. Start With One Robot Scene
 
@@ -242,7 +159,7 @@ robot.ctrl_mode = mj_kdl::CtrlMode::POSITION;
 mj_kdl::Viewer viewer;
 mj_kdl::init_window_sim(&viewer, &robot, "position control");
 
-while (mj_kdl::step(&viewer, env.model, env.data)) {
+while (mj_kdl::step(&robot)) {
     mj_kdl::update(&robot);
 
     for (int i = 0; i < robot.n_joints; ++i) {
@@ -266,7 +183,7 @@ KDL::ChainDynParam dyn(robot.chain, KDL::Vector(0.0, 0.0, scene.gravity_z));
 KDL::JntArray q(robot.n_joints);
 KDL::JntArray g(robot.n_joints);
 
-while (mj_kdl::step(&viewer, env.model, env.data)) {
+while (mj_kdl::step(&robot)) {
     mj_kdl::update(&robot);
 
     for (int i = 0; i < robot.n_joints; ++i) {
@@ -295,7 +212,7 @@ the gripper offset and 180-degree flip. So the gripper attachment is just:
 
 ```cpp
 mj_kdl::AttachmentSpec gripper{
-    .mjcf_path = "third_party/menagerie/robotiq_2f85/2f85.xml",
+    .mjcf_path = "assets/robotiq_2f85/2f85.xml",
     .attach_to = { mj_kdl::AttachKind::Site, "pinch_site" },
     .prefix    = "g_",
 };
@@ -358,7 +275,7 @@ mj_kdl::AttachmentSpec sensor{
 };
 
 mj_kdl::AttachmentSpec gripper{
-    .mjcf_path = "third_party/menagerie/robotiq_2f85/2f85.xml",
+    .mjcf_path = "assets/robotiq_2f85/2f85.xml",
     .attach_to = { mj_kdl::AttachKind::Body, "ft_tool" },
     .prefix    = "g_",
 };
@@ -400,7 +317,7 @@ primitives, `build_scene` runs explicit checks:
 ```cpp
 mj_kdl::SceneObject table{
     .name      = "table",
-    .mjcf_path = "src/examples/assets/table.xml",
+    .mjcf_path = "assets/table.xml",
     .pos       = { 0.0, 0.0, 0.7 },
     .fixed     = true,
 };
@@ -569,7 +486,7 @@ The full viewer path is:
 mj_kdl::Viewer viewer;
 mj_kdl::init_window_sim(&viewer, &robot, "task");
 
-while (mj_kdl::step(&viewer, env.model, env.data)) {
+while (mj_kdl::step(&robot)) {
     mj_kdl::update(&robot);
     // control...
 }
@@ -732,7 +649,7 @@ the tool offset and 180-degree flip, so no `pos`/`euler` are needed:
 
 ```cpp
 mj_kdl::AttachmentSpec gripper{
-    .mjcf_path = "third_party/menagerie/robotiq_2f85/2f85.xml",
+    .mjcf_path = "assets/robotiq_2f85/2f85.xml",
     .attach_to = { mj_kdl::AttachKind::Site, "pinch_site" },
     .prefix    = "g_",
 };
@@ -744,7 +661,7 @@ tabletop surface center, so placing it at `z = 0.7` makes the top surface `0.7 m
 ```cpp
 mj_kdl::SceneObject table{
     .name      = "table",
-    .mjcf_path = "src/examples/assets/table.xml",
+    .mjcf_path = "assets/table.xml",
     .pos       = { 0.0, 0.0, 0.7 },
     .fixed     = true,
 };
@@ -1038,7 +955,7 @@ mj_kdl::Viewer viewer;
 mj_kdl::init_window_sim(&viewer, &robot, "table pick-place");
 mj_kdl::use_camera(&viewer, env.model, "task");
 
-while (mj_kdl::step(&viewer, env.model, env.data)) {
+while (mj_kdl::step(&robot)) {
     mj_kdl::update(&robot);
     run_state_machine();
     apply_impedance_command();
@@ -1109,7 +1026,7 @@ The included examples show how these pieces combine:
 - `ex_dual_arm`: two prefixed robots in one scene.
 - `ex_record`: headless MP4 recording.
 
-Read `src/examples/README.md` for behavior summaries and expected outputs.
+Read `../examples.md` for behavior summaries and expected outputs.
 
 ## 15. Modify A Running Scene
 
@@ -1176,6 +1093,6 @@ Run tests:
 ctest --test-dir build --output-on-failure
 ```
 
-The vendored `src/simulate_ui/simulate.cc` is MuJoCo 3.8.0 sample UI code with
+The vendored `src/simulate_ui/simulate.cc` is MuJoCo sample UI code with
 small wrapper UI additions. It is intentionally excluded from clang-tidy style
 cleanup so local changes stay reviewable against upstream.

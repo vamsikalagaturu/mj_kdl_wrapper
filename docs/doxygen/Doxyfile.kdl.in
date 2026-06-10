@@ -1,0 +1,48 @@
+# Doxyfile.kdl.in -- build an external-symbol tag file for Orocos KDL.
+#
+# The main project docs consume this tag file so KDL symbols in snippets/source
+# can be resolved. A small local KDL HTML tree is also generated under
+# build/docs/html/kdl so external-symbol links do not point at missing pages.
+
+PROJECT_NAME           = "Orocos KDL"
+OUTPUT_DIRECTORY       = @CMAKE_CURRENT_BINARY_DIR@/docs
+CREATE_SUBDIRS         = NO
+OUTPUT_LANGUAGE        = English
+
+INPUT                  = @MJ_KDL_KDL_DOXYGEN_INPUTS@
+RECURSIVE              = YES
+FILE_PATTERNS          = *.h *.hpp
+
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = NO
+HIDE_UNDOC_MEMBERS     = NO
+SHOW_FILES             = NO
+SHOW_NAMESPACES        = YES
+
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html/kdl
+GENERATE_TREEVIEW      = NO
+DISABLE_INDEX          = YES
+SEARCHENGINE           = NO
+USE_MATHJAX            = YES
+GENERATE_LATEX         = NO
+GENERATE_RTF           = NO
+GENERATE_MAN           = NO
+GENERATE_XML           = NO
+GENERATE_TAGFILE       = @MJ_KDL_KDL_TAG_FILE@
+
+SOURCE_BROWSER         = NO
+REFERENCED_BY_RELATION = NO
+REFERENCES_RELATION    = NO
+
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = NO
+
+WARNINGS               = NO
+WARN_IF_UNDOCUMENTED   = NO
+WARN_IF_DOC_ERROR      = NO
+WARN_IF_INCOMPLETE_DOC = NO
+WARN_NO_PARAMDOC       = NO
+WARN_IF_UNDOC_ENUM_VAL = NO
+QUIET                  = YES

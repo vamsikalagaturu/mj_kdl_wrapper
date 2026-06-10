@@ -17,6 +17,9 @@
 #ifdef MJ_KDL_HAS_EGL
 #include <EGL/egl.h>
 #endif
+#ifdef MJ_KDL_RELOCATABLE_PLUGINS
+#include <dlfcn.h>
+#endif
 
 #include <kdl/frames.hpp>
 
@@ -33,12 +36,34 @@
 
 namespace mj_kdl {
 
+static std::string default_mujoco_plugin_dir()
+{
+#ifdef MJ_KDL_RELOCATABLE_PLUGINS
+    Dl_info info {};
+    if (dladdr(reinterpret_cast<void *>(&default_mujoco_plugin_dir), &info) && info.dli_fname) {
+        std::string library_path(info.dli_fname);
+        const auto  slash = library_path.find_last_of('/');
+        if (slash != std::string::npos) {
+            return library_path.substr(0, slash) + "/mujoco_plugin";
+        }
+    }
+#endif
+    return MUJOCO_PLUGIN_DIR;
+}
+
 void ensure_plugins_loaded()
 {
     static std::once_flag flag;
     std::call_once(flag, []() {
+        /* MuJoCo's plugin registry is global to the loaded libmujoco. When this
+         * library shares that libmujoco with the official mujoco Python package,
+         * importing mujoco already registers the bundled plugins; loading them
+         * again is a fatal "plugin already registered" error. Only load when the
+         * registry is still empty (e.g. standalone C++ use). */
+        if (mjp_pluginCount() > 0) return;
         const char *env = std::getenv("MUJOCO_PLUGIN_DIR");
-        const char *dir = env ? env : MUJOCO_PLUGIN_DIR;
+        const std::string fallback = default_mujoco_plugin_dir();
+        const char       *dir      = env ? env : fallback.c_str();
         mj_loadAllPluginLibraries(dir, nullptr);
     });
 }
@@ -1730,6 +1755,12 @@ void add_trace_segment(Viewer *v, const KDL::Vector &a, const KDL::Vector &b, co
 
 bool is_running(const Viewer *v)
 {
+    if (!v) return false;
+    if (v->_sim_ui) {
+        auto *ss = static_cast<SimUiState *>(v->_sim_ui);
+        if (!ss || !ss->sim) return false;
+        return !ss->sim->exitrequest.load();
+    }
     if (!v->window) return false;
     return !glfwWindowShouldClose(v->window);
 }

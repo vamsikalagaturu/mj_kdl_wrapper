@@ -4,16 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A C++ library bridging **MuJoCo 3.8** physics simulation with **KDL** (Kinematics and Dynamics Library) for robot kinematics/dynamics. The primary target is the Kinova GEN3 7-DOF arm with optional Robotiq 2F-85 gripper support.
+A C++ library bridging **MuJoCo 3.9** physics simulation with **KDL** (Kinematics and Dynamics Library) for robot kinematics/dynamics. The primary target is the Kinova GEN3 7-DOF arm with optional Robotiq 2F-85 gripper support.
 
 ## Build
 
-Requires: MuJoCo 3.8.0 at `/opt/mujoco-3.8.0` (override with `-DMUJOCO_ROOT=...`), and apt packages `liborocos-kdl-dev libglfw3-dev libgl-dev`. Older MuJoCo releases are not supported; CMake validates `mjVERSION_HEADER == 3008000`.
+Requires: MuJoCo 3.9.0 at `/opt/mujoco-3.9.0` (override with `-DMJ_KDL_MUJOCO_DIR=...` or use `-DMJ_KDL_FETCH_MUJOCO=ON`), apt packages `libglfw3-dev libgl-dev`, and the secorolab Orocos KDL fork. CMake fetches and builds the KDL fork by default; system `liborocos-kdl` is not used. Older MuJoCo releases are not supported; CMake validates the expected `mjVERSION_HEADER` from `cmake/Versions.cmake`.
 
 **Always build with all flags and verify tests pass before considering any task complete:**
 
 ```bash
-cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTS=ON -DFETCH_MENAGERIE=ON -DBUILD_DOCS=ON
+cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTS=ON -DMJ_KDL_FETCH_MENAGERIE=ON -DBUILD_DOCS=ON
 cmake --build build --parallel $(nproc)
 cmake --build build --target docs
 ctest --test-dir build --output-on-failure
@@ -32,7 +32,7 @@ ctest --test-dir build --output-on-failure
 ./build/test_mjcf_trq_ctrl --gui
 ```
 
-All tests self-skip when `third_party/menagerie` is absent (requires `-DFETCH_MENAGERIE=ON`).
+All tests self-skip when `third_party/menagerie` is absent (requires `-DMJ_KDL_FETCH_MENAGERIE=ON`).
 
 ## Formatting and Linting
 
