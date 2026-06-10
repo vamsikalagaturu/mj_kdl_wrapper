@@ -54,8 +54,9 @@ sudo apt install \
   libeigen3-dev libglfw3-dev libgl-dev libegl-dev ffmpeg
 ```
 
-ROS 2 Jazzy and `colcon` (via `python3-colcon-common-extensions`) are assumed
-present and sourced.
+ROS 2 (**Jazzy** or **Lyrical**) and `colcon` (via
+`python3-colcon-common-extensions`) are assumed present and sourced. CI builds
+both distros.
 
 ## ROS 2 C++
 
@@ -63,11 +64,13 @@ Create the workspace, clone the KDL fork and the wrapper, then build KDL first a
 the wrapper against it:
 
 ```bash
+# Workspace with the KDL fork and the wrapper as sibling packages
 mkdir -p ~/ros2_ws/src && cd ~/ros2_ws
 git clone -b feature/achd_fixed_joint \
   https://github.com/secorolab/orocos_kinematics_dynamics.git src/orocos_kinematics_dynamics
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git src/mj_kdl_wrapper
 
+# Use your distro: jazzy or lyrical
 source /opt/ros/jazzy/setup.bash
 
 # 1. Build the fork's C++ KDL as the shared package
@@ -120,9 +123,14 @@ system `rclpy` while keeping the wheel and its pinned `mujoco==3.9.0` inside the
 venv:
 
 ```bash
+# Use your distro: jazzy or lyrical
 source /opt/ros/jazzy/setup.bash
+
+# venv that can still see the system rclpy
 python3 -m venv --system-site-packages ~/ros2_ws/.venv-ros
 source ~/ros2_ws/.venv-ros/bin/activate
+
+# build + install the wheel, then verify the combined stack imports
 pip install "git+https://github.com/vamsikalagaturu/mj_kdl_wrapper.git"
 python -c "import rclpy, PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mjk.mujoco_version())"
 ```

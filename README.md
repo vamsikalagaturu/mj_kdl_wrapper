@@ -1,6 +1,7 @@
 # Mujoco KDL Wrapper
 
 [![build](https://github.com/vamsikalagaturu/mj_kdl_wrapper/actions/workflows/build.yml/badge.svg)](https://github.com/vamsikalagaturu/mj_kdl_wrapper/actions/workflows/build.yml)
+[![tests](https://github.com/vamsikalagaturu/mj_kdl_wrapper/actions/workflows/tests.yml/badge.svg)](https://github.com/vamsikalagaturu/mj_kdl_wrapper/actions/workflows/tests.yml)
 [![docs](https://github.com/vamsikalagaturu/mj_kdl_wrapper/actions/workflows/docs.yml/badge.svg)](https://github.com/vamsikalagaturu/mj_kdl_wrapper/actions/workflows/docs.yml)
 [![python](https://github.com/vamsikalagaturu/mj_kdl_wrapper/actions/workflows/python.yml/badge.svg)](https://github.com/vamsikalagaturu/mj_kdl_wrapper/actions/workflows/python.yml)
 [![ros2](https://github.com/vamsikalagaturu/mj_kdl_wrapper/actions/workflows/ros2.yml/badge.svg)](https://github.com/vamsikalagaturu/mj_kdl_wrapper/actions/workflows/ros2.yml)
@@ -56,9 +57,15 @@ sudo apt install cmake g++ git python3-dev python3-venv \
 ```bash
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
 cd mj_kdl_wrapper
+
+# configure (downloads MuJoCo, clones and builds the KDL fork)
 cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+# compile
 cmake --build build --parallel $(nproc)
-cmake --install build          # optional; self-contained, bundles KDL into the prefix
+
+# optional install; self-contained, bundles KDL into the prefix
+cmake --install build
 ```
 
 To share one KDL across several projects, set up a `ws/` folder, build the fork
@@ -66,16 +73,19 @@ once into `ws/install`, and point the wrapper (and any sibling) at it instead of
 bundling its own:
 
 ```bash
+# Workspace folder with the two source trees
 mkdir -p ws && cd ws
 git clone -b feature/achd_fixed_joint \
   https://github.com/secorolab/orocos_kinematics_dynamics.git
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
 
+# 1. Build the KDL fork once into ws/install
 cmake -S orocos_kinematics_dynamics/orocos_kdl -B build/orocos_kdl \
   -DCMAKE_INSTALL_PREFIX="$PWD/install" -DENABLE_TESTS=OFF
 cmake --build build/orocos_kdl --parallel $(nproc)
 cmake --install build/orocos_kdl
 
+# 2. Build the wrapper against that shared KDL (bundles none of its own)
 cmake -S mj_kdl_wrapper -B build/mj_kdl_wrapper \
   -DCMAKE_INSTALL_PREFIX="$PWD/install" -DMJ_KDL_OROCOS_KDL_INSTALL_DIR="$PWD/install"
 cmake --build build/mj_kdl_wrapper --parallel $(nproc)
@@ -97,18 +107,25 @@ Menagerie models, and build options.
 
 ### ROS 2 (colcon)
 
-Build the secorolab KDL as its own workspace package, then the wrapper against it
-so the overlay shares one `liborocos-kdl`:
+Tested on ROS 2 **Jazzy** and **Lyrical**. Build the secorolab KDL as its own
+workspace package, then the wrapper against it so the overlay shares one
+`liborocos-kdl`:
 
 ```bash
+# Workspace with the KDL fork and the wrapper as sibling packages
 mkdir -p ~/ros2_ws/src && cd ~/ros2_ws
 git clone -b feature/achd_fixed_joint \
   https://github.com/secorolab/orocos_kinematics_dynamics.git src/orocos_kinematics_dynamics
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git src/mj_kdl_wrapper
 
+# Use your distro: jazzy or lyrical
 source /opt/ros/jazzy/setup.bash
+
+# 1. Build the shared KDL package
 colcon build --packages-select orocos_kdl --cmake-args -DENABLE_TESTS=OFF
 source install/setup.bash
+
+# 2. Build the wrapper against it
 colcon build --packages-select mj_kdl_wrapper --cmake-args -DMJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON
 ```
 

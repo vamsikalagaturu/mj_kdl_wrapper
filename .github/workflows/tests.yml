@@ -1,11 +1,11 @@
-name: build
+name: tests
 
 on:
   push:
   pull_request:
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-24.04
     env:
       MUJOCO_VERSION: 3.9.0
@@ -23,9 +23,6 @@ jobs:
             ccache ninja-build \
             libeigen3-dev libglfw3-dev libgl-dev libegl-dev
 
-      - name: Check version metadata
-        run: python3 scripts/check_versions.py
-
       # Native MuJoCo release (cached between runs).
       - name: Cache MuJoCo
         id: cache-mujoco
@@ -41,7 +38,24 @@ jobs:
           tar xzf "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz" -C /tmp
           rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
 
-      # Compiler cache, shared with the tests workflow via the common prefix.
+      # Robot models the tests load (cached); without them the tests self-skip.
+      - name: Cache MuJoCo Menagerie
+        id: cache-menagerie
+        uses: actions/cache@v4
+        with:
+          path: third_party/menagerie
+          key: menagerie-${{ runner.os }}-v1
+          restore-keys: |
+            menagerie-${{ runner.os }}-
+
+      - name: Fetch MuJoCo Menagerie
+        if: steps.cache-menagerie.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p third_party
+          [ -d third_party/menagerie/.git ] || \
+            git clone --depth 1 https://github.com/google-deepmind/mujoco_menagerie.git third_party/menagerie
+
+      # Compiler cache, shared with the build workflow via the common prefix.
       - name: Cache ccache
         uses: actions/cache@v4
         with:
@@ -56,8 +70,6 @@ jobs:
           path: ${{ env.FETCHCONTENT_BASE_DIR }}
           key: fetchcontent-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
 
-      # Compile the library, examples, and test binaries (no ctest here - the
-      # tests workflow runs them).
       - name: Configure
         run: |
           cmake -S . -B build -G Ninja \
@@ -73,3 +85,6 @@ jobs:
 
       - name: Build
         run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure

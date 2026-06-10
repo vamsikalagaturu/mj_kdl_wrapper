@@ -56,8 +56,14 @@ fetches the robot models. No system MuJoCo or KDL is ever used.
 ```bash
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
 cd mj_kdl_wrapper
+
+# configure (downloads MuJoCo, builds the KDL fork, fetches Menagerie models)
 cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMJ_KDL_FETCH_MENAGERIE=ON
+
+# compile
 cmake --build build --parallel $(nproc)
+
+# run the test suite
 ctest --test-dir build --output-on-failure
 ```
 
@@ -76,7 +82,8 @@ What happens during configure/build:
 ### Install
 
 ```bash
-cmake -B build -DCMAKE_INSTALL_PREFIX="$HOME/ws"   # choose the prefix at configure time
+# choose the prefix at configure time
+cmake -B build -DCMAKE_INSTALL_PREFIX="$HOME/ws"
 cmake --build build --parallel $(nproc)
 cmake --install build
 ```
