@@ -1,0 +1,2 @@
+The bundled Orocos KDL and PyKDL binaries, when present, are built from the secorolab fork branch `feature/achd_fixed_joint`:
+https://github.com/secorolab/orocos_kinematics_dynamics/tree/feature/achd_fixed_joint

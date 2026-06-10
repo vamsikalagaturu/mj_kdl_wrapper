@@ -42,7 +42,7 @@ set(
   MJ_KDL_OROCOS_KDL_GIT_TAG
   "feature/achd_fixed_joint"
   CACHE STRING
-  "Orocos KDL fork branch/tag to build"
+  "Orocos KDL fork branch, tag, or commit to build"
 )
 # Source/clone destination for the fork. Defaults to a persistent checkout under
 # third_party/ (like the Menagerie checkout). If this directory already holds the
@@ -408,9 +408,15 @@ if(BUILD_PYTHON_BINDINGS)
           DESTINATION .
           FILES_MATCHING PATTERN "PyKDL*.so"
         )
+        install(FILES licenses/LGPL-2.1.txt licenses/KDL_SOURCE.txt
+          DESTINATION .
+        )
         install(DIRECTORY "${_MJ_KDL_OROCOS_PREFIX}/lib/"
           DESTINATION mj_kdl_wrapper
           FILES_MATCHING PATTERN "liborocos-kdl.so*"
+        )
+        install(FILES licenses/LGPL-2.1.txt licenses/KDL_SOURCE.txt
+          DESTINATION mj_kdl_wrapper
         )
     endif()
 
@@ -441,6 +447,13 @@ if(BUILD_PYTHON_BINDINGS)
     install(TARGETS mj_kdl_wrapper
       LIBRARY DESTINATION mj_kdl_wrapper
       RUNTIME DESTINATION mj_kdl_wrapper
+    )
+    install(FILES
+      NOTICE
+      THIRD_PARTY_LICENSES.md
+      licenses/Apache-2.0.txt
+      licenses/Robotiq-2F85-BSD-2-Clause.txt
+      DESTINATION mj_kdl_wrapper
     )
     # libmujoco is intentionally not bundled: the wheel depends on the matching
     # `mujoco` pip package and links its shared library at runtime via the
@@ -594,6 +607,13 @@ if(MJ_KDL_INSTALL_CPP_PACKAGE)
       LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
       ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     )
+    install(FILES
+      NOTICE
+      THIRD_PARTY_LICENSES.md
+      licenses/Apache-2.0.txt
+      licenses/Robotiq-2F85-BSD-2-Clause.txt
+      DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    )
     install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
     # Self-contained install: bundle the fork we built (lib + headers + its CMake
@@ -604,6 +624,9 @@ if(MJ_KDL_INSTALL_CPP_PACKAGE)
         install(DIRECTORY "${_MJ_KDL_OROCOS_PREFIX}/"
           DESTINATION .
           USE_SOURCE_PERMISSIONS
+        )
+        install(FILES licenses/LGPL-2.1.txt licenses/KDL_SOURCE.txt
+          DESTINATION ${CMAKE_INSTALL_LIBDIR}
         )
         set_property(TARGET mj_kdl_wrapper APPEND PROPERTY INSTALL_RPATH "$ORIGIN")
     endif()

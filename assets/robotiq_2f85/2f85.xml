@@ -1,5 +1,5 @@
 <!--
-  Derived from MuJoCo Menagerie robotiq_2f85/2f85.xml (Apache-2.0). Self-contained (meshes copied
+  Derived from MuJoCo Menagerie robotiq_2f85/2f85.xml (BSD 2-Clause style license). Self-contained (meshes copied
   into ./assets). Only the actuator is changed: joint-direct position actuator so ctrl == the
   driver-joint angle (rad).
 -->

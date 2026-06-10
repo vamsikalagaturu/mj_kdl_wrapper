@@ -1,0 +1,12 @@
+mj_kdl_wrapper
+Copyright (c) 2026 Vamsi Kalagaturu
+
+This product includes software developed by third parties:
+
+- MuJoCo, licensed under the Apache License 2.0: https://github.com/google-deepmind/mujoco.
+- `src/simulate_ui/` is derived from MuJoCo's `simulate` sample and has been modified for mj_kdl_wrapper: https://github.com/google-deepmind/mujoco/tree/main/simulate.
+- Orocos KDL and PyKDL are built from the secorolab fork when bundled; source is available at https://github.com/secorolab/orocos_kinematics_dynamics.
+- `assets/robotiq_2f85/` is derived from MuJoCo Menagerie's Robotiq 2F-85 model, copyright ROS-Industrial, and has been modified for mj_kdl_wrapper.
+- MuJoCo Menagerie robot assets are optionally fetched from https://github.com/google-deepmind/mujoco_menagerie and are subject to the upstream repository and per-model license files.
+
+See `THIRD_PARTY_LICENSES.md` and the files in `licenses/` for license texts and source URLs.
