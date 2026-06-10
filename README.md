@@ -56,6 +56,23 @@ cmake --build build --parallel $(nproc)
 cmake --install build          # optional; self-contained, bundles KDL into the prefix
 ```
 
+To share one KDL across several projects, build the fork separately into a prefix
+and point the wrapper at it (instead of bundling its own):
+
+```bash
+git clone -b feature/achd_fixed_joint \
+  https://github.com/secorolab/orocos_kinematics_dynamics.git
+cmake -S orocos_kinematics_dynamics/orocos_kdl -B build/orocos_kdl \
+  -DCMAKE_INSTALL_PREFIX="$HOME/.local" -DENABLE_TESTS=OFF
+cmake --build build/orocos_kdl --parallel $(nproc)
+cmake --install build/orocos_kdl
+
+cmake -B build -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
+  -DMJ_KDL_OROCOS_KDL_INSTALL_DIR="$HOME/.local"
+cmake --build build --parallel $(nproc)
+cmake --install build
+```
+
 The [standalone guide](docs/install/standalone.md) covers tests, custom
 MuJoCo/KDL, sharing one KDL across projects, and all CMake options.
 
