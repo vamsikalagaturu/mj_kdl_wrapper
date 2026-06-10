@@ -191,9 +191,16 @@ This is a plain CMake project; it is not built on `ament_cmake`. colcon can stil
 build it: the `colcon-cmake` extension (part of `python3-colcon-common-extensions`,
 installed with ROS 2) discovers any directory with a `CMakeLists.txt` and builds
 it as a `cmake`-type package named after the `project()` call. A minimal
-`package.xml` (build type `cmake`) is included so the package also participates in
-colcon dependency ordering, `rosdep`, and `ros2 pkg list`. Plain CMake and pip
-builds ignore `package.xml`, so the non-ROS workflows above are unchanged.
+`package.xml` (build type `cmake`) is included so the package participates in
+colcon dependency ordering and `rosdep`. Plain CMake and pip builds ignore
+`package.xml`, so the non-ROS workflows above are unchanged.
+
+> [!NOTE]
+> Because the build type is `cmake` (not `ament_cmake`), the package is not
+> registered in the ament index, so `ros2 pkg list` / `ros2 pkg prefix` will not
+> show it. That is expected and does not affect linking: dependent packages still
+> consume it with `find_package(mj_kdl_wrapper)`, and colcon orders the build via
+> `package.xml`.
 
 > [!IMPORTANT]
 > KDL in ROS 2: this project requires the secorolab Orocos KDL fork (not the
