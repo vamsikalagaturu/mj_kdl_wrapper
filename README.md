@@ -194,22 +194,21 @@ A plain CMake project (not `ament_cmake`); colcon builds it via the bundled
 
 Build the secorolab KDL as its own workspace package so the overlay has one shared
 `liborocos-kdl` (the distro KDL and `python3-pykdl` use the same SONAME, and two
-copies in one process is unsafe). Workspace layout:
-
-```
-ros2_ws/src/
-  orocos_kinematics_dynamics/   # secorolab fork -> orocos_kdl package
-  mj_kdl_wrapper/
-```
-
-Install the [system packages](#system-packages) in the environment first.
+copies in one process is unsafe). Install the [system packages](#system-packages)
+in the environment first.
 
 #### ROS 2 C++
 
-Build the KDL fork first, then the wrapper against it:
+Create the workspace, clone the KDL fork and the wrapper, then build KDL first and
+the wrapper against it:
 
 ```bash
-cd ~/ros2_ws && source /opt/ros/jazzy/setup.bash
+mkdir -p ~/ros2_ws/src && cd ~/ros2_ws
+git clone -b feature/achd_fixed_joint \
+  https://github.com/secorolab/orocos_kinematics_dynamics.git src/orocos_kinematics_dynamics
+git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git src/mj_kdl_wrapper
+
+source /opt/ros/jazzy/setup.bash
 colcon build --packages-select orocos_kdl --cmake-args -DENABLE_TESTS=OFF
 source install/setup.bash
 colcon build --packages-select mj_kdl_wrapper \
@@ -314,7 +313,6 @@ See [test/README.md](test/README.md) for the full list of tests.
 
 | Path | Description |
 |------|-------------|
-| `third_party/menagerie/kinova_gen3/gen3.xml` | Kinova GEN3 7-DOF arm (MuJoCo Menagerie) |
 | `assets/robotiq_2f85/2f85.xml` | Local Robotiq 2F-85 gripper asset used by examples/tests |
 | `assets/table.xml` | Table asset with authored `table_top` site |
 | `assets/mug.xml`, `assets/mug_table.xml` | Pouring example assets |
