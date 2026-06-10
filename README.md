@@ -266,7 +266,7 @@ python -c "import rclpy, PyKDL, mujoco, mj_kdl_wrapper as mjk; print('ros2 + ', 
 > The wheel bundles its own `PyKDL`, which takes precedence over the system
 > `python3-pykdl` on the venv `sys.path`. If you suspect the wrong one is loaded,
 > check `python -c "import PyKDL; print(PyKDL.__file__)"` - it should point inside
-> the venv `site-packages`, not `/opt/ros`.
+> the venv `site-packages`, not the system `/usr/lib/python3/dist-packages`.
 
 #### One shared KDL
 
