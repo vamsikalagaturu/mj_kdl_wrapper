@@ -66,6 +66,18 @@ set(
   CACHE PATH
   "Pre-installed Orocos KDL prefix to consume (skips building/bundling the fork)"
 )
+# Consume an Orocos KDL provided as a CMake package on CMAKE_PREFIX_PATH via
+# find_package(orocos_kdl). This is the natural way to share one KDL across a
+# workspace - a colcon overlay (the fork built as the orocos_kdl package) or any
+# prefix on CMAKE_PREFIX_PATH where the secorolab fork is installed. When ON, no
+# ExternalProject build runs and nothing is bundled. The found package MUST be the
+# secorolab fork, not a stock distro KDL. Takes precedence over
+# MJ_KDL_OROCOS_KDL_INSTALL_DIR and the in-tree build.
+option(
+  MJ_KDL_OROCOS_KDL_FROM_PACKAGE
+  "Consume Orocos KDL via find_package(orocos_kdl) instead of building the fork"
+  OFF
+)
 
 # MuJoCo - prefer /opt/mujoco-<version>, override with -DMJ_KDL_MUJOCO_DIR=...
 set(MJ_KDL_MUJOCO_DIR "${MJ_KDL_MUJOCO_DEFAULT_DIR}" CACHE PATH "MuJoCo install location")
@@ -147,7 +159,19 @@ endif()
 # no system liborocos-kdl is ever consulted. The wrapper consumes it through an
 # IMPORTED target and PyKDL (built later) consumes its install prefix.
 include(ExternalProject)
-if(MJ_KDL_OROCOS_KDL_INSTALL_DIR)
+# TRUE only when this build compiles and installs its own copy of the fork. The
+# consume-from-elsewhere branches leave it FALSE, which switches off PyKDL
+# building, KDL bundling, and the self-contained install of KDL.
+set(_MJ_KDL_BUILD_OROCOS_KDL FALSE)
+if(MJ_KDL_OROCOS_KDL_FROM_PACKAGE)
+  # Consume an Orocos KDL provided as a CMake package on CMAKE_PREFIX_PATH (a
+  # colcon overlay, or any prefix where the fork is installed). find_package
+  # creates the orocos-kdl imported target and sets orocos_kdl_INCLUDE_DIRS.
+  find_package(orocos_kdl REQUIRED)
+  set(orocos_kdl_LIBRARIES orocos-kdl)
+  set(orocos_kdl_DIR "found: orocos_kdl package")
+  message(STATUS "Orocos KDL: using found orocos_kdl package")
+elseif(MJ_KDL_OROCOS_KDL_INSTALL_DIR)
   # Consume a pre-installed Orocos KDL (e.g. a colcon workspace overlay). No
   # ExternalProject build, no bundling: a single shared liborocos-kdl is used by
   # the wrapper and by any other package in the same workspace/process.
@@ -170,6 +194,7 @@ if(MJ_KDL_OROCOS_KDL_INSTALL_DIR)
   set(orocos_kdl_DIR          "installed: ${MJ_KDL_OROCOS_KDL_INSTALL_DIR}")
   message(STATUS "Orocos KDL: using installed prefix ${MJ_KDL_OROCOS_KDL_INSTALL_DIR}")
 else()
+set(_MJ_KDL_BUILD_OROCOS_KDL TRUE)
 set(_MJ_KDL_OROCOS_PREFIX "${CMAKE_BINARY_DIR}/orocos_kdl_install")
 set(_MJ_KDL_OROCOS_SRC "${MJ_KDL_OROCOS_KDL_DIR}")
 if(EXISTS "${_MJ_KDL_OROCOS_SRC}/orocos_kdl/CMakeLists.txt")
@@ -352,10 +377,10 @@ if(BUILD_PYTHON_BINDINGS)
     endif()
 
     # PyKDL and liborocos-kdl are built and bundled only when this build owns the
-    # KDL (ExternalProject). When MJ_KDL_OROCOS_KDL_INSTALL_DIR is set the KDL and
-    # its PyKDL come from that shared prefix, so we neither build nor bundle them -
-    # the goal there is exactly one copy across the workspace/process.
-    if(NOT MJ_KDL_OROCOS_KDL_INSTALL_DIR)
+    # KDL (ExternalProject). When KDL is consumed from elsewhere (a shared prefix
+    # or a found package), its PyKDL comes from there too, so we neither build nor
+    # bundle them - the goal is exactly one copy across the workspace/process.
+    if(_MJ_KDL_BUILD_OROCOS_KDL)
         # Build PyKDL from the same checkout, at build time, against the
         # ExternalProject-installed Orocos KDL. python_orocos_kdl is a separate CMake
         # project that find_package()s an installed orocos_kdl, so it must run after
@@ -575,7 +600,7 @@ if(MJ_KDL_INSTALL_CPP_PACKAGE)
     # package config) into this prefix and rpath the wrapper to $ORIGIN so it loads
     # the co-installed liborocos-kdl. Skipped when consuming an external KDL, which
     # is already shared from its own prefix.
-    if(MJ_KDL_INSTALL_BUNDLED_KDL AND NOT MJ_KDL_OROCOS_KDL_INSTALL_DIR)
+    if(MJ_KDL_INSTALL_BUNDLED_KDL AND _MJ_KDL_BUILD_OROCOS_KDL)
         install(DIRECTORY "${_MJ_KDL_OROCOS_PREFIX}/"
           DESTINATION .
           USE_SOURCE_PERMISSIONS
