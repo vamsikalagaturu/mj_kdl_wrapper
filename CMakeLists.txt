@@ -550,6 +550,17 @@ option(
   "Install the C++ library, headers, and CMake package config"
   ${_MJ_KDL_INSTALL_CPP_PACKAGE_DEFAULT}
 )
+# Make the install self-contained: also install the Orocos KDL fork we built (its
+# library, headers, and CMake package config) into the same prefix, so the
+# installed wrapper loads KDL via $ORIGIN and sibling packages in the prefix can
+# find_package(orocos_kdl). Disable to keep KDL out of a shared prefix (e.g.
+# /usr/local) where it could shadow a distro KDL. Has no effect when consuming an
+# external KDL via MJ_KDL_OROCOS_KDL_INSTALL_DIR (that prefix is already shared).
+option(
+  MJ_KDL_INSTALL_BUNDLED_KDL
+  "Install the built Orocos KDL fork into the prefix so the install is self-contained"
+  ON
+)
 
 if(MJ_KDL_INSTALL_CPP_PACKAGE)
     install(TARGETS mj_kdl_wrapper
@@ -559,6 +570,18 @@ if(MJ_KDL_INSTALL_CPP_PACKAGE)
       ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     )
     install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+    # Self-contained install: bundle the fork we built (lib + headers + its CMake
+    # package config) into this prefix and rpath the wrapper to $ORIGIN so it loads
+    # the co-installed liborocos-kdl. Skipped when consuming an external KDL, which
+    # is already shared from its own prefix.
+    if(MJ_KDL_INSTALL_BUNDLED_KDL AND NOT MJ_KDL_OROCOS_KDL_INSTALL_DIR)
+        install(DIRECTORY "${_MJ_KDL_OROCOS_PREFIX}/"
+          DESTINATION .
+          USE_SOURCE_PERMISSIONS
+        )
+        set_property(TARGET mj_kdl_wrapper APPEND PROPERTY INSTALL_RPATH "$ORIGIN")
+    endif()
 
     install(EXPORT mj_kdl_wrapperTargets
       FILE mj_kdl_wrapperTargets.cmake

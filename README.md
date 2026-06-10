@@ -102,6 +102,15 @@ user-local prefix):
 cmake --install build
 ```
 
+The install is self-contained: the Orocos KDL fork built during the build (its
+library, headers, and CMake package config) is installed into the same prefix,
+and the wrapper is rpath'd to `$ORIGIN` so it loads that co-installed KDL. As a
+result, other packages in the prefix can `find_package(orocos_kdl)` directly, and
+`find_package(mj_kdl_wrapper)` pulls KDL in transitively. Disable with
+`-DMJ_KDL_INSTALL_BUNDLED_KDL=OFF` to keep KDL out of a shared prefix (e.g.
+`/usr/local`) where it could shadow a distro KDL. (MuJoCo is not bundled into the
+prefix; consumers still resolve it from `MJ_KDL_MUJOCO_DIR` / the pip package.)
+
 ### Python Install
 
 Install into an active supported Python environment. The build bundles the
@@ -303,6 +312,7 @@ Build toggles:
 | `BUILD_EXAMPLES` | `ON` | Build the `src/examples/ex_*` programs |
 | `BUILD_TESTS` | `ON` | Build and register GoogleTest tests with CTest |
 | `BUILD_DOCS` | `OFF` | Generate Doxygen HTML docs (`cmake --build build --target docs`) |
+| `MJ_KDL_INSTALL_BUNDLED_KDL` | `ON` | Install the built Orocos KDL fork (lib, headers, CMake config) into the prefix so the install is self-contained and sibling packages can `find_package(orocos_kdl)`. No effect with `MJ_KDL_OROCOS_KDL_INSTALL_DIR` |
 | `SHOW_EQUALITY_PANEL` | `OFF` | Show the Simulate UI `Equality` section |
 | `SHOW_GROUP_PANEL` | `OFF` | Show the Simulate UI `Group enable` section |
 
