@@ -56,6 +56,7 @@ sudo apt install cmake g++ git python3-dev python3-venv \
 
 ```bash
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
+# pin a release with --branch v0.1.0 (see Releases for the latest tag)
 cd mj_kdl_wrapper
 
 # configure (downloads MuJoCo, clones and builds the KDL fork, fetches Menagerie models)
@@ -102,10 +103,14 @@ MuJoCo/KDL, sharing one KDL across projects, and all CMake options.
 
 ```bash
 uv pip install "git+https://github.com/vamsikalagaturu/mj_kdl_wrapper.git"
+# pin a release by appending @v0.1.0 to the URL (see Releases for the latest tag)
 
 # fetch the MuJoCo Menagerie models needed by the examples
 mj-kdl-fetch-menagerie
 ```
+
+Installing without a `@tag` tracks the `main` branch, which only advances at
+releases - so the default command above already installs the latest release.
 
 Bundles MuJoCo, the KDL fork, and PyKDL. See the
 [standalone guide](docs/install/standalone.md#python) for editable installs,
@@ -134,6 +139,7 @@ mkdir -p ~/ros2_ws/src && cd ~/ros2_ws
 git clone -b feature/achd_fixed_joint \
   https://github.com/secorolab/orocos_kinematics_dynamics.git src/orocos_kinematics_dynamics
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git src/mj_kdl_wrapper
+# pin a release with --branch v0.1.0 (see Releases for the latest tag)
 
 # Use your distro: jazzy or lyrical
 source /opt/ros/jazzy/setup.bash
