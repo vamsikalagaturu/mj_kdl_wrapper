@@ -200,14 +200,20 @@ prefix has KDL but no `PyKDL`, so the default (bundle) is right for standalone u
 
 ### Menagerie models and examples
 
-The example scripts use MuJoCo Menagerie models. Fetch them and run an example
-from a checkout (`python/examples/` is not shipped in the wheel):
+The examples and their assets ship in the wheel; `mj-kdl-fetch-examples` copies
+them out as sibling `examples/` and `assets/` directories. The example scripts
+also use MuJoCo Menagerie models, fetched once into a cache that resolves from
+any directory:
 
 ```bash
-mj-kdl-fetch-menagerie                       # into the default location
+mj-kdl-fetch-menagerie                       # into the default cache
+mj-kdl-fetch-examples                         # copies into ./mj_kdl_wrapper_examples
+cd mj_kdl_wrapper_examples
+python examples/ex_gravity_comp.py
+
+# or point at a custom Menagerie checkout
 mj-kdl-fetch-menagerie --dest /path/to/menagerie
-export MJ_KDL_MENAGERIE=/path/to/menagerie   # if you used a custom --dest
-python python/examples/ex_gravity_comp.py
+export MJ_KDL_MENAGERIE=/path/to/menagerie
 ```
 
 Model resolution, environment variables, and using other model sources are

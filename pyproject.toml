@@ -35,6 +35,7 @@ dependencies = [
 
 [project.scripts]
 mj-kdl-fetch-menagerie = "mj_kdl_wrapper.menagerie:main"
+mj-kdl-fetch-examples = "mj_kdl_wrapper.fetch_examples:main"
 
 [project.urls]
 Homepage = "https://github.com/vamsikalagaturu/mj_kdl_wrapper"
@@ -49,11 +50,15 @@ cmake.args = [
   "-DBUILD_TESTS=OFF",
   "-DBUILD_EXAMPLES=OFF",
 ]
-wheel.packages = ["python/mj_kdl_wrapper"]
 build-dir = "build/{wheel_tag}"
 sdist.include = [
   "cmake/Versions.cmake",
 ]
+
+[tool.scikit-build.wheel.packages]
+mj_kdl_wrapper = "python/mj_kdl_wrapper"
+"mj_kdl_wrapper/examples" = "python/examples"
+"mj_kdl_wrapper/assets" = "assets"
 
 [tool.ruff]
 line-length = 100

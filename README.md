@@ -58,14 +58,17 @@ sudo apt install cmake g++ git python3-dev python3-venv \
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
 cd mj_kdl_wrapper
 
-# configure (downloads MuJoCo, clones and builds the KDL fork)
-cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+# configure (downloads MuJoCo, clones and builds the KDL fork, fetches Menagerie models)
+cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMJ_KDL_FETCH_MENAGERIE=ON
 
 # compile
 cmake --build build --parallel $(nproc)
 
 # optional install; self-contained, bundles KDL into the prefix
 cmake --install build
+
+# check: run the pick-and-place example
+./build/src/examples/ex_pick
 ```
 
 To share one KDL across several projects, set up a `ws/` folder, build the fork
@@ -99,11 +102,25 @@ MuJoCo/KDL, sharing one KDL across projects, and all CMake options.
 
 ```bash
 uv pip install "git+https://github.com/vamsikalagaturu/mj_kdl_wrapper.git"
+
+# fetch the MuJoCo Menagerie models needed by the examples
+mj-kdl-fetch-menagerie
 ```
 
 Bundles MuJoCo, the KDL fork, and PyKDL. See the
 [standalone guide](docs/install/standalone.md#python) for editable installs,
 Menagerie models, and build options.
+
+The examples and their assets ship in the wheel. Copy them out and run one:
+
+```bash
+# copy the bundled examples + assets into ./mj_kdl_wrapper_examples
+mj-kdl-fetch-examples
+cd mj_kdl_wrapper_examples
+
+# check: run the pick-and-place example
+python examples/ex_pick.py --gui
+```
 
 ### ROS 2 (colcon)
 
@@ -125,7 +142,8 @@ source /opt/ros/jazzy/setup.bash
 colcon build --packages-select orocos_kdl --cmake-args -DENABLE_TESTS=OFF
 source install/setup.bash
 
-# 2. Build the wrapper against it
+# 2. Build the wrapper against it (add -DMJ_KDL_FETCH_MENAGERIE=ON to fetch
+# the Menagerie models needed by the examples and tests)
 colcon build --packages-select mj_kdl_wrapper --cmake-args -DMJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON
 ```
 
