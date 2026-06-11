@@ -3,6 +3,8 @@ name: docs
 on:
   push:
   pull_request:
+  release:
+    types: [published]
 
 jobs:
   docs:
@@ -64,14 +66,14 @@ jobs:
         run: cmake --build build --target docs
 
       - name: Upload Pages artifact
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: github.event_name == 'release'
         uses: actions/upload-pages-artifact@v5
         with:
           path: build/docs/html
 
   deploy-docs:
     needs: docs
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.event_name == 'release'
     runs-on: ubuntu-24.04
     permissions:
       pages: write
