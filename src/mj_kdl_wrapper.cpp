@@ -2084,17 +2084,21 @@ bool init_video_recorder(
     mjr_resizeOffscreen(width, height, &impl->con);
 
     // Launch ffmpeg: reads raw RGB24 frames from stdin, writes H.264 MP4.
+    // -g <fps>: ~1s GOP (vs x264's 250-frame default) so scrubbing seeks land
+    // near a keyframe instead of decoding seconds of frames.
+    const int gop = std::max(1, fps);
     char cmd[2048];
     snprintf(
       cmd,
       sizeof(cmd),
       "ffmpeg -hide_banner -loglevel error -nostats -y "
       "-f rawvideo -vcodec rawvideo -pix_fmt rgb24 -s %dx%d -r %d "
-      "-i pipe:0 -an -vcodec libx264 -pix_fmt yuv420p -preset medium -crf 18 \"%s\" "
+      "-i pipe:0 -an -vcodec libx264 -pix_fmt yuv420p -preset medium -crf 18 -g %d \"%s\" "
       "2>/dev/null",
       width,
       height,
       fps,
+      gop,
       out_path
     );
     impl->ffmpeg = popen(cmd, "w");
