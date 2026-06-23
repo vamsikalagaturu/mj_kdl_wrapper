@@ -59,7 +59,9 @@ git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
 # pin a release with --branch v0.1.0 (see Releases for the latest tag)
 cd mj_kdl_wrapper
 
-# configure (downloads MuJoCo, clones and builds the KDL fork, fetches Menagerie models)
+# configure (downloads MuJoCo, clones and builds the KDL fork; the menagerie
+# flag fetches Menagerie models and copies bundled assets into the user cache
+# at ~/.cache/mj_kdl_wrapper, which the examples and tests resolve from)
 cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMJ_KDL_FETCH_MENAGERIE=ON
 
 # compile
@@ -180,8 +182,10 @@ Every C++ `src/examples/ex_*.cpp` example has a same-name Python counterpart in
 ctest --test-dir build --output-on-failure
 ```
 
-Tests need the Menagerie models (`-DMJ_KDL_FETCH_MENAGERIE=ON` at configure) and
-self-skip without them. See [test/README.md](test/README.md) for the full list.
+Tests resolve the Menagerie models and bundled assets from the user cache
+(`~/.cache/mj_kdl_wrapper`); `-DMJ_KDL_FETCH_MENAGERIE=ON` at configure populates
+it, and tests self-skip when it is empty. See [test/README.md](test/README.md)
+for the full list.
 
 ## More Documentation
 
@@ -192,6 +196,11 @@ self-skip without them. See [test/README.md](test/README.md) for the full list.
 - [Examples guide](docs/examples.md)
 
 ## Assets
+
+These ship in the repo and the wheel, and are copied into the user cache
+(`~/.cache/mj_kdl_wrapper/assets`) by `-DMJ_KDL_FETCH_MENAGERIE=ON` or
+`mj-kdl-fetch-menagerie`. Examples and tests resolve them from the cache via
+`mj_kdl_examples::asset(...)` (C++) and `menagerie.asset_path(...)` (Python).
 
 | Path | Description |
 |------|-------------|

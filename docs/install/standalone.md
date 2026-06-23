@@ -75,9 +75,12 @@ What happens during configure/build:
   `MJ_KDL_OROCOS_KDL_DIR` (default `third_party/orocos_kinematics_dynamics`) and
   built via `ExternalProject` into `build/orocos_kdl_install`. The checkout
   persists across builds and is reused (no re-clone) on later configures.
-- **Menagerie** robot models are fetched only with `-DMJ_KDL_FETCH_MENAGERIE=ON`;
-  tests and examples that need them self-skip otherwise. The Robotiq gripper is
-  bundled under `assets/robotiq_2f85`.
+- **Menagerie** robot models and the bundled `assets/` (Robotiq gripper, table,
+  mug) are fetched/copied into the user cache `~/.cache/mj_kdl_wrapper`
+  (`$XDG_CACHE_HOME` honored) only with `-DMJ_KDL_FETCH_MENAGERIE=ON`. The C++
+  examples and tests resolve both from that cache via `example_paths.hpp`
+  (`$MJ_KDL_MENAGERIE` overrides the model location); they self-skip when it is
+  empty.
 
 ### Install
 
@@ -200,14 +203,14 @@ prefix has KDL but no `PyKDL`, so the default (bundle) is right for standalone u
 
 ### Menagerie models and examples
 
-The examples and their assets ship in the wheel; `mj-kdl-fetch-examples` copies
-them out as sibling `examples/` and `assets/` directories. The example scripts
-also use MuJoCo Menagerie models, fetched once into a cache that resolves from
-any directory:
+The examples ship in the wheel; `mj-kdl-fetch-examples` copies them out as an
+`examples/` directory. The scripts resolve MuJoCo Menagerie models and bundled
+assets from the user cache, populated once by `mj-kdl-fetch-menagerie`, so the
+copied scripts run from any directory:
 
 ```bash
-mj-kdl-fetch-menagerie                       # into the default cache
 mj-kdl-fetch-examples                         # copies into ./mj_kdl_wrapper_examples
+mj-kdl-fetch-menagerie                        # populates the user cache (models + assets)
 cd mj_kdl_wrapper_examples
 python examples/ex_gravity_comp.py
 
