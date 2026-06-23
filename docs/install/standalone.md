@@ -76,11 +76,10 @@ What happens during configure/build:
   built via `ExternalProject` into `build/orocos_kdl_install`. The checkout
   persists across builds and is reused (no re-clone) on later configures.
 - **Menagerie** robot models and the bundled `assets/` (Robotiq gripper, table,
-  mug) are fetched/copied into the user cache `~/.cache/mj_kdl_wrapper`
-  (`$XDG_CACHE_HOME` honored) only with `-DMJ_KDL_FETCH_MENAGERIE=ON`. The C++
-  examples and tests resolve both from that cache via `example_paths.hpp`
-  (`$MJ_KDL_MENAGERIE` overrides the model location); they self-skip when it is
-  empty.
+  mug) are fetched/copied into the user cache `~/.cache/mj_kdl_wrapper` only with
+  `-DMJ_KDL_FETCH_MENAGERIE=ON`. The C++ examples and tests resolve both from
+  that cache via `example_paths.hpp` (`$MJ_KDL_MENAGERIE` overrides the model
+  location); they self-skip when it is empty.
 
 ### Install
 
@@ -249,7 +248,7 @@ Paths / sources:
 | `MJ_KDL_OROCOS_KDL_INSTALL_DIR` | (empty) | Pre-installed Orocos KDL prefix to consume (skips building and bundling the fork) |
 | `MJ_KDL_OROCOS_KDL_FROM_PACKAGE` | `OFF` | Consume Orocos KDL via `find_package(orocos_kdl)` on `CMAKE_PREFIX_PATH`; skips building and bundling the fork |
 | `MJ_KDL_FETCH_MENAGERIE` | `OFF` | Download MuJoCo Menagerie models |
-| `MJ_KDL_MENAGERIE_DIR` | `$XDG_CACHE_HOME/mj_kdl_wrapper/menagerie` (or `~/.cache/mj_kdl_wrapper/menagerie`) | Menagerie location / `MJ_KDL_FETCH_MENAGERIE` destination |
+| `MJ_KDL_MENAGERIE_DIR` | `~/.cache/mj_kdl_wrapper/menagerie` | Menagerie location / `MJ_KDL_FETCH_MENAGERIE` destination |
 
 Build toggles:
 

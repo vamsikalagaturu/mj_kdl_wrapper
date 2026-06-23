@@ -32,8 +32,7 @@ the same cache backs the C++ examples (see the C++ guide).
 **Overrides:** the example scripts wire these per-file env vars -- `MJ_KDL_MODEL`
 (arm), `MJ_KDL_GRIPPER`, `MJ_KDL_TABLE`, `MJ_KDL_BOTTLE`, `MJ_KDL_RECEIVER`. Each
 must point at an existing file or resolution raises a clear error.
-`MJ_KDL_MENAGERIE` overrides the Menagerie checkout root, and `XDG_CACHE_HOME`
-relocates the cache.
+`MJ_KDL_MENAGERIE` overrides the Menagerie checkout root.
 
 For other MJCF sources, set the relevant environment variable or assign
 `RobotSpec.path` directly.
