@@ -12,6 +12,7 @@
  * follow the commanded velocity profile. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "example_paths.hpp"
 
 #include <gtest/gtest.h>
 
@@ -28,8 +29,6 @@ static constexpr double kTol           = 0.02; // convergence tolerance [rad]
 static constexpr double kTimeout       = 5.0;  // max simulation time [s]
 
 namespace fs = std::filesystem;
-static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
-
 class MjcfVelCtrlTest : public testing::Test
 {
   protected:
@@ -41,8 +40,7 @@ class MjcfVelCtrlTest : public testing::Test
 
     void SetUp() override
     {
-        root_ = repo_root();
-        std::string arm_mjcf = (root_ / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+        std::string arm_mjcf = mj_kdl_examples::find_menagerie_model("kinova_gen3/gen3.xml");
         if (!fs::exists(arm_mjcf)) {
             GTEST_SKIP() << arm_mjcf << " not found";
             return;

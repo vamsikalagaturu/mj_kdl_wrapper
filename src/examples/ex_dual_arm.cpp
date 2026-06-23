@@ -13,7 +13,7 @@
  * jnt_trq_cmd is primed before the loop so the first physics step already
  * gets correct compensation.
  *
- * Requires third_party/menagerie submodule.
+ * Requires MuJoCo Menagerie in cache.
  *
  * Usage:
  *   ex_dual_arm [--headless]
@@ -21,12 +21,12 @@
  * --headless: run 600 steps and print both EE positions, then exit. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "example_paths.hpp"
 
 #include <kdl/chaindynparam.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
 
 #include <cmath>
-#include <filesystem>
 #include <iostream>
 #include <string>
 
@@ -35,24 +35,14 @@ static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.95
 static constexpr double kKp[7] = { 100, 200, 100, 200, 100, 200, 100 };
 static constexpr double kKd[7] = { 10, 20, 10, 20, 10, 20, 10 };
 
-namespace fs = std::filesystem;
-static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path().parent_path(); }
-
 int main(int argc, char *argv[])
 {
     bool headless = false;
     for (int i = 1; i < argc; ++i)
         if (std::string(argv[i]) == "--headless") headless = true;
 
-    const fs::path root = repo_root();
-    if (!fs::exists(root / "third_party/menagerie")) {
-        std::cerr << "third_party/menagerie/ not found - run:\n"
-                     "  git submodule update --init third_party/menagerie\n";
-        return 1;
-    }
-
-    const std::string arm_mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-    const std::string grp_mjcf = (root / "assets/robotiq_2f85/2f85.xml").string();
+    const std::string arm_mjcf = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
+    const std::string grp_mjcf = mj_kdl_examples::asset("robotiq_2f85/2f85.xml");
 
     mj_kdl::AttachmentSpec gs;
     gs.mjcf_path = grp_mjcf.c_str();

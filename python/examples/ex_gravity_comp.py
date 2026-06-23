@@ -8,30 +8,19 @@ button restores the home pose, mirroring the C++ example.
 from __future__ import annotations
 
 import argparse
-import os
-from pathlib import Path
 
 import mj_kdl_wrapper as mjk
 
-DEFAULT_MODEL = "third_party/menagerie/kinova_gen3/gen3.xml"
-MODEL_ENV_VAR = "MJ_KDL_MODEL"
 HOME_POSE = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 
 
-def path_from_arg(value: str, label: str) -> Path:
-    path = Path(value)
-    if not path.exists():
-        raise FileNotFoundError(f"{value} does not exist for {label}")
-    return path
-
-
-def build_env(model_path: Path) -> tuple[mjk.Env, mjk.Robot]:
+def build_env(model_path: str) -> tuple[mjk.Env, mjk.Robot]:
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
     spec.add_skybox = True
     robot_spec = mjk.RobotSpec()
-    robot_spec.path = str(model_path)
+    robot_spec.path = model_path
     spec.robots = [robot_spec]
     env = mjk.Env.build(spec)
     robot = env.create_robot("base_link", "bracelet_link")
@@ -64,7 +53,7 @@ def main() -> int:
     parser.add_argument("--gui", action="store_true")
     args = parser.parse_args()
 
-    model_path = path_from_arg(mjk.menagerie.model_path("kinova_gen3", env_var=MODEL_ENV_VAR), "arm model")
+    model_path = mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
     env, robot = build_env(model_path)
     try:
         robot.ctrl_mode = mjk.CtrlMode.TORQUE

@@ -17,6 +17,7 @@
  * With --headless runs the full sequence and prints final cube position. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "example_paths.hpp"
 
 #include "chainhdsolver_vereshchagin_fixed_joint.hpp"
 #include <kdl/chainfksolverpos_recursive.hpp>
@@ -25,13 +26,10 @@
 
 #include <algorithm>
 #include <cmath>
-#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <string>
 #include <vector>
-
-namespace fs = std::filesystem;
 
 static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
 static constexpr double kCubeHS      = 0.02;
@@ -61,7 +59,6 @@ static constexpr double kSupportKd   = 80.0;
 static constexpr double kSupportFMax = 45.0;
 static constexpr double kSupportLift = 0.06;
 
-static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path().parent_path(); }
 static double   clamp01(double v) { return std::max(0.0, std::min(1.0, v)); }
 static double   clamp_abs(double v, double limit) { return std::max(-limit, std::min(limit, v)); }
 static double   smoothstep(double t)
@@ -262,16 +259,9 @@ int main(int argc, char *argv[])
         }
     }
 
-    const fs::path root = repo_root();
-    if (!fs::exists(root / "third_party/menagerie")) {
-        std::cerr << "third_party/menagerie/ not found - run:\n"
-                     "  cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON\n";
-        return 1;
-    }
-
-    const std::string arm_mjcf   = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-    const std::string grp_mjcf   = (root / "assets/robotiq_2f85/2f85.xml").string();
-    const std::string table_mjcf = (root / "assets/table.xml").string();
+    const std::string arm_mjcf   = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
+    const std::string grp_mjcf   = mj_kdl_examples::asset("robotiq_2f85/2f85.xml");
+    const std::string table_mjcf = mj_kdl_examples::asset("table.xml");
 
     mj_kdl::AttachmentSpec gripper;
     gripper.mjcf_path = grp_mjcf.c_str();

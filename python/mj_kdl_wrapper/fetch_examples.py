@@ -1,10 +1,12 @@
-"""Copy the bundled mj_kdl_wrapper examples and assets to a local directory.
+"""Copy the bundled mj_kdl_wrapper example scripts to a local directory.
 
-The examples and their assets (the Robotiq 2F-85 gripper, table, and mug MJCF
-files) are shipped inside the wheel under ``mj_kdl_wrapper/examples`` and
-``mj_kdl_wrapper/assets``. The example scripts resolve asset paths relative to
-the current working directory, so this helper copies both out as sibling
-``examples/`` and ``assets/`` directories that you can run from directly.
+The example scripts are shipped inside the wheel under
+``mj_kdl_wrapper/examples``. This helper copies them out as a sibling
+``examples/`` directory that you can run from directly. The scripts resolve
+Menagerie models and bundled assets (the Robotiq 2F-85 gripper, table, and mug
+MJCF files) via :mod:`mj_kdl_wrapper.menagerie`, which reads from the user
+cache populated by ``mj-kdl-fetch-menagerie`` -- not from the current working
+directory.
 """
 
 from __future__ import annotations
@@ -16,17 +18,15 @@ from pathlib import Path
 
 
 def copy_examples(dest: Path) -> None:
-    """Copy the bundled examples and assets into ``dest`` as sibling dirs."""
+    """Copy the bundled example scripts into ``dest`` as a sibling dir."""
     pkg_root = resources.files("mj_kdl_wrapper")
     with resources.as_file(pkg_root / "examples") as examples_src:
         shutil.copytree(examples_src, dest / "examples", dirs_exist_ok=True)
-    with resources.as_file(pkg_root / "assets") as assets_src:
-        shutil.copytree(assets_src, dest / "assets", dirs_exist_ok=True)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Copy the bundled mj_kdl_wrapper examples and assets to a local directory."
+        description="Copy the bundled mj_kdl_wrapper example scripts to a local directory."
     )
     parser.add_argument(
         "--dest",
@@ -38,7 +38,7 @@ def main() -> int:
     dest = Path(args.dest)
     copy_examples(dest)
 
-    print(f"Copied examples and assets to {dest}/")
+    print(f"Copied examples to {dest}/")
     print("Run, e.g.:")
     print(f"  cd {dest}")
     print("  mj-kdl-fetch-menagerie")

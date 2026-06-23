@@ -32,7 +32,7 @@ ctest --test-dir build --output-on-failure
 ./build/test_mjcf_trq_ctrl --gui
 ```
 
-All tests self-skip when `third_party/menagerie` is absent (requires `-DMJ_KDL_FETCH_MENAGERIE=ON`).
+All tests self-skip when Menagerie is absent; `-DMJ_KDL_FETCH_MENAGERIE=ON` populates the user cache.
 
 ## Python bindings
 
@@ -51,10 +51,10 @@ pytest -q python/tests
 
 **Packaging (examples + assets ship in the wheel):** `pyproject.toml`'s `tool.scikit-build.wheel.packages` table maps `python/examples` -> `mj_kdl_wrapper/examples` and the repo-root `assets/` -> `mj_kdl_wrapper/assets` into the wheel. The table form is `dest = "source"` (wheel path on the left), and the final path components must match. Two console scripts populate a user's working directory:
 
-- `mj-kdl-fetch-menagerie` (`menagerie:main`) -- clones the MuJoCo Menagerie into a cache that resolves from any cwd.
+- `mj-kdl-fetch-menagerie` (`menagerie:main`) -- clones the MuJoCo Menagerie into cache and copies bundled assets to `~/.cache/mj_kdl_wrapper/assets`.
 - `mj-kdl-fetch-examples` (`fetch_examples:main`) -- copies the bundled `examples/` and `assets/` out as sibling dirs (default `./mj_kdl_wrapper_examples`).
 
-**Asset resolution in examples:** scripts resolve the arm model via `mjk.menagerie.model_path(...)` (env var -> cwd `third_party/menagerie` -> repo-relative -> cache) and resolve `assets/...` paths relative to **cwd** via a local `path()` helper. This is why copying examples + assets out as siblings lets them run unmodified from the copied directory -- do not rewrite example asset paths to be `__file__`-relative.
+**Asset resolution in examples:** Python and C++ helpers resolve Menagerie models and bundled assets from env overrides or the user cache. `mj-kdl-fetch-menagerie` populates both `menagerie/` and `assets/` under the cache.
 
 ## Formatting and Linting
 
@@ -111,7 +111,7 @@ Robot  (KDL chain + joint index maps into MuJoCo arrays)
 **Scene patching:** `build_scene()` merges MJCF files using `mjSpec` (MuJoCo's programmatic spec API), then calls `patch_mjcf_*` helpers to inject floor, skybox, table, and objects. Runtime add/remove (`scene_add_object` / `scene_remove_object`) re-compiles the spec in place and updates all existing `Robot` handles.
 
 **Bundled dependencies:**
-- `third_party/menagerie/` -- MuJoCo Menagerie (optional, fetched via CMake FetchContent)
+- user cache `~/.cache/mj_kdl_wrapper/menagerie/` -- MuJoCo Menagerie fetched by `mj-kdl-fetch-menagerie` or CMake
 
 ## Branching and releases
 

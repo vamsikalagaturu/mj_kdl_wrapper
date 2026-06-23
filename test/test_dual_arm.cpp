@@ -7,9 +7,10 @@
  *   (zero velocity, so qfrc_bias == gravity torques); logged only, no assertion.
  * DualArmDrift  - 500-step closed-loop gravity comp; EE drift must be < 1 mm.
  *
- * Self-skips when third_party/menagerie is absent. */
+ * Self-skips when Menagerie is absent. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "example_paths.hpp"
 
 #include <gtest/gtest.h>
 
@@ -34,8 +35,6 @@ static void apply_grav_comp(mj_kdl::Robot *s, KDL::ChainDynParam &dyn)
 }
 
 namespace fs = std::filesystem;
-static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
-
 class DualArmTest : public testing::Test
 {
   protected:
@@ -51,8 +50,7 @@ class DualArmTest : public testing::Test
 
     void SetUp() override
     {
-        fs::path root = repo_root();
-        std::string mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+        std::string mjcf = mj_kdl_examples::find_menagerie_model("kinova_gen3/gen3.xml");
         if (!fs::exists(mjcf)) {
             GTEST_SKIP() << mjcf << " not found";
             return;

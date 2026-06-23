@@ -1,4 +1,5 @@
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "example_paths.hpp"
 
 #include "chainhdsolver_vereshchagin_fixed_joint.hpp"
 #include <kdl/chainfksolverpos_recursive.hpp>
@@ -8,13 +9,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <string>
 #include <vector>
-
-namespace fs = std::filesystem;
 
 static constexpr double kTableZ       = 0.447;
 static constexpr double kMoveX        = 0.20;
@@ -30,7 +28,6 @@ static constexpr double kTablePose[7] = {
     -0.00258, 1.43, 3.14, -1.70, -0.018, 1.74, 1.57
 };
 
-static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path().parent_path(); }
 static double clamp_abs(double v, double limit) { return std::max(-limit, std::min(limit, v)); }
 
 static void print_array(const char *label, const KDL::JntArray &x)
@@ -142,11 +139,9 @@ int main(int argc, char **argv)
     bool headless = false;
     for (int i = 1; i < argc; ++i)
         if (std::string(argv[i]) == "--headless") headless = true;
-
-    const fs::path root = repo_root();
-    const std::string arm_mjcf   = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-    const std::string grp_mjcf   = (root / "assets/robotiq_2f85/2f85.xml").string();
-    const std::string table_mjcf = (root / "assets/table.xml").string();
+    const std::string arm_mjcf   = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
+    const std::string grp_mjcf   = mj_kdl_examples::asset("robotiq_2f85/2f85.xml");
+    const std::string table_mjcf = mj_kdl_examples::asset("table.xml");
 
     mj_kdl::AttachmentSpec gripper;
     gripper.mjcf_path = grp_mjcf.c_str();

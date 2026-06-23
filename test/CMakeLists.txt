@@ -10,7 +10,7 @@ enable_testing()
 include(GoogleTest)
 
 # All tests use the MuJoCo Menagerie MJCF (kinova_gen3/gen3.xml).
-# Each test self-skips via GTEST_SKIP() when third_party/menagerie is absent.
+# Each test self-skips via GTEST_SKIP() when Menagerie is absent.
 set(ALL_TESTS
   test_init
   test_dual_arm
@@ -25,6 +25,7 @@ set(ALL_TESTS
 foreach(test_name ${ALL_TESTS})
   add_executable(${test_name} ${test_name}.cpp)
   target_link_libraries(${test_name} PRIVATE mj_kdl_wrapper GTest::gtest)
+  target_include_directories(${test_name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src/examples")
   target_compile_options(${test_name} PRIVATE -Wall -Wextra)
   # RUN_SERIAL avoids conflicts over shared temp files and MuJoCo global XML state.
   gtest_discover_tests(${test_name} DISCOVERY_TIMEOUT 60 PROPERTIES RUN_SERIAL TRUE)

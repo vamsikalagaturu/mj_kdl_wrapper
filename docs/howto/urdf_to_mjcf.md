@@ -159,4 +159,6 @@ after MuJoCo compilation, so they always match the simulation.
 
 - MuJoCo model specification: https://mujoco.readthedocs.io/en/stable/XMLreference.html
 - MuJoCo Menagerie (reference MJCF models): https://github.com/google-deepmind/mujoco_menagerie
-- Kinova GEN3 Menagerie model: `third_party/menagerie/kinova_gen3/gen3.xml`
+- Kinova GEN3 Menagerie model: `kinova_gen3/gen3.xml` in the user cache populated by
+  `mj-kdl-fetch-menagerie` (`~/.cache/mj_kdl_wrapper/menagerie/kinova_gen3/gen3.xml`, or
+  `$XDG_CACHE_HOME/mj_kdl_wrapper/...`)

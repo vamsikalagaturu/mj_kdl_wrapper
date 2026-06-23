@@ -105,7 +105,7 @@ MuJoCo/KDL, sharing one KDL across projects, and all CMake options.
 uv pip install "git+https://github.com/vamsikalagaturu/mj_kdl_wrapper.git"
 # pin a release by appending @v0.1.0 to the URL (see Releases for the latest tag)
 
-# fetch the MuJoCo Menagerie models needed by the examples
+# fetch the MuJoCo Menagerie models and bundled assets into the user cache
 mj-kdl-fetch-menagerie
 ```
 
@@ -116,12 +116,17 @@ Bundles MuJoCo, the KDL fork, and PyKDL. See the
 [standalone guide](docs/install/standalone.md#python) for editable installs,
 Menagerie models, and build options.
 
-The examples and their assets ship in the wheel. Copy them out and run one:
+The example scripts ship in the wheel. Copy them out, populate the cache, and
+run one (the scripts resolve models and bundled assets from the cache, so they
+run from anywhere):
 
 ```bash
-# copy the bundled examples + assets into ./mj_kdl_wrapper_examples
+# copy the bundled example scripts into ./mj_kdl_wrapper_examples
 mj-kdl-fetch-examples
 cd mj_kdl_wrapper_examples
+
+# populate the user cache with Menagerie models and bundled assets
+mj-kdl-fetch-menagerie
 
 # check: run the pick-and-place example
 python examples/ex_pick.py --gui

@@ -46,6 +46,7 @@ guess on your behalf. `build_scene` rejects `timestep <= 0` at runtime.
 `gravity_z` defaults to Earth gravity (-9.81 m/s^2).
 
 ```cpp
+#include "example_paths.hpp"
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 
 mj_kdl::SceneSpec scene;
@@ -53,7 +54,7 @@ scene.timestep   = 0.002;   // [s]
 scene.add_floor  = true;
 scene.add_skybox = true;
 scene.robots.push_back(mj_kdl::RobotSpec{
-    .path = "third_party/menagerie/kinova_gen3/gen3.xml",
+    .path = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
 });
 
 mj_kdl::Env env;
@@ -97,7 +98,7 @@ attachment so names stay unique in the compiled model:
 
 ```cpp
 scene.robots.push_back(mj_kdl::RobotSpec{
-    .path   = "third_party/menagerie/kinova_gen3/gen3.xml",
+    .path   = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
     .prefix = "left_",
     .pos    = { -0.6, 0.0, 0.0 },
 });
@@ -212,13 +213,13 @@ the gripper offset and 180-degree flip. So the gripper attachment is just:
 
 ```cpp
 mj_kdl::AttachmentSpec gripper{
-    .mjcf_path = "assets/robotiq_2f85/2f85.xml",
+    .mjcf_path = mj_kdl_examples::asset("robotiq_2f85/2f85.xml"),
     .attach_to = { mj_kdl::AttachKind::Site, "pinch_site" },
     .prefix    = "g_",
 };
 
 mj_kdl::RobotSpec arm{
-    .path        = "third_party/menagerie/kinova_gen3/gen3.xml",
+    .path        = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
     .attachments = { gripper },
 };
 
@@ -262,29 +263,27 @@ previous attachments, so later `attach_to` values may refer to bodies introduced
 by earlier attachments.
 
 ```cpp
-mj_kdl::AttachmentSpec mount{
-    .mjcf_path = "assets/wrist_mount.xml",
-    .attach_to = { mj_kdl::AttachKind::Body, "bracelet_link" },
-    .prefix    = "mount_",
-};
-
-mj_kdl::AttachmentSpec sensor{
-    .mjcf_path = "assets/ft_sensor.xml",
-    .attach_to = { mj_kdl::AttachKind::Body, "mount_tip" },
-    .prefix    = "ft_",
-};
-
 mj_kdl::AttachmentSpec gripper{
-    .mjcf_path = "assets/robotiq_2f85/2f85.xml",
-    .attach_to = { mj_kdl::AttachKind::Body, "ft_tool" },
+    .mjcf_path = mj_kdl_examples::asset("robotiq_2f85/2f85.xml"),
+    .attach_to = { mj_kdl::AttachKind::Site, "pinch_site" },
     .prefix    = "g_",
 };
 
+// The mug attaches to "g_base", a body the gripper attachment introduced.
+mj_kdl::AttachmentSpec mug{
+    .mjcf_path = mj_kdl_examples::asset("mug.xml"),
+    .attach_to = { mj_kdl::AttachKind::Body, "g_base" },
+    .prefix    = "mug_",
+};
+
 scene.robots.push_back(mj_kdl::RobotSpec{
-    .path        = "third_party/menagerie/kinova_gen3/gen3.xml",
-    .attachments = { mount, sensor, gripper },
+    .path        = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
+    .attachments = { gripper, mug },
 });
 ```
+
+Both assets ship with the package; `ex_table_pour` runs this exact chain to hold
+a mug in the gripper.
 
 For contact stability, add contact exclusions only when two attached bodies are
 known to overlap structurally:
@@ -317,7 +316,7 @@ primitives, `build_scene` runs explicit checks:
 ```cpp
 mj_kdl::SceneObject table{
     .name      = "table",
-    .mjcf_path = "assets/table.xml",
+    .mjcf_path = mj_kdl_examples::asset("table.xml"),
     .pos       = { 0.0, 0.0, 0.7 },
     .fixed     = true,
 };
@@ -361,7 +360,7 @@ heights:
 const std::string mount = mj_kdl::scene_object_site_name(table, "table_top");
 
 scene.robots.push_back(mj_kdl::RobotSpec{
-    .path      = "third_party/menagerie/kinova_gen3/gen3.xml",
+    .path      = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
     .attach_to = { mj_kdl::AttachKind::Site, mount.c_str() },
 });
 ```
@@ -649,7 +648,7 @@ the tool offset and 180-degree flip, so no `pos`/`euler` are needed:
 
 ```cpp
 mj_kdl::AttachmentSpec gripper{
-    .mjcf_path = "assets/robotiq_2f85/2f85.xml",
+    .mjcf_path = mj_kdl_examples::asset("robotiq_2f85/2f85.xml"),
     .attach_to = { mj_kdl::AttachKind::Site, "pinch_site" },
     .prefix    = "g_",
 };
@@ -661,7 +660,7 @@ tabletop surface center, so placing it at `z = 0.7` makes the top surface `0.7 m
 ```cpp
 mj_kdl::SceneObject table{
     .name      = "table",
-    .mjcf_path = "assets/table.xml",
+    .mjcf_path = mj_kdl_examples::asset("table.xml"),
     .pos       = { 0.0, 0.0, 0.7 },
     .fixed     = true,
 };
@@ -703,7 +702,7 @@ const std::string mount =
     mj_kdl::scene_object_site_name(table, "table_top");
 
 scene.robots.push_back(mj_kdl::RobotSpec{
-    .path        = "third_party/menagerie/kinova_gen3/gen3.xml",
+    .path        = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
     .attach_to   = { mj_kdl::AttachKind::Site, mount.c_str() },
     .attachments = { gripper },
 });
@@ -988,12 +987,12 @@ Use prefixes to disambiguate the second robot:
 ```cpp
 scene.robots = {
     mj_kdl::RobotSpec{
-        .path = "third_party/menagerie/kinova_gen3/gen3.xml",
+        .path = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
         .pos  = { -0.7, 0.0, 0.0 },
         .attachments = { gripper },
     },
     mj_kdl::RobotSpec{
-        .path   = "third_party/menagerie/kinova_gen3/gen3.xml",
+        .path   = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
         .prefix = "r2_",
         .pos    = { 0.7, 0.0, 0.0 },
         .attachments = { gripper },

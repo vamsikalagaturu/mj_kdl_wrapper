@@ -7,6 +7,7 @@
  *   3. Full pick sequence lifts the cube above 0.20 m. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "example_paths.hpp"
 
 #include <gtest/gtest.h>
 
@@ -34,8 +35,6 @@ static constexpr double kIkTol       = 2e-3;
 
 static constexpr double kKp[7] = { 100, 200, 100, 200, 100, 200, 100 };
 static constexpr double kKd[7] = { 10, 20, 10, 20, 10, 20, 10 };
-
-static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
 
 static double clamp01(double v) { return std::max(0.0, std::min(1.0, v)); }
 
@@ -120,11 +119,10 @@ class MjcfPickTest : public testing::Test
 
     void SetUp() override
     {
-        root_ = repo_root();
         const std::string arm_mjcf =
-          (root_ / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+          mj_kdl_examples::find_menagerie_model("kinova_gen3/gen3.xml");
         const std::string grp_mjcf =
-          (root_ / "assets/robotiq_2f85/2f85.xml").string();
+          mj_kdl_examples::find_asset("robotiq_2f85/2f85.xml");
         if (!fs::exists(arm_mjcf)) {
             GTEST_SKIP() << arm_mjcf << " not found";
             return;

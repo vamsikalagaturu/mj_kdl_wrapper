@@ -481,8 +481,17 @@ endif()
 
 # MuJoCo Menagerie (robot model zoo - used by the examples and tests)
 option(MJ_KDL_FETCH_MENAGERIE "Download MuJoCo Menagerie into MJ_KDL_MENAGERIE_DIR" OFF)
+# _MJ_KDL_CACHE_ROOT mirrors python/mj_kdl_wrapper/menagerie.py:_cache_root and
+# src/examples/example_paths.hpp:cache_root; keep all three in sync.
+if(DEFINED ENV{XDG_CACHE_HOME} AND NOT "$ENV{XDG_CACHE_HOME}" STREQUAL "")
+    set(_MJ_KDL_CACHE_ROOT "$ENV{XDG_CACHE_HOME}/mj_kdl_wrapper")
+elseif(DEFINED ENV{HOME} AND NOT "$ENV{HOME}" STREQUAL "")
+    set(_MJ_KDL_CACHE_ROOT "$ENV{HOME}/.cache/mj_kdl_wrapper")
+else()
+    set(_MJ_KDL_CACHE_ROOT "${CMAKE_BINARY_DIR}/mj_kdl_wrapper_cache")
+endif()
 set(
-  MJ_KDL_MENAGERIE_DIR "${CMAKE_SOURCE_DIR}/third_party/menagerie"
+  MJ_KDL_MENAGERIE_DIR "${_MJ_KDL_CACHE_ROOT}/menagerie"
   CACHE PATH
   "MuJoCo Menagerie location (used as the MJ_KDL_FETCH_MENAGERIE destination)"
 )
@@ -503,6 +512,8 @@ if(MJ_KDL_FETCH_MENAGERIE)
         FetchContent_MakeAvailable(mujoco_menagerie)
         message(STATUS "Menagerie: ready at ${MENAGERIE_SOURCE_DIR}")
     endif()
+    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/assets/" DESTINATION "${_MJ_KDL_CACHE_ROOT}/assets")
+    message(STATUS "Bundled assets: ready at ${_MJ_KDL_CACHE_ROOT}/assets")
 endif()
 
 # Documentation (Doxygen + local CSS)

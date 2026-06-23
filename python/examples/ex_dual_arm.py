@@ -9,31 +9,18 @@ from __future__ import annotations
 
 import argparse
 import math
-import os
-from pathlib import Path
 
 import mj_kdl_wrapper as mjk
 
-DEFAULT_MODEL = "third_party/menagerie/kinova_gen3/gen3.xml"
-DEFAULT_GRIPPER = "assets/robotiq_2f85/2f85.xml"
-MODEL_ENV_VAR = "MJ_KDL_MODEL"
-GRIPPER_ENV_VAR = "MJ_KDL_GRIPPER"
 HOME_POSE = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 
 KP = [100, 200, 100, 200, 100, 200, 100]
 KD = [10, 20, 10, 20, 10, 20, 10]
 
 
-def path_from_arg(value: str, label: str) -> Path:
-    path = Path(value)
-    if not path.exists():
-        raise FileNotFoundError(f"{value} does not exist for {label}")
-    return path
-
-
-def attachment_gripper(path: Path, prefix: str = "g_") -> mjk.AttachmentSpec:
+def attachment_gripper(path: str, prefix: str = "g_") -> mjk.AttachmentSpec:
     spec = mjk.AttachmentSpec()
-    spec.mjcf_path = str(path)
+    spec.mjcf_path = path
     spec.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
     spec.prefix = prefix
     return spec
@@ -53,8 +40,8 @@ def main() -> int:
     parser.add_argument("--gui", action="store_true")
     args = parser.parse_args()
 
-    arm_path = path_from_arg(mjk.menagerie.model_path("kinova_gen3", env_var=MODEL_ENV_VAR), "arm model")
-    gripper_path = path_from_arg(os.environ.get(GRIPPER_ENV_VAR, DEFAULT_GRIPPER), "gripper model")
+    arm_path = mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
+    gripper_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml", env_var="MJ_KDL_GRIPPER")
     attach = attachment_gripper(gripper_path)
 
     spec = mjk.SceneSpec()
@@ -62,11 +49,11 @@ def main() -> int:
     spec.add_floor = True
     spec.add_skybox = True
     left = mjk.RobotSpec()
-    left.path = str(arm_path)
+    left.path = arm_path
     left.pos = [-1.0, 0.0, 0.0]
     left.attachments = [attach]
     right = mjk.RobotSpec()
-    right.path = str(arm_path)
+    right.path = arm_path
     right.prefix = "r2_"
     right.pos = [1.0, 0.0, 0.0]
     right.attachments = [attach]

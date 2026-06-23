@@ -1,19 +1,46 @@
 /* test_init.cpp
  * Loads the Kinova GEN3 MJCF (menagerie gen3.xml), runs 100 simulation steps,
  * and verifies basic model properties are consistent.
- * Self-skips when third_party/menagerie is absent. */
+ * Self-skips when Menagerie is absent. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "example_paths.hpp"
 
 #include <gtest/gtest.h>
 
-#include <string>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <string>
 
 static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
 
 namespace fs = std::filesystem;
-static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
+
+TEST(ExamplePaths, StaleMenagerieEnvFallsBackToCache)
+{
+    const auto tmp = fs::temp_directory_path() / "mj_kdl_wrapper_paths_test";
+    fs::remove_all(tmp);
+    fs::create_directories(tmp / "cache" / "mj_kdl_wrapper" / "menagerie" / "kinova_gen3");
+
+    const auto model = tmp / "cache" / "mj_kdl_wrapper" / "menagerie" / "kinova_gen3" / "gen3.xml";
+    std::ofstream(model) << "<mujoco/>";
+
+    const char       *old_xdg         = std::getenv("XDG_CACHE_HOME");
+    const char       *old_menagerie   = std::getenv("MJ_KDL_MENAGERIE");
+    const std::string saved_xdg       = old_xdg ? old_xdg : "";
+    const std::string saved_menagerie = old_menagerie ? old_menagerie : "";
+
+    setenv("XDG_CACHE_HOME", (tmp / "cache").c_str(), 1);
+    setenv("MJ_KDL_MENAGERIE", (tmp / "missing").c_str(), 1);
+
+    EXPECT_EQ(mj_kdl_examples::find_menagerie_model("kinova_gen3/gen3.xml"), model.string());
+
+    old_xdg ? setenv("XDG_CACHE_HOME", saved_xdg.c_str(), 1) : unsetenv("XDG_CACHE_HOME");
+    old_menagerie ? setenv("MJ_KDL_MENAGERIE", saved_menagerie.c_str(), 1)
+                  : unsetenv("MJ_KDL_MENAGERIE");
+    fs::remove_all(tmp);
+}
 
 class InitTest : public testing::Test
 {
@@ -25,8 +52,7 @@ class InitTest : public testing::Test
 
     void SetUp() override
     {
-        fs::path root = repo_root();
-        std::string mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+        std::string mjcf = mj_kdl_examples::find_menagerie_model("kinova_gen3/gen3.xml");
         if (!fs::exists(mjcf)) {
             GTEST_SKIP() << mjcf << " not found";
             return;

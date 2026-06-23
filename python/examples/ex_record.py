@@ -9,14 +9,10 @@ display or GLFW window is needed.
 from __future__ import annotations
 
 import math
-import os
 import sys
-from pathlib import Path
 
 import mj_kdl_wrapper as mjk
 
-DEFAULT_MODEL = "third_party/menagerie/kinova_gen3/gen3.xml"
-MODEL_ENV_VAR = "MJ_KDL_MODEL"
 HOME_POSE = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 FPS = 60
 DURATION = 5.0  # seconds
@@ -32,22 +28,13 @@ RESOLUTIONS = {
 }
 
 
-def resolve_model(path: str) -> Path:
-    model_path = Path(path)
-    if not model_path.exists():
-        raise FileNotFoundError(
-            f"{model_path} does not exist; set {MODEL_ENV_VAR} or run from repo root"
-        )
-    return model_path
-
-
-def build_scene(model_path: Path) -> tuple[mjk.Scene, mjk.Robot]:
+def build_scene(model_path: str) -> tuple[mjk.Scene, mjk.Robot]:
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
     spec.add_skybox = True
     robot_spec = mjk.RobotSpec()
-    robot_spec.path = str(model_path)
+    robot_spec.path = model_path
     spec.robots = [robot_spec]
     scene = mjk.Scene.build(spec)
     robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link")
@@ -65,7 +52,7 @@ def main() -> int:
         else:
             print(f"Unknown argument '{arg}'; using 1080p", file=sys.stderr)
 
-    model_path = resolve_model(mjk.menagerie.model_path("kinova_gen3", env_var=MODEL_ENV_VAR))
+    model_path = mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
     scene, robot = build_scene(model_path)
     recorder = None
     try:

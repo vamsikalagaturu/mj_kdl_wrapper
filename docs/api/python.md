@@ -21,9 +21,7 @@ known local or cached MuJoCo Menagerie checkouts:
 
 1. `MJ_KDL_MODEL` / `MJ_KDL_GRIPPER` - per-model file overrides.
 2. `MJ_KDL_MENAGERIE` - a MuJoCo Menagerie checkout root.
-3. A local `third_party/menagerie` checkout next to the current directory or
-   repository.
-4. The cache populated by `mj-kdl-fetch-menagerie`.
+3. The user cache populated by `mj-kdl-fetch-menagerie`.
 
 For other MJCF sources, set the relevant environment variable or assign
 `RobotSpec.path` directly.

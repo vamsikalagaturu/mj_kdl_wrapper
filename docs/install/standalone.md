@@ -246,7 +246,7 @@ Paths / sources:
 | `MJ_KDL_OROCOS_KDL_INSTALL_DIR` | (empty) | Pre-installed Orocos KDL prefix to consume (skips building and bundling the fork) |
 | `MJ_KDL_OROCOS_KDL_FROM_PACKAGE` | `OFF` | Consume Orocos KDL via `find_package(orocos_kdl)` on `CMAKE_PREFIX_PATH`; skips building and bundling the fork |
 | `MJ_KDL_FETCH_MENAGERIE` | `OFF` | Download MuJoCo Menagerie models |
-| `MJ_KDL_MENAGERIE_DIR` | `third_party/menagerie` | Menagerie location / `MJ_KDL_FETCH_MENAGERIE` destination |
+| `MJ_KDL_MENAGERIE_DIR` | `$XDG_CACHE_HOME/mj_kdl_wrapper/menagerie` (or `~/.cache/mj_kdl_wrapper/menagerie`) | Menagerie location / `MJ_KDL_FETCH_MENAGERIE` destination |
 
 Build toggles:
 

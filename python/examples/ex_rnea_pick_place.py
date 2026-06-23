@@ -9,15 +9,10 @@ cube, and opens the gripper so the simulate-UI reset replays the task.
 from __future__ import annotations
 
 import argparse
-import os
-from pathlib import Path
 
 import PyKDL as kdl
 import mj_kdl_wrapper as mjk
 
-ARM = "third_party/menagerie/kinova_gen3/gen3.xml"
-GRIPPER = "assets/robotiq_2f85/2f85.xml"
-TABLE = "assets/table.xml"
 HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 KP = [100.0, 200.0, 100.0, 200.0, 100.0, 200.0, 100.0]
 KD = [20.0, 28.0, 20.0, 28.0, 20.0, 28.0, 20.0]
@@ -29,17 +24,10 @@ class ResetRequested(Exception):
     """Raised when the simulate UI reset is detected, to restart the sequence."""
 
 
-def path(value: str) -> Path:
-    p = Path(value)
-    if not p.exists():
-        raise FileNotFoundError(f"{p} does not exist; run from the mj_kdl_wrapper root")
-    return p
-
-
 def build_env() -> tuple[mjk.Env, mjk.Robot]:
     table = mjk.SceneObject()
     table.name = "table"
-    table.mjcf_path = str(path(os.environ.get("MJ_KDL_TABLE", TABLE)))
+    table.mjcf_path = mjk.menagerie.asset_path("table.xml", env_var="MJ_KDL_TABLE")
     table.pos = [0.0, 0.0, SURFACE_Z]
     table.fixed = True
     cube = mjk.SceneObject()
@@ -52,7 +40,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     cube.friction = [1.0, 0.005, 0.0001]
 
     attach = mjk.AttachmentSpec()
-    attach.mjcf_path = str(path(os.environ.get("MJ_KDL_GRIPPER", GRIPPER)))
+    attach.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml", env_var="MJ_KDL_GRIPPER")
     attach.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
     attach.prefix = "g_"
     spec = mjk.SceneSpec()
@@ -61,7 +49,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     spec.add_skybox = True
     spec.objects = [table, cube]
     robot_spec = mjk.RobotSpec()
-    robot_spec.path = str(path(mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")))
+    robot_spec.path = mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
     robot_spec.pos = [0.0, 0.0, SURFACE_Z]
     robot_spec.attachments = [attach]
     spec.robots = [robot_spec]

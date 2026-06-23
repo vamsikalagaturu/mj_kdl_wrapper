@@ -10,16 +10,11 @@ from __future__ import annotations
 
 import argparse
 import math
-import os
 from dataclasses import dataclass
-from pathlib import Path
 
 import PyKDL as kdl
 import mj_kdl_wrapper as mjk
 
-ARM = "third_party/menagerie/kinova_gen3/gen3.xml"
-GRIPPER = "assets/robotiq_2f85/2f85.xml"
-TABLE = "assets/table.xml"
 HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 SURFACE_Z = 0.70
 CUBE_HALF_SIZE = 0.02
@@ -46,25 +41,18 @@ class Phase:
     gripper: float
 
 
-def path(value: str, label: str) -> Path:
-    p = Path(value)
-    if not p.exists():
-        raise FileNotFoundError(f"{p} does not exist for {label}; run from the repo root")
-    return p
-
-
-def gripper_attachment(gripper_path: Path) -> mjk.AttachmentSpec:
+def gripper_attachment(gripper_path: str) -> mjk.AttachmentSpec:
     attach = mjk.AttachmentSpec()
-    attach.mjcf_path = str(gripper_path)
+    attach.mjcf_path = gripper_path
     attach.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
     attach.prefix = "g_"
     return attach
 
 
-def table_object(table_path: Path) -> mjk.SceneObject:
+def table_object(table_path: str) -> mjk.SceneObject:
     table = mjk.SceneObject()
     table.name = "table"
-    table.mjcf_path = str(table_path)
+    table.mjcf_path = table_path
     table.pos = [0.0, 0.0, SURFACE_Z]
     table.fixed = True
     return table
@@ -89,15 +77,17 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     spec.add_floor = True
     spec.add_skybox = True
     spec.objects = [
-        table_object(path(os.environ.get("MJ_KDL_TABLE", TABLE), "table model")),
+        table_object(mjk.menagerie.asset_path("table.xml", env_var="MJ_KDL_TABLE")),
         cube_object(),
     ]
 
     robot_spec = mjk.RobotSpec()
-    robot_spec.path = str(path(mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL"), "arm model"))
+    robot_spec.path = mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
     robot_spec.pos = [0.0, 0.0, SURFACE_Z]
     robot_spec.attachments = [
-        gripper_attachment(path(os.environ.get("MJ_KDL_GRIPPER", GRIPPER), "gripper model"))
+        gripper_attachment(
+            mjk.menagerie.asset_path("robotiq_2f85/2f85.xml", env_var="MJ_KDL_GRIPPER")
+        )
     ]
     spec.robots = [robot_spec]
 

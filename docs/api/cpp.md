@@ -11,6 +11,7 @@ Those are choices, not values the library can guess. `build_scene()` rejects
 `timestep <= 0` at runtime.
 
 ```cpp
+#include "example_paths.hpp"
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 
 mj_kdl::SceneSpec sc;
@@ -18,7 +19,7 @@ sc.timestep   = 0.002;   // [s]; required, must be > 0
 sc.add_floor  = true;
 sc.add_skybox = true;
 sc.robots.push_back(mj_kdl::RobotSpec{
-    .path = "third_party/menagerie/kinova_gen3/gen3.xml"
+    .path = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml")
 });
 
 mjModel *model = nullptr;
@@ -86,14 +87,14 @@ manual `pos` or `euler`:
 
 ```cpp
 mj_kdl::AttachmentSpec gripper{
-    .mjcf_path          = "assets/robotiq_2f85/2f85.xml",
+    .mjcf_path          = mj_kdl_examples::asset("robotiq_2f85/2f85.xml"),
     .attach_to          = { mj_kdl::AttachKind::Site, "pinch_site" },
     .prefix             = "g_",
     .contact_exclusions = {},
 };
 
 mj_kdl::RobotSpec robot_spec;
-robot_spec.path = "third_party/menagerie/kinova_gen3/gen3.xml";
+robot_spec.path = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
 robot_spec.attachments.push_back(gripper);
 
 mj_kdl::SceneSpec sc;
@@ -166,7 +167,7 @@ sc.add_skybox = true;
 
 mj_kdl::SceneObject table{
     .name      = "table",
-    .mjcf_path = "assets/table.xml",  // ships a table_top site
+    .mjcf_path = mj_kdl_examples::asset("table.xml"),  // ships a table_top site
     .pos       = { 0.0, 0.0, 0.7 },
     .fixed     = true,
 };
@@ -175,7 +176,7 @@ sc.objects.push_back(table);
 std::string mount = mj_kdl::scene_object_site_name(table, "table_top");
 
 sc.robots.push_back(mj_kdl::RobotSpec{
-    .path      = "third_party/menagerie/kinova_gen3/gen3.xml",
+    .path      = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
     .attach_to = { mj_kdl::AttachKind::Site, mount.c_str() },
 });
 

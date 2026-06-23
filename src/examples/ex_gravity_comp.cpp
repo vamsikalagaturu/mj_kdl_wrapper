@@ -5,7 +5,7 @@
  * KDL::ChainDynParam::JntToGravity and applies them via update() in
  * TORQUE mode, keeping the arm floating at home pose.
  *
- * Requires third_party/menagerie submodule.
+ * Requires MuJoCo Menagerie in cache.
  *
  * Usage:
  *   ex_gravity_comp_mjcf [--headless]
@@ -13,19 +13,16 @@
  * With --headless runs 500 steps and prints the final EE drift. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "example_paths.hpp"
 
 #include <kdl/chaindynparam.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
 
-#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <string>
 
 static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
-
-namespace fs = std::filesystem;
-static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path().parent_path(); }
 
 int main(int argc, char *argv[])
 {
@@ -33,14 +30,7 @@ int main(int argc, char *argv[])
     for (int i = 1; i < argc; ++i)
         if (std::string(argv[i]) == "--headless") headless = true;
 
-    const fs::path root = repo_root();
-    if (!fs::exists(root / "third_party/menagerie")) {
-        std::cerr << "third_party/menagerie/ not found - run:\n"
-                     "  cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON\n";
-        return 1;
-    }
-
-    const std::string mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+    const std::string mjcf = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
 
     mj_kdl::SceneSpec sc;
     sc.timestep   = 0.002;

@@ -5,7 +5,7 @@
  * for 5 s at 60 fps, loaded from MuJoCo Menagerie MJCF.
  * No display or GLFW window is needed.
  *
- * Requires third_party/menagerie submodule.
+ * Requires MuJoCo Menagerie in cache.
  *
  * Requirements:
  *   - BUILD_RECORDER=ON (default) -- EGL support compiled into the library
@@ -17,20 +17,17 @@
  * Output defaults to sim.mp4; resolution defaults to 1080p. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "example_paths.hpp"
 
 #include <kdl/chaindynparam.hpp>
 
 #include <cmath>
-#include <filesystem>
 #include <iostream>
 #include <string>
 
 static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
 static constexpr int    kFps         = 60;
 static constexpr double kDuration    = 5.0; // seconds
-
-namespace fs = std::filesystem;
-static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path().parent_path(); }
 
 static mj_kdl::VideoResolution parse_resolution(const std::string &s)
 {
@@ -56,14 +53,7 @@ int main(int argc, char *argv[])
             res = parse_resolution(a);
     }
 
-    const fs::path root = repo_root();
-    if (!fs::exists(root / "third_party/menagerie")) {
-        std::cerr << "third_party/menagerie/ not found - run:\n"
-                     "  cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON\n";
-        return 1;
-    }
-
-    const std::string mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+    const std::string mjcf = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
 
     // Build scene
     mj_kdl::SceneSpec sc;
