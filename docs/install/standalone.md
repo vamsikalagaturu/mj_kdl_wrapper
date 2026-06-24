@@ -69,8 +69,9 @@ ctest --test-dir build --output-on-failure
 
 What happens during configure/build:
 
-- **MuJoCo** is downloaded (`MJ_KDL_FETCH_MUJOCO=ON`) unless `MJ_KDL_MUJOCO_DIR`
-  already holds a matching install.
+- **MuJoCo** is downloaded into the user cache (`MJ_KDL_FETCH_MUJOCO=ON`) unless
+  `MJ_KDL_MUJOCO_DIR` already holds a matching install. No system paths are
+  searched; set `MJ_KDL_MUJOCO_DIR` to use an install elsewhere.
 - **Orocos KDL** (the secorolab fork) is cloned into
   `MJ_KDL_OROCOS_KDL_DIR` (default `third_party/orocos_kinematics_dynamics`) and
   built via `ExternalProject` into `build/orocos_kdl_install`. The checkout
@@ -238,8 +239,8 @@ Paths / sources:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `MJ_KDL_MUJOCO_DIR` | `/opt/mujoco-${MJ_KDL_MUJOCO_VERSION}` | Existing MuJoCo install to use |
-| `MJ_KDL_FETCH_MUJOCO` | `ON` | Download MuJoCo when `MJ_KDL_MUJOCO_DIR` is not present |
+| `MJ_KDL_MUJOCO_DIR` | `~/.cache/mj_kdl_wrapper/mujoco-${MJ_KDL_MUJOCO_VERSION}` | MuJoCo location: download destination, or an existing install to use |
+| `MJ_KDL_FETCH_MUJOCO` | `ON` | Download MuJoCo into the cache when `MJ_KDL_MUJOCO_DIR` is not present |
 | `MJ_KDL_MUJOCO_URL` | (release) | MuJoCo archive URL to download |
 | `MJ_KDL_FETCH_OROCOS_KDL` | `ON` | Clone and build the secorolab Orocos KDL fork (the only KDL used) |
 | `MJ_KDL_OROCOS_KDL_GIT_REPOSITORY` | secorolab fork | Orocos KDL git source to build |
