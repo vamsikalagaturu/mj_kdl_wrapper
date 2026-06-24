@@ -14,8 +14,23 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
-# MuJoCo: use MJ_KDL_MUJOCO_DIR if it points at a MuJoCo install, otherwise download the
-# supported release (on by default). Override the archive URL if needed.
+# Shared cache root for downloaded MuJoCo, MuJoCo Menagerie, and bundled assets.
+# Mirrors python/mj_kdl_wrapper/menagerie.py:_cache_root and
+# src/examples/example_paths.hpp:cache_root; keep all three in sync.
+if(DEFINED ENV{XDG_CACHE_HOME} AND NOT "$ENV{XDG_CACHE_HOME}" STREQUAL "")
+    set(_MJ_KDL_CACHE_ROOT "$ENV{XDG_CACHE_HOME}/mj_kdl_wrapper")
+elseif(DEFINED ENV{HOME} AND NOT "$ENV{HOME}" STREQUAL "")
+    set(_MJ_KDL_CACHE_ROOT "$ENV{HOME}/.cache/mj_kdl_wrapper")
+endif()
+set(MJ_KDL_MUJOCO_DEFAULT_DIR "")
+set(MJ_KDL_MENAGERIE_DEFAULT_DIR "")
+if(_MJ_KDL_CACHE_ROOT)
+    set(MJ_KDL_MUJOCO_DEFAULT_DIR "${_MJ_KDL_CACHE_ROOT}/mujoco-${MJ_KDL_MUJOCO_VERSION}")
+    set(MJ_KDL_MENAGERIE_DEFAULT_DIR "${_MJ_KDL_CACHE_ROOT}/menagerie")
+endif()
+
+# MuJoCo: downloaded into the cache by default. Point MJ_KDL_MUJOCO_DIR at an
+# existing install to use that instead (no system paths are searched).
 option(
   MJ_KDL_FETCH_MUJOCO
   "Download the supported MuJoCo release if MJ_KDL_MUJOCO_DIR is not available"
@@ -79,7 +94,10 @@ option(
   OFF
 )
 
-# MuJoCo - prefer /opt/mujoco-<version>, override with -DMJ_KDL_MUJOCO_DIR=...
+# MuJoCo - default to the user cache, override with -DMJ_KDL_MUJOCO_DIR=...
+if(NOT DEFINED CACHE{MJ_KDL_MUJOCO_DIR} AND NOT MJ_KDL_MUJOCO_DEFAULT_DIR)
+    message(FATAL_ERROR "Set XDG_CACHE_HOME or HOME for the default MuJoCo cache, or pass MJ_KDL_MUJOCO_DIR explicitly.")
+endif()
 set(MJ_KDL_MUJOCO_DIR "${MJ_KDL_MUJOCO_DEFAULT_DIR}" CACHE PATH "MuJoCo install location")
 if(MJ_KDL_FETCH_MUJOCO AND NOT EXISTS "${MJ_KDL_MUJOCO_DIR}/include/mujoco/mujoco.h")
     if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -113,13 +131,20 @@ if(MJ_KDL_FETCH_MUJOCO AND NOT EXISTS "${MJ_KDL_MUJOCO_DIR}/include/mujoco/mujoc
     FetchContent_Declare(
       mujoco_release
       URL "${MJ_KDL_MUJOCO_URL}"
+      SOURCE_DIR "${MJ_KDL_MUJOCO_DIR}"
       SOURCE_SUBDIR _mj_kdl_no_configure
     )
     FetchContent_MakeAvailable(mujoco_release)
     set(MJ_KDL_MUJOCO_DIR "${mujoco_release_SOURCE_DIR}" CACHE PATH "MuJoCo install location" FORCE)
 endif()
+if(NOT EXISTS "${MJ_KDL_MUJOCO_DIR}/include/mujoco/mujoco.h")
+    message(FATAL_ERROR
+      "MuJoCo ${MJ_KDL_MUJOCO_VERSION} was not found at ${MJ_KDL_MUJOCO_DIR}. "
+      "Set MJ_KDL_MUJOCO_DIR to an existing install, or set MJ_KDL_FETCH_MUJOCO=ON "
+      "to download it into the cache.")
+endif()
 find_path(MUJOCO_INCLUDE_DIR mujoco/mujoco.h
-          PATHS "${MJ_KDL_MUJOCO_DIR}/include" /usr/local/include /usr/include
+          PATHS "${MJ_KDL_MUJOCO_DIR}/include"
           NO_DEFAULT_PATH REQUIRED)
 file(STRINGS "${MUJOCO_INCLUDE_DIR}/mujoco/mujoco.h" MUJOCO_VERSION_HEADER_LINE
      REGEX "^#define mjVERSION_HEADER ")
@@ -132,7 +157,7 @@ if(NOT MUJOCO_VERSION_HEADER STREQUAL "${MJ_KDL_MUJOCO_VERSION_HEADER}")
       "but found ${MUJOCO_VERSION_HEADER} at ${MUJOCO_INCLUDE_DIR}")
 endif()
 find_library(MUJOCO_LIBRARY mujoco
-             PATHS "${MJ_KDL_MUJOCO_DIR}/lib" /usr/local/lib /usr/lib /usr/lib/x86_64-linux-gnu
+             PATHS "${MJ_KDL_MUJOCO_DIR}/lib"
              NO_DEFAULT_PATH REQUIRED)
 get_filename_component(MUJOCO_LIB_DIR "${MUJOCO_LIBRARY}" DIRECTORY)
 list(APPEND CMAKE_BUILD_RPATH "${MUJOCO_LIB_DIR}")
@@ -482,11 +507,14 @@ endif()
 # MuJoCo Menagerie (robot model zoo - used by the examples and tests)
 option(MJ_KDL_FETCH_MENAGERIE "Download MuJoCo Menagerie into MJ_KDL_MENAGERIE_DIR" OFF)
 set(
-  MJ_KDL_MENAGERIE_DIR "${CMAKE_SOURCE_DIR}/third_party/menagerie"
+  MJ_KDL_MENAGERIE_DIR "${MJ_KDL_MENAGERIE_DEFAULT_DIR}"
   CACHE PATH
   "MuJoCo Menagerie location (used as the MJ_KDL_FETCH_MENAGERIE destination)"
 )
 if(MJ_KDL_FETCH_MENAGERIE)
+    if(NOT MJ_KDL_MENAGERIE_DIR)
+        message(FATAL_ERROR "Set XDG_CACHE_HOME or HOME for the default Menagerie cache, or pass MJ_KDL_MENAGERIE_DIR explicitly.")
+    endif()
     set(MENAGERIE_SOURCE_DIR "${MJ_KDL_MENAGERIE_DIR}")
     if(EXISTS ${MENAGERIE_SOURCE_DIR}/README.md)
         message(STATUS "Menagerie: already present at ${MENAGERIE_SOURCE_DIR}")
@@ -503,6 +531,8 @@ if(MJ_KDL_FETCH_MENAGERIE)
         FetchContent_MakeAvailable(mujoco_menagerie)
         message(STATUS "Menagerie: ready at ${MENAGERIE_SOURCE_DIR}")
     endif()
+    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/assets/" DESTINATION "${_MJ_KDL_CACHE_ROOT}/assets")
+    message(STATUS "Bundled assets: ready at ${_MJ_KDL_CACHE_ROOT}/assets")
 endif()
 
 # Documentation (Doxygen + local CSS)

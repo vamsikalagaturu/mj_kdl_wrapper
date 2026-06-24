@@ -16,7 +16,7 @@ ctest --test-dir build --output-on-failure
 ./build/test/test_init
 ```
 
-All tests self-skip if `third_party/menagerie/` is absent.  Fetch it with:
+All tests self-skip if Menagerie is absent. Fetch it into the user cache with:
 
 ```bash
 cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON

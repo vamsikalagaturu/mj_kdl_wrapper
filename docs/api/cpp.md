@@ -4,6 +4,30 @@ This page collects the C++ wrapper usage notes that are too detailed for the
 README. For complete function signatures, see the generated Doxygen API pages
 for `include/mj_kdl_wrapper/mj_kdl_wrapper.hpp`.
 
+## Resolving Models And Assets
+
+The examples and tests resolve paths through `example_paths.hpp` (a header-only
+helper under `src/examples/`) so no checkout location is hard-coded. It mirrors
+the Python `menagerie` resolver:
+
+- `mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml")` returns a MuJoCo
+  Menagerie model. It checks `$MJ_KDL_MENAGERIE` first, then the user cache
+  `~/.cache/mj_kdl_wrapper/menagerie`. It throws
+  with a fetch hint when absent; `find_menagerie_model(...)` returns `""`
+  instead, which is how tests self-skip.
+- `mj_kdl_examples::asset("table.xml")` returns a bundled asset from the user
+  cache `~/.cache/mj_kdl_wrapper/assets`; `find_asset(...)` returns `""`.
+
+Populate the cache with `cmake -DMJ_KDL_FETCH_MENAGERIE=ON` (it clones Menagerie
+and copies the bundled assets into the cache) or the `mj-kdl-fetch-menagerie`
+console script. The same cache backs both the C++ and Python examples.
+
+**Overrides:** export `MJ_KDL_MENAGERIE=/path/to/menagerie` to resolve models
+from a checkout outside the cache. The C++ helper has no per-asset override --
+assets resolve from the cache only. (The Python examples additionally honor
+per-file overrides such as `MJ_KDL_MODEL` and `MJ_KDL_GRIPPER`; see the Python
+guide.)
+
 ## Load From MJCF
 
 `SceneSpec` has no defaults for `timestep`, `add_floor`, or `add_skybox`.
@@ -11,6 +35,7 @@ Those are choices, not values the library can guess. `build_scene()` rejects
 `timestep <= 0` at runtime.
 
 ```cpp
+#include "example_paths.hpp"
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 
 mj_kdl::SceneSpec sc;
@@ -18,7 +43,7 @@ sc.timestep   = 0.002;   // [s]; required, must be > 0
 sc.add_floor  = true;
 sc.add_skybox = true;
 sc.robots.push_back(mj_kdl::RobotSpec{
-    .path = "third_party/menagerie/kinova_gen3/gen3.xml"
+    .path = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml")
 });
 
 mjModel *model = nullptr;
@@ -86,14 +111,14 @@ manual `pos` or `euler`:
 
 ```cpp
 mj_kdl::AttachmentSpec gripper{
-    .mjcf_path          = "assets/robotiq_2f85/2f85.xml",
+    .mjcf_path          = mj_kdl_examples::asset("robotiq_2f85/2f85.xml"),
     .attach_to          = { mj_kdl::AttachKind::Site, "pinch_site" },
     .prefix             = "g_",
     .contact_exclusions = {},
 };
 
 mj_kdl::RobotSpec robot_spec;
-robot_spec.path = "third_party/menagerie/kinova_gen3/gen3.xml";
+robot_spec.path = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
 robot_spec.attachments.push_back(gripper);
 
 mj_kdl::SceneSpec sc;
@@ -166,7 +191,7 @@ sc.add_skybox = true;
 
 mj_kdl::SceneObject table{
     .name      = "table",
-    .mjcf_path = "assets/table.xml",  // ships a table_top site
+    .mjcf_path = mj_kdl_examples::asset("table.xml"),  // ships a table_top site
     .pos       = { 0.0, 0.0, 0.7 },
     .fixed     = true,
 };
@@ -175,7 +200,7 @@ sc.objects.push_back(table);
 std::string mount = mj_kdl::scene_object_site_name(table, "table_top");
 
 sc.robots.push_back(mj_kdl::RobotSpec{
-    .path      = "third_party/menagerie/kinova_gen3/gen3.xml",
+    .path      = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
     .attach_to = { mj_kdl::AttachKind::Site, mount.c_str() },
 });
 

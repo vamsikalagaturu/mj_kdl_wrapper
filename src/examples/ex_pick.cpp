@@ -10,7 +10,7 @@
  * while control loop:
  *   HOME -> PREGRASP -> GRASP -> CLOSE -> LIFT -> HOLD
  *
- * Requires third_party/menagerie (MuJoCo Menagerie submodule).
+ * Requires MuJoCo Menagerie in cache.
  *
  * Usage:
  *   ex_pick [--headless]
@@ -18,6 +18,7 @@
  * With --headless runs the full pick sequence and prints final cube height. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "example_paths.hpp"
 
 #include <kdl/chaindynparam.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
@@ -25,7 +26,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -44,8 +44,6 @@ static constexpr double kKp[7] = { 100, 200, 100, 200, 100, 200, 100 }; // Nm/ra
 static constexpr double kKd[7] = { 10, 20, 10, 20, 10, 20, 10 };        // Nm*s/rad
 
 // helpers
-namespace fs = std::filesystem;
-static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path().parent_path(); }
 static double   clamp01(double v) { return std::max(0.0, std::min(1.0, v)); }
 
 static void lerp_q(const KDL::JntArray &a, const KDL::JntArray &b, double t, KDL::JntArray &out)
@@ -160,16 +158,9 @@ int main(int argc, char *argv[])
     for (int i = 1; i < argc; ++i)
         if (std::string(argv[i]) == "--headless") headless = true;
 
-    const fs::path root = repo_root();
-    if (!fs::exists(root / "third_party/menagerie")) {
-        std::cerr << "third_party/menagerie/ not found  - run: "
-                     "git submodule update --init third_party/menagerie\n";
-        return 1;
-    }
-
     // scene setup
-    const std::string arm_mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-    const std::string grp_mjcf = (root / "assets/robotiq_2f85/2f85.xml").string();
+    const std::string arm_mjcf = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
+    const std::string grp_mjcf = mj_kdl_examples::asset("robotiq_2f85/2f85.xml");
 
     mj_kdl::AttachmentSpec gs;
     gs.mjcf_path = grp_mjcf.c_str();

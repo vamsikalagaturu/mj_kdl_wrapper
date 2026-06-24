@@ -10,15 +10,10 @@ the slide.
 from __future__ import annotations
 
 import argparse
-import os
-from pathlib import Path
 
 import PyKDL as kdl
 import mj_kdl_wrapper as mjk
 
-ARM = "third_party/menagerie/kinova_gen3/gen3.xml"
-GRIPPER = "assets/robotiq_2f85/2f85.xml"
-TABLE = "assets/table.xml"
 TABLE_POSE = [-0.00258, 1.43, 3.14, -1.70, -0.018, 1.74, 1.57]
 TABLE_Z = 0.447
 MOVE_X = 0.20
@@ -27,21 +22,14 @@ KPROT, KDROT = 175.0, 28.0
 BETA_MAX, TAU_MAX = 120.0, 59.0
 
 
-def path(value: str) -> Path:
-    p = Path(value)
-    if not p.exists():
-        raise FileNotFoundError(f"{p} does not exist; run from the mj_kdl_wrapper root")
-    return p
-
-
 def build_env() -> tuple[mjk.Env, mjk.Robot]:
     table = mjk.SceneObject()
     table.name = "table"
-    table.mjcf_path = str(path(os.environ.get("MJ_KDL_TABLE", TABLE)))
+    table.mjcf_path = mjk.menagerie.asset_path("table.xml", env_var="MJ_KDL_TABLE")
     table.pos = [0.0, 0.0, TABLE_Z]
     table.fixed = True
     attach = mjk.AttachmentSpec()
-    attach.mjcf_path = str(path(os.environ.get("MJ_KDL_GRIPPER", GRIPPER)))
+    attach.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml", env_var="MJ_KDL_GRIPPER")
     attach.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
     attach.prefix = "g_"
     spec = mjk.SceneSpec()
@@ -50,7 +38,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     spec.add_skybox = True
     spec.objects = [table]
     robot_spec = mjk.RobotSpec()
-    robot_spec.path = str(path(mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")))
+    robot_spec.path = mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
     robot_spec.pos = [0.0, 0.0, TABLE_Z]
     robot_spec.attachments = [attach]
     spec.robots = [robot_spec]

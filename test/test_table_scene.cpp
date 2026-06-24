@@ -2,11 +2,12 @@
  * Load a robot arm on a table with pickable objects (cubes and spheres).
  * Runs KDL gravity compensation so the arm holds position.
  * Also tests runtime scene_add_object / scene_remove_object.
- * Self-skips when third_party/menagerie is absent. */
+ * Self-skips when Menagerie is absent. */
 
 #include <gtest/gtest.h>
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "example_paths.hpp"
 
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chaindynparam.hpp>
@@ -18,8 +19,6 @@
 static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
 
 namespace fs = std::filesystem;
-static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
-
 // Free-jointed primitives must stay world-anchored (MuJoCo: freejoint only on
 // top level), so their z is surface_z + half_height. The robot, which has no
 // freejoint at its root, attaches to the table via a site instead.
@@ -81,13 +80,12 @@ class TableSceneTest : public testing::Test
 
     void SetUp() override
     {
-        fs::path root = repo_root();
-        mjcf_ = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+        mjcf_ = mj_kdl_examples::find_menagerie_model("kinova_gen3/gen3.xml");
         if (!fs::exists(mjcf_)) {
             GTEST_SKIP() << mjcf_ << " not found";
             return;
         }
-        std::string table_mjcf = (root / "assets/table.xml").string();
+        std::string table_mjcf = mj_kdl_examples::find_asset("table.xml");
 
         // Table asset origin is the tabletop surface center; only the table
         // itself carries a world-frame z. Robot and objects derive their

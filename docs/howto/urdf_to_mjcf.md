@@ -29,7 +29,8 @@ If you need to start from a URDF (vendor-supplied), the recommended path is:
 ### 1. Convert with MuJoCo's own tool
 
 ```bash
-/opt/mujoco-3.9.0/bin/compile robot.urdf robot.xml
+# the compile tool ships with MuJoCo; this project caches it under ~/.cache
+~/.cache/mj_kdl_wrapper/mujoco-3.9.0/bin/compile robot.urdf robot.xml
 ```
 
 This produces a flat MJCF. It is a raw mechanical conversion -- no actuators, no sensors,
@@ -159,4 +160,5 @@ after MuJoCo compilation, so they always match the simulation.
 
 - MuJoCo model specification: https://mujoco.readthedocs.io/en/stable/XMLreference.html
 - MuJoCo Menagerie (reference MJCF models): https://github.com/google-deepmind/mujoco_menagerie
-- Kinova GEN3 Menagerie model: `third_party/menagerie/kinova_gen3/gen3.xml`
+- Kinova GEN3 Menagerie model: `kinova_gen3/gen3.xml` in the user cache populated by
+  `mj-kdl-fetch-menagerie` (`~/.cache/mj_kdl_wrapper/menagerie/kinova_gen3/gen3.xml`)

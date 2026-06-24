@@ -10,40 +10,25 @@ from __future__ import annotations
 
 import argparse
 import math
-import os
-from pathlib import Path
 
 import mj_kdl_wrapper as mjk
 
 SURFACE_Z = 0.7
-DEFAULT_MODEL = "third_party/menagerie/kinova_gen3/gen3.xml"
-DEFAULT_GRIPPER = "assets/robotiq_2f85/2f85.xml"
-DEFAULT_TABLE = "assets/table.xml"
-MODEL_ENV_VAR = "MJ_KDL_MODEL"
-GRIPPER_ENV_VAR = "MJ_KDL_GRIPPER"
-TABLE_ENV_VAR = "MJ_KDL_TABLE"
 HOME_POSE = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 
 
-def path_from_arg(value: str, label: str) -> Path:
-    path = Path(value)
-    if not path.exists():
-        raise FileNotFoundError(f"{value} does not exist for {label}")
-    return path
-
-
-def attachment_gripper(path: Path) -> mjk.AttachmentSpec:
+def attachment_gripper(path: str) -> mjk.AttachmentSpec:
     spec = mjk.AttachmentSpec()
-    spec.mjcf_path = str(path)
+    spec.mjcf_path = path
     spec.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
     spec.prefix = "g_"
     return spec
 
 
-def table_object(path: Path) -> mjk.SceneObject:
+def table_object(path: str) -> mjk.SceneObject:
     obj = mjk.SceneObject()
     obj.name = "table"
-    obj.mjcf_path = str(path)
+    obj.mjcf_path = path
     obj.pos = [0.0, 0.0, SURFACE_Z]
     obj.fixed = True
     return obj
@@ -84,14 +69,14 @@ def scene_objects(table_path):
     ]
 
 
-def build_env(model_path: Path, gripper_path: Path, table_path: Path) -> tuple[mjk.Env, mjk.Robot]:
+def build_env(model_path: str, gripper_path: str, table_path: str) -> tuple[mjk.Env, mjk.Robot]:
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
     spec.add_skybox = True
     spec.objects = scene_objects(table_path)
     robot_spec = mjk.RobotSpec()
-    robot_spec.path = str(model_path)
+    robot_spec.path = model_path
     robot_spec.pos = [0.0, 0.0, SURFACE_Z]
     robot_spec.attachments = [attachment_gripper(gripper_path)]
     spec.robots = [robot_spec]
@@ -141,9 +126,9 @@ def main() -> int:
     args = parser.parse_args()
 
     env, robot = build_env(
-        path_from_arg(mjk.menagerie.model_path("kinova_gen3", env_var=MODEL_ENV_VAR), "arm model"),
-        path_from_arg(os.environ.get(GRIPPER_ENV_VAR, DEFAULT_GRIPPER), "gripper model"),
-        path_from_arg(os.environ.get(TABLE_ENV_VAR, DEFAULT_TABLE), "table model"),
+        mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL"),
+        mjk.menagerie.asset_path("robotiq_2f85/2f85.xml", env_var="MJ_KDL_GRIPPER"),
+        mjk.menagerie.asset_path("table.xml", env_var="MJ_KDL_TABLE"),
     )
     try:
         robot.ctrl_mode = mjk.CtrlMode.TORQUE

@@ -3,30 +3,20 @@
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import mj_kdl_wrapper as mjk
 
-DEFAULT_MODEL = "third_party/menagerie/kinova_gen3/gen3.xml"
-MODEL_ENV_VAR = "MJ_KDL_MODEL"
 TITLE = "mj_kdl_wrapper Python UI"
 
 
 def main() -> int:
-    model_path = Path(mjk.menagerie.model_path("kinova_gen3", env_var=MODEL_ENV_VAR))
-    if not model_path.exists():
-        raise FileNotFoundError(
-            f"{model_path} does not exist. Run from a directory where that relative path exists "
-            f"or set {MODEL_ENV_VAR}."
-        )
+    model_path = mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
 
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
     spec.add_skybox = True
     robot_spec = mjk.RobotSpec()
-    robot_spec.path = str(model_path)
+    robot_spec.path = model_path
     spec.robots = [robot_spec]
 
     scene = mjk.Scene.build(spec)

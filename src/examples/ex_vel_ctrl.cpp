@@ -8,7 +8,7 @@
  *   vel[i]          = clamp(Kv * (target[i] - q[i]), -maxVel, maxVel)
  *   jnt_pos_cmd[i] += vel[i] * dt
  *
- * Requires third_party/menagerie submodule.
+ * Requires MuJoCo Menagerie in cache.
  *
  * Usage:
  *   ex_vel_ctrl [--headless]
@@ -17,10 +17,10 @@
  * final max joint error. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "example_paths.hpp"
 
 #include <algorithm>
 #include <cmath>
-#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -32,23 +32,13 @@ static constexpr double kKv     = 2.0;  // proportional gain [rad/s per rad erro
 static constexpr double kMaxVel = 0.6;  // max joint velocity [rad/s]
 static constexpr double kTol    = 0.01; // convergence tolerance [rad]
 
-namespace fs = std::filesystem;
-static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path().parent_path(); }
-
 int main(int argc, char *argv[])
 {
     bool headless = false;
     for (int i = 1; i < argc; ++i)
         if (std::string(argv[i]) == "--headless") headless = true;
 
-    const fs::path root = repo_root();
-    if (!fs::exists(root / "third_party/menagerie")) {
-        std::cerr << "third_party/menagerie/ not found - run:\n"
-                     "  cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON\n";
-        return 1;
-    }
-
-    const std::string mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+    const std::string mjcf = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
 
     mj_kdl::SceneSpec sc;
     sc.timestep   = 0.002;

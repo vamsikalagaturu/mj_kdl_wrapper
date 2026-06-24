@@ -38,22 +38,15 @@ jobs:
           tar xzf "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz" -C /tmp
           rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
 
-      # Robot models the tests load (cached); without them the tests self-skip.
-      - name: Cache MuJoCo Menagerie
-        id: cache-menagerie
+      # Models + bundled assets the tests load, in the user cache the resolvers
+      # read; Configure (MJ_KDL_FETCH_MENAGERIE=ON below) populates it on a miss.
+      - name: Cache MuJoCo Menagerie + assets
         uses: actions/cache@v4
         with:
-          path: third_party/menagerie
-          key: menagerie-${{ runner.os }}-v1
+          path: ~/.cache/mj_kdl_wrapper
+          key: menagerie-${{ runner.os }}-v2
           restore-keys: |
             menagerie-${{ runner.os }}-
-
-      - name: Fetch MuJoCo Menagerie
-        if: steps.cache-menagerie.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p third_party
-          [ -d third_party/menagerie/.git ] || \
-            git clone --depth 1 https://github.com/google-deepmind/mujoco_menagerie.git third_party/menagerie
 
       # Compiler cache, shared with the build workflow via the common prefix.
       - name: Cache ccache
@@ -79,7 +72,7 @@ jobs:
             -DMJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}" \
             -DBUILD_TESTS=ON \
             -DBUILD_DOCS=OFF \
-            -DMJ_KDL_FETCH_MENAGERIE=OFF \
+            -DMJ_KDL_FETCH_MENAGERIE=ON \
             -DFETCHCONTENT_BASE_DIR="${FETCHCONTENT_BASE_DIR}" \
             -DFETCHCONTENT_UPDATES_DISCONNECTED=ON
 

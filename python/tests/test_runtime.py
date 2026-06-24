@@ -1,10 +1,13 @@
-from pathlib import Path
-
 import pytest
 
 import mj_kdl_wrapper as mjk
 
-MODEL_PATH = Path("third_party/menagerie/kinova_gen3/gen3.xml")
+
+def _model_path() -> str:
+    try:
+        return mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
+    except RuntimeError as exc:
+        pytest.skip(str(exc))
 
 
 def _scene_spec() -> mjk.SceneSpec:
@@ -13,7 +16,7 @@ def _scene_spec() -> mjk.SceneSpec:
     spec.add_floor = True
     spec.add_skybox = True
     robot_spec = mjk.RobotSpec()
-    robot_spec.path = str(MODEL_PATH)
+    robot_spec.path = _model_path()
     spec.robots = [robot_spec]
     return spec
 
@@ -31,8 +34,7 @@ def _cube(name: str = "cube") -> mjk.SceneObject:
 
 
 def _skip_without_model() -> None:
-    if not MODEL_PATH.exists():
-        pytest.skip("MuJoCo Menagerie Kinova model is not available")
+    _model_path()
 
 
 def test_build_scene_and_robot_step():

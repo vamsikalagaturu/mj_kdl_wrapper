@@ -6,7 +6,7 @@
  * kMotionDuration seconds.  After the motion completes the final position is
  * held indefinitely.
  *
- * Requires third_party/menagerie submodule.
+ * Requires MuJoCo Menagerie in cache.
  *
  * Usage:
  *   ex_pos_ctrl [--headless]
@@ -14,10 +14,10 @@
  * With --headless runs the full motion and prints final max joint error. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "example_paths.hpp"
 
 #include <algorithm>
 #include <cmath>
-#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -26,23 +26,13 @@ static constexpr double kHomePose[7]    = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0
 static constexpr double kTargetPose[7]  = { 0.3, 0.5, 2.9, -2.0, 0.3, 1.2, 1.3 };
 static constexpr double kMotionDuration = 2.0; // seconds for the interpolated move
 
-namespace fs = std::filesystem;
-static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path().parent_path(); }
-
 int main(int argc, char *argv[])
 {
     bool headless = false;
     for (int i = 1; i < argc; ++i)
         if (std::string(argv[i]) == "--headless") headless = true;
 
-    const fs::path root = repo_root();
-    if (!fs::exists(root / "third_party/menagerie")) {
-        std::cerr << "third_party/menagerie/ not found - run:\n"
-                     "  cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON\n";
-        return 1;
-    }
-
-    const std::string mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+    const std::string mjcf = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
 
     mj_kdl::SceneSpec sc;
     sc.timestep   = 0.002;

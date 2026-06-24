@@ -21,9 +21,18 @@ known local or cached MuJoCo Menagerie checkouts:
 
 1. `MJ_KDL_MODEL` / `MJ_KDL_GRIPPER` - per-model file overrides.
 2. `MJ_KDL_MENAGERIE` - a MuJoCo Menagerie checkout root.
-3. A local `third_party/menagerie` checkout next to the current directory or
-   repository.
-4. The cache populated by `mj-kdl-fetch-menagerie`.
+3. The user cache `~/.cache/mj_kdl_wrapper/menagerie`, populated by
+   `mj-kdl-fetch-menagerie`.
+
+`menagerie.asset_path(rel)` resolves bundled assets (gripper, table, mug) the
+same way: an optional per-asset env override, otherwise the user cache
+`~/.cache/mj_kdl_wrapper/assets`. `mj-kdl-fetch-menagerie` populates both, and
+the same cache backs the C++ examples (see the C++ guide).
+
+**Overrides:** the example scripts wire these per-file env vars -- `MJ_KDL_MODEL`
+(arm), `MJ_KDL_GRIPPER`, `MJ_KDL_TABLE`, `MJ_KDL_BOTTLE`, `MJ_KDL_RECEIVER`. Each
+must point at an existing file or resolution raises a clear error.
+`MJ_KDL_MENAGERIE` overrides the Menagerie checkout root.
 
 For other MJCF sources, set the relevant environment variable or assign
 `RobotSpec.path` directly.

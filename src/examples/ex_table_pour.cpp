@@ -9,6 +9,7 @@
  * in the receiver. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "example_paths.hpp"
 
 #include <kdl/chaindynparam.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
@@ -19,13 +20,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <string>
 #include <vector>
-
-namespace fs = std::filesystem;
 
 static constexpr double kHomePose[7]      = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
 static constexpr double kTableZ           = 0.70;
@@ -47,7 +45,6 @@ static constexpr double kTiltOutletZ      = kTableZ + 0.18;
 static constexpr double kKp[7] = { 120, 220, 120, 220, 110, 190, 90 };
 static constexpr double kKd[7] = { 12, 22, 12, 22, 11, 18, 9 };
 
-static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path().parent_path(); }
 static double   clamp01(double v) { return std::max(0.0, std::min(1.0, v)); }
 
 static void lerp_q(const KDL::JntArray &a, const KDL::JntArray &b, double t, KDL::JntArray &out)
@@ -137,18 +134,11 @@ int main(int argc, char *argv[])
     }
     const int num_balls = headless ? kNumBallsHeadless : kNumBallsGui;
 
-    const fs::path root = repo_root();
-    if (!fs::exists(root / "third_party/menagerie")) {
-        std::cerr << "third_party/menagerie/ not found - run:\n"
-                     "  cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON\n";
-        return 1;
-    }
-
-    const std::string arm_mjcf    = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-    const std::string grp_mjcf    = (root / "assets/robotiq_2f85/2f85.xml").string();
-    const std::string bottle_mjcf = (root / "assets/mug.xml").string();
-    const std::string receiver_mjcf = (root / "assets/mug_table.xml").string();
-    const std::string table_mjcf    = (root / "assets/table.xml").string();
+    const std::string arm_mjcf    = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
+    const std::string grp_mjcf    = mj_kdl_examples::asset("robotiq_2f85/2f85.xml");
+    const std::string bottle_mjcf = mj_kdl_examples::asset("mug.xml");
+    const std::string receiver_mjcf = mj_kdl_examples::asset("mug_table.xml");
+    const std::string table_mjcf    = mj_kdl_examples::asset("table.xml");
 
     mj_kdl::AttachmentSpec gripper;
     gripper.mjcf_path = grp_mjcf.c_str();

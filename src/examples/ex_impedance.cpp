@@ -6,7 +6,7 @@
  * where g_kdl is computed via KDL::ChainDynParam::JntToGravity (includes gripper inertia).
  * Applied via TORQUE mode (qfrc_applied).  The gripper cycles open and closed every 3 s.
  *
- * Requires third_party/menagerie (MuJoCo Menagerie submodule).
+ * Requires MuJoCo Menagerie in cache.
  *
  * Usage:
  *   ex_impedance [--headless]
@@ -14,12 +14,12 @@
  * With --headless runs 200 steps and prints EE drift. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "example_paths.hpp"
 
 #include <kdl/chaindynparam.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
 
 #include <cmath>
-#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -31,24 +31,14 @@ static constexpr double kKp[7] = { 100, 200, 100, 200, 100, 200, 100 };
 static constexpr double kKd[7] = { 10, 20, 10, 20, 10, 20, 10 };
 
 
-namespace fs = std::filesystem;
-static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path().parent_path(); }
-
 int main(int argc, char *argv[])
 {
     bool headless = false;
     for (int i = 1; i < argc; ++i)
         if (std::string(argv[i]) == "--headless") headless = true;
 
-    const fs::path root = repo_root();
-    if (!fs::exists(root / "third_party/menagerie")) {
-        std::cerr << "third_party/menagerie/ not found  - run: "
-                     "git submodule update --init third_party/menagerie\n";
-        return 1;
-    }
-
-    const std::string arm_mjcf = (root / "third_party/menagerie/kinova_gen3/gen3.xml").string();
-    const std::string grp_mjcf = (root / "assets/robotiq_2f85/2f85.xml").string();
+    const std::string arm_mjcf = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
+    const std::string grp_mjcf = mj_kdl_examples::asset("robotiq_2f85/2f85.xml");
 
     mj_kdl::AttachmentSpec gs;
     gs.mjcf_path = grp_mjcf.c_str();

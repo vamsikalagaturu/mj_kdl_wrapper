@@ -9,13 +9,8 @@ re-homes the arm and restarts the motion so the simulate-UI reset replays it.
 from __future__ import annotations
 
 import argparse
-import os
-from pathlib import Path
 
 import mj_kdl_wrapper as mjk
-
-DEFAULT_MODEL = "third_party/menagerie/kinova_gen3/gen3.xml"
-MODEL_ENV_VAR = "MJ_KDL_MODEL"
 
 HOME_POSE = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 TARGET_POSE = [0.3, 0.5, 2.9, -2.0, 0.3, 1.2, 1.3]
@@ -28,13 +23,13 @@ def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
-def build_env(model_path: Path) -> tuple[mjk.Env, mjk.Robot]:
+def build_env(model_path: str) -> tuple[mjk.Env, mjk.Robot]:
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
     spec.add_skybox = True
     robot_spec = mjk.RobotSpec()
-    robot_spec.path = str(model_path)
+    robot_spec.path = model_path
     spec.robots = [robot_spec]
     env = mjk.Env.build(spec)
     robot = env.create_robot("base_link", "bracelet_link")
@@ -47,13 +42,7 @@ def main() -> int:
     parser.add_argument("--gui", action="store_true", help="Open the custom Simulate UI.")
     args = parser.parse_args()
 
-    model_path = Path(mjk.menagerie.model_path("kinova_gen3", env_var=MODEL_ENV_VAR))
-    if not model_path.exists():
-        raise FileNotFoundError(
-            f"{model_path} does not exist. Run from a directory where that relative path exists "
-            f"or set {MODEL_ENV_VAR}."
-        )
-
+    model_path = mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
     env, robot = build_env(model_path)
     try:
         dt = env.timestep()

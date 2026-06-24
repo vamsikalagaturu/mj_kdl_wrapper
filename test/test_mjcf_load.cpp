@@ -3,6 +3,7 @@
  * the combined arm + Robotiq 2F-85 model. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "example_paths.hpp"
 
 #include <gtest/gtest.h>
 
@@ -16,8 +17,6 @@
 namespace fs = std::filesystem;
 
 static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
-
-static fs::path repo_root() { return fs::path(__FILE__).parent_path().parent_path(); }
 
 /* -------------------------------------------------------------------------
  * Fixture 1: arm-only from scene.xml
@@ -36,9 +35,8 @@ class MjcfLoadTest : public testing::Test
 
     void SetUp() override
     {
-        root_ = repo_root();
         // scene.xml already has floor, lights, and skybox.
-        std::string mjcf = (root_ / "third_party/menagerie/kinova_gen3/scene.xml").string();
+        std::string mjcf = mj_kdl_examples::find_menagerie_model("kinova_gen3/scene.xml");
         if (!fs::exists(mjcf)) {
             GTEST_SKIP() << mjcf << " not found";
             return;
@@ -122,11 +120,10 @@ class MjcfGripperTest : public testing::Test
 
     void SetUp() override
     {
-        root_ = repo_root();
         const std::string arm_mjcf =
-          (root_ / "third_party/menagerie/kinova_gen3/gen3.xml").string();
+          mj_kdl_examples::find_menagerie_model("kinova_gen3/gen3.xml");
         const std::string grp_mjcf =
-          (root_ / "assets/robotiq_2f85/2f85.xml").string();
+          mj_kdl_examples::find_asset("robotiq_2f85/2f85.xml");
         if (!fs::exists(arm_mjcf)) {
             GTEST_SKIP() << arm_mjcf << " not found";
             return;

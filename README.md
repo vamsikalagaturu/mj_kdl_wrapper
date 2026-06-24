@@ -56,9 +56,12 @@ sudo apt install cmake g++ git python3-dev python3-venv \
 
 ```bash
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
+# pin a release with --branch v0.1.0 (see Releases for the latest tag)
 cd mj_kdl_wrapper
 
-# configure (downloads MuJoCo, clones and builds the KDL fork, fetches Menagerie models)
+# configure (downloads MuJoCo, clones and builds the KDL fork; the menagerie
+# flag fetches Menagerie models and copies bundled assets into the user cache
+# at ~/.cache/mj_kdl_wrapper, which the examples and tests resolve from)
 cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMJ_KDL_FETCH_MENAGERIE=ON
 
 # compile
@@ -102,21 +105,30 @@ MuJoCo/KDL, sharing one KDL across projects, and all CMake options.
 
 ```bash
 uv pip install "git+https://github.com/vamsikalagaturu/mj_kdl_wrapper.git"
+# pin a release by appending @v0.1.0 to the URL (see Releases for the latest tag)
 
-# fetch the MuJoCo Menagerie models needed by the examples
+# fetch the MuJoCo Menagerie models and bundled assets into the user cache
 mj-kdl-fetch-menagerie
 ```
+
+Installing without a `@tag` tracks the `main` branch, which only advances at
+releases - so the default command above already installs the latest release.
 
 Bundles MuJoCo, the KDL fork, and PyKDL. See the
 [standalone guide](docs/install/standalone.md#python) for editable installs,
 Menagerie models, and build options.
 
-The examples and their assets ship in the wheel. Copy them out and run one:
+The example scripts ship in the wheel. Copy them out, populate the cache, and
+run one (the scripts resolve models and bundled assets from the cache, so they
+run from anywhere):
 
 ```bash
-# copy the bundled examples + assets into ./mj_kdl_wrapper_examples
+# copy the bundled example scripts into ./mj_kdl_wrapper_examples
 mj-kdl-fetch-examples
 cd mj_kdl_wrapper_examples
+
+# populate the user cache with Menagerie models and bundled assets
+mj-kdl-fetch-menagerie
 
 # check: run the pick-and-place example
 python examples/ex_pick.py --gui
@@ -134,6 +146,7 @@ mkdir -p ~/ros2_ws/src && cd ~/ros2_ws
 git clone -b feature/achd_fixed_joint \
   https://github.com/secorolab/orocos_kinematics_dynamics.git src/orocos_kinematics_dynamics
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git src/mj_kdl_wrapper
+# pin a release with --branch v0.1.0 (see Releases for the latest tag)
 
 # Use your distro: jazzy or lyrical
 source /opt/ros/jazzy/setup.bash
@@ -169,8 +182,10 @@ Every C++ `src/examples/ex_*.cpp` example has a same-name Python counterpart in
 ctest --test-dir build --output-on-failure
 ```
 
-Tests need the Menagerie models (`-DMJ_KDL_FETCH_MENAGERIE=ON` at configure) and
-self-skip without them. See [test/README.md](test/README.md) for the full list.
+Tests resolve the Menagerie models and bundled assets from the user cache
+(`~/.cache/mj_kdl_wrapper`); `-DMJ_KDL_FETCH_MENAGERIE=ON` at configure populates
+it, and tests self-skip when it is empty. See [test/README.md](test/README.md)
+for the full list.
 
 ## More Documentation
 
@@ -181,6 +196,11 @@ self-skip without them. See [test/README.md](test/README.md) for the full list.
 - [Examples guide](docs/examples.md)
 
 ## Assets
+
+These ship in the repo and the wheel, and are copied into the user cache
+(`~/.cache/mj_kdl_wrapper/assets`) by `-DMJ_KDL_FETCH_MENAGERIE=ON` or
+`mj-kdl-fetch-menagerie`. Examples and tests resolve them from the cache via
+`mj_kdl_examples::asset(...)` (C++) and `menagerie.asset_path(...)` (Python).
 
 | Path | Description |
 |------|-------------|
