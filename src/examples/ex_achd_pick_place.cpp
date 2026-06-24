@@ -19,7 +19,7 @@
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "example_paths.hpp"
 
-#include "chainhdsolver_vereshchagin_fixed_joint.hpp"
+#include <kdl/chainhdsolver_vereshchagin_fixed_joint.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chainfksolvervel_recursive.hpp>
 #include <kdl/chainidsolver_recursive_newton_euler.hpp>
