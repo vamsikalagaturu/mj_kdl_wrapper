@@ -39,13 +39,11 @@ namespace mj_kdl {
 static std::string default_mujoco_plugin_dir()
 {
 #ifdef MJ_KDL_RELOCATABLE_PLUGINS
-    Dl_info info {};
+    Dl_info info{};
     if (dladdr(reinterpret_cast<void *>(&default_mujoco_plugin_dir), &info) && info.dli_fname) {
         std::string library_path(info.dli_fname);
         const auto  slash = library_path.find_last_of('/');
-        if (slash != std::string::npos) {
-            return library_path.substr(0, slash) + "/mujoco_plugin";
-        }
+        if (slash != std::string::npos) { return library_path.substr(0, slash) + "/mujoco_plugin"; }
     }
 #endif
     return MUJOCO_PLUGIN_DIR;
@@ -61,7 +59,7 @@ void ensure_plugins_loaded()
          * again is a fatal "plugin already registered" error. Only load when the
          * registry is still empty (e.g. standalone C++ use). */
         if (mjp_pluginCount() > 0) return;
-        const char *env = std::getenv("MUJOCO_PLUGIN_DIR");
+        const char       *env      = std::getenv("MUJOCO_PLUGIN_DIR");
         const std::string fallback = default_mujoco_plugin_dir();
         const char       *dir      = env ? env : fallback.c_str();
         mj_loadAllPluginLibraries(dir, nullptr);
@@ -80,13 +78,13 @@ static constexpr size_t kMjErrBuf = 2048;
 
 // Default scene-decoration constants used by add_floor_to_spec /
 // add_skybox_to_spec. Keep here so callers reading the code see one source.
-static constexpr int    kFloorHalfSize    = 10;      // floor plane half-extents [m]
-static constexpr double kFloorThickness   = 0.05;    // floor geom thickness   [m]
-static constexpr int    kFloorTexSize     = 300;     // checker texture size   [px]
-static constexpr int    kFloorTexRepeat   = 5;       // checker tile repeat
-static constexpr float  kFloorReflectance = 0.2f;    // floor material reflectance
-static constexpr int    kSkyTexSize       = 200;     // skybox gradient texture size [px]
-static constexpr double kSunHeight        = 4.0;     // overhead directional light z [m]
+static constexpr int    kFloorHalfSize    = 10;   // floor plane half-extents [m]
+static constexpr double kFloorThickness   = 0.05; // floor geom thickness   [m]
+static constexpr int    kFloorTexSize     = 300;  // checker texture size   [px]
+static constexpr int    kFloorTexRepeat   = 5;    // checker tile repeat
+static constexpr float  kFloorReflectance = 0.2f; // floor material reflectance
+static constexpr int    kSkyTexSize       = 200;  // skybox gradient texture size [px]
+static constexpr double kSunHeight        = 4.0;  // overhead directional light z [m]
 
 // Numerical tolerances. Frame-equality test treats relative deviations below
 // kIdentityTol as zero; sim-time guard rejects steps shorter than kSimTimeEps
@@ -100,11 +98,11 @@ static constexpr double kSimTimeEps  = 1e-9;
 static constexpr int kContactCategoryAll = 1;
 
 // GL/MuJoCo viewer defaults.
-static constexpr int    kMsaaSamples       = 4;     // GLFW_SAMPLES (4x MSAA)
-static constexpr int    kMaxSceneGeoms     = 2000;  // mjv_makeScene buffer capacity
-static constexpr double kCamDefaultDist    = 2.5;
-static constexpr double kCamDefaultAzim    = 135.0;
-static constexpr double kCamDefaultElev    = -20.0;
+static constexpr int    kMsaaSamples    = 4;    // GLFW_SAMPLES (4x MSAA)
+static constexpr int    kMaxSceneGeoms  = 2000; // mjv_makeScene buffer capacity
+static constexpr double kCamDefaultDist = 2.5;
+static constexpr double kCamDefaultAzim = 135.0;
+static constexpr double kCamDefaultElev = -20.0;
 
 // Pixel layout for the offscreen recorder (RGB24 / ffmpeg rgb24 input).
 static constexpr int kRgbBytesPerPixel = 3;
@@ -127,17 +125,24 @@ static mjsBody *world_body(mjSpec *spec) { return mjs_findBody(spec, "world"); }
 // MuJoCo quaternion [w,x,y,z] <-> KDL::Rotation [x,y,z,w]. Single source so
 // the w/x/y/z swap is never re-derived inline.
 static KDL::Rotation mj_quat_to_kdl_rot(const double *q)
-{ return KDL::Rotation::Quaternion(q[1], q[2], q[3], q[0]); }
+{
+    return KDL::Rotation::Quaternion(q[1], q[2], q[3], q[0]);
+}
 
 static void kdl_rot_to_mj_quat(const KDL::Rotation &R, double q[4])
 {
     double qx, qy, qz, qw;
     R.GetQuaternion(qx, qy, qz, qw);
-    q[0] = qw; q[1] = qx; q[2] = qy; q[3] = qz;
+    q[0] = qw;
+    q[1] = qx;
+    q[2] = qy;
+    q[3] = qz;
 }
 
 static KDL::Rotation mj_xmat_to_kdl_rot(const double *m)
-{ return KDL::Rotation(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]); }
+{
+    return KDL::Rotation(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
+}
 
 // RAII guard for transient mjSpec pointers built/parsed inside scene-building
 // functions. unique_ptr handles every early-return error path automatically.
@@ -154,19 +159,28 @@ static mjsElement *resolve_parent(mjSpec *spec, const AttachTarget &t)
         return wb ? wb->element : nullptr;
     }
     case AttachKind::Body: {
-        if (!t.name) { LOG_ERROR("AttachTarget kind=Body has null name"); return nullptr; }
+        if (!t.name) {
+            LOG_ERROR("AttachTarget kind=Body has null name");
+            return nullptr;
+        }
         mjsBody *b = mjs_findBody(spec, t.name);
         if (!b) LOG_ERROR("attach parent body '" << t.name << "' not found");
         return b ? b->element : nullptr;
     }
     case AttachKind::Site: {
-        if (!t.name) { LOG_ERROR("AttachTarget kind=Site has null name"); return nullptr; }
+        if (!t.name) {
+            LOG_ERROR("AttachTarget kind=Site has null name");
+            return nullptr;
+        }
         mjsElement *e = mjs_findElement(spec, mjOBJ_SITE, t.name);
         if (!e) LOG_ERROR("attach parent site '" << t.name << "' not found");
         return e;
     }
     case AttachKind::Frame: {
-        if (!t.name) { LOG_ERROR("AttachTarget kind=Frame has null name"); return nullptr; }
+        if (!t.name) {
+            LOG_ERROR("AttachTarget kind=Frame has null name");
+            return nullptr;
+        }
         mjsFrame *f = mjs_findFrame(spec, t.name);
         if (!f) LOG_ERROR("attach parent frame '" << t.name << "' not found");
         return f ? f->element : nullptr;
@@ -179,12 +193,16 @@ static mjsElement *resolve_parent(mjSpec *spec, const AttachTarget &t)
 static void euler_deg_to_mj_quat(const double euler[3], double out_quat[4])
 {
     if (!euler[0] && !euler[1] && !euler[2]) {
-        out_quat[0] = 1; out_quat[1] = 0; out_quat[2] = 0; out_quat[3] = 0;
+        out_quat[0] = 1;
+        out_quat[1] = 0;
+        out_quat[2] = 0;
+        out_quat[3] = 0;
         return;
     }
     const double d2r = M_PI / 180.0;
     kdl_rot_to_mj_quat(
-      KDL::Rotation::RPY(euler[0] * d2r, euler[1] * d2r, euler[2] * d2r), out_quat);
+      KDL::Rotation::RPY(euler[0] * d2r, euler[1] * d2r, euler[2] * d2r), out_quat
+    );
 }
 
 // Attach a child body element under the resolved parent at the given offset.
@@ -213,7 +231,9 @@ static mjsBody *attach_child(
     if (mjsBody *body_parent = mjs_asBody(parent)) {
         // Intermediate frame carries the user offset; child keeps its authored pose.
         mjsFrame *frame = mjs_addFrame(body_parent, nullptr);
-        frame->pos[0] = pos[0]; frame->pos[1] = pos[1]; frame->pos[2] = pos[2];
+        frame->pos[0]   = pos[0];
+        frame->pos[1]   = pos[1];
+        frame->pos[2]   = pos[2];
         for (int i = 0; i < 4; ++i) frame->quat[i] = quat[i];
         attach_parent = frame->element;
     } else {
@@ -223,15 +243,16 @@ static mjsBody *attach_child(
         KDL::Frame user(mj_quat_to_kdl_rot(quat), KDL::Vector(pos[0], pos[1], pos[2]));
         KDL::Frame child(
           mj_quat_to_kdl_rot(child_root->quat),
-          KDL::Vector(child_root->pos[0], child_root->pos[1], child_root->pos[2]));
+          KDL::Vector(child_root->pos[0], child_root->pos[1], child_root->pos[2])
+        );
         KDL::Frame composed = user * child;
-        child_root->pos[0] = composed.p.x();
-        child_root->pos[1] = composed.p.y();
-        child_root->pos[2] = composed.p.z();
+        child_root->pos[0]  = composed.p.x();
+        child_root->pos[1]  = composed.p.y();
+        child_root->pos[2]  = composed.p.z();
         kdl_rot_to_mj_quat(composed.M, child_root->quat);
     }
 
-    const char *pfx = prefix ? prefix : "";
+    const char *pfx      = prefix ? prefix : "";
     mjsElement *attached = mjs_attach(attach_parent, child_root->element, pfx, "");
     if (!attached) {
         LOG_ERROR("mjs_attach failed: " << mjs_getError(spec));
@@ -316,9 +337,9 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
 
     for (const auto &obj : objects) {
         if (!obj.mjcf_path.empty()) {
-            char     err[kMjErrBuf] = {};
-            MjSpecPtr asset = make_spec_ptr(
-              mj_parseXML(obj.mjcf_path.c_str(), nullptr, err, sizeof(err)));
+            char      err[kMjErrBuf] = {};
+            MjSpecPtr asset =
+              make_spec_ptr(mj_parseXML(obj.mjcf_path.c_str(), nullptr, err, sizeof(err)));
             if (!asset) {
                 LOG_ERROR("mj_parseXML failed for object asset '" << obj.mjcf_path << "': " << err);
                 continue;
@@ -331,7 +352,7 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
             }
 
             std::string prefix = obj.name.empty() ? "" : obj.name + "_";
-            mjsBody *attached =
+            mjsBody    *attached =
               attach_child(spec, obj.attach_to, obj.pos, kZeroEuler, root, prefix.c_str());
             // Rename the asset's root body to obj.name so callers can write
             // attach_to = { Body, obj.name } without knowing the MJCF-internal
@@ -344,27 +365,28 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
 
         if (obj.shape == Shape::Unspecified) {
             LOG_ERROR(
-              "primitive SceneObject '" << obj.name
-              << "' has Shape::Unspecified; set .shape explicitly (BOX/SPHERE/CYLINDER)");
+              "primitive SceneObject '"
+              << obj.name << "' has Shape::Unspecified; set .shape explicitly (BOX/SPHERE/CYLINDER)"
+            );
             continue;
         }
         // Validate fields the user must set on a primitive. Free-jointed bodies
         // also need mass > 0; fixed bodies tolerate any non-negative mass.
         const bool need_size2 = (obj.shape == Shape::BOX);
         const bool need_size1 = (obj.shape == Shape::CYLINDER);
-        if (obj.size[0] <= 0.0
-            || (need_size1 && obj.size[1] <= 0.0)
+        if (obj.size[0] <= 0.0 || (need_size1 && obj.size[1] <= 0.0)
             || (need_size2 && (obj.size[1] <= 0.0 || obj.size[2] <= 0.0))) {
             LOG_ERROR(
-              "primitive SceneObject '" << obj.name
-              << "' has zero or negative .size for its shape; set explicit dimensions");
+              "primitive SceneObject '"
+              << obj.name << "' has zero or negative .size for its shape; set explicit dimensions"
+            );
             continue;
         }
         if (!obj.fixed && obj.mass <= 0.0) {
             LOG_ERROR(
-              "primitive SceneObject '" << obj.name
-              << "' has .mass=" << obj.mass
-              << "; non-fixed bodies require mass > 0");
+              "primitive SceneObject '" << obj.name << "' has .mass=" << obj.mass
+                                        << "; non-fixed bodies require mass > 0"
+            );
             continue;
         }
 
@@ -384,10 +406,17 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
         mjsGeom *g = mjs_addGeom(ob, nullptr);
         mjs_setString(mjs_getName(g->element), (obj.name + "_geom").c_str());
         switch (obj.shape) {
-        case Shape::BOX:      g->type = mjGEOM_BOX;      break;
-        case Shape::SPHERE:   g->type = mjGEOM_SPHERE;   break;
-        case Shape::CYLINDER: g->type = mjGEOM_CYLINDER; break;
-        case Shape::Unspecified: break; // unreachable, guarded above
+        case Shape::BOX:
+            g->type = mjGEOM_BOX;
+            break;
+        case Shape::SPHERE:
+            g->type = mjGEOM_SPHERE;
+            break;
+        case Shape::CYLINDER:
+            g->type = mjGEOM_CYLINDER;
+            break;
+        case Shape::Unspecified:
+            break; // unreachable, guarded above
         }
         g->size[0] = obj.size[0];
         g->size[1] = obj.size[1];
@@ -629,10 +658,8 @@ static bool build_index_map(Robot *s, const std::string &pfx = "")
         // Find the actuator that drives this joint (mjTRN_JOINT type).
         int ctrl_idx = -1;
         for (int ai = 0; ai < s->model->nu; ++ai) {
-            if (
-              s->model->actuator_trntype[ai] == mjTRN_JOINT
-              && s->model->actuator_trnid[2 * ai] == id
-            ) {
+            if (s->model->actuator_trntype[ai] == mjTRN_JOINT
+                && s->model->actuator_trnid[2 * ai] == id) {
                 ctrl_idx = ai;
                 break;
             }
@@ -788,7 +815,7 @@ bool attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
     );
 
     char      err[kMjErrBuf] = {};
-    MjSpecPtr att = make_spec_ptr(mj_parseXML(a->mjcf_path, nullptr, err, sizeof(err)));
+    MjSpecPtr att            = make_spec_ptr(mj_parseXML(a->mjcf_path, nullptr, err, sizeof(err)));
     if (!att) {
         LOG_ERROR("mj_parseXML failed for attachment '" << a->mjcf_path << "': " << err);
         return false;
@@ -819,14 +846,14 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     if (!sc || sc->robots.empty()) return false;
     if (sc->timestep <= 0.0) {
         LOG_ERROR(
-          "SceneSpec::timestep must be > 0 (got " << sc->timestep
-          << "); the field has no default, set it explicitly (suggested 0.002 s)");
+          "SceneSpec::timestep must be > 0 (got "
+          << sc->timestep << "); the field has no default, set it explicitly (suggested 0.002 s)"
+        );
         return false;
     }
     ensure_plugins_loaded();
     LOG_INFO(
-      "build_scene: " << sc->robots.size() << " robot(s)"
-                      << ", objects=" << sc->objects.size()
+      "build_scene: " << sc->robots.size() << " robot(s)" << ", objects=" << sc->objects.size()
     );
 
     MjSpecPtr scene = make_spec_ptr(mj_makeSpec());
@@ -835,21 +862,21 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
         return false;
     }
 
-    scene->compiler.balanceinertia = true;  // mjsCompiler stores as int 0/1
+    scene->compiler.balanceinertia = true; // mjsCompiler stores as int 0/1
     scene->compiler.discardvisual  = false;
 
     // Scene decorations go in before any object/robot so they exist as world
     // anchors regardless of declaration order.
     if (sc->add_skybox) add_skybox_to_spec(scene.get());
-    if (sc->add_floor)  add_floor_to_spec(scene.get());
+    if (sc->add_floor) add_floor_to_spec(scene.get());
 
     // Objects come before robots so a robot can attach to a SceneObject (e.g.
     // {AttachKind::Site, "table_mount"}). A child object that references
     // another object must appear after its parent in SceneSpec::objects.
     if (!sc->objects.empty()) add_objects_to_spec(scene.get(), sc->objects);
 
-    bool first_arm        = true;
-    char err[kMjErrBuf]   = {};
+    bool first_arm      = true;
+    char err[kMjErrBuf] = {};
     for (int ai = 0; ai < (int)sc->robots.size(); ++ai) {
         const RobotSpec &rs = sc->robots[ai];
         if (!rs.path) {
@@ -869,7 +896,7 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
             scene->option            = arm->option;
             scene->option.timestep   = sc->timestep;
             scene->option.gravity[2] = sc->gravity_z;
-            first_arm = false;
+            first_arm                = false;
         }
 
         // Apply attachment chain in order (mount, sensor, gripper, etc.).
@@ -970,7 +997,7 @@ bool get_site_frame(const mjModel *model, mjData *data, const char *site_name, K
     mj_forward(model, data);
     const double *p = data->site_xpos + 3 * sid;
     const double *R = data->site_xmat + 9 * sid;
-    *out = KDL::Frame(mj_xmat_to_kdl_rot(R), KDL::Vector(p[0], p[1], p[2]));
+    *out            = KDL::Frame(mj_xmat_to_kdl_rot(R), KDL::Vector(p[0], p[1], p[2]));
     return true;
 }
 
@@ -984,7 +1011,7 @@ bool get_body_frame(const mjModel *model, mjData *data, const char *body_name, K
     mj_forward(model, data);
     const double *p = data->xpos + 3 * bid;
     const double *R = data->xmat + 9 * bid;
-    *out = KDL::Frame(mj_xmat_to_kdl_rot(R), KDL::Vector(p[0], p[1], p[2]));
+    *out            = KDL::Frame(mj_xmat_to_kdl_rot(R), KDL::Vector(p[0], p[1], p[2]));
     return true;
 }
 
@@ -1001,7 +1028,7 @@ bool get_joint_position(const mjModel *model, mjData *data, const char *name, do
             jid = model->actuator_trnid[2 * aid];
         } else if (model->actuator_trntype[aid] == mjTRN_TENDON) {
             const int tid = model->actuator_trnid[2 * aid];
-            jid = model->wrap_objid[model->tendon_adr[tid]];
+            jid           = model->wrap_objid[model->tendon_adr[tid]];
         }
         if (jid < 0) return false;
     }
@@ -1042,6 +1069,70 @@ bool use_camera(VideoRecorder *vr, const mjModel *model, const char *name)
 
 // Robot API
 
+static bool resolve_ft_sensors(Robot *r, const ToolFrameSpec *tool)
+{
+    r->ft_sensors.clear();
+    if (!tool) return true;
+
+    for (const ForceTorqueSensorSpec &spec : tool->ft_sensors) {
+        if (!spec.name || spec.name[0] == '\0') {
+            LOG_ERROR("ForceTorqueSensorSpec.name is required");
+            return false;
+        }
+
+        const std::string name = spec.name;
+        const std::string force_name =
+          (spec.force_sensor && spec.force_sensor[0] != '\0') ? spec.force_sensor : name + "_force";
+        const std::string torque_name = (spec.torque_sensor && spec.torque_sensor[0] != '\0')
+                                          ? spec.torque_sensor
+                                          : name + "_torque";
+
+        const int force_id = mj_name2id(r->model, mjOBJ_SENSOR, force_name.c_str());
+        if (force_id < 0) {
+            LOG_ERROR(
+              "force sensor '" << force_name << "' not found for FT sensor '" << name << "'"
+            );
+            return false;
+        }
+        const int torque_id = mj_name2id(r->model, mjOBJ_SENSOR, torque_name.c_str());
+        if (torque_id < 0) {
+            LOG_ERROR(
+              "torque sensor '" << torque_name << "' not found for FT sensor '" << name << "'"
+            );
+            return false;
+        }
+        if (r->model->sensor_type[force_id] != mjSENS_FORCE
+            || r->model->sensor_dim[force_id] != 3) {
+            LOG_ERROR("sensor '" << force_name << "' must be a 3D MuJoCo force sensor");
+            return false;
+        }
+        if (r->model->sensor_type[torque_id] != mjSENS_TORQUE
+            || r->model->sensor_dim[torque_id] != 3) {
+            LOG_ERROR("sensor '" << torque_name << "' must be a 3D MuJoCo torque sensor");
+            return false;
+        }
+
+        ForceTorqueSensor sensor;
+        sensor.name          = name;
+        sensor.force_sensor  = force_name;
+        sensor.torque_sensor = torque_name;
+        sensor.force_adr     = r->model->sensor_adr[force_id];
+        sensor.torque_adr    = r->model->sensor_adr[torque_id];
+        if (spec.frame_site && spec.frame_site[0] != '\0') {
+            sensor.frame_site    = spec.frame_site;
+            sensor.frame_site_id = mj_name2id(r->model, mjOBJ_SITE, spec.frame_site);
+            if (sensor.frame_site_id < 0) {
+                LOG_ERROR(
+                  "frame_site '" << spec.frame_site << "' not found for FT sensor '" << name << "'"
+                );
+                return false;
+            }
+        }
+        r->ft_sensors.push_back(std::move(sensor));
+    }
+    return true;
+}
+
 bool init_robot_from_mjcf(
   Robot               *r,
   mjModel             *model,
@@ -1063,8 +1154,10 @@ bool init_robot_from_mjcf(
     r->tip_T_tcp     = KDL::Frame::Identity();
     r->has_tcp_frame = false;
     r->tcp_site.clear();
+    r->ft_sensors.clear();
     if (!build_kdl_from_model(r, model, base_body, tip_body)) return false;
     if (!build_index_map(r, prefix ? prefix : "")) return false;
+    if (!resolve_ft_sensors(r, tool)) return false;
 
     KDL::Frame tip_T_tcp = KDL::Frame::Identity();
     bool       has_tcp   = false;
@@ -1102,11 +1195,9 @@ bool init_robot_from_mjcf(
           "appending lumped tool inertia: " << subtree.size() << " bodies under '"
                                             << tool->tool_body << "'"
         );
-        r->chain.addSegment(
-          KDL::Segment(
-            tool->tool_body, KDL::Joint(KDL::Joint::None), KDL::Frame::Identity(), tool_inertia
-          )
-        );
+        r->chain.addSegment(KDL::Segment(
+          tool->tool_body, KDL::Joint(KDL::Joint::None), KDL::Frame::Identity(), tool_inertia
+        ));
         // Fixed joints do not count: n_joints remains the same after addSegment.
     }
 
@@ -1127,6 +1218,15 @@ bool init_robot_from_mjcf(
     return true;
 }
 
+const ForceTorqueSensor *find_ft_sensor(const Robot *r, const char *name)
+{
+    if (!r || !name) return nullptr;
+    for (const auto &sensor : r->ft_sensors) {
+        if (sensor.name == name) return &sensor;
+    }
+    return nullptr;
+}
+
 void cleanup(Robot *r)
 {
     r->model         = nullptr;
@@ -1138,6 +1238,7 @@ void cleanup(Robot *r)
     r->n_joints = 0;
     r->joint_names.clear();
     r->joint_limits.clear();
+    r->ft_sensors.clear();
     r->ctrl_mode = CtrlMode::POSITION;
     r->paused    = false;
     r->jnt_pos_msr.clear();
@@ -1160,10 +1261,10 @@ void set_joint_pos(Robot *r, const KDL::JntArray &q, bool call_forward)
 }
 
 void set_body_pose(
-  mjModel    *model,
-  mjData     *data,
-  const char *body_name,
-  const double pos[3],
+  mjModel      *model,
+  mjData       *data,
+  const char   *body_name,
+  const double  pos[3],
   const double *quat
 )
 {
@@ -1172,7 +1273,7 @@ void set_body_pose(
     if (bid < 0) return;
     int jnt_start = model->body_jntadr[bid];
     int jnt_count = model->body_jntnum[bid];
-    int jid = -1;
+    int jid       = -1;
     for (int k = 0; k < jnt_count; ++k) {
         if (model->jnt_type[jnt_start + k] == mjJNT_FREE) {
             jid = jnt_start + k;
@@ -1180,8 +1281,8 @@ void set_body_pose(
         }
     }
     if (jid < 0) return;
-    int qadr = model->jnt_qposadr[jid];
-    int dadr  = model->jnt_dofadr[jid];
+    int qadr             = model->jnt_qposadr[jid];
+    int dadr             = model->jnt_dofadr[jid];
     data->qpos[qadr]     = pos[0];
     data->qpos[qadr + 1] = pos[1];
     data->qpos[qadr + 2] = pos[2];
@@ -1199,8 +1300,7 @@ static bool tick_impl(Viewer *v, mjModel *m, mjData *d, bool paused); // defined
 bool step(Robot *s)
 {
     if (!s->model || !s->data) return true;
-    if (g_viewer)
-        return tick_impl(g_viewer, s->model, s->data, s->paused);
+    if (g_viewer) return tick_impl(g_viewer, s->model, s->data, s->paused);
     if (s->paused) return true;
     mj_step(s->model, s->data);
     return true;
@@ -1213,10 +1313,7 @@ bool step_n(Robot *s, int n)
     return true;
 }
 
-bool step(Viewer *v, mjModel *m, mjData *d)
-{
-    return tick_impl(v, m, d, false);
-}
+bool step(Viewer *v, mjModel *m, mjData *d) { return tick_impl(v, m, d, false); }
 
 static void sync_robot_after_reset(Robot *r)
 {
@@ -1224,10 +1321,10 @@ static void sync_robot_after_reset(Robot *r)
 
     mjData *d = r->data;
     for (int i = 0; i < r->n_joints; ++i) {
-        const int qpos_id = r->kdl_to_mj_qpos[i];
-        const int dof_id  = r->kdl_to_mj_dof[i];
-        const int ctrl_id = r->kdl_to_mj_ctrl[i];
-        const double q    = d->qpos[qpos_id];
+        const int    qpos_id = r->kdl_to_mj_qpos[i];
+        const int    dof_id  = r->kdl_to_mj_dof[i];
+        const int    ctrl_id = r->kdl_to_mj_ctrl[i];
+        const double q       = d->qpos[qpos_id];
 
         r->jnt_pos_msr[i] = q;
         r->jnt_vel_msr[i] = d->qvel[dof_id];
@@ -1238,16 +1335,18 @@ static void sync_robot_after_reset(Robot *r)
         d->qfrc_applied[dof_id] = 0.0;
         if (ctrl_id >= 0) d->ctrl[ctrl_id] = q;
     }
+
+    for (auto &sensor : r->ft_sensors) sensor.wrench = KDL::Wrench::Zero();
 }
 
 static ResetInfo reset_runtime(
-  Env                *env,
-  mjModel            *model,
-  mjData             *data,
+  Env                        *env,
+  mjModel                    *model,
+  mjData                     *data,
   const std::vector<Robot *> &robots,
-  const ResetOptions *options,
-  const ResetHook    &hook,
-  bool                reset_mujoco
+  const ResetOptions         *options,
+  const ResetHook            &hook,
+  bool                        reset_mujoco
 )
 {
     ResetInfo info{};
@@ -1311,8 +1410,7 @@ void update(Robot *r)
 
         switch (r->ctrl_mode) {
         case CtrlMode::POSITION:
-            if (ctrl_id >= 0)
-                d->ctrl[ctrl_id] = clamp_ctrlrange(m, ctrl_id, r->jnt_pos_cmd[i]);
+            if (ctrl_id >= 0) d->ctrl[ctrl_id] = clamp_ctrlrange(m, ctrl_id, r->jnt_pos_cmd[i]);
             break;
         case CtrlMode::TORQUE:
             if (ctrl_id >= 0) {
@@ -1321,14 +1419,20 @@ void update(Robot *r)
                  * Setting ctrl = pos + (kv/kp)*vel drives force to zero,
                  * making qfrc_applied the sole torque source -- matching the
                  * real robot's pure torque interface. */
-                const double kp =  m->actuator_gainprm[ctrl_id * mjNGAIN + 0];
-                const double kv = -m->actuator_biasprm[ctrl_id * mjNBIAS + 2];
+                const double kp     = m->actuator_gainprm[ctrl_id * mjNGAIN + 0];
+                const double kv     = -m->actuator_biasprm[ctrl_id * mjNBIAS + 2];
                 const double vel_ff = (kp > 0.0) ? (kv / kp) * d->qvel[dof_id] : 0.0;
-                d->ctrl[ctrl_id] = d->qpos[qpos_id] + vel_ff;
+                d->ctrl[ctrl_id]    = d->qpos[qpos_id] + vel_ff;
             }
             d->qfrc_applied[dof_id] = r->jnt_trq_cmd[i];
             break;
         }
+    }
+
+    for (auto &sensor : r->ft_sensors) {
+        const double *f = d->sensordata + sensor.force_adr;
+        const double *t = d->sensordata + sensor.torque_adr;
+        sensor.wrench   = KDL::Wrench(KDL::Vector(f[0], f[1], f[2]), KDL::Vector(t[0], t[1], t[2]));
     }
 }
 
@@ -1353,7 +1457,7 @@ static void adjust_realtime_factor(Viewer *v, int direction)
 
     if (direction > 0) {
         if (v->realtime_factor == 0.0) return; // already uncapped/max-speed
-        double next = v->realtime_factor * kStep;
+        double next        = v->realtime_factor * kStep;
         v->realtime_factor = (next > kMaxRtf) ? 0.0 : next;
     } else {
         if (v->realtime_factor == 0.0) {
@@ -1572,19 +1676,19 @@ struct SimUiState
     bool                              sim_ready = false;
     std::mutex                        sim_ready_mtx;
     std::condition_variable           sim_ready_cv;
-    double               prev_sim_time        = 0.0;
-    std::atomic<int>     rtf_step{ 0 };       // + faster, - slower (render thread)
-    GLFWwindow          *glfw_window          = nullptr;
-    VideoRecorder        recorder;
-    bool                 recorder_active      = false;
-    int                  record_camera        = 0; // 0=current, 1=free, 2=tracking, 3+=fixed cam
-    int                  record_frame_stride  = 1;
-    int                  record_frame_counter = 0;
+    double                            prev_sim_time = 0.0;
+    std::atomic<int>                  rtf_step{ 0 }; // + faster, - slower (render thread)
+    GLFWwindow                       *glfw_window = nullptr;
+    VideoRecorder                     recorder;
+    bool                              recorder_active = false;
+    int record_camera        = 0; // 0=current, 1=free, 2=tracking, 3+=fixed cam
+    int record_frame_stride  = 1;
+    int record_frame_counter = 0;
     /* User scene merged into each render frame by Simulate (overlay polylines,
      * e.g. the EE trajectory trace). Guarded by user_scn_mtx because the control
      * thread appends to it while the render thread reads it. */
-    mjvScene             user_scn{};
-    std::mutex           user_scn_mtx;
+    mjvScene   user_scn{};
+    std::mutex user_scn_mtx;
 };
 
 static VideoResolution recorder_resolution_from_index(int index)
@@ -1607,9 +1711,9 @@ static void handle_recorder_request(SimUiState *ss, mjModel *m)
     if (!ss || !ss->sim || !m) return;
 
     char path[mujoco::Simulate::kMaxFilenameLength] = {};
-    int  camera     = 0;
-    int  resolution = kRecorderDefaultResIndex;
-    int  fps        = kRecorderDefaultFps;
+    int  camera                                     = 0;
+    int  resolution                                 = kRecorderDefaultResIndex;
+    int  fps                                        = kRecorderDefaultFps;
     int  request =
       ss->sim->ConsumeWrapperRecordRequest(path, sizeof(path), &camera, &resolution, &fps);
     if (!request) return;
@@ -1697,11 +1801,48 @@ bool use_camera(Viewer *v, const mjModel *model, const char *name)
 {
     if (!v || !model) return false;
     if (v->_sim_ui) {
-        auto *ss = static_cast<SimUiState *>(v->_sim_ui);
+        auto                                  *ss = static_cast<SimUiState *>(v->_sim_ui);
         std::unique_lock<std::recursive_mutex> lock(ss->sim->mtx);
         return use_camera_impl(&ss->cam, model, name);
     }
     return use_camera_impl(&v->cam, model, name);
+}
+
+static void set_free_camera_impl(
+  mjvCamera                   *cam,
+  double                       distance,
+  double                       azimuth,
+  double                       elevation,
+  const std::array<double, 3> &lookat
+)
+{
+    cam->type       = mjCAMERA_FREE;
+    cam->fixedcamid = -1;
+    cam->distance   = distance;
+    cam->azimuth    = azimuth;
+    cam->elevation  = elevation;
+    cam->lookat[0]  = lookat[0];
+    cam->lookat[1]  = lookat[1];
+    cam->lookat[2]  = lookat[2];
+}
+
+void set_free_camera(
+  Viewer                      *v,
+  double                       distance,
+  double                       azimuth,
+  double                       elevation,
+  const std::array<double, 3> &lookat
+)
+{
+    if (!v) return;
+    if (v->_sim_ui) {
+        auto                                  *ss = static_cast<SimUiState *>(v->_sim_ui);
+        std::unique_lock<std::recursive_mutex> lock(ss->sim->mtx);
+        set_free_camera_impl(&ss->cam, distance, azimuth, elevation, lookat);
+        ss->sim->camera = 0;
+        return;
+    }
+    set_free_camera_impl(&v->cam, distance, azimuth, elevation, lookat);
 }
 
 void cleanup(Viewer *v)
@@ -1731,7 +1872,7 @@ void cleanup(Viewer *v)
 void clear_trace(Viewer *v)
 {
     if (!v || !v->_sim_ui) return; // headless / no window
-    auto *ss = static_cast<SimUiState *>(v->_sim_ui);
+    auto                       *ss = static_cast<SimUiState *>(v->_sim_ui);
     std::lock_guard<std::mutex> lk(ss->user_scn_mtx);
     ss->user_scn.ngeom = 0;
 }
@@ -1739,7 +1880,7 @@ void clear_trace(Viewer *v)
 void add_trace_segment(Viewer *v, const KDL::Vector &a, const KDL::Vector &b, const float rgba[4])
 {
     if (!v || !v->_sim_ui) return; // headless / no window
-    auto *ss = static_cast<SimUiState *>(v->_sim_ui);
+    auto                       *ss = static_cast<SimUiState *>(v->_sim_ui);
     std::lock_guard<std::mutex> lk(ss->user_scn_mtx);
     if (ss->user_scn.ngeom >= ss->user_scn.maxgeom) return;
     mjvGeom *g = &ss->user_scn.geoms[ss->user_scn.ngeom++];
@@ -1796,8 +1937,7 @@ bool init_window_sim(Viewer *v, Robot *r, const char *title)
     mjv_defaultPerturb(&ss->pert);
     /* If the caller configured Viewer.cam before init_window_sim (e.g. set a
      * named camera via use_camera() or a free-camera distance > 0), apply it. */
-    if (v->cam.type != mjCAMERA_FREE || v->cam.distance > 0.0)
-        ss->cam = v->cam;
+    if (v->cam.type != mjCAMERA_FREE || v->cam.distance > 0.0) ss->cam = v->cam;
 
     /* Create GlfwAdapter INSIDE the render thread so glfwMakeContextCurrent() is
      * called there and the GL context is owned by that thread.  RenderLoop() then
@@ -1813,8 +1953,7 @@ bool init_window_sim(Viewer *v, Robot *r, const char *title)
          * glfwGetCurrentContext() returns the SimUI window on this thread.
          * Install a chained key callback so ,/. speed keys reach sim_ui_key_cb. */
         ss->glfw_window = glfwGetCurrentContext();
-        if (ss->glfw_window)
-            g_sim_prev_key_cb = glfwSetKeyCallback(ss->glfw_window, sim_ui_key_cb);
+        if (ss->glfw_window) g_sim_prev_key_cb = glfwSetKeyCallback(ss->glfw_window, sim_ui_key_cb);
         {
             std::lock_guard<std::mutex> lk(ss->sim_ready_mtx);
             ss->sim_ready = true;
@@ -1857,8 +1996,9 @@ bool init_window_sim(Viewer *v, Robot *r, const char *title)
     ss->sim->user_scn  = &ss->user_scn;
 
     // trace follows the robot's TCP site (Frames panel "Trace EE")
-    if (!r->tcp_site.empty())
+    if (!r->tcp_site.empty()) {
         ss->sim->ee_trace_site_ = mj_name2id(r->model, mjOBJ_SITE, r->tcp_site.c_str());
+    }
 
     v->_sim_ui = ss;
     g_viewer   = v;
@@ -1879,7 +2019,7 @@ static bool tick_impl(Viewer *v, mjModel *m, mjData *d, bool paused)
         if (sim->exitrequest.load()) return false;
 
         // Speed control: ,/. keys are intercepted by sim_ui_key_cb.
-        int rtf_step = ss->rtf_step.exchange(0);
+        int  rtf_step    = ss->rtf_step.exchange(0);
         bool rtf_changed = false;
         while (rtf_step > 0) {
             adjust_realtime_factor(v, +1);
@@ -1894,9 +2034,8 @@ static bool tick_impl(Viewer *v, mjModel *m, mjData *d, bool paused)
         if (rtf_changed) sim->SetWrapperRealtimeFactor(v->realtime_factor);
         handle_recorder_request(ss, m);
 
-        double wall_per_step = (v->realtime_factor > 0.0)
-                                   ? m->opt.timestep / v->realtime_factor
-                                   : 0.0;
+        double wall_per_step =
+          (v->realtime_factor > 0.0) ? m->opt.timestep / v->realtime_factor : 0.0;
         auto now = Clock::now();
         if (wall_per_step > 0.0 && v->_tick_t.time_since_epoch().count() != 0) {
             auto next = v->_tick_t + Dur(wall_per_step);
@@ -1915,8 +2054,7 @@ static bool tick_impl(Viewer *v, mjModel *m, mjData *d, bool paused)
             // to avoid false triggers on the very first tick or when the user
             // scrubs to t=0 from a paused state before any physics has run.
             const bool time_jumped_back =
-                ss->prev_sim_time > m->opt.timestep &&
-                d->time < ss->prev_sim_time - kSimTimeEps;
+              ss->prev_sim_time > m->opt.timestep && d->time < ss->prev_sim_time - kSimTimeEps;
             if (time_jumped_back && g_robot) {
                 std::vector<Robot *> robots = { g_robot };
                 (void)reset_runtime(nullptr, m, d, robots, nullptr, {}, false);
@@ -1943,10 +2081,8 @@ static bool tick_impl(Viewer *v, mjModel *m, mjData *d, bool paused)
     if (!v->window || glfwWindowShouldClose(v->window)) return false;
 
     // Real-time sync: sleep until last tick time + wall time per step.
-    auto   now          = Clock::now();
-    double wall_per_step = (v->realtime_factor > 0.0)
-                               ? m->opt.timestep / v->realtime_factor
-                               : 0.0;
+    auto   now           = Clock::now();
+    double wall_per_step = (v->realtime_factor > 0.0) ? m->opt.timestep / v->realtime_factor : 0.0;
     if (wall_per_step > 0.0 && v->_tick_t.time_since_epoch().count() != 0) {
         auto next = v->_tick_t + Dur(wall_per_step);
         if (now < next) std::this_thread::sleep_until(next);
@@ -1982,16 +2118,13 @@ struct VideoRecorderImpl
 
 static bool vr_egl_init(VideoRecorderImpl *impl)
 {
-    const EGLint attrs[] = { EGL_RED_SIZE,         kEglChannelBits,
-                             EGL_GREEN_SIZE,       kEglChannelBits,
-                             EGL_BLUE_SIZE,        kEglChannelBits,
-                             EGL_ALPHA_SIZE,       kEglChannelBits,
-                             EGL_DEPTH_SIZE,       kEglDepthBits,
-                             EGL_STENCIL_SIZE,     kEglChannelBits,
-                             EGL_COLOR_BUFFER_TYPE, EGL_RGB_BUFFER,
-                             EGL_SURFACE_TYPE,     EGL_PBUFFER_BIT,
-                             EGL_RENDERABLE_TYPE,  EGL_OPENGL_BIT,
-                             EGL_NONE };
+    const EGLint attrs[] = {
+        EGL_RED_SIZE,          kEglChannelBits, EGL_GREEN_SIZE,   kEglChannelBits,
+        EGL_BLUE_SIZE,         kEglChannelBits, EGL_ALPHA_SIZE,   kEglChannelBits,
+        EGL_DEPTH_SIZE,        kEglDepthBits,   EGL_STENCIL_SIZE, kEglChannelBits,
+        EGL_COLOR_BUFFER_TYPE, EGL_RGB_BUFFER,  EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
+        EGL_RENDERABLE_TYPE,   EGL_OPENGL_BIT,  EGL_NONE
+    };
 
     impl->egl_dpy = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     if (impl->egl_dpy == EGL_NO_DISPLAY) {
@@ -2060,12 +2193,13 @@ bool init_video_recorder(
     mjv_defaultFreeCamera(model, &vr->cam);
     mjv_defaultOption(&vr->opt);
 
-    auto *impl   = new VideoRecorderImpl();
-    impl->width  = width;
-    impl->height = height;
+    auto *impl     = new VideoRecorderImpl();
+    impl->width    = width;
+    impl->height   = height;
     impl->out_path = out_path;
     impl->rgb_buf.resize(
-      static_cast<size_t>(width) * static_cast<size_t>(height) * kRgbBytesPerPixel);
+      static_cast<size_t>(width) * static_cast<size_t>(height) * kRgbBytesPerPixel
+    );
 
     if (!vr_egl_init(impl)) {
         delete impl;
@@ -2164,7 +2298,7 @@ void cleanup(VideoRecorder *vr)
     if (!vr || !vr->_impl) return;
     auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
     if (impl->ffmpeg) {
-        int status = pclose(impl->ffmpeg);
+        int status   = pclose(impl->ffmpeg);
         impl->ffmpeg = nullptr;
         if (status == 0 && impl->frames > 0) {
             std::fprintf(stderr, "[mj_kdl] recording saved to %s\n", impl->out_path.c_str());

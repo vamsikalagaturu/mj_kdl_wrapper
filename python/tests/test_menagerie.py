@@ -18,6 +18,7 @@ def test_fetch_assets_to_cache_and_resolve(monkeypatch, tmp_path):
 
     assert assets_dir == tmp_path / "cache" / "mj_kdl_wrapper" / "assets"
     assert (assets_dir / "table.xml").exists()
+    assert (assets_dir / "ft_sensor.xml").exists()
     assert menagerie.asset_path("table.xml") == str(assets_dir / "table.xml")
     with pytest.raises(ValueError):
         menagerie.asset_path("../table.xml")

@@ -107,6 +107,39 @@ robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link", tool=tool)
 assert robot.has_tcp_frame
 ```
 
+For a wrist force-torque sensor, attach the sensor MJCF first, then attach the
+gripper to a site exported by that sensor asset:
+
+```python
+ft_sensor = mjk.AttachmentSpec()
+ft_sensor.mjcf_path = mjk.menagerie.asset_path("ft_sensor.xml")
+ft_sensor.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
+
+gripper = mjk.AttachmentSpec()
+gripper.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml")
+gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "wrist_ft_site")
+gripper.prefix = "g_"
+
+robot_spec = mjk.RobotSpec()
+robot_spec.path = mjk.menagerie.model_path("kinova_gen3")
+robot_spec.attachments = [ft_sensor, gripper]
+```
+
+Then register the logical force-torque sensor on the same tool spec. MuJoCo
+models one FT sensor as separate `<force>` and `<torque>` sensors; the wrapper
+returns a `PyKDL.Wrench`.
+
+```python
+ft = mjk.ForceTorqueSensorSpec()
+ft.name = "wrist_ft"          # resolves wrist_ft_force + wrist_ft_torque
+ft.frame_site = "wrist_ft_site"
+
+tool.ft_sensors = [ft]
+robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link", tool=tool)
+robot.update()
+wrench = robot.ft_sensor("wrist_ft")
+```
+
 ## Attach MJCF Bodies
 
 `AttachTarget` is a tagged pair of `AttachKind` and an element name. The Kinova

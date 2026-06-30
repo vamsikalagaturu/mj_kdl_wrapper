@@ -95,10 +95,19 @@ struct PySceneSpec
     std::vector<PyCameraSpec>  cameras;
 };
 
+struct PyForceTorqueSensorSpec
+{
+    std::string name;
+    std::string force_sensor;
+    std::string torque_sensor;
+    std::string frame_site;
+};
+
 struct PyToolFrameSpec
 {
-    std::string tool_body;
-    std::string tcp_site;
+    std::string                          tool_body;
+    std::string                          tcp_site;
+    std::vector<PyForceTorqueSensorSpec> ft_sensors;
 };
 
 struct PyScene;
@@ -216,8 +225,7 @@ KDL::JntArray to_jnt_array(const py::object &values, int expected)
         int rows = values.attr("rows")().cast<int>();
         if (rows != expected) {
             throw std::invalid_argument(
-              "expected " + std::to_string(expected) + " joint values, got "
-              + std::to_string(rows)
+              "expected " + std::to_string(expected) + " joint values, got " + std::to_string(rows)
             );
         }
         KDL::JntArray out(expected);
@@ -237,6 +245,33 @@ py::object kdl_frame_to_py(const KDL::Frame &frame)
     return kdl.attr("Frame")(rotation, vector);
 }
 
+py::object kdl_wrench_to_py(const KDL::Wrench &wrench)
+{
+    py::module_ kdl   = py::module_::import("PyKDL");
+    py::object  force = kdl.attr("Vector")(wrench.force.x(), wrench.force.y(), wrench.force.z());
+    py::object torque = kdl.attr("Vector")(wrench.torque.x(), wrench.torque.y(), wrench.torque.z());
+    return kdl.attr("Wrench")(force, torque);
+}
+
+void set_body_wrench(
+  mjModel                     *model,
+  mjData                      *data,
+  const std::string           &name,
+  const std::array<double, 3> &force,
+  const std::array<double, 3> &torque
+)
+{
+    if (!model || !data) throw std::runtime_error("scene/env is closed");
+    const int id = mj_name2id(model, mjOBJ_BODY, name.c_str());
+    if (id < 0) throw std::runtime_error("body not found: " + name);
+    data->xfrc_applied[6 * id + 0] = force[0];
+    data->xfrc_applied[6 * id + 1] = force[1];
+    data->xfrc_applied[6 * id + 2] = force[2];
+    data->xfrc_applied[6 * id + 3] = torque[0];
+    data->xfrc_applied[6 * id + 4] = torque[1];
+    data->xfrc_applied[6 * id + 5] = torque[2];
+}
+
 py::object kdl_chain_to_py(const KDL::Chain &chain)
 {
     py::module_::import("PyKDL");
@@ -251,9 +286,9 @@ py::object kdl_chain_to_py(const KDL::Chain &chain)
 
 struct PyScene : std::enable_shared_from_this<PyScene>
 {
-    PySceneSpec spec;
-    mjModel    *model = nullptr;
-    mjData     *data  = nullptr;
+    PySceneSpec                         spec;
+    mjModel                            *model = nullptr;
+    mjData                             *data  = nullptr;
     std::vector<std::weak_ptr<PyRobot>> robots;
 
     ~PyScene() { close(); }
@@ -363,6 +398,15 @@ struct PyScene : std::enable_shared_from_this<PyScene>
         data->ctrl[id] = value;
     }
 
+    void set_body_wrench(
+      const std::string           &name,
+      const std::array<double, 3> &force,
+      const std::array<double, 3> &torque
+    )
+    {
+        ::set_body_wrench(model, data, name, force, torque);
+    }
+
     double actuator_ctrl(const std::string &name) const
     {
         if (!model || !data) throw std::runtime_error("scene is closed");
@@ -419,19 +463,18 @@ struct PyScene : std::enable_shared_from_this<PyScene>
         data  = next_data;
         reinit_robots();
     }
-
 };
 
 struct PyRobot
 {
-    mj_kdl::Robot            robot;
-    std::shared_ptr<PyScene> scene_owner;
-    std::shared_ptr<PyEnv>   env_owner;
-    std::string              base_body;
-    std::string              tip_body;
-    std::string              prefix;
+    mj_kdl::Robot                  robot;
+    std::shared_ptr<PyScene>       scene_owner;
+    std::shared_ptr<PyEnv>         env_owner;
+    std::string                    base_body;
+    std::string                    tip_body;
+    std::string                    prefix;
     std::optional<PyToolFrameSpec> tool_spec;
-    bool                     active = false;
+    bool                           active = false;
 
     ~PyRobot();
 
@@ -466,7 +509,7 @@ struct PyRobot
         prefix    = prefix_arg;
         std::optional<PyToolFrameSpec> next_tool;
         if (tool) next_tool = *tool;
-        tool_spec = std::move(next_tool);
+        tool_spec                          = std::move(next_tool);
         const PyToolFrameSpec *stored_tool = tool_spec ? &*tool_spec : nullptr;
 
         mj_kdl::ToolFrameSpec        cpp_tool;
@@ -476,7 +519,16 @@ struct PyRobot
               stored_tool->tool_body.empty() ? nullptr : stored_tool->tool_body.c_str();
             cpp_tool.tcp_site =
               stored_tool->tcp_site.empty() ? nullptr : stored_tool->tcp_site.c_str();
-            tool_ptr           = &cpp_tool;
+            cpp_tool.ft_sensors.reserve(stored_tool->ft_sensors.size());
+            for (const auto &src : stored_tool->ft_sensors) {
+                cpp_tool.ft_sensors.push_back(mj_kdl::ForceTorqueSensorSpec{
+                  .name          = src.name.empty() ? nullptr : src.name.c_str(),
+                  .force_sensor  = src.force_sensor.empty() ? nullptr : src.force_sensor.c_str(),
+                  .torque_sensor = src.torque_sensor.empty() ? nullptr : src.torque_sensor.c_str(),
+                  .frame_site    = src.frame_site.empty() ? nullptr : src.frame_site.c_str(),
+                });
+            }
+            tool_ptr = &cpp_tool;
         }
         if (!mj_kdl::init_robot_from_mjcf(
               &robot,
@@ -610,6 +662,38 @@ struct PyRobot
         return kdl_chain_to_py(robot.chain);
     }
 
+    std::vector<std::string> ft_sensor_names() const
+    {
+        ensure_active();
+        std::vector<std::string> out;
+        out.reserve(robot.ft_sensors.size());
+        for (const auto &sensor : robot.ft_sensors) out.push_back(sensor.name);
+        return out;
+    }
+
+    py::object ft_sensor(const std::string &name) const
+    {
+        ensure_active();
+        const mj_kdl::ForceTorqueSensor *sensor = mj_kdl::find_ft_sensor(&robot, name.c_str());
+        if (!sensor) throw std::runtime_error("FT sensor not found: " + name);
+        return kdl_wrench_to_py(sensor->wrench);
+    }
+
+    py::object ft_sensor_frame(const std::string &name) const
+    {
+        ensure_active();
+        const mj_kdl::ForceTorqueSensor *sensor = mj_kdl::find_ft_sensor(&robot, name.c_str());
+        if (!sensor) throw std::runtime_error("FT sensor not found: " + name);
+        if (sensor->frame_site.empty()) {
+            throw std::runtime_error("FT sensor has no frame_site: " + name);
+        }
+        KDL::Frame frame;
+        if (!mj_kdl::get_site_frame(robot.model, robot.data, sensor->frame_site.c_str(), &frame)) {
+            throw std::runtime_error("FT sensor frame_site not found: " + sensor->frame_site);
+        }
+        return kdl_frame_to_py(frame);
+    }
+
     void set_port(std::vector<double> mj_kdl::Robot::*port, const std::vector<double> &values)
     {
         ensure_active();
@@ -623,10 +707,7 @@ struct PyRobot
     }
 };
 
-void PyScene::register_robot(const std::shared_ptr<PyRobot> &robot)
-{
-    robots.push_back(robot);
-}
+void PyScene::register_robot(const std::shared_ptr<PyRobot> &robot) { robots.push_back(robot); }
 
 void PyScene::reinit_robots()
 {
@@ -731,11 +812,22 @@ struct PySimulateViewer
           &viewer, robot_owner->robot.model, name.empty() ? nullptr : name.c_str()
         );
     }
+
+    void set_free_camera(
+      double                       distance,
+      double                       azimuth,
+      double                       elevation,
+      const std::array<double, 3> &lookat
+    )
+    {
+        if (!active) throw std::runtime_error("viewer is closed");
+        mj_kdl::set_free_camera(&viewer, distance, azimuth, elevation, lookat);
+    }
 };
 
 struct PyVideoRecorder
 {
-    mj_kdl::VideoRecorder     recorder;
+    mj_kdl::VideoRecorder recorder;
     // Live accessors to the owning Scene or Env model/data; the closures also
     // keep the owner alive for the recorder's lifetime.
     std::function<mjModel *()> model_fn;
@@ -749,14 +841,14 @@ struct PyVideoRecorder
 
     // Build a recorder bound to model/data accessors. width<=0 selects a preset.
     static std::shared_ptr<PyVideoRecorder> make(
-      std::function<mjModel *()>  model_fn,
-      std::function<mjData *()>   data_fn,
-      const std::string          &out_path,
-      int                         width,
-      int                         height,
-      mj_kdl::VideoResolution     resolution,
-      bool                        use_preset,
-      int                         fps
+      std::function<mjModel *()> model_fn,
+      std::function<mjData *()>  data_fn,
+      const std::string         &out_path,
+      int                        width,
+      int                        height,
+      mj_kdl::VideoResolution    resolution,
+      bool                       use_preset,
+      int                        fps
     )
     {
         mjModel *m = model_fn ? model_fn() : nullptr;
@@ -765,9 +857,10 @@ struct PyVideoRecorder
         auto out      = std::shared_ptr<PyVideoRecorder>(new PyVideoRecorder());
         out->model_fn = std::move(model_fn);
         out->data_fn  = std::move(data_fn);
-        bool ok       = use_preset
-                          ? mj_kdl::init_video_recorder(&out->recorder, m, out_path.c_str(), resolution, fps)
-                          : mj_kdl::init_video_recorder(&out->recorder, m, out_path.c_str(), width, height, fps);
+        bool ok =
+          use_preset
+            ? mj_kdl::init_video_recorder(&out->recorder, m, out_path.c_str(), resolution, fps)
+            : mj_kdl::init_video_recorder(&out->recorder, m, out_path.c_str(), width, height, fps);
         if (!ok) throw std::runtime_error("init_video_recorder failed");
         out->active = true;
         return out;
@@ -789,9 +882,9 @@ struct PyVideoRecorder
     }
 
     void set_free_camera(
-      double                        distance,
-      double                        azimuth,
-      double                        elevation,
+      double                       distance,
+      double                       azimuth,
+      double                       elevation,
       const std::array<double, 3> &lookat
     )
     {
@@ -817,10 +910,10 @@ struct PyVideoRecorder
 
 struct PyEnv : std::enable_shared_from_this<PyEnv>
 {
-    PySceneSpec spec;
-    mj_kdl::Env env;
+    PySceneSpec                         spec;
+    mj_kdl::Env                         env;
     std::vector<std::weak_ptr<PyRobot>> robots;
-    py::object  reset_callback; // Python callable invoked by reset(), or None
+    py::object reset_callback; // Python callable invoked by reset(), or None
 
     ~PyEnv() { close(); }
 
@@ -888,7 +981,7 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         mj_kdl::Env next_env;
         SceneSpec   cpp_spec = to_cpp(spec);
         if (!mj_kdl::init_env(&next_env, &cpp_spec)) {
-            spec = std::move(old_spec);
+            spec                   = std::move(old_spec);
             SceneSpec old_cpp_spec = to_cpp(spec);
             env.spec               = old_cpp_spec;
             throw std::runtime_error(error_message);
@@ -934,9 +1027,10 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
     {
         if (!env.model || !env.data) throw std::runtime_error("env is closed");
         PySceneSpec next_spec = spec;
-        auto it = std::find_if(next_spec.objects.begin(), next_spec.objects.end(), [&](const auto &obj) {
-            return obj.name == name;
-        });
+        auto        it =
+          std::find_if(next_spec.objects.begin(), next_spec.objects.end(), [&](const auto &obj) {
+              return obj.name == name;
+          });
         if (it == next_spec.objects.end()) throw std::runtime_error("object not found");
         next_spec.objects.erase(it);
         rebuild(std::move(next_spec), "scene_remove_object failed");
@@ -998,6 +1092,15 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         int id = mj_name2id(env.model, mjOBJ_ACTUATOR, name.c_str());
         if (id < 0) throw std::runtime_error("actuator not found: " + name);
         env.data->ctrl[id] = value;
+    }
+
+    void set_body_wrench(
+      const std::string           &name,
+      const std::array<double, 3> &force,
+      const std::array<double, 3> &torque
+    )
+    {
+        ::set_body_wrench(env.model, env.data, name, force, torque);
     }
 
     double actuator_ctrl(const std::string &name) const
@@ -1184,6 +1287,27 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def_readwrite("objects", &PySceneSpec::objects, "Scene objects and fixtures.")
       .def_readwrite("cameras", &PySceneSpec::cameras, "Named fixed world cameras.");
 
+    py::class_<PyForceTorqueSensorSpec>(
+      m, "ForceTorqueSensorSpec", "Logical FT sensor backed by MuJoCo force and torque sensors."
+    )
+      .def(py::init<>())
+      .def_readwrite("name", &PyForceTorqueSensorSpec::name, "Logical wrapper sensor name.")
+      .def_readwrite(
+        "force_sensor",
+        &PyForceTorqueSensorSpec::force_sensor,
+        "MuJoCo force sensor name; defaults to '<name>_force'."
+      )
+      .def_readwrite(
+        "torque_sensor",
+        &PyForceTorqueSensorSpec::torque_sensor,
+        "MuJoCo torque sensor name; defaults to '<name>_torque'."
+      )
+      .def_readwrite(
+        "frame_site",
+        &PyForceTorqueSensorSpec::frame_site,
+        "Optional MuJoCo site that defines the sensor frame."
+      );
+
     py::class_<PyToolFrameSpec>(
       m, "ToolFrameSpec", "Optional tool mass/TCP description for building the robot KDL chain."
     )
@@ -1193,6 +1317,11 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       )
       .def_readwrite(
         "tcp_site", &PyToolFrameSpec::tcp_site, "MuJoCo site used as the terminal TCP frame."
+      )
+      .def_readwrite(
+        "ft_sensors",
+        &PyToolFrameSpec::ft_sensors,
+        "Logical force-torque sensors attached to this robot."
       );
 
     py::class_<mj_kdl::ResetOptions>(m, "ResetOptions")
@@ -1210,13 +1339,13 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def_property_readonly(
         "options",
         [](const mj_kdl::ResetContext &c) {
-            return c.options ? *c.options : mj_kdl::ResetOptions {};
+            return c.options ? *c.options : mj_kdl::ResetOptions{};
         },
         "Reset options that triggered this reset."
       )
       .def_property_readonly(
         "info",
-        [](const mj_kdl::ResetContext &c) { return c.info ? *c.info : mj_kdl::ResetInfo {}; },
+        [](const mj_kdl::ResetContext &c) { return c.info ? *c.info : mj_kdl::ResetInfo{}; },
         "Reset result (keyframe used, etc.)."
       );
 
@@ -1266,7 +1395,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
                 self.set_body_pose(name, pos, nullptr);
                 return;
             }
-            auto q = quat.cast<std::array<double, 4>>();
+            auto                  q       = quat.cast<std::array<double, 4>>();
             std::array<double, 4> mj_quat = { q[3], q[0], q[1], q[2] };
             self.set_body_pose(name, pos, &mj_quat);
         },
@@ -1281,6 +1410,14 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         py::arg("name"),
         py::arg("value"),
         "Set an actuator ctrl slot by name."
+      )
+      .def(
+        "set_body_wrench",
+        &PyScene::set_body_wrench,
+        py::arg("name"),
+        py::arg("force"),
+        py::arg("torque") = std::array<double, 3>{ 0.0, 0.0, 0.0 },
+        "Set a world-frame external body wrench [force, torque]."
       )
       .def(
         "actuator_ctrl",
@@ -1354,6 +1491,23 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "Compute KDL gravity torques at measured q."
       )
       .def("kdl_chain", &PyRobot::kdl_chain, "Return the wrapper-built chain as a PyKDL.Chain.")
+      .def_property_readonly(
+        "ft_sensor_names",
+        &PyRobot::ft_sensor_names,
+        "Configured logical force-torque sensor names."
+      )
+      .def(
+        "ft_sensor",
+        &PyRobot::ft_sensor,
+        py::arg("name"),
+        "Return the latest measured force-torque sensor value as a PyKDL.Wrench."
+      )
+      .def(
+        "ft_sensor_frame",
+        &PyRobot::ft_sensor_frame,
+        py::arg("name"),
+        "Return the configured FT sensor frame_site pose as a PyKDL.Frame."
+      )
       .def(
         "fk_frame",
         [](const PyRobot &self, const py::object &q) {
@@ -1519,6 +1673,16 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         py::arg("name") = "",
         "Switch to a named camera; empty name restores default."
       )
+      .def(
+        "set_free_camera",
+        &PySimulateViewer::set_free_camera,
+        py::arg("distance"),
+        py::arg("azimuth"),
+        py::arg("elevation"),
+        py::arg("lookat") = std::array<double, 3>{ 0.0, 0.0, 0.0 },
+        "Configure the free orbit camera (distance, azimuth/elevation in degrees, "
+        "lookat xyz in meters)."
+      )
       .def_property(
         "realtime_factor",
         [](const PySimulateViewer &self) { return self.viewer.realtime_factor; },
@@ -1550,8 +1714,14 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
           const std::shared_ptr<PyScene> &scene, const std::string &out, int w, int h, int fps
         ) {
             return PyVideoRecorder::make(
-              scene_model_fn(scene), scene_data_fn(scene), out, w, h,
-              mj_kdl::VideoResolution::R720p, false, fps
+              scene_model_fn(scene),
+              scene_data_fn(scene),
+              out,
+              w,
+              h,
+              mj_kdl::VideoResolution::R720p,
+              false,
+              fps
             );
         },
         py::arg("scene"),
@@ -1567,8 +1737,14 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
           const std::shared_ptr<PyEnv> &env, const std::string &out, int w, int h, int fps
         ) {
             return PyVideoRecorder::make(
-              env_model_fn(env), env_data_fn(env), out, w, h,
-              mj_kdl::VideoResolution::R720p, false, fps
+              env_model_fn(env),
+              env_data_fn(env),
+              out,
+              w,
+              h,
+              mj_kdl::VideoResolution::R720p,
+              false,
+              fps
             );
         },
         py::arg("env"),
@@ -1582,9 +1758,9 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "open_preset",
         [scene_model_fn, scene_data_fn](
           const std::shared_ptr<PyScene> &scene,
-          const std::string             &out,
-          mj_kdl::VideoResolution        res,
-          int                            fps
+          const std::string              &out,
+          mj_kdl::VideoResolution         res,
+          int                             fps
         ) {
             return PyVideoRecorder::make(
               scene_model_fn(scene), scene_data_fn(scene), out, 0, 0, res, true, fps
@@ -1627,7 +1803,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         py::arg("distance"),
         py::arg("azimuth"),
         py::arg("elevation"),
-        py::arg("lookat") = std::array<double, 3> { 0.0, 0.0, 0.0 },
+        py::arg("lookat") = std::array<double, 3>{ 0.0, 0.0, 0.0 },
         "Configure the free orbit camera (distance, azimuth/elevation in degrees, "
         "lookat point). Call between frames to orbit."
       )
@@ -1696,11 +1872,26 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       )
       .def("time", &PyEnv::time, "Current MuJoCo simulation time.")
       .def("timestep", &PyEnv::timestep, "Configured simulation timestep.")
-      .def("body_frame", &PyEnv::body_frame, py::arg("name"), "Return a body world pose as PyKDL.Frame.")
-      .def("site_frame", &PyEnv::site_frame, py::arg("name"), "Return a site world pose as PyKDL.Frame.")
+      .def(
+        "body_frame",
+        &PyEnv::body_frame,
+        py::arg("name"),
+        "Return a body world pose as PyKDL.Frame."
+      )
+      .def(
+        "site_frame",
+        &PyEnv::site_frame,
+        py::arg("name"),
+        "Return a site world pose as PyKDL.Frame."
+      )
       .def(
         "set_body_pose",
-        [](PyEnv &self, const std::string &name, const std::array<double, 3> &pos, const py::object &quat) {
+        [](
+          PyEnv                       &self,
+          const std::string           &name,
+          const std::array<double, 3> &pos,
+          const py::object            &quat
+        ) {
             if (quat.is_none()) return self.set_body_pose(name, pos, nullptr);
             auto q = quat.cast<std::array<double, 4>>();
             return self.set_body_pose(name, pos, &q);
@@ -1710,11 +1901,45 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         py::arg("quat") = py::none(),
         "Set a body pose (position and optional xyzw quaternion)."
       )
-      .def("set_actuator_ctrl", &PyEnv::set_actuator_ctrl, py::arg("name"), py::arg("value"), "Set an actuator ctrl value by name.")
-      .def("actuator_ctrl", &PyEnv::actuator_ctrl, py::arg("name"), "Return an actuator ctrl value by name.")
-      .def("has_actuator", &PyEnv::has_actuator, py::arg("name"), "Whether the compiled model has the named actuator.")
-      .def("save_xml", &PyEnv::save_xml, py::arg("path"), "Save the compiled model to an MJCF XML file.")
-      .def("save_binary", &PyEnv::save_binary, py::arg("path"), "Save the compiled model to a MuJoCo binary file.")
+      .def(
+        "set_actuator_ctrl",
+        &PyEnv::set_actuator_ctrl,
+        py::arg("name"),
+        py::arg("value"),
+        "Set an actuator ctrl value by name."
+      )
+      .def(
+        "set_body_wrench",
+        &PyEnv::set_body_wrench,
+        py::arg("name"),
+        py::arg("force"),
+        py::arg("torque") = std::array<double, 3>{ 0.0, 0.0, 0.0 },
+        "Set a world-frame external body wrench [force, torque]."
+      )
+      .def(
+        "actuator_ctrl",
+        &PyEnv::actuator_ctrl,
+        py::arg("name"),
+        "Return an actuator ctrl value by name."
+      )
+      .def(
+        "has_actuator",
+        &PyEnv::has_actuator,
+        py::arg("name"),
+        "Whether the compiled model has the named actuator."
+      )
+      .def(
+        "save_xml",
+        &PyEnv::save_xml,
+        py::arg("path"),
+        "Save the compiled model to an MJCF XML file."
+      )
+      .def(
+        "save_binary",
+        &PyEnv::save_binary,
+        py::arg("path"),
+        "Save the compiled model to a MuJoCo binary file."
+      )
       .def_readonly("spec", &PyEnv::spec, "Python scene spec used to build this environment.");
 
     m.def("set_log_level", &mj_kdl::set_log_level, py::arg("level"), "Set wrapper log level.");
