@@ -174,7 +174,8 @@ rationale, build ordering, and consuming it from your own nodes.
 
 The example catalog lives in [docs/examples.md](docs/examples.md).
 Every C++ `src/examples/ex_*.cpp` example has a same-name Python counterpart in
-`python/examples/`.
+`python/examples/`, including the named force-torque admittance demos:
+`ex_admittance_ft`, `ex_admittance_ft_rnea`, and `ex_admittance_ft_achd`.
 
 ## Tests
 
@@ -205,5 +206,6 @@ These ship in the repo and the wheel, and are copied into the user cache
 | Path | Description |
 |------|-------------|
 | `assets/robotiq_2f85/2f85.xml` | Local Robotiq 2F-85 gripper asset used by examples/tests |
+| `assets/ft_sensor.xml` | Local 6-axis force-torque sensor asset used by FT examples/tests |
 | `assets/table.xml` | Table asset with authored `table_top` site |
 | `assets/mug.xml`, `assets/mug_table.xml` | Pouring example assets |

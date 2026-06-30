@@ -19,6 +19,7 @@ set(ALL_TESTS
   test_mjcf_pos_ctrl
   test_mjcf_vel_ctrl
   test_mjcf_trq_ctrl
+  test_mjcf_ft_sensor
   test_mjcf_pick
 )
 

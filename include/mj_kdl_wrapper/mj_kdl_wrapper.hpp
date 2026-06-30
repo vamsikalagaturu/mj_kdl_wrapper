@@ -53,25 +53,25 @@ inline LogLevel get_log_level() { return g_log_level; }
  */
 #define MJ_FILENAME_ (::strrchr(__FILE__, '/') ? ::strrchr(__FILE__, '/') + 1 : __FILE__)
 
-#define MJ_LOG_(lvl_enum, color, label, expr)                        \
-    do {                                                             \
-        if (::mj_kdl::g_log_level >= ::mj_kdl::LogLevel::lvl_enum) { \
-            std::ostringstream _mj_oss;                              \
+#define MJ_LOG_(lvl_enum, color, label, expr)                         \
+    do {                                                              \
+        if (::mj_kdl::g_log_level >= ::mj_kdl::LogLevel::lvl_enum) {  \
+            std::ostringstream _mj_oss;                               \
             _mj_oss << expr; /* NOLINT(bugprone-macro-parentheses) */ \
-            std::fprintf(                                            \
-              stderr,                                                \
-              color "[mj_kdl " label "] %s:%d (%s): %s\033[0m\n",    \
-              MJ_FILENAME_,                                          \
-              __LINE__,                                              \
-              __func__,                                              \
-              _mj_oss.str().c_str()                                  \
-            );                                                       \
-        }                                                            \
+            std::fprintf(                                             \
+              stderr,                                                 \
+              color "[mj_kdl " label "] %s:%d (%s): %s\033[0m\n",     \
+              MJ_FILENAME_,                                           \
+              __LINE__,                                               \
+              __func__,                                               \
+              _mj_oss.str().c_str()                                   \
+            );                                                        \
+        }                                                             \
     } while (0)
 
-#define LOG_INFO(expr)  MJ_LOG_(INFO,  "",          "INFO ", expr)
-#define LOG_WARN(expr)  MJ_LOG_(WARN,  "\033[33m",  "WARN ", expr)
-#define LOG_ERROR(expr) MJ_LOG_(ERROR, "\033[31m",  "ERROR", expr)
+#define LOG_INFO(expr) MJ_LOG_(INFO, "", "INFO ", expr)
+#define LOG_WARN(expr) MJ_LOG_(WARN, "\033[33m", "WARN ", expr)
+#define LOG_ERROR(expr) MJ_LOG_(ERROR, "\033[31m", "ERROR", expr)
 
 namespace mj_kdl {
 
@@ -107,11 +107,11 @@ struct AttachTarget
  */
 struct AttachmentSpec
 {
-    const char  *mjcf_path = nullptr;     // MJCF file for this attachment
-    AttachTarget attach_to;               // parent in root or prior attachment (default: world)
-    const char  *prefix    = "";          // element name prefix (avoids name conflicts)
-    double       pos[3]    = { 0, 0, 0 }; // position offset [m]
-    double       euler[3]  = { 0, 0, 0 }; // extrinsic XYZ Euler offset [degrees]
+    const char  *mjcf_path = nullptr;    // MJCF file for this attachment
+    AttachTarget attach_to;              // parent in root or prior attachment (default: world)
+    const char  *prefix   = "";          // element name prefix (avoids name conflicts)
+    double       pos[3]   = { 0, 0, 0 }; // position offset [m]
+    double       euler[3] = { 0, 0, 0 }; // extrinsic XYZ Euler offset [degrees]
 
     /* Contact exclusion pairs registered by attach_to_spec(). */
     std::vector<std::pair<std::string, std::string>> contact_exclusions; // (body1, body2) pairs
@@ -137,8 +137,8 @@ struct AttachmentSpec
  */
 struct RobotSpec
 {
-    const char                 *path     = nullptr;     // root MJCF path
-    const char                 *prefix   = "";          // element name prefix
+    const char                 *path   = nullptr;       // root MJCF path
+    const char                 *prefix = "";            // element name prefix
     AttachTarget                attach_to;              // placement parent (default: world)
     double                      pos[3]   = { 0, 0, 0 }; // offset in parent frame [m]
     double                      euler[3] = { 0, 0, 0 }; // extrinsic XYZ Euler offset [degrees]
@@ -196,16 +196,16 @@ enum class Condim : int { Tangential = 3, Torsional = 4, Rolling = 6 };
 struct SceneObject
 {
     std::string  name;
-    std::string  mjcf_path;  // optional MJCF asset; when set, shape/size/mass/friction are ignored
-    AttachTarget attach_to;  // placement parent (default: world)
-    Shape        shape    = Shape::Unspecified; // required for primitives; rejected at build time if not set
-    double       size[3]; // half-extents (BOX) / {radius, 0, 0} (SPHERE) / {radius, half-len, 0} (CYL)
-    double       pos[3]  = { 0.0, 0.0, 0.0 }; // offset in resolved parent frame [m]
-    float        rgba[4];                     // [r, g, b, a]; required for primitives
-    bool         fixed    = false;
-    double       mass;                        // [kg]; required for primitives
-    Condim       condim   = Condim::Tangential;
-    double       friction[3];                 // [slide, spin, roll]; required for primitives
+    std::string  mjcf_path; // optional MJCF asset; when set, shape/size/mass/friction are ignored
+    AttachTarget attach_to; // placement parent (default: world)
+    Shape  shape = Shape::Unspecified; // required for primitives; rejected at build time if not set
+    double size[3]; // half-extents (BOX) / {radius, 0, 0} (SPHERE) / {radius, half-len, 0} (CYL)
+    double pos[3] = { 0.0, 0.0, 0.0 }; // offset in resolved parent frame [m]
+    float  rgba[4];                    // [r, g, b, a]; required for primitives
+    bool   fixed = false;
+    double mass; // [kg]; required for primitives
+    Condim condim = Condim::Tangential;
+    double friction[3]; // [slide, spin, roll]; required for primitives
 };
 
 /**
@@ -244,6 +244,38 @@ struct SceneSpec
 
 /**
  * @ingroup grp_types
+ * Logical force-torque sensor backed by MuJoCo's separate <force> and <torque>
+ * sensors. If force_sensor/torque_sensor are omitted, init_robot_from_mjcf()
+ * resolves "{name}_force" and "{name}_torque".
+ */
+struct ForceTorqueSensorSpec
+{
+    const char *name          = nullptr; // logical wrapper name
+    const char *force_sensor  = nullptr; // MuJoCo <force> sensor name
+    const char *torque_sensor = nullptr; // MuJoCo <torque> sensor name
+    const char *frame_site    = nullptr; // optional site that defines the sensor frame
+};
+
+/**
+ * @ingroup grp_types
+ * Runtime force-torque sensor state. The wrench is updated by update().
+ */
+struct ForceTorqueSensor
+{
+    std::string name;
+    std::string force_sensor;
+    std::string torque_sensor;
+    std::string frame_site;
+
+    int force_adr     = -1;
+    int torque_adr    = -1;
+    int frame_site_id = -1;
+
+    KDL::Wrench wrench = KDL::Wrench::Zero();
+};
+
+/**
+ * @ingroup grp_types
  * Optional tool/end-effector description used while building the KDL chain.
  *
  * tool_body names the root of the attached tool subtree whose mass/inertia is
@@ -258,6 +290,7 @@ struct ToolFrameSpec
     const char *tool_body = nullptr;
     const char *tcp_site  = nullptr;                // MuJoCo site name (takes priority)
     KDL::Frame  tcp_frame = KDL::Frame::Identity(); // manual TCP in tip frame (fallback)
+    std::vector<ForceTorqueSensorSpec> ft_sensors;
 };
 
 /**
@@ -290,6 +323,7 @@ struct Robot
     int                                    n_joints = 0;
     std::vector<std::string>               joint_names;
     std::vector<std::pair<double, double>> joint_limits;
+    std::vector<ForceTorqueSensor>         ft_sensors;
 
     /* Ports - read/written each control cycle. */
     CtrlMode            ctrl_mode = CtrlMode::POSITION;
@@ -452,6 +486,9 @@ bool init_robot_from_mjcf(
   const char          *prefix = "",
   const ToolFrameSpec *tool   = nullptr
 );
+
+/** @ingroup grp_robot Find a configured logical force-torque sensor by name. */
+const ForceTorqueSensor *find_ft_sensor(const Robot *r, const char *name);
 
 /**
  * @ingroup grp_scene
@@ -875,6 +912,17 @@ std::vector<std::string> get_camera_names(const mjModel *model);
  * @return true if the camera name was found; false if not found (viewer unchanged).
  */
 bool use_camera(Viewer *v, const mjModel *model, const char *name);
+
+/**
+ * Configure the viewer's free orbit camera.
+ */
+void set_free_camera(
+  Viewer                      *v,
+  double                       distance,
+  double                       azimuth,
+  double                       elevation,
+  const std::array<double, 3> &lookat
+);
 
 /**
  * @ingroup grp_recorder

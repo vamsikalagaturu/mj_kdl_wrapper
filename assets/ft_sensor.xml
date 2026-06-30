@@ -1,0 +1,15 @@
+<mujoco model="ft_sensor">
+  <worldbody>
+    <body name="wrist_ft_body">
+      <inertial pos="0 0 0" mass="0.01" diaginertia="1e-5 1e-5 1e-5"/>
+      <geom name="wrist_ft_geom" type="box" size="0.025 0.025 0.01"
+            contype="0" conaffinity="0" rgba="0.15 0.15 0.15 1"/>
+      <site name="wrist_ft_site" pos="0 0 0" size="0.012"/>
+    </body>
+  </worldbody>
+
+  <sensor>
+    <force name="wrist_ft_force" site="wrist_ft_site"/>
+    <torque name="wrist_ft_torque" site="wrist_ft_site"/>
+  </sensor>
+</mujoco>

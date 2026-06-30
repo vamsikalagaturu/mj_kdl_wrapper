@@ -332,6 +332,8 @@ assert robot.has_tcp_frame
 
 `tool_body` identifies the attached subtree whose inertia should be included in
 the KDL chain. `tcp_site` becomes the terminal frame for FK and task-space code.
+If the scene includes an attached FT sensor asset, add a `ForceTorqueSensorSpec`
+to `tool.ft_sensors`; `robot.ft_sensor(name)` returns a `PyKDL.Wrench`.
 
 ## 6. Add Tables, Objects, And Asset Sites
 

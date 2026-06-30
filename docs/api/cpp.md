@@ -102,6 +102,46 @@ KDL::JntArray q(n), g(n);
 dyn.JntToGravity(q, g);
 ```
 
+For a wrist force-torque sensor, attach the sensor MJCF first, then attach the
+gripper to a site exported by that sensor asset:
+
+```cpp
+mj_kdl::AttachmentSpec ft_sensor{
+    .mjcf_path = mj_kdl_examples::asset("ft_sensor.xml"),
+    .attach_to = { mj_kdl::AttachKind::Site, "pinch_site" },
+};
+
+mj_kdl::AttachmentSpec gripper{
+    .mjcf_path = mj_kdl_examples::asset("robotiq_2f85/2f85.xml"),
+    .attach_to = { mj_kdl::AttachKind::Site, "wrist_ft_site" },
+    .prefix    = "g_",
+};
+
+mj_kdl::RobotSpec robot_spec;
+robot_spec.path = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
+robot_spec.attachments = { ft_sensor, gripper };
+```
+
+Then register the logical force-torque sensor through `ToolFrameSpec`. MuJoCo
+stores it as separate `<force>` and `<torque>` sensors; the wrapper combines one
+pair into a `KDL::Wrench`.
+
+```cpp
+mj_kdl::ForceTorqueSensorSpec ft{ .name = "wrist_ft", .frame_site = "wrist_ft_site" };
+mj_kdl::ToolFrameSpec tool{
+    .tool_body  = "g_base",
+    .tcp_site   = "g_pinch",
+    .ft_sensors = { ft },
+};
+
+mj_kdl::update(&robot);
+const auto *sensor = mj_kdl::find_ft_sensor(&robot, "wrist_ft");
+KDL::Wrench wrench = sensor ? sensor->wrench : KDL::Wrench::Zero();
+```
+
+When `force_sensor` and `torque_sensor` are omitted, the wrapper resolves
+`{name}_force` and `{name}_torque`.
+
 ## Attach MJCF Bodies
 
 `AttachTarget` is a tagged pair of `AttachKind { World, Body, Site, Frame }`
