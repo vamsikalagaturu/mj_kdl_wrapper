@@ -26,6 +26,7 @@
 #include <chrono>
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -1225,6 +1226,20 @@ const ForceTorqueSensor *find_ft_sensor(const Robot *r, const char *name)
         if (sensor.name == name) return &sensor;
     }
     return nullptr;
+}
+
+std::vector<double> joint_force_limits(const Robot *r, double fallback)
+{
+    std::vector<double> limits(r->n_joints, fallback);
+    if (!r->model) return limits;
+    for (int i = 0; i < r->n_joints; ++i) {
+        const int ctrl_id = r->kdl_to_mj_ctrl[i];
+        if (ctrl_id < 0 || !r->model->actuator_forcelimited[ctrl_id]) continue;
+        const double lo = r->model->actuator_forcerange[2 * ctrl_id];
+        const double hi = r->model->actuator_forcerange[2 * ctrl_id + 1];
+        limits[i]       = std::max(std::abs(lo), std::abs(hi));
+    }
+    return limits;
 }
 
 void cleanup(Robot *r)
