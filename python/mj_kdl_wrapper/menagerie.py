@@ -102,6 +102,11 @@ def asset_path(relative_path: str, *, env_var: str | None = None) -> str:
     if relative.is_absolute() or ".." in relative.parts:
         raise ValueError(f"asset path must be relative inside assets/: {relative_path}")
 
+    try:
+        fetch_assets()
+    except RuntimeError:
+        pass
+
     candidate = assets_cache_dir() / relative
     if candidate.exists():
         return str(candidate)

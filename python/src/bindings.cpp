@@ -290,8 +290,9 @@ struct PyScene : std::enable_shared_from_this<PyScene>
     mjModel                            *model = nullptr;
     mjData                             *data  = nullptr;
     std::vector<std::weak_ptr<PyRobot>> robots;
+    int                                 active_viewers = 0;
 
-    ~PyScene() { close(); }
+    ~PyScene() { close_data(); }
 
     void register_robot(const std::shared_ptr<PyRobot> &robot);
     void reinit_robots();
@@ -309,6 +310,12 @@ struct PyScene : std::enable_shared_from_this<PyScene>
     }
 
     void close()
+    {
+        if (active_viewers > 0) throw std::runtime_error("scene has an active viewer");
+        close_data();
+    }
+
+    void close_data()
     {
         invalidate_robots();
         mj_kdl::destroy_scene(model, data);
@@ -739,6 +746,7 @@ struct PySimulateViewer
 {
     mj_kdl::Viewer           viewer;
     std::shared_ptr<PyRobot> robot_owner;
+    std::shared_ptr<PyScene> scene_owner;
     bool                     active = false;
 
     ~PySimulateViewer() { close(); }
@@ -758,12 +766,29 @@ struct PySimulateViewer
         return out;
     }
 
+    static std::shared_ptr<PySimulateViewer>
+      open_scene(const std::shared_ptr<PyScene> &scene, const std::string &title)
+    {
+        if (!scene || !scene->model || !scene->data) throw std::runtime_error("scene is closed");
+
+        auto out         = std::shared_ptr<PySimulateViewer>(new PySimulateViewer());
+        out->scene_owner = scene;
+        if (!mj_kdl::init_window_sim(&out->viewer, scene->model, scene->data, title.c_str())) {
+            throw std::runtime_error("init_window_sim failed");
+        }
+        ++scene->active_viewers;
+        out->active = true;
+        return out;
+    }
+
     void close()
     {
         if (!active) return;
         mj_kdl::cleanup(&viewer);
         active = false;
         robot_owner.reset();
+        if (scene_owner && scene_owner->active_viewers > 0) --scene_owner->active_viewers;
+        scene_owner.reset();
     }
 
     bool is_running() const
@@ -774,8 +799,11 @@ struct PySimulateViewer
 
     bool step()
     {
-        if (!active || !robot_owner) throw std::runtime_error("viewer is closed");
-        return mj_kdl::step(&robot_owner->robot);
+        if (!active) throw std::runtime_error("viewer is closed");
+        if (robot_owner) return mj_kdl::step(&robot_owner->robot);
+        if (!scene_owner || !scene_owner->model || !scene_owner->data)
+            throw std::runtime_error("scene is closed");
+        return mj_kdl::step(&viewer, scene_owner->model, scene_owner->data);
     }
 
     bool step_n(int n)
@@ -1639,6 +1667,13 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         py::arg("robot"),
         py::arg("title") = "MuJoCo",
         "Open the custom simulate UI for a robot."
+      )
+      .def_static(
+        "open",
+        &PySimulateViewer::open_scene,
+        py::arg("scene"),
+        py::arg("title") = "MuJoCo",
+        "Open the simulate UI for a robot-less Scene."
       )
       .def("close", &PySimulateViewer::close, "Close the viewer.")
       .def(

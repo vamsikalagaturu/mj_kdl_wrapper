@@ -491,6 +491,22 @@ bool init_robot_from_mjcf(
 const ForceTorqueSensor *find_ft_sensor(const Robot *r, const char *name);
 
 /**
+ * @ingroup grp_robot
+ * Per-joint torque/force saturation limit in KDL joint order, read from the
+ * MuJoCo actuator forcerange (`mjModel::actuator_forcerange`). For each KDL
+ * joint, the returned bound is symmetric: max(|lo|, |hi|) of the driving
+ * actuator's forcerange. Joints with no driving actuator
+ * (`kdl_to_mj_ctrl[i] == -1`) or an unlimited actuator (`actuator_forcelimited`
+ * false) fall back to `fallback`.
+ *
+ * @param r         Initialized robot (init_robot_from_mjcf() already called).
+ * @param fallback  Bound used for joints without a force-limited actuator;
+ *                  default is a large, effectively non-limiting value.
+ * @return          One entry per KDL joint, same order as r->joint_names.
+ */
+std::vector<double> joint_force_limits(const Robot *r, double fallback = 1e6);
+
+/**
  * @ingroup grp_scene
  * Apply one attachment to an arm spec using the MuJoCo spec API (mjs_attach).
  * Parses a->mjcf_path, attaches its first root body under a->attach_to with the given
@@ -593,6 +609,14 @@ bool init_window(
  * @return true on success.
  */
 bool init_window_sim(Viewer *v, Robot *r, const char *title = "MuJoCo");
+
+/**
+ * @ingroup grp_viewer
+ * Open the simulate UI for a robot-less model/data pair (e.g. a Scene or Env
+ * with no Robot). Physics, camera and pause are handled by the UI directly.
+ * @return true on success.
+ */
+bool init_window_sim(Viewer *v, mjModel *m, mjData *d, const char *title = "MuJoCo");
 
 /**
  * @ingroup grp_viewer
