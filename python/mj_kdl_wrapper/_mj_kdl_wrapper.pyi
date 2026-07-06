@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Callable, Optional, Sequence, Union
+from typing import Callable, Optional, Sequence, Union, overload
 
 import PyKDL as kdl
 
@@ -244,7 +244,11 @@ class SimulateViewer:
     """Wrapper for the custom MuJoCo simulate UI."""
     realtime_factor: float
     @staticmethod
+    @overload
     def open(robot: Robot, title: str = "MuJoCo") -> "SimulateViewer": ...
+    @staticmethod
+    @overload
+    def open(scene: "Scene", title: str = "MuJoCo") -> "SimulateViewer": ...
     def close(self) -> None: ...
     def is_running(self) -> bool: ...
     def step(self) -> bool: ...
