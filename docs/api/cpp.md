@@ -32,7 +32,8 @@ guide.)
 
 `SceneSpec` has no defaults for `timestep`, `add_floor`, or `add_skybox`.
 Those are choices, not values the library can guess. `build_scene()` rejects
-`timestep <= 0` at runtime.
+`timestep <= 0` at runtime. `SceneSpec::robots` may be empty; object-only
+scenes are valid.
 
 ```cpp
 #include "example_paths.hpp"
@@ -48,6 +49,19 @@ sc.robots.push_back(mj_kdl::RobotSpec{
 
 mjModel *model = nullptr;
 mjData  *data  = nullptr;
+mj_kdl::build_scene(&model, &data, &sc);
+```
+
+For an object-only scene, add MJCF or primitive `SceneObject` entries and leave
+`sc.robots` empty:
+
+```cpp
+mj_kdl::SceneObject cabinet{
+    .name      = "cabinet",
+    .mjcf_path = mj_kdl_examples::asset("cabinet/cabinet.xml"),
+    .fixed     = true,
+};
+sc.objects.push_back(cabinet);
 mj_kdl::build_scene(&model, &data, &sc);
 ```
 
@@ -450,8 +464,10 @@ while (mj_kdl::is_running(&viewer)) {
 mj_kdl::cleanup(&viewer);
 ```
 
-Use `step(&viewer, model, data)` for multi-robot or no-robot loops where the
-viewer should own the same pacing behavior as the Simulate UI path.
+Use `init_window_sim(&viewer, model, data, "object scene")` for object-only
+scenes that still need the full Simulate UI. Use `step(&viewer, model, data)`
+for multi-robot or no-robot loops where the viewer should own the same pacing
+behavior as the Simulate UI path.
 
 ## Viewer Controls
 

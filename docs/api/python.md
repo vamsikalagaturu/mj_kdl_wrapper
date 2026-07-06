@@ -41,6 +41,7 @@ For other MJCF sources, set the relevant environment variable or assign
 
 `SceneSpec` has no defaults for `timestep`, `add_floor`, or `add_skybox`.
 Those are explicit scene choices. `Scene.build()` rejects `timestep <= 0`.
+`spec.robots` may be empty; object-only scenes are valid.
 
 ```python
 import mj_kdl_wrapper as mjk
@@ -54,6 +55,19 @@ robot_spec = mjk.RobotSpec()
 robot_spec.path = mjk.menagerie.model_path("kinova_gen3")
 spec.robots = [robot_spec]
 
+scene = mjk.Scene.build(spec)
+```
+
+For an object-only scene, put MJCF or primitive objects in `spec.objects` and
+leave `spec.robots` empty:
+
+```python
+cabinet = mjk.SceneObject()
+cabinet.name = "cabinet"
+cabinet.mjcf_path = mjk.menagerie.asset_path("cabinet/cabinet.xml")
+cabinet.fixed = True
+
+spec.objects = [cabinet]
 scene = mjk.Scene.build(spec)
 ```
 
@@ -408,12 +422,17 @@ cameras, and cameras added through `SceneSpec.cameras`.
 ## Viewer Controls
 
 `SimulateViewer.open(robot)` starts the custom MuJoCo Simulate UI and binds it
-to a robot handle:
+to a robot handle. For object-only scenes, pass the `Scene` instead:
 
 ```python
 viewer = mjk.SimulateViewer.open(robot, "MuJoCo")
 while viewer.step():
     robot.update()
+viewer.close()
+
+viewer = mjk.SimulateViewer.open(scene, "object scene")
+while viewer.step():
+    pass
 viewer.close()
 ```
 
