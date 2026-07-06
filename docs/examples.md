@@ -30,6 +30,7 @@ bindings for FK, IK, RNEA, and ACHD instead of re-binding KDL classes locally.
 | `ex_vel_ctrl` | arm only | velocity-style convergence control |
 | `ex_impedance` | arm + gripper | joint impedance with gripper inertia |
 | `ex_table_scene` | table + free objects | table/object scene construction |
+| `ex_cabinet` | 3-drawer cabinet, no robot | object-only scene with grasp sites and Simulate UI viewer |
 | `ex_pick` | floor cube | scripted pick and lift |
 | `ex_table_pick_place` | table + blue cube | scripted tabletop pick, transfer, release, and retreat |
 | `ex_table_pour` | table + transparent receiver | scripted pour from small gripper-held bottle into a tabletop vessel |

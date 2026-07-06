@@ -79,6 +79,7 @@ Prefer `Env` for applications that need reset hooks or registered robots.
 
 `build_scene()` creates one MuJoCo `mjSpec`, attaches robot MJCF trees into it,
 adds global scene options, adds objects and cameras, then compiles the model.
+The robot list may be empty when the scene only contains objects.
 
 Important fields:
 
@@ -338,6 +339,9 @@ scene.objects.push_back(mj_kdl::SceneObject{
 
 `Condim` is a typed enum (`Tangential` = 3, `Torsional` = 4, `Rolling` = 6)
 matching MuJoCo's contact-dimensionality integers. Default is `Tangential`.
+
+`scene.robots` can be empty. Object-only scenes still compile and can be opened
+in the Simulate UI with `init_window_sim(&viewer, model, data, "object scene")`.
 
 After `build_scene`, an MJCF-backed `SceneObject` exposes its root body in
 the compiled scene under `obj.name` (i.e. the asset's internal root body name

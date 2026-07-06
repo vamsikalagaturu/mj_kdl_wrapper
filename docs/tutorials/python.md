@@ -380,6 +380,14 @@ surface_z = world_t_table_top.p.z()
 Free objects must stay world-anchored because MuJoCo restricts free joints to
 top-level bodies.
 
+`spec.robots` can be empty. For object-only scenes, build `Scene` from objects
+and open the viewer on the scene itself:
+
+```python
+scene = mjk.Scene.build(spec)
+viewer = mjk.SimulateViewer.open(scene, "object scene")
+```
+
 ## 7. Add Cameras
 
 Add fixed scene cameras with `CameraSpec`. `pos` and `fovy` are required;
@@ -432,8 +440,9 @@ and task state. Avoid hiding reset logic in the control loop.
 
 ## 9. Use The Simulate UI
 
-`SimulateViewer.open(robot)` starts the custom Simulate UI. The viewer owns the
-window; your loop still owns controller logic.
+`SimulateViewer.open(robot)` starts the custom Simulate UI. Object-only scenes
+use `SimulateViewer.open(scene)` instead. The viewer owns the window; your loop
+still owns controller logic.
 
 ```python
 viewer = mjk.SimulateViewer.open(robot, "task")
