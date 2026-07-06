@@ -26,6 +26,7 @@
 #include <chrono>
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -342,6 +343,19 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
               make_spec_ptr(mj_parseXML(obj.mjcf_path.c_str(), nullptr, err, sizeof(err)));
             if (!asset) {
                 LOG_ERROR("mj_parseXML failed for object asset '" << obj.mjcf_path << "': " << err);
+                continue;
+            }
+
+            // Compile now so mesh files load while this spec's meshdir is alive:
+            // mjs_attach defers file loading to the parent compile, but `asset`
+            // is freed before then.
+            if (mjModel *compiled = mj_compile(asset.get(), nullptr)) {
+                mj_deleteModel(compiled);
+            } else {
+                LOG_ERROR(
+                  "failed to compile object asset '" << obj.mjcf_path
+                                                     << "': " << mjs_getError(asset.get())
+                );
                 continue;
             }
 
@@ -843,7 +857,7 @@ bool attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
 
 bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
 {
-    if (!sc || sc->robots.empty()) return false;
+    if (!sc) return false;
     if (sc->timestep <= 0.0) {
         LOG_ERROR(
           "SceneSpec::timestep must be > 0 (got "
@@ -915,6 +929,12 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
             return false;
         }
         // arm (deep-copied into scene) is freed by MjSpecPtr at scope exit.
+    }
+
+    // Robot-less scenes skip the first_arm branch; apply timestep/gravity here.
+    if (first_arm) {
+        scene->option.timestep   = sc->timestep;
+        scene->option.gravity[2] = sc->gravity_z;
     }
 
     if (!sc->cameras.empty()) add_cameras_to_spec(scene.get(), sc->cameras);
@@ -1225,6 +1245,20 @@ const ForceTorqueSensor *find_ft_sensor(const Robot *r, const char *name)
         if (sensor.name == name) return &sensor;
     }
     return nullptr;
+}
+
+std::vector<double> joint_force_limits(const Robot *r, double fallback)
+{
+    std::vector<double> limits(r->n_joints, fallback);
+    if (!r->model) return limits;
+    for (int i = 0; i < r->n_joints; ++i) {
+        const int ctrl_id = r->kdl_to_mj_ctrl[i];
+        if (ctrl_id < 0 || !r->model->actuator_forcelimited[ctrl_id]) continue;
+        const double lo = r->model->actuator_forcerange[2 * ctrl_id];
+        const double hi = r->model->actuator_forcerange[2 * ctrl_id + 1];
+        limits[i]       = std::max(std::abs(lo), std::abs(hi));
+    }
+    return limits;
 }
 
 void cleanup(Robot *r)
@@ -1856,7 +1890,10 @@ void cleanup(Viewer *v)
         mjv_freeScene(&ss->user_scn);
         delete ss;
         v->_sim_ui = nullptr;
-        if (g_viewer == v) g_viewer = nullptr;
+        if (g_viewer == v) {
+            g_viewer = nullptr;
+            g_robot  = nullptr;
+        }
         return;
     }
     if (!v->window) return;
@@ -1866,7 +1903,10 @@ void cleanup(Viewer *v)
     glfwDestroyWindow(v->window);
     v->window = nullptr;
     glfwTerminate();
-    if (g_viewer == v) g_viewer = nullptr;
+    if (g_viewer == v) {
+        g_viewer = nullptr;
+        g_robot  = nullptr;
+    }
 }
 
 void clear_trace(Viewer *v)
@@ -1923,9 +1963,10 @@ bool render(Viewer *v, mjModel *m, mjData *d)
 
 bool render(Viewer *v, const Robot *r) { return render(v, r->model, r->data); }
 
-bool init_window_sim(Viewer *v, Robot *r, const char *title)
+static bool init_window_sim_core(
+  Viewer *v, mjModel *m, mjData *d, const char *tcp_site, const char *title)
 {
-    if (!r->model) return false;
+    if (!v || !m || !d) return false;
     if (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY")) return false;
 
     // glfwInitHint() is "main thread only" per GLFW docs -- call before spawning.
@@ -1973,16 +2014,16 @@ bool init_window_sim(Viewer *v, Robot *r, const char *title)
      * overriding the font we set above.  Load() calls RefreshMjrContext with
      * the current font value, so we correct it here after the first load. */
     ss->sim->LoadMessage(title);
-    ss->sim->Load(r->model, r->data, title);
+    ss->sim->Load(m, d, title);
     ss->sim->SetWrapperRealtimeFactor(v->realtime_factor);
     if (ss->sim->font != 2) {
         ss->sim->font = 2; // 150%: 0=50% 1=100% 2=150% 3=200%
-        ss->sim->Load(r->model, r->data, title);
+        ss->sim->Load(m, d, title);
         ss->sim->SetWrapperRealtimeFactor(v->realtime_factor);
     }
     {
         std::unique_lock<std::recursive_mutex> lock(ss->sim->mtx);
-        mj_forward(r->model, r->data);
+        mj_forward(m, d);
     }
 
     /* Allocate the overlay user scene and hand it to Simulate, which merges it
@@ -1991,18 +2032,33 @@ bool init_window_sim(Viewer *v, Robot *r, const char *title)
     mjv_defaultScene(&ss->user_scn);
     // Overlay geom budget for add_trace_segment(); caps the DSL trace-length
     // (mj:trace-length maxInclusive in simulation/mujoco.shacl.ttl).
-    mjv_makeScene(r->model, &ss->user_scn, /*maxgeom=*/8192);
+    mjv_makeScene(m, &ss->user_scn, /*maxgeom=*/8192);
     ss->user_scn.ngeom = 0;
     ss->sim->user_scn  = &ss->user_scn;
 
     // trace follows the robot's TCP site (Frames panel "Trace EE")
-    if (!r->tcp_site.empty()) {
-        ss->sim->ee_trace_site_ = mj_name2id(r->model, mjOBJ_SITE, r->tcp_site.c_str());
+    if (tcp_site && *tcp_site) {
+        ss->sim->ee_trace_site_ = mj_name2id(m, mjOBJ_SITE, tcp_site);
     }
 
     v->_sim_ui = ss;
     g_viewer   = v;
-    g_robot    = r;
+    return true;
+}
+
+bool init_window_sim(Viewer *v, Robot *r, const char *title)
+{
+    if (!r || !r->model || !r->data) return false;
+    const char *tcp = r->tcp_site.empty() ? nullptr : r->tcp_site.c_str();
+    if (!init_window_sim_core(v, r->model, r->data, tcp, title)) return false;
+    g_robot = r;
+    return true;
+}
+
+bool init_window_sim(Viewer *v, mjModel *m, mjData *d, const char *title)
+{
+    if (!init_window_sim_core(v, m, d, nullptr, title)) return false;
+    g_robot = nullptr;
     return true;
 }
 

@@ -1,0 +1,101 @@
+<mujoco model="cabinet">
+  <!--
+    Attach-friendly cabinet asset for mj_kdl_wrapper: a single root body so it can be
+    added as a SceneObject (mjs_attach). The parent scene provides floor/lights/option.
+    Standalone view (default headlight, no floor): python -m mujoco.viewer --mjcf=cabinet.xml
+
+    Source 3D models (STL meshes are the authors' work, redistributed for simulation):
+      Cabinet / drawers  -> "Office Desk Organizer - 3 Drawer Storage"
+        https://makerworld.com/en/models/2500817-office-desk-organizer-3-drawer-storage
+      Drawer handles     -> "Dual-Color Furniture Handle / Drawer Handle"
+        https://makerworld.com/en/models/2431804-dual-color-furniture-handle-drawer-handle
+    Check each model's MakerWorld license before redistributing the meshes.
+  -->
+  <compiler meshdir="." angle="radian" autolimits="true"/>
+  <default>
+    <!-- Mesh visuals are non-colliding: MuJoCo treats mesh collisions as convex
+         hulls, so explicit box geoms below provide the drawer support/contact. -->
+    <geom density="600" friction="0.5 0.02 0.001" solref="0.005 1" contype="0" conaffinity="0"/>
+  </default>
+
+  <asset>
+    <mesh name="frame_top"    file="cabinet_frame_top.stl"    scale="0.001 0.001 0.001"/>
+    <mesh name="frame_mid"    file="cabinet_frame_mid.stl"    scale="0.001 0.001 0.001"/>
+    <mesh name="frame_bottom" file="cabinet_frame_bottom.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="drawer_mesh"  file="cabinet_drawer.stl"       scale="0.001 0.001 0.001"/>
+    <mesh name="handle_body"  file="handle_body_96mm.stl"     scale="0.001 0.001 0.001"/>
+    <mesh name="handle_cover" file="handle_cover_96mm.stl"    scale="0.001 0.001 0.001"/>
+    <material name="frame" rgba="0.11 0.11 0.11 1"/>
+    <material name="drawer" rgba="0.90 0.78 0.60 1"/>
+    <material name="handle_body" rgba="0.10 0.10 0.10 1"/>
+    <material name="handle_cover" rgba="0.40 0.26 0.20 1"/>
+  </asset>
+
+  <worldbody>
+    <!-- Root origin = cabinet base center on the floor. Place this asset at z=0. -->
+    <body name="root">
+      <!-- static frame: base + 3 stacked modules -->
+      <body name="base" pos="-0.065 -0.1792 -0.1205" quat="0 0.707107 0 0.707107"><geom type="mesh" mesh="frame_bottom" material="frame"/></body>
+      <body name="mod_bottom" pos="-0.065 0.128 -0.6809" quat="0 0.707107 0 0.707107"><geom type="mesh" mesh="frame_mid" material="frame"/></body>
+      <body name="mod_middle" pos="-0.065 0.128 -0.5879" quat="0 0.707107 0 0.707107"><geom type="mesh" mesh="frame_mid" material="frame"/></body>
+      <body name="mod_top" pos="-0.065 0.128 0.1195" quat="0 0.707107 0 0.707107"><geom type="mesh" mesh="frame_top" material="frame"/></body>
+      <geom name="bay1_shelf" type="box" pos="0 0 0.012" size="0.065 0.090 0.006" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
+      <geom name="bay1_wall_l" type="box" pos="0 0.096 0.062" size="0.065 0.006 0.046" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
+      <geom name="bay1_wall_r" type="box" pos="0 -0.096 0.062" size="0.065 0.006 0.046" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
+      <geom name="bay1_back" type="box" pos="-0.071 0 0.062" size="0.006 0.090 0.046" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
+      <geom name="bay2_shelf" type="box" pos="0 0 0.105" size="0.065 0.090 0.006" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
+      <geom name="bay2_wall_l" type="box" pos="0 0.096 0.155" size="0.065 0.006 0.046" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
+      <geom name="bay2_wall_r" type="box" pos="0 -0.096 0.155" size="0.065 0.006 0.046" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
+      <geom name="bay2_back" type="box" pos="-0.071 0 0.155" size="0.006 0.090 0.046" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
+      <geom name="bay3_shelf" type="box" pos="0 0 0.198" size="0.065 0.090 0.006" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
+      <geom name="bay3_wall_l" type="box" pos="0 0.096 0.248" size="0.065 0.006 0.046" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
+      <geom name="bay3_wall_r" type="box" pos="0 -0.096 0.248" size="0.065 0.006 0.046" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
+      <geom name="bay3_back" type="box" pos="-0.071 0 0.248" size="0.006 0.090 0.046" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
+      <geom name="top_shelf" type="box" pos="0 0 0.291" size="0.065 0.090 0.006" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
+
+      <!-- Drawers are free bodies on simple support shelves: pull out +X and they can fall. -->
+      <body name="drawer1" pos="-0.4352 0.1792 0.020663">
+        <joint name="drawer1_x" type="slide" axis="1 0 0" damping="1"/>
+        <joint name="drawer1_y" type="slide" axis="0 1 0" damping="1"/>
+        <joint name="drawer1_z" type="slide" axis="0 0 1" damping="1"/>
+        <joint name="drawer1_ball" type="ball" damping="0.05"/>
+        <geom name="drawer1_contact" type="box" pos="0.4352 -0.1792 0.04084" size="0.062 0.088 0.038" rgba="0 1 1 0.50" group="0" contype="1" conaffinity="1" friction="0.6 0.02 0.001"/>
+        <geom name="drawer1_handle_bar" type="capsule" fromto="0.52449 -0.2272 0.04084 0.52449 -0.1312 0.04084" size="0.009" rgba="1 0.45 0 0.80" group="0" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
+        <geom name="drawer1_handle_post_l" type="capsule" fromto="0.51049 -0.2192 0.04084 0.52449 -0.2192 0.04084" size="0.006" rgba="1 0.45 0 0.80" group="0" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
+        <geom name="drawer1_handle_post_r" type="capsule" fromto="0.51049 -0.1392 0.04084 0.52449 -0.1392 0.04084" size="0.006" rgba="1 0.45 0 0.80" group="0" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
+        <geom type="mesh" mesh="drawer_mesh" material="drawer"/>
+        <geom type="mesh" mesh="handle_cover" material="handle_cover" pos="0.52986 -0.1792 0.04084" quat="-0.5 0.5 0.5 -0.5"/>
+        <geom type="mesh" mesh="handle_body"  material="handle_body"  pos="0.53049 -0.1792 0.04084" quat="-0.5 0.5 0.5 -0.5"/>
+        <site name="grasp1" pos="0.51649 -0.1792 0.04084" size="0.008" rgba="1 0.2 0.2 0" group="3"/>
+      </body>
+      <body name="drawer2" pos="-0.4352 0.1792 0.113663">
+        <joint name="drawer2_x" type="slide" axis="1 0 0" damping="1"/>
+        <joint name="drawer2_y" type="slide" axis="0 1 0" damping="1"/>
+        <joint name="drawer2_z" type="slide" axis="0 0 1" damping="1"/>
+        <joint name="drawer2_ball" type="ball" damping="0.05"/>
+        <geom name="drawer2_contact" type="box" pos="0.4352 -0.1792 0.04084" size="0.062 0.088 0.038" rgba="0 1 1 0.50" group="0" contype="1" conaffinity="1" friction="0.6 0.02 0.001"/>
+        <geom name="drawer2_handle_bar" type="capsule" fromto="0.52449 -0.2272 0.04084 0.52449 -0.1312 0.04084" size="0.009" rgba="1 0.45 0 0.80" group="0" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
+        <geom name="drawer2_handle_post_l" type="capsule" fromto="0.51049 -0.2192 0.04084 0.52449 -0.2192 0.04084" size="0.006" rgba="1 0.45 0 0.80" group="0" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
+        <geom name="drawer2_handle_post_r" type="capsule" fromto="0.51049 -0.1392 0.04084 0.52449 -0.1392 0.04084" size="0.006" rgba="1 0.45 0 0.80" group="0" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
+        <geom type="mesh" mesh="drawer_mesh" material="drawer"/>
+        <geom type="mesh" mesh="handle_cover" material="handle_cover" pos="0.52986 -0.1792 0.04084" quat="-0.5 0.5 0.5 -0.5"/>
+        <geom type="mesh" mesh="handle_body"  material="handle_body"  pos="0.53049 -0.1792 0.04084" quat="-0.5 0.5 0.5 -0.5"/>
+        <site name="grasp2" pos="0.51649 -0.1792 0.04084" size="0.008" rgba="1 0.2 0.2 0" group="3"/>
+      </body>
+      <body name="drawer3" pos="-0.4352 0.1792 0.206663">
+        <joint name="drawer3_x" type="slide" axis="1 0 0" damping="1"/>
+        <joint name="drawer3_y" type="slide" axis="0 1 0" damping="1"/>
+        <joint name="drawer3_z" type="slide" axis="0 0 1" damping="1"/>
+        <joint name="drawer3_ball" type="ball" damping="0.05"/>
+        <geom name="drawer3_contact" type="box" pos="0.4352 -0.1792 0.04084" size="0.062 0.088 0.038" rgba="0 1 1 0.50" group="0" contype="1" conaffinity="1" friction="0.6 0.02 0.001"/>
+        <geom name="drawer3_handle_bar" type="capsule" fromto="0.52449 -0.2272 0.04084 0.52449 -0.1312 0.04084" size="0.009" rgba="1 0.45 0 0.80" group="0" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
+        <geom name="drawer3_handle_post_l" type="capsule" fromto="0.51049 -0.2192 0.04084 0.52449 -0.2192 0.04084" size="0.006" rgba="1 0.45 0 0.80" group="0" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
+        <geom name="drawer3_handle_post_r" type="capsule" fromto="0.51049 -0.1392 0.04084 0.52449 -0.1392 0.04084" size="0.006" rgba="1 0.45 0 0.80" group="0" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
+        <geom type="mesh" mesh="drawer_mesh" material="drawer"/>
+        <geom type="mesh" mesh="handle_cover" material="handle_cover" pos="0.52986 -0.1792 0.04084" quat="-0.5 0.5 0.5 -0.5"/>
+        <geom type="mesh" mesh="handle_body"  material="handle_body"  pos="0.53049 -0.1792 0.04084" quat="-0.5 0.5 0.5 -0.5"/>
+        <site name="grasp3" pos="0.51649 -0.1792 0.04084" size="0.008" rgba="1 0.2 0.2 0" group="3"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
