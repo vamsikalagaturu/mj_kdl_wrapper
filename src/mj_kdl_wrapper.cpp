@@ -334,8 +334,6 @@ void add_floor_to_spec(mjSpec *spec)
 
 void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
 {
-    static const double kZeroEuler[3] = { 0, 0, 0 };
-
     for (const auto &obj : objects) {
         if (!obj.mjcf_path.empty()) {
             char      err[kMjErrBuf] = {};
@@ -367,7 +365,7 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
 
             std::string prefix = obj.name.empty() ? "" : obj.name + "_";
             mjsBody    *attached =
-              attach_child(spec, obj.attach_to, obj.pos, kZeroEuler, root, prefix.c_str());
+              attach_child(spec, obj.attach_to, obj.pos, obj.euler, root, prefix.c_str());
             // Rename the asset's root body to obj.name so callers can write
             // attach_to = { Body, obj.name } without knowing the MJCF-internal
             // root body name. Other elements keep the obj.name + "_" prefix.
@@ -442,7 +440,7 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
         g->conaffinity = kContactCategoryAll;
         g->condim      = static_cast<int>(obj.condim);
 
-        attach_child(spec, obj.attach_to, obj.pos, kZeroEuler, ob, "");
+        attach_child(spec, obj.attach_to, obj.pos, obj.euler, ob, "");
     }
 }
 
