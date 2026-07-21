@@ -201,7 +201,9 @@ struct SceneObject
     Shape  shape = Shape::Unspecified; // required for primitives; rejected at build time if not set
     double size[3]; // half-extents (BOX) / {radius, 0, 0} (SPHERE) / {radius, half-len, 0} (CYL)
     double pos[3] = { 0.0, 0.0, 0.0 }; // offset in resolved parent frame [m]
-    float  rgba[4];                    // [r, g, b, a]; required for primitives
+    // TODO: Support quaternion placement consistently across all scene specification types.
+    double euler[3] = { 0.0, 0.0, 0.0 }; // extrinsic XYZ rotation [deg]
+    float  rgba[4];                      // [r, g, b, a]; required for primitives
     bool   fixed = false;
     double mass; // [kg]; required for primitives
     Condim condim = Condim::Tangential;

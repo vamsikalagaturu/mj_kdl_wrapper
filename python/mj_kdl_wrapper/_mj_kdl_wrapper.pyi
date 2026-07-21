@@ -84,6 +84,7 @@ class SceneObject:
     shape: Shape
     size: Optional[list[float]]
     pos: list[float]
+    euler: list[float]
     rgba: Optional[list[float]]
     fixed: bool
     mass: Optional[float]

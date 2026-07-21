@@ -68,7 +68,8 @@ struct PySceneObject
     PyAttachTarget                       attach_to;
     Shape                                shape = Shape::Unspecified;
     std::optional<std::array<double, 3>> size;
-    std::array<double, 3>                pos = { 0.0, 0.0, 0.0 };
+    std::array<double, 3>                pos   = { 0.0, 0.0, 0.0 };
+    std::array<double, 3>                euler = { 0.0, 0.0, 0.0 };
     std::optional<std::array<float, 4>>  rgba;
     bool                                 fixed = false;
     std::optional<double>                mass;
@@ -155,6 +156,7 @@ SceneObject to_cpp(const PySceneObject &src)
     out.attach_to = to_cpp(src.attach_to);
     out.shape     = src.shape;
     std::copy(src.pos.begin(), src.pos.end(), out.pos);
+    std::copy(src.euler.begin(), src.euler.end(), out.euler);
     out.fixed  = src.fixed;
     out.condim = src.condim;
     if (src.mjcf_path.empty()) {
@@ -1278,6 +1280,9 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def_readwrite("shape", &PySceneObject::shape, "Primitive shape when mjcf_path is empty.")
       .def_readwrite("size", &PySceneObject::size, "Required primitive size.")
       .def_readwrite("pos", &PySceneObject::pos, "Placement offset in the parent frame, in meters.")
+      .def_readwrite(
+        "euler", &PySceneObject::euler, "Placement extrinsic XYZ Euler offset, in degrees."
+      )
       .def_readwrite("rgba", &PySceneObject::rgba, "Required primitive color.")
       .def_readwrite(
         "fixed", &PySceneObject::fixed, "If true, primitives are welded to their parent."
