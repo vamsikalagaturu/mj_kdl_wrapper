@@ -1,0 +1,11 @@
+<mujoco model="cube_asset">
+  <worldbody>
+    <!-- Free-floating graspable cube. Root body origin is the cube center. -->
+    <body name="root">
+      <freejoint name="free"/>
+      <geom name="box" type="box" size="0.02 0.02 0.02" mass="0.01"
+            rgba="0.1 0.35 1.0 1.0" contype="1" conaffinity="1" condim="6"
+            friction="0.8 0.01 0.0001"/>
+    </body>
+  </worldbody>
+</mujoco>
