@@ -1229,6 +1229,63 @@ bool init_robot_from_mjcf(
     return true;
 }
 
+bool init_robot_from_chain(
+  Robot                          *r,
+  mjModel                        *model,
+  mjData                         *data,
+  const KDL::Chain               &chain,
+  const std::vector<std::string> &joint_names,
+  const char                     *prefix,
+  const ToolFrameSpec            *tool
+)
+{
+    LOG_INFO(
+      "init_robot_from_chain: " << chain.getNrOfSegments() << " segments, "
+                                << chain.getNrOfJoints() << " joints, prefix='"
+                                << (prefix ? prefix : "") << "'"
+    );
+    if (joint_names.size() != chain.getNrOfJoints()) {
+        LOG_ERROR(
+          "joint_names has " << joint_names.size() << " entries but the chain has "
+                             << chain.getNrOfJoints() << " joints"
+        );
+        return false;
+    }
+
+    r->model         = model;
+    r->data          = data;
+    r->tip_T_tcp     = KDL::Frame::Identity();
+    r->has_tcp_frame = false;
+    r->tcp_site.clear();
+    r->ft_sensors.clear();
+
+    // The chain is authored, not derived: take it as given, tool segments included.
+    r->chain       = chain;
+    r->n_joints    = (int)chain.getNrOfJoints();
+    r->joint_names = joint_names;
+
+    // Limits stay a property of the simulated model, as they are for a derived chain.
+    const std::string pfx = prefix ? prefix : "";
+    r->joint_limits.clear();
+    for (const auto &name : joint_names) {
+        double lo = -M_PI, hi = M_PI;
+        int    jid = mj_name2id(model, mjOBJ_JOINT, (pfx + name).c_str());
+        if (jid >= 0 && model->jnt_limited[jid]) {
+            lo = model->jnt_range[2 * jid];
+            hi = model->jnt_range[2 * jid + 1];
+        }
+        r->joint_limits.emplace_back(lo, hi);
+    }
+
+    if (!build_index_map(r, pfx)) return false;
+    if (!resolve_ft_sensors(r, tool)) return false;
+
+    LOG_INFO(
+      "chain adopted: " << r->n_joints << " joints, " << r->chain.getNrOfSegments() << " segments"
+    );
+    return true;
+}
+
 const ForceTorqueSensor *find_ft_sensor(const Robot *r, const char *name)
 {
     if (!r || !name) return nullptr;

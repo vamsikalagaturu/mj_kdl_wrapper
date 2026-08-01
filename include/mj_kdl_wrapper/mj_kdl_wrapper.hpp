@@ -488,6 +488,31 @@ bool init_robot_from_mjcf(
   const ToolFrameSpec *tool   = nullptr
 );
 
+/**
+ * @ingroup grp_robot
+ * Adopt an externally built KDL chain and wire it to a compiled MuJoCo model.
+ *
+ * Same as init_robot_from_mjcf(), except the chain is supplied rather than derived
+ * from the model: use this when the chain comes from the scene description that also
+ * produced the MJCF, so the solvers compute with the authored dynamics.  The chain is
+ * taken as given - no tool inertia is lumped onto it, since such a chain already
+ * carries its tool as explicit segments.
+ *
+ * joint_names lists the MuJoCo joint names in KDL chain order, one per chain joint;
+ * they drive the same qpos/dof/ctrl index maps init_robot_from_mjcf() builds, and
+ * prefix is applied to each as there.  tool is used only to resolve FT sensors;
+ * tool->tool_body and tool->tcp_site are ignored.
+ */
+bool init_robot_from_chain(
+  Robot                          *r,
+  mjModel                        *model,
+  mjData                         *data,
+  const KDL::Chain               &chain,
+  const std::vector<std::string> &joint_names,
+  const char                     *prefix = "",
+  const ToolFrameSpec            *tool   = nullptr
+);
+
 /** @ingroup grp_robot Find a configured logical force-torque sensor by name. */
 const ForceTorqueSensor *find_ft_sensor(const Robot *r, const char *name);
 
