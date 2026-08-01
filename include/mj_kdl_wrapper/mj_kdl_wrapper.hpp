@@ -89,7 +89,7 @@ enum class AttachKind { World, Body, Site, Frame };
  * Tagged so exactly one alternative is encoded; defaulting to World keeps
  * callers that omit attach_to anchored to the worldbody.
  * For Site, the site's own pos/quat becomes the placement frame and the
- * accompanying pos/euler are an additional offset on top of it (matches MJCF).
+ * accompanying pos/quat are an additional offset on top of it (matches MJCF).
  */
 struct AttachTarget
 {
@@ -107,11 +107,11 @@ struct AttachTarget
  */
 struct AttachmentSpec
 {
-    const char  *mjcf_path = nullptr;    // MJCF file for this attachment
-    AttachTarget attach_to;              // parent in root or prior attachment (default: world)
-    const char  *prefix   = "";          // element name prefix (avoids name conflicts)
-    double       pos[3]   = { 0, 0, 0 }; // position offset [m]
-    double       euler[3] = { 0, 0, 0 }; // extrinsic XYZ Euler offset [degrees]
+    const char  *mjcf_path = nullptr;      // MJCF file for this attachment
+    AttachTarget attach_to;                // parent in root or prior attachment (default: world)
+    const char  *prefix  = "";             // element name prefix (avoids name conflicts)
+    double       pos[3]  = { 0, 0, 0 };     // position offset [m]
+    double       quat[4] = { 0, 0, 0, 1 };  // orientation offset [x, y, z, w]
 
     /* Contact exclusion pairs registered by attach_to_spec(). */
     std::vector<std::pair<std::string, std::string>> contact_exclusions; // (body1, body2) pairs
@@ -129,7 +129,7 @@ struct AttachmentSpec
  *
  * attach_to selects where the robot root is placed in the scene; the default is the
  * worldbody. Set it to e.g. { AttachKind::Site, "table_mount" } to place the robot on
- * a tabletop site exported by a prior scene object. pos/euler are offsets in the
+ * a tabletop site exported by a prior scene object. pos/quat are offsets in the
  * resolved parent frame.
  *
  * path is the root MJCF passed to build_scene(). prefix must be unique per robot
@@ -137,12 +137,12 @@ struct AttachmentSpec
  */
 struct RobotSpec
 {
-    const char                 *path   = nullptr;       // root MJCF path
-    const char                 *prefix = "";            // element name prefix
-    AttachTarget                attach_to;              // placement parent (default: world)
-    double                      pos[3]   = { 0, 0, 0 }; // offset in parent frame [m]
-    double                      euler[3] = { 0, 0, 0 }; // extrinsic XYZ Euler offset [degrees]
-    std::vector<AttachmentSpec> attachments;            // ordered attachment chain; empty = none
+    const char                 *path   = nullptr;          // root MJCF path
+    const char                 *prefix = "";               // element name prefix
+    AttachTarget                attach_to;                 // placement parent (default: world)
+    double                      pos[3]  = { 0, 0, 0 };       // offset in parent frame [m]
+    double                      quat[4] = { 0, 0, 0, 1 };    // orientation offset [x, y, z, w]
+    std::vector<AttachmentSpec> attachments;               // ordered attachment chain; empty = none
 };
 
 /** @ingroup grp_types
@@ -200,8 +200,9 @@ struct SceneObject
     AttachTarget attach_to; // placement parent (default: world)
     Shape  shape = Shape::Unspecified; // required for primitives; rejected at build time if not set
     double size[3]; // half-extents (BOX) / {radius, 0, 0} (SPHERE) / {radius, half-len, 0} (CYL)
-    double pos[3] = { 0.0, 0.0, 0.0 }; // offset in resolved parent frame [m]
-    float  rgba[4];                    // [r, g, b, a]; required for primitives
+    double pos[3]    = { 0.0, 0.0, 0.0 };       // offset in resolved parent frame [m]
+    double quat[4]   = { 0.0, 0.0, 0.0, 1.0 };  // orientation offset [x, y, z, w]
+    float  rgba[4];                             // [r, g, b, a]; required for primitives
     bool   fixed = false;
     double mass; // [kg]; required for primitives
     Condim condim = Condim::Tangential;
@@ -215,14 +216,14 @@ struct SceneObject
  * and can be activated on a Viewer or VideoRecorder with use_camera().
  *
  * pos and fovy have no defaults: there is no neutral camera position or
- * field of view, so the caller must specify both. euler defaults to identity.
+ * field of view, so the caller must specify both. quat defaults to identity.
  */
 struct CameraSpec
 {
     std::string name;
-    double      pos[3];                       // world-frame position [m]
-    double      euler[3] = { 0.0, 0.0, 0.0 }; // extrinsic XYZ Euler [degrees]
-    double      fovy;                         // vertical field of view [degrees]
+    double      pos[3];                          // world-frame position [m]
+    double      quat[4] = { 0.0, 0.0, 0.0, 1.0 }; // orientation [x, y, z, w]
+    double      fovy;                             // vertical field of view [degrees]
 };
 
 /** @ingroup grp_types
@@ -510,7 +511,7 @@ std::vector<double> joint_force_limits(const Robot *r, double fallback = 1e6);
  * @ingroup grp_scene
  * Apply one attachment to an arm spec using the MuJoCo spec API (mjs_attach).
  * Parses a->mjcf_path, attaches its first root body under a->attach_to with the given
- * pos/euler offset, prefixes all element names with a->prefix, and registers contact
+ * pos/quat offset, prefixes all element names with a->prefix, and registers contact
  * exclusions via mjs_addExclude.  Can be called repeatedly to build a chain: each
  * subsequent a->attach_to may reference any body added by prior calls.
  * @param[in,out] robot_spec  Accumulated robot spec to attach into.

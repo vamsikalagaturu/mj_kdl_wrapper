@@ -190,20 +190,13 @@ static mjsElement *resolve_parent(mjSpec *spec, const AttachTarget &t)
     return nullptr;
 }
 
-// Pack extrinsic XYZ Euler [deg] into a MuJoCo quaternion [w, x, y, z].
-static void euler_deg_to_mj_quat(const double euler[3], double out_quat[4])
+// Reorder a [x, y, z, w] quaternion into MuJoCo's [w, x, y, z].
+static void quat_xyzw_to_mj_quat(const double q[4], double out_quat[4])
 {
-    if (!euler[0] && !euler[1] && !euler[2]) {
-        out_quat[0] = 1;
-        out_quat[1] = 0;
-        out_quat[2] = 0;
-        out_quat[3] = 0;
-        return;
-    }
-    const double d2r = M_PI / 180.0;
-    kdl_rot_to_mj_quat(
-      KDL::Rotation::RPY(euler[0] * d2r, euler[1] * d2r, euler[2] * d2r), out_quat
-    );
+    out_quat[0] = q[3];
+    out_quat[1] = q[0];
+    out_quat[2] = q[1];
+    out_quat[3] = q[2];
 }
 
 // Attach a child body element under the resolved parent at the given offset.
@@ -216,7 +209,7 @@ static mjsBody *attach_child(
   mjSpec             *spec,
   const AttachTarget &target,
   const double        pos[3],
-  const double        euler[3],
+  const double        quat[4],
   mjsBody            *child_root,
   const char         *prefix
 )
@@ -225,8 +218,8 @@ static mjsBody *attach_child(
     mjsElement *parent = resolve_parent(spec, target);
     if (!parent) return nullptr;
 
-    double quat[4];
-    euler_deg_to_mj_quat(euler, quat);
+    double mj_quat[4];
+    quat_xyzw_to_mj_quat(quat, mj_quat);
 
     mjsElement *attach_parent = parent;
     if (mjsBody *body_parent = mjs_asBody(parent)) {
@@ -235,13 +228,13 @@ static mjsBody *attach_child(
         frame->pos[0]   = pos[0];
         frame->pos[1]   = pos[1];
         frame->pos[2]   = pos[2];
-        for (int i = 0; i < 4; ++i) frame->quat[i] = quat[i];
+        for (int i = 0; i < 4; ++i) frame->quat[i] = mj_quat[i];
         attach_parent = frame->element;
     } else {
         // Site/frame parents do not accept mjs_addFrame, so the offset has to
         // ride on the child root. Compose user_offset * child_authored so the
         // child's MJCF-authored pos/quat is not silently dropped.
-        KDL::Frame user(mj_quat_to_kdl_rot(quat), KDL::Vector(pos[0], pos[1], pos[2]));
+        KDL::Frame user(mj_quat_to_kdl_rot(mj_quat), KDL::Vector(pos[0], pos[1], pos[2]));
         KDL::Frame child(
           mj_quat_to_kdl_rot(child_root->quat),
           KDL::Vector(child_root->pos[0], child_root->pos[1], child_root->pos[2])
@@ -334,8 +327,6 @@ void add_floor_to_spec(mjSpec *spec)
 
 void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
 {
-    static const double kZeroEuler[3] = { 0, 0, 0 };
-
     for (const auto &obj : objects) {
         if (!obj.mjcf_path.empty()) {
             char      err[kMjErrBuf] = {};
@@ -367,7 +358,7 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
 
             std::string prefix = obj.name.empty() ? "" : obj.name + "_";
             mjsBody    *attached =
-              attach_child(spec, obj.attach_to, obj.pos, kZeroEuler, root, prefix.c_str());
+              attach_child(spec, obj.attach_to, obj.pos, obj.quat, root, prefix.c_str());
             // Rename the asset's root body to obj.name so callers can write
             // attach_to = { Body, obj.name } without knowing the MJCF-internal
             // root body name. Other elements keep the obj.name + "_" prefix.
@@ -442,7 +433,7 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
         g->conaffinity = kContactCategoryAll;
         g->condim      = static_cast<int>(obj.condim);
 
-        attach_child(spec, obj.attach_to, obj.pos, kZeroEuler, ob, "");
+        attach_child(spec, obj.attach_to, obj.pos, obj.quat, ob, "");
     }
 }
 
@@ -456,7 +447,7 @@ static void add_cameras_to_spec(mjSpec *spec, const std::vector<CameraSpec> &cam
         cam->pos[1] = cs.pos[1];
         cam->pos[2] = cs.pos[2];
         cam->fovy   = cs.fovy;
-        euler_deg_to_mj_quat(cs.euler, cam->quat);
+        quat_xyzw_to_mj_quat(cs.quat, cam->quat);
     }
 }
 
@@ -841,7 +832,7 @@ bool attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
         return false;
     }
 
-    if (!attach_child(robot_spec, a->attach_to, a->pos, a->euler, att_root, a->prefix)) {
+    if (!attach_child(robot_spec, a->attach_to, a->pos, a->quat, att_root, a->prefix)) {
         return false;
     }
     // att (deep-copied into robot_spec) is freed by MjSpecPtr at scope exit.
@@ -924,7 +915,7 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
             return false;
         }
 
-        if (!attach_child(scene.get(), rs.attach_to, rs.pos, rs.euler, arm_root, rs.prefix)) {
+        if (!attach_child(scene.get(), rs.attach_to, rs.pos, rs.quat, arm_root, rs.prefix)) {
             LOG_ERROR("attach failed for arm " << ai);
             return false;
         }

@@ -26,6 +26,31 @@ static constexpr double kCubeMass         = 0.1; // [kg]
 static constexpr double kSphereMass       = 0.05;
 static constexpr double kPickFriction[3]  = { 0.8, 0.02, 0.001 };
 
+TEST(SceneObjectTransform, PathBackedObjectAppliesQuat)
+{
+    std::string       table_mjcf = mj_kdl_examples::find_asset("table.xml");
+    mj_kdl::SceneSpec spec;
+    spec.timestep = 0.002;
+    // extrinsic XYZ euler (30, 40, 50) deg
+    spec.objects.push_back({
+      .name      = "turned",
+      .mjcf_path = table_mjcf,
+      .quat = { 0.08080468869083995, 0.40219849353410964, 0.30337177447125957, 0.860042173697679 },
+      .fixed     = true,
+    });
+
+    mjModel *model = nullptr;
+    mjData  *data  = nullptr;
+    ASSERT_TRUE(mj_kdl::build_scene(&model, &data, &spec));
+    KDL::Frame frame;
+    ASSERT_TRUE(mj_kdl::get_site_frame(model, data, "turned_table_top", &frame));
+    const KDL::Vector y = frame.M * KDL::Vector(0.0, 1.0, 0.0);
+    EXPECT_NEAR(y.x(), -0.456825992585671, 1e-9);
+    EXPECT_NEAR(y.y(), 0.802872337479472, 1e-9);
+    EXPECT_NEAR(y.z(), 0.383022221559489, 1e-9);
+    mj_kdl::destroy_scene(model, data);
+}
+
 static mj_kdl::SceneObject make_box(
   const char *name, double x, double y, double hx, double hy, double hz,
   float r, float g, float b, double surface_z

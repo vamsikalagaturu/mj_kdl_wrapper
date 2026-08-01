@@ -60,7 +60,7 @@ class AttachmentSpec:
     attach_to: AttachTarget
     prefix: str
     pos: list[float]
-    euler: list[float]
+    quat: list[float]
     contact_exclusions: list[tuple[str, str]]
     def __init__(self) -> None: ...
 
@@ -71,7 +71,7 @@ class RobotSpec:
     prefix: str
     attach_to: AttachTarget
     pos: list[float]
-    euler: list[float]
+    quat: list[float]
     attachments: list[AttachmentSpec]
     def __init__(self) -> None: ...
 
@@ -84,6 +84,7 @@ class SceneObject:
     shape: Shape
     size: Optional[list[float]]
     pos: list[float]
+    quat: list[float]
     rgba: Optional[list[float]]
     fixed: bool
     mass: Optional[float]
@@ -96,7 +97,7 @@ class CameraSpec:
     """Named fixed world camera. pos and fovy are required."""
     name: str
     pos: Optional[list[float]]
-    euler: list[float]
+    quat: list[float]
     fovy: Optional[float]
     def __init__(self) -> None: ...
 

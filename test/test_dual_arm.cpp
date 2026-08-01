@@ -70,7 +70,7 @@ class DualArmTest : public testing::Test
 
         scene.robots = {
             mj_kdl::RobotSpec{ .path = mjcf.c_str(), .pos = { -0.5, 0.0, 0.0 }, .attachments = {} },
-            mj_kdl::RobotSpec{ .path = mjcf.c_str(), .prefix = "r2_", .pos = { 0.5, 0.0, 0.0 }, .euler = { 0.0, 0.0, 180.0 }, .attachments = {} },
+            mj_kdl::RobotSpec{ .path = mjcf.c_str(), .prefix = "r2_", .pos = { 0.5, 0.0, 0.0 }, .quat = { 0.0, 0.0, 1.0, 0.0 }, .attachments = {} }, // yaw 180 deg
         };
 
         ASSERT_TRUE(mj_kdl::build_scene(&model, &data, &scene)) << "build_scene() returned false";

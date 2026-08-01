@@ -77,3 +77,27 @@ def test_mesh_scene_object_builds_and_moves():
         assert opened.z() < closed.z() - 0.01
     finally:
         scene.close()
+
+
+def test_mesh_scene_object_applies_quat():
+    from PyKDL import Vector
+
+    obj = mjk.SceneObject()
+    obj.name = "cabinet"
+    obj.mjcf_path = str(CABINET)
+    # extrinsic XYZ euler (30, 40, 50) deg
+    obj.quat = [0.08080468869083995, 0.40219849353410964, 0.30337177447125957, 0.860042173697679]
+    obj.fixed = True
+    spec = mjk.SceneSpec()
+    spec.timestep = 0.002
+    spec.add_floor = False
+    spec.add_skybox = False
+    spec.objects = [obj]
+    scene = mjk.Scene.build(spec)
+    try:
+        y = scene.body_frame("cabinet").M * Vector(0.0, 1.0, 0.0)
+        assert abs(y.x() + 0.456825992585671) < 1e-9
+        assert abs(y.y() - 0.802872337479472) < 1e-9
+        assert abs(y.z() - 0.383022221559489) < 1e-9
+    finally:
+        scene.close()

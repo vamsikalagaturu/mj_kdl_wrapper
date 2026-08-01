@@ -46,8 +46,8 @@ struct PyAttachmentSpec
     std::string                                      mjcf_path;
     PyAttachTarget                                   attach_to;
     std::string                                      prefix;
-    std::array<double, 3>                            pos   = { 0.0, 0.0, 0.0 };
-    std::array<double, 3>                            euler = { 0.0, 0.0, 0.0 };
+    std::array<double, 3>                            pos  = { 0.0, 0.0, 0.0 };
+    std::array<double, 4>                            quat = { 0.0, 0.0, 0.0, 1.0 };
     std::vector<std::pair<std::string, std::string>> contact_exclusions;
 };
 
@@ -56,8 +56,8 @@ struct PyRobotSpec
     std::string                   path;
     std::string                   prefix;
     PyAttachTarget                attach_to;
-    std::array<double, 3>         pos   = { 0.0, 0.0, 0.0 };
-    std::array<double, 3>         euler = { 0.0, 0.0, 0.0 };
+    std::array<double, 3>         pos  = { 0.0, 0.0, 0.0 };
+    std::array<double, 4>         quat = { 0.0, 0.0, 0.0, 1.0 };
     std::vector<PyAttachmentSpec> attachments;
 };
 
@@ -68,7 +68,8 @@ struct PySceneObject
     PyAttachTarget                       attach_to;
     Shape                                shape = Shape::Unspecified;
     std::optional<std::array<double, 3>> size;
-    std::array<double, 3>                pos = { 0.0, 0.0, 0.0 };
+    std::array<double, 3>                pos  = { 0.0, 0.0, 0.0 };
+    std::array<double, 4>                quat = { 0.0, 0.0, 0.0, 1.0 };
     std::optional<std::array<float, 4>>  rgba;
     bool                                 fixed = false;
     std::optional<double>                mass;
@@ -80,7 +81,7 @@ struct PyCameraSpec
 {
     std::string                          name;
     std::optional<std::array<double, 3>> pos;
-    std::array<double, 3>                euler = { 0.0, 0.0, 0.0 };
+    std::array<double, 4>                quat = { 0.0, 0.0, 0.0, 1.0 };
     std::optional<double>                fovy;
 };
 
@@ -129,7 +130,7 @@ mj_kdl::AttachmentSpec to_cpp(const PyAttachmentSpec &src)
     out.attach_to = to_cpp(src.attach_to);
     out.prefix    = src.prefix.c_str();
     std::copy(src.pos.begin(), src.pos.end(), out.pos);
-    std::copy(src.euler.begin(), src.euler.end(), out.euler);
+    std::copy(src.quat.begin(), src.quat.end(), out.quat);
     out.contact_exclusions = src.contact_exclusions;
     return out;
 }
@@ -141,7 +142,7 @@ RobotSpec to_cpp(const PyRobotSpec &src)
     out.prefix    = src.prefix.c_str();
     out.attach_to = to_cpp(src.attach_to);
     std::copy(src.pos.begin(), src.pos.end(), out.pos);
-    std::copy(src.euler.begin(), src.euler.end(), out.euler);
+    std::copy(src.quat.begin(), src.quat.end(), out.quat);
     out.attachments.reserve(src.attachments.size());
     for (const auto &item : src.attachments) out.attachments.push_back(to_cpp(item));
     return out;
@@ -155,6 +156,7 @@ SceneObject to_cpp(const PySceneObject &src)
     out.attach_to = to_cpp(src.attach_to);
     out.shape     = src.shape;
     std::copy(src.pos.begin(), src.pos.end(), out.pos);
+    std::copy(src.quat.begin(), src.quat.end(), out.quat);
     out.fixed  = src.fixed;
     out.condim = src.condim;
     if (src.mjcf_path.empty()) {
@@ -182,7 +184,7 @@ CameraSpec to_cpp(const PyCameraSpec &src)
     if (!src.pos) throw std::runtime_error("CameraSpec.pos must be set");
     if (!src.fovy) throw std::runtime_error("CameraSpec.fovy must be set");
     std::copy(src.pos->begin(), src.pos->end(), out.pos);
-    std::copy(src.euler.begin(), src.euler.end(), out.euler);
+    std::copy(src.quat.begin(), src.quat.end(), out.quat);
     out.fovy = *src.fovy;
     return out;
 }
@@ -1245,7 +1247,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def_readwrite(
         "pos", &PyAttachmentSpec::pos, "Position offset in the parent frame, in meters."
       )
-      .def_readwrite("euler", &PyAttachmentSpec::euler, "Extrinsic XYZ Euler offset, in degrees.")
+      .def_readwrite("quat", &PyAttachmentSpec::quat, "Orientation offset [x, y, z, w].")
       .def_readwrite(
         "contact_exclusions",
         &PyAttachmentSpec::contact_exclusions,
@@ -1261,7 +1263,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def_readwrite("attach_to", &PyRobotSpec::attach_to, "Placement parent; defaults to world.")
       .def_readwrite("pos", &PyRobotSpec::pos, "Placement offset in the parent frame, in meters.")
       .def_readwrite(
-        "euler", &PyRobotSpec::euler, "Placement extrinsic XYZ Euler offset, in degrees."
+        "quat", &PyRobotSpec::quat, "Placement orientation offset [x, y, z, w]."
       )
       .def_readwrite("attachments", &PyRobotSpec::attachments, "Ordered attachment chain.");
 
@@ -1278,6 +1280,9 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def_readwrite("shape", &PySceneObject::shape, "Primitive shape when mjcf_path is empty.")
       .def_readwrite("size", &PySceneObject::size, "Required primitive size.")
       .def_readwrite("pos", &PySceneObject::pos, "Placement offset in the parent frame, in meters.")
+      .def_readwrite(
+        "quat", &PySceneObject::quat, "Placement orientation offset [x, y, z, w]."
+      )
       .def_readwrite("rgba", &PySceneObject::rgba, "Required primitive color.")
       .def_readwrite(
         "fixed", &PySceneObject::fixed, "If true, primitives are welded to their parent."
@@ -1294,7 +1299,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def(py::init<>())
       .def_readwrite("name", &PyCameraSpec::name, "Camera name.")
       .def_readwrite("pos", &PyCameraSpec::pos, "Required world position, in meters.")
-      .def_readwrite("euler", &PyCameraSpec::euler, "Extrinsic XYZ Euler orientation, in degrees.")
+      .def_readwrite("quat", &PyCameraSpec::quat, "Orientation [x, y, z, w].")
       .def_readwrite("fovy", &PyCameraSpec::fovy, "Required vertical field of view, in degrees.");
 
     py::class_<PySceneSpec>(

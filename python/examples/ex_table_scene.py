@@ -83,12 +83,12 @@ def build_env(model_path: str, gripper_path: str, table_path: str) -> tuple[mjk.
     overview = mjk.CameraSpec()
     overview.name = "overview"
     overview.pos = [0.0, -0.6, 1.6]
-    overview.euler = [34.0, 0.0, 0.0]
+    overview.quat = [0.29237170472273677, 0.0, 0.0, 0.9563047559630354]  # roll 34 deg
     overview.fovy = 45.0
     side = mjk.CameraSpec()
     side.name = "side"
     side.pos = [-1.0, 0.0, 1.1]
-    side.euler = [0.0, -68.0, 0.0]
+    side.quat = [0.0, -0.5591929034707469, 0.0, 0.8290375725550416]  # pitch -68 deg
     side.fovy = 45.0
     spec.cameras = [overview, side]
     env = mjk.Env.build(spec)
