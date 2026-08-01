@@ -26,14 +26,18 @@ static constexpr double kCubeMass         = 0.1; // [kg]
 static constexpr double kSphereMass       = 0.05;
 static constexpr double kPickFriction[3]  = { 0.8, 0.02, 0.001 };
 
-TEST(SceneObjectTransform, PathBackedObjectAppliesEuler)
+TEST(SceneObjectTransform, PathBackedObjectAppliesQuat)
 {
     std::string       table_mjcf = mj_kdl_examples::find_asset("table.xml");
     mj_kdl::SceneSpec spec;
     spec.timestep = 0.002;
-    spec.objects.push_back(
-      { .name = "turned", .mjcf_path = table_mjcf, .euler = { 30.0, 40.0, 50.0 }, .fixed = true }
-    );
+    // extrinsic XYZ euler (30, 40, 50) deg
+    spec.objects.push_back({
+      .name      = "turned",
+      .mjcf_path = table_mjcf,
+      .quat = { 0.08080468869083995, 0.40219849353410964, 0.30337177447125957, 0.860042173697679 },
+      .fixed     = true,
+    });
 
     mjModel *model = nullptr;
     mjData  *data  = nullptr;

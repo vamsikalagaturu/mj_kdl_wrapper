@@ -105,8 +105,8 @@ scene.robots.push_back(mj_kdl::RobotSpec{
 });
 ```
 
-Use `RobotSpec::pos` and `RobotSpec::euler` to place the robot root in the world.
-Euler angles are extrinsic XYZ degrees.
+Use `RobotSpec::pos` and `RobotSpec::quat` to place the robot root in the world.
+`quat` is `[x, y, z, w]` and defaults to identity `{ 0, 0, 0, 1 }`.
 
 ### Cleanup Order
 
@@ -228,7 +228,7 @@ scene.robots.clear();
 scene.robots.push_back(arm);
 ```
 
-`pos` and `euler` on the spec are still available as offsets. For body and
+`pos` and `quat` on the spec are still available as offsets. For body and
 frame parents they ride on an intermediate frame, preserving the child's
 authored pose. For site parents they compose with the child root's authored
 pose so authored values are never silently dropped.
@@ -239,7 +239,9 @@ offset by hand:
 ```cpp
 gripper.attach_to = { mj_kdl::AttachKind::Body, "bracelet_link" };
 gripper.pos[2]    = -0.061525;
-gripper.euler[0]  = 180.0;
+// 180 deg about x is exactly [x, y, z, w] = { 1, 0, 0, 0 }
+gripper.quat[0]   = 1.0;
+gripper.quat[3]   = 0.0;
 ```
 
 Tell KDL about the attached tool when initializing the robot:
@@ -387,14 +389,15 @@ asset roots with a freejoint must use `AttachKind::World` (the default).
 ## 8. Add Cameras
 
 Add fixed scene cameras through `SceneSpec::cameras`. `CameraSpec` requires
-`pos` and `fovy`; `euler` defaults to identity.
+`pos` and `fovy`; `quat` is `[x, y, z, w]` and defaults to identity
+`{ 0, 0, 0, 1 }`.
 
 ```cpp
 scene.cameras.push_back(mj_kdl::CameraSpec{
-    .name  = "front",
-    .pos   = { 0.0, -0.8, 1.45 },  // required
-    .euler = { 35.0, 0.0, 0.0 },
-    .fovy  = 45.0,                 // required
+    .name = "front",
+    .pos  = { 0.0, -0.8, 1.45 },                  // required
+    .quat = { 0.300706, 0.0, 0.0, 0.953717 },     // 35 deg about x, tilt down
+    .fovy = 45.0,                                 // required
 });
 ```
 
@@ -648,7 +651,7 @@ The application has five parts:
 ### 12.1 Build The Scene
 
 Start with the gripper attachment. The Kinova `pinch_site` already encodes
-the tool offset and 180-degree flip, so no `pos`/`euler` are needed:
+the tool offset and 180-degree flip, so no `pos`/`quat` are needed:
 
 ```cpp
 mj_kdl::AttachmentSpec gripper{
@@ -711,10 +714,11 @@ scene.robots.push_back(mj_kdl::RobotSpec{
     .attachments = { gripper },
 });
 scene.cameras.push_back(mj_kdl::CameraSpec{
-    .name  = "task",
-    .pos   = { 0.1, -0.9, 1.45 },
-    .euler = { 35.0, 0.0, 5.0 },
-    .fovy  = 45.0,
+    .name = "task",
+    .pos  = { 0.1, -0.9, 1.45 },
+    // extrinsic XYZ (35, 0, 5) deg: tilt down, yaw slightly right
+    .quat = { 0.300420, 0.013117, 0.041601, 0.952809 },
+    .fovy = 45.0,
 });
 
 mj_kdl::Env env;

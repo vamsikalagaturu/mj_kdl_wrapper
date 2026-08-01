@@ -119,7 +119,8 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     camera = mjk.CameraSpec()
     camera.name = "task"
     camera.pos = [0.1, -0.9, 1.45]
-    camera.euler = [35.0, 0.0, 5.0]
+    # extrinsic XYZ (35, 0, 5) deg: tilt down, yaw slightly right
+    camera.quat = [0.300420, 0.013117, 0.041601, 0.952809]
     camera.fovy = 45.0
     spec.cameras = [camera]
 
@@ -311,12 +312,14 @@ spec.robots = [robot_spec]
 env = mjk.Env.build(spec)
 ```
 
-If the model has no useful mount site, attach by body name and add offsets:
+If the model has no useful mount site, attach by body name and add offsets.
+Assign the whole list -- `pos` and `quat` return a copy, so item assignment
+such as `gripper.pos[2] = -0.061525` is silently discarded:
 
 ```python
 gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Body, "bracelet_link")
-gripper.pos[2] = -0.061525
-gripper.euler[0] = 180.0
+gripper.pos = [0.0, 0.0, -0.061525]
+gripper.quat = [1.0, 0.0, 0.0, 0.0]  # 180 deg about x, [x, y, z, w]
 ```
 
 Tell KDL about the attached tool when creating the robot:
@@ -391,13 +394,14 @@ viewer = mjk.SimulateViewer.open(scene, "object scene")
 ## 7. Add Cameras
 
 Add fixed scene cameras with `CameraSpec`. `pos` and `fovy` are required;
-`euler` defaults to identity.
+`quat` is `[x, y, z, w]` and defaults to identity `[0, 0, 0, 1]`.
 
 ```python
 camera = mjk.CameraSpec()
 camera.name = "task"
 camera.pos = [0.1, -0.9, 1.45]
-camera.euler = [35.0, 0.0, 5.0]
+# extrinsic XYZ (35, 0, 5) deg: tilt down, yaw slightly right
+camera.quat = [0.300420, 0.013117, 0.041601, 0.952809]
 camera.fovy = 45.0
 spec.cameras = [camera]
 ```
@@ -568,7 +572,8 @@ spec.robots = [arm]
 camera = mjk.CameraSpec()
 camera.name = "task"
 camera.pos = [0.1, -0.9, 1.45]
-camera.euler = [35.0, 0.0, 5.0]
+# extrinsic XYZ (35, 0, 5) deg: tilt down, yaw slightly right
+camera.quat = [0.300420, 0.013117, 0.041601, 0.952809]
 camera.fovy = 45.0
 spec.cameras = [camera]
 
