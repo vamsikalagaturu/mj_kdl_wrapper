@@ -4,6 +4,9 @@ This page collects the Python wrapper usage notes that are too detailed for the
 README. For complete function signatures, see the generated stubs in
 `python/mj_kdl_wrapper/*.pyi`.
 
+Coming from 0.2.x? Placement orientation moved from `.euler` to `.quat`
+`[x, y, z, w]`; see [Migrating from 0.2.x](@ref sec_migrate_quat).
+
 The Python package exposes the same scene, robot, reset, viewer, and recorder
 concepts as the C++ wrapper. It owns MuJoCo `mjModel`/`mjData` through `Scene`
 or `Env` and returns KDL values through the upstream `PyKDL` module.
@@ -171,12 +174,15 @@ robot_spec.path = mjk.menagerie.model_path("kinova_gen3")
 robot_spec.attachments = [gripper]
 ```
 
-Optional `pos` and `euler` on the attachment spec are composed with the parent
-site pose, so small calibration offsets can stay local to the attachment:
+Optional `pos` and `quat` on the attachment spec are composed with the parent
+site pose, so small calibration offsets can stay local to the attachment.
+`quat` is `[x, y, z, w]` and defaults to identity `[0, 0, 0, 1]`. Assign the
+whole list -- these properties return a copy, so `gripper.pos[2] = 0.005` is
+silently discarded:
 
 ```python
-gripper.pos[2] = 0.005
-gripper.euler[2] = 15.0
+gripper.pos = [0.0, 0.0, 0.005]                    # +5 mm along the tool z
+gripper.quat = [0.0, 0.0, 0.130526, 0.991445]      # +15 deg about the tool z
 ```
 
 Chains are supported by appending multiple `AttachmentSpec` objects in order.
@@ -249,7 +255,7 @@ a free joint must stay world-anchored.
 ## Cameras, Actuators, And Poses
 
 Add fixed world cameras through `SceneSpec.cameras`. `pos` and `fovy` are
-required; `euler` defaults to identity.
+required; `quat` is `[x, y, z, w]` and defaults to identity `[0, 0, 0, 1]`.
 
 ```python
 cam = mjk.CameraSpec()

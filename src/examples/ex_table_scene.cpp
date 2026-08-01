@@ -131,16 +131,18 @@ int main(int argc, char *argv[])
     /* Static scene cameras.  The Kinova MJCF also contributes a "wrist" camera;
      * all of them are enumerated by get_camera_names() after build_scene(). */
     sc.cameras.push_back(mj_kdl::CameraSpec{
-        .name  = "overview",
-        .pos   = { 0.0, -0.6, 1.6 },  // in front of and above the table
-        .euler = { 34.0, 0.0, 0.0 },  // tilt down toward table
-        .fovy  = 55.0,
+        .name = "overview",
+        .pos  = { 0.0, -0.6, 1.6 }, // in front of and above the table
+        // roll 34 deg: tilt down toward table
+        .quat = { 0.29237170472273677, 0.0, 0.0, 0.9563047559630354 },
+        .fovy = 55.0,
     });
     sc.cameras.push_back(mj_kdl::CameraSpec{
-        .name  = "side",
-        .pos   = { -1.0, 0.0, 1.1 },  // left side, arm height
-        .euler = { 0.0, -68.0, 0.0 }, // pitch down toward robot base
-        .fovy  = 50.0,
+        .name = "side",
+        .pos  = { -1.0, 0.0, 1.1 }, // left side, arm height
+        // pitch -68 deg: pitch down toward robot base
+        .quat = { 0.0, -0.5591929034707469, 0.0, 0.8290375725550416 },
+        .fovy = 50.0,
     });
 
     mjModel      *model = nullptr;

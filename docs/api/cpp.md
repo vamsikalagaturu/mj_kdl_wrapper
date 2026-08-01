@@ -4,6 +4,9 @@ This page collects the C++ wrapper usage notes that are too detailed for the
 README. For complete function signatures, see the generated Doxygen API pages
 for `include/mj_kdl_wrapper/mj_kdl_wrapper.hpp`.
 
+Coming from 0.2.x? Placement orientation moved from `euler` to `quat`
+`[x, y, z, w]`; see [Migrating from 0.2.x](@ref sec_migrate_quat).
+
 ## Resolving Models And Assets
 
 The examples and tests resolve paths through `example_paths.hpp` (a header-only
@@ -161,7 +164,7 @@ When `force_sensor` and `torque_sensor` are omitted, the wrapper resolves
 `AttachTarget` is a tagged pair of `AttachKind { World, Body, Site, Frame }`
 and an element name. The Kinova GEN3 MJCF exports `pinch_site` on the bracelet,
 which already encodes the tool offset and flip, so a gripper attaches with no
-manual `pos` or `euler`:
+manual `pos` or `quat`:
 
 ```cpp
 mj_kdl::AttachmentSpec gripper{
@@ -183,12 +186,17 @@ sc.robots.push_back(robot_spec);
 mj_kdl::build_scene(&model, &data, &sc);
 ```
 
-Optional `pos` and `euler` on the attachment spec are composed with the parent
-site pose, so you can still add small offsets:
+Optional `pos` and `quat` on the attachment spec are composed with the parent
+site pose, so you can still add small offsets. `quat` is `[x, y, z, w]` and
+defaults to identity `{ 0, 0, 0, 1 }`:
 
 ```cpp
-gripper.pos[2]   = 0.005;   // +5 mm along the tool z
-gripper.euler[2] = 15.0;    // +15 deg about the tool z
+gripper.pos[2] = 0.005; // +5 mm along the tool z
+// +15 deg about the tool z
+gripper.quat[0] = 0.0;
+gripper.quat[1] = 0.0;
+gripper.quat[2] = 0.130526;
+gripper.quat[3] = 0.991445;
 ```
 
 If a model has no suitable site, attach by body name instead:
@@ -196,7 +204,9 @@ If a model has no suitable site, attach by body name instead:
 ```cpp
 gripper.attach_to = { mj_kdl::AttachKind::Body, "bracelet_link" };
 gripper.pos[2]    = -0.061525;
-gripper.euler[0]  = 180.0;
+// 180 deg about x is exactly [x, y, z, w] = { 1, 0, 0, 0 }
+gripper.quat[0]   = 1.0;
+gripper.quat[3]   = 0.0;
 ```
 
 Chains are supported: push multiple `AttachmentSpec` entries in order, such as
@@ -286,7 +296,7 @@ a free joint must stay world-anchored.
 ## Cameras And Poses
 
 Add fixed world cameras through `SceneSpec::cameras`. `pos` and `fovy` are
-required; `euler` defaults to identity.
+required; `quat` is `[x, y, z, w]` and defaults to identity `{ 0, 0, 0, 1 }`.
 
 ```cpp
 sc.cameras.push_back(mj_kdl::CameraSpec{
