@@ -362,6 +362,8 @@ int main(int argc, char *argv[])
                 if ((done_time && done_pose) || done_timeout) break;
 
                 if (!mj_kdl::step(&robot)) {
+
+                mj_kdl::pace_realtime(&robot);
                     aborted = true;
                     break;
                 }

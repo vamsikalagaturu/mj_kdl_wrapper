@@ -161,6 +161,7 @@ int main(int argc, char *argv[])
         for (int step = 0; step < 600; ++step) {
             ctrl_step();
             mj_kdl::step(&arm1);
+            mj_kdl::pace_realtime(&arm1);
         }
 
         KDL::ChainFkSolverPos_recursive fk1(arm1.chain), fk2(arm2.chain);
@@ -190,6 +191,7 @@ int main(int argc, char *argv[])
             prev_sim_time = data->time;
             ctrl_step();
             if (!mj_kdl::step(&arm1)) break;
+            mj_kdl::pace_realtime(&arm1);
         }
 
         mj_kdl::cleanup(&viewer);

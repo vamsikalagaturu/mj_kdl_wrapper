@@ -597,6 +597,12 @@ struct PyRobot
         return mj_kdl::step(&robot);
     }
 
+    void pace()
+    {
+        ensure_active();
+        mj_kdl::pace_realtime(&robot);
+    }
+
     bool step_n(int n)
     {
         ensure_active();
@@ -806,6 +812,15 @@ struct PySimulateViewer
         if (!scene_owner || !scene_owner->model || !scene_owner->data)
             throw std::runtime_error("scene is closed");
         return mj_kdl::step(&viewer, scene_owner->model, scene_owner->data);
+    }
+
+    void pace()
+    {
+        if (!active) throw std::runtime_error("viewer is closed");
+        if (robot_owner) { mj_kdl::pace_realtime(&robot_owner->robot); return; }
+        if (!scene_owner || !scene_owner->model)
+            throw std::runtime_error("scene is closed");
+        mj_kdl::pace_realtime(&viewer, scene_owner->model);
     }
 
     bool step_n(int n)
@@ -1507,6 +1522,8 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       )
       .def("update", &PyRobot::update, "Synchronize measured joint state from MuJoCo.")
       .def("step", &PyRobot::step, "Apply commands and step the robot's MuJoCo scene.")
+      .def("pace", &PyRobot::pace,
+           "Sleep until this step's share of wall time has elapsed. step() never sleeps.")
       .def("step_n", &PyRobot::step_n, py::arg("n"), "Run step() n times.")
       .def(
         "set_joint_pos",
@@ -1685,6 +1702,8 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "is_running", &PySimulateViewer::is_running, "Return false once the user closes the viewer."
       )
       .def("step", &PySimulateViewer::step, "Step simulation and update the viewer.")
+      .def("pace", &PySimulateViewer::pace,
+           "Sleep until this step's share of wall time has elapsed. step() never sleeps.")
       .def("step_n", &PySimulateViewer::step_n, py::arg("n"), "Run step() n times.")
       .def("clear_trace", &PySimulateViewer::clear_trace, "Clear viewer trace geometry.")
       .def(

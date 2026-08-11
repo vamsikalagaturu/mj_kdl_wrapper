@@ -92,6 +92,7 @@ int main(int argc, char *argv[])
         while (data->time < end_time) {
             ctrl_step();
             mj_kdl::step(&robot);
+            mj_kdl::pace_realtime(&robot);
         }
 
         double max_err = 0.0;
@@ -114,6 +115,7 @@ int main(int argc, char *argv[])
             prev_sim_time = data->time;
             ctrl_step();
             if (!mj_kdl::step(&robot)) break;
+            mj_kdl::pace_realtime(&robot);
         }
 
         mj_kdl::cleanup(&viewer);

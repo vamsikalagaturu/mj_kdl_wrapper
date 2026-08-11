@@ -260,6 +260,7 @@ inline void settle_and_tare(SceneHandles &h, Controller &ctrl, AdmState &state)
         close_gripper(h.model, h.data);
         ctrl.track(home);
         if (!mj_kdl::step(&h.robot)) break;
+        mj_kdl::pace_realtime(&h.robot);
     }
     mj_kdl::update(&h.robot);
     state.bias = tare_force(h.robot);
@@ -292,6 +293,7 @@ inline Metrics run_selfcheck(SceneHandles &h, Controller &ctrl, AdmState &state,
         m.helix_react = std::max(m.helix_react, norm3(state.offset));
         m.helix_track_err = std::max(m.helix_track_err, norm3(tcp.p - target.p));
         if (!mj_kdl::step(&h.robot)) break;
+        mj_kdl::pace_realtime(&h.robot);
     }
 
     const double th = h.data->time;
@@ -302,6 +304,7 @@ inline Metrics run_selfcheck(SceneHandles &h, Controller &ctrl, AdmState &state,
         KDL::Frame tcp = current_tcp(fk, h.robot);
         m.helix_track_err = std::max(m.helix_track_err, norm3(tcp.p - target.p));
         if (!mj_kdl::step(&h.robot)) break;
+        mj_kdl::pace_realtime(&h.robot);
     }
 
     mj_kdl::update(&h.robot);
@@ -313,6 +316,7 @@ inline Metrics run_selfcheck(SceneHandles &h, Controller &ctrl, AdmState &state,
         m.handoff_force = std::max(m.handoff_force, norm3(f));
         admittance_step(h.robot, ctrl, state, nominal, f, h.scene.timestep);
         if (!mj_kdl::step(&h.robot)) break;
+        mj_kdl::pace_realtime(&h.robot);
     }
 
     const double ts = h.data->time;
@@ -323,6 +327,7 @@ inline Metrics run_selfcheck(SceneHandles &h, Controller &ctrl, AdmState &state,
         KDL::Frame tcp = current_tcp(fk, h.robot);
         m.helix_settle_err = std::max(m.helix_settle_err, norm3(tcp.p - target.p));
         if (!mj_kdl::step(&h.robot)) break;
+        mj_kdl::pace_realtime(&h.robot);
     }
 
     const KDL::Vector pre_push = state.offset;
@@ -345,6 +350,7 @@ inline Metrics run_selfcheck(SceneHandles &h, Controller &ctrl, AdmState &state,
         }
         if (t >= 2.5) settled = state.offset;
         if (!mj_kdl::step(&h.robot)) break;
+        mj_kdl::pace_realtime(&h.robot);
     }
     set_body_wrench(h.model, h.data, kToolBody, KDL::Vector::Zero());
 
@@ -431,6 +437,8 @@ inline void run_gui(SceneHandles &h, Controller &ctrl, AdmState &state, const KD
         have_prev = true;
 
         if (!mj_kdl::step(&viewer, h.model, h.data)) break;
+
+        mj_kdl::pace_realtime(&viewer, h.model);
     }
     set_body_wrench(h.model, h.data, kToolBody, KDL::Vector::Zero());
     mj_kdl::cleanup(&viewer);

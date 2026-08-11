@@ -83,6 +83,7 @@ def main() -> int:
                     control_step()
                     if not viewer.step():
                         break
+                    viewer.pace()
             finally:
                 viewer.close()
         else:
@@ -90,6 +91,7 @@ def main() -> int:
             while env.time() < end and not state["arrived"]:
                 control_step()
                 robot.step()
+                robot.pace()
             max_err = max(abs(TARGET_POSE[i] - robot.jnt_pos_msr[i]) for i in range(robot.n_joints))
             status = "converged" if state["arrived"] else "timeout"
             print(f"max joint error: {max_err:.4f} rad  ({status})")

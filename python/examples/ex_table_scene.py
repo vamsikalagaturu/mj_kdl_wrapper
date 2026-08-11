@@ -111,6 +111,7 @@ def run_loop(env: mjk.Env, robot: mjk.Robot, step_fn, *, duration: float, gui: b
                 step_fn()
                 if not viewer.step():
                     break
+                viewer.pace()
         finally:
             viewer.close()
         return
@@ -118,6 +119,7 @@ def run_loop(env: mjk.Env, robot: mjk.Robot, step_fn, *, duration: float, gui: b
     while env.time() < end:
         step_fn()
         robot.step()
+        robot.pace()
 
 
 def main() -> int:

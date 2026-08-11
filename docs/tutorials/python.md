@@ -166,6 +166,7 @@ def main() -> int:
             while env.time() < end_time:
                 run_controller(env, robot)
                 robot.step()
+                robot.pace()
         else:
             viewer = mjk.SimulateViewer.open(robot, "python tutorial")
             viewer.use_camera("task")
@@ -174,6 +175,7 @@ def main() -> int:
                     run_controller(env, robot)
                     if not viewer.step():
                         break
+                    viewer.pace()
             finally:
                 viewer.close()
 
@@ -255,6 +257,7 @@ while env.time() < end_time:
     robot.update()
     robot.jnt_pos_cmd = list(robot.jnt_pos_msr)
     robot.step()
+    robot.pace()
 ```
 
 `robot.step()` advances the owning scene by one MuJoCo timestep. For scenes
@@ -272,6 +275,7 @@ while env.time() < end_time:
     robot.update()
     robot.jnt_trq_cmd = robot.gravity_torques(env.spec.gravity_z)
     robot.step()
+    robot.pace()
 ```
 
 For other KDL solvers, use the standard `PyKDL` module and the wrapper-built
@@ -458,6 +462,7 @@ try:
         robot.jnt_trq_cmd = robot.gravity_torques(env.spec.gravity_z)
         if not viewer.step():
             break
+        viewer.pace()
 finally:
     viewer.close()
 ```
@@ -488,6 +493,7 @@ while viewer.is_running():
     robot.jnt_trq_cmd = robot.gravity_torques(env.spec.gravity_z)
     if not viewer.step():
         break
+    viewer.pace()
 ```
 
 `add_trace_segment()` silently drops segments once the user-scene geometry
@@ -512,6 +518,7 @@ try:
         robot.update()
         robot.jnt_trq_cmd = robot.gravity_torques(env.spec.gravity_z)
         robot.step()
+        robot.pace()
         recorder.record_frame()
 finally:
     recorder.close()

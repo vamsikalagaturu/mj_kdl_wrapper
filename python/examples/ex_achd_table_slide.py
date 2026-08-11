@@ -153,6 +153,7 @@ def main() -> int:
                     step()
                     if not viewer.step():
                         break
+                    viewer.pace()
             finally:
                 viewer.close()
         else:
@@ -161,6 +162,7 @@ def main() -> int:
                 step()
                 if not robot.step():
                     break
+                robot.pace()
         print(f"tcp target x shift: {MOVE_X:.3f} m")
         final_frame = robot.fk_frame()
         final_pos = [final_frame.p.x(), final_frame.p.y(), final_frame.p.z()]

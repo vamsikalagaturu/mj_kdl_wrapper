@@ -25,6 +25,7 @@ def main() -> int:
         for _ in range(10):
             robot.update()
             robot.step()
+            robot.pace()
 
         print(f"joints: {robot.n_joints}")
         print(f"joint_names: {robot.joint_names}")

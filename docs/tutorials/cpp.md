@@ -163,6 +163,7 @@ mj_kdl::init_window_sim(&viewer, &robot, "position control");
 
 while (mj_kdl::step(&robot)) {
     mj_kdl::update(&robot);
+    mj_kdl::pace_realtime(&robot);   // step() never sleeps; pace the loop yourself
 
     for (int i = 0; i < robot.n_joints; ++i) {
         robot.jnt_pos_cmd[i] = robot.jnt_pos_msr[i];
@@ -187,6 +188,7 @@ KDL::JntArray g(robot.n_joints);
 
 while (mj_kdl::step(&robot)) {
     mj_kdl::update(&robot);
+    mj_kdl::pace_realtime(&robot);   // step() never sleeps; pace the loop yourself
 
     for (int i = 0; i < robot.n_joints; ++i) {
         q(i) = robot.jnt_pos_msr[i];
@@ -494,6 +496,7 @@ mj_kdl::init_window_sim(&viewer, &robot, "task");
 
 while (mj_kdl::step(&robot)) {
     mj_kdl::update(&robot);
+    mj_kdl::pace_realtime(&robot);   // step() never sleeps; pace the loop yourself
     // control...
 }
 ```
@@ -563,6 +566,7 @@ constexpr size_t kTraceMax = 4096;      // bounded by the user-scene geom budget
 
 while (mj_kdl::step(&robot)) {
     mj_kdl::update(&robot);
+    mj_kdl::pace_realtime(&robot);   // step() never sleeps; pace the loop yourself
     // ... run your controller; advance the EE ...
 
     // FK gives the EE in the chain-root frame; the overlay renders in world
@@ -964,6 +968,7 @@ mj_kdl::use_camera(&viewer, env.model, "task");
 
 while (mj_kdl::step(&robot)) {
     mj_kdl::update(&robot);
+    mj_kdl::pace_realtime(&robot);   // step() never sleeps; pace the loop yourself
     run_state_machine();
     apply_impedance_command();
 }
