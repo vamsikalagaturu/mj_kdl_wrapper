@@ -2281,29 +2281,18 @@ static void vr_egl_done(VideoRecorderImpl *impl)
     impl->egl_dpy = EGL_NO_DISPLAY;
 }
 
-bool init_video_recorder(
-  VideoRecorder *vr,
-  mjModel       *model,
-  const char    *out_path,
-  int            width,
-  int            height,
-  int            fps
-)
+bool init_offscreen(VideoRecorder *vr, mjModel *model, int width, int height)
 {
-    if (!vr || !model || !out_path) return false;
+    if (!vr || !model) return false;
 
     // Set up default camera and options on the user-visible struct.
     mjv_defaultCamera(&vr->cam);
     mjv_defaultFreeCamera(model, &vr->cam);
     mjv_defaultOption(&vr->opt);
 
-    auto *impl     = new VideoRecorderImpl();
-    impl->width    = width;
-    impl->height   = height;
-    impl->out_path = out_path;
-    impl->rgb_buf.resize(
-      static_cast<size_t>(width) * static_cast<size_t>(height) * kRgbBytesPerPixel
-    );
+    auto *impl   = new VideoRecorderImpl();
+    impl->width  = width;
+    impl->height = height;
 
     if (!vr_egl_init(impl)) {
         delete impl;
@@ -2321,11 +2310,33 @@ bool init_video_recorder(
     mjr_setBuffer(mjFB_OFFSCREEN, &impl->con);
     mjr_resizeOffscreen(width, height, &impl->con);
 
+    vr->_impl = impl;
+    return true;
+}
+
+bool init_video_recorder(
+  VideoRecorder *vr,
+  mjModel       *model,
+  const char    *out_path,
+  int            width,
+  int            height,
+  int            fps
+)
+{
+    if (!out_path) return false;
+    if (!init_offscreen(vr, model, width, height)) return false;
+
+    auto *impl     = static_cast<VideoRecorderImpl *>(vr->_impl);
+    impl->out_path = out_path;
+    impl->rgb_buf.resize(
+      static_cast<size_t>(width) * static_cast<size_t>(height) * kRgbBytesPerPixel
+    );
+
     // Launch ffmpeg: reads raw RGB24 frames from stdin, writes H.264 MP4.
     // -g <fps>: ~1s GOP (vs x264's 250-frame default) so scrubbing seeks land
     // near a keyframe instead of decoding seconds of frames.
     const int gop = std::max(1, fps);
-    char cmd[2048];
+    char      cmd[2048];
     snprintf(
       cmd,
       sizeof(cmd),
@@ -2342,40 +2353,49 @@ bool init_video_recorder(
     impl->ffmpeg = popen(cmd, "w");
     if (!impl->ffmpeg) {
         LOG_ERROR("popen(ffmpeg) failed - is ffmpeg installed and in PATH?");
-        mjr_freeContext(&impl->con);
-        mjv_freeScene(&impl->scn);
-        vr_egl_done(impl);
-        delete impl;
+        cleanup(vr);
         return false;
     }
 
-    vr->_impl = impl;
     LOG_INFO("VideoRecorder: " << width << "x" << height << " @ " << fps << " fps -> " << out_path);
     return true;
 }
 
-bool record_frame(VideoRecorder *vr, mjModel *model, mjData *data)
+bool render_rgb(VideoRecorder *vr, mjModel *model, mjData *data, std::uint8_t *out)
 {
-    if (!vr || !vr->_impl || !model || !data) return false;
+    if (!vr || !vr->_impl || !model || !data || !out) return false;
     auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
+
+    // One EGL context per recorder: make this one current before rendering.
+    eglMakeCurrent(impl->egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, impl->egl_ctx);
 
     mjv_updateScene(model, data, &vr->opt, nullptr, &vr->cam, mjCAT_ALL, &impl->scn);
 
     mjrRect vp = { 0, 0, impl->width, impl->height };
     mjr_render(vp, &impl->scn, &impl->con);
-    mjr_readPixels(impl->rgb_buf.data(), nullptr, vp, &impl->con);
+    mjr_readPixels(out, nullptr, vp, &impl->con);
 
-    // MuJoCo fills the buffer bottom-to-top; flip before piping to ffmpeg.
+    // MuJoCo fills the buffer bottom-to-top; flip to top-down.
     const int            row_bytes = kRgbBytesPerPixel * impl->width;
-    uint8_t             *buf       = impl->rgb_buf.data();
     std::vector<uint8_t> tmp(static_cast<size_t>(row_bytes));
     for (int top = 0, bot = impl->height - 1; top < bot; ++top, --bot) {
-        memcpy(tmp.data(), buf + top * row_bytes, row_bytes);
-        memcpy(buf + top * row_bytes, buf + bot * row_bytes, row_bytes);
-        memcpy(buf + bot * row_bytes, tmp.data(), row_bytes);
+        memcpy(tmp.data(), out + top * row_bytes, row_bytes);
+        memcpy(out + top * row_bytes, out + bot * row_bytes, row_bytes);
+        memcpy(out + bot * row_bytes, tmp.data(), row_bytes);
     }
+    return true;
+}
 
-    if (fwrite(buf, 1, impl->rgb_buf.size(), impl->ffmpeg) != impl->rgb_buf.size()) {
+bool record_frame(VideoRecorder *vr, mjModel *model, mjData *data)
+{
+    if (!vr || !vr->_impl) return false;
+    auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
+    if (!impl->ffmpeg) return false;
+
+    if (!render_rgb(vr, model, data, impl->rgb_buf.data())) return false;
+
+    if (fwrite(impl->rgb_buf.data(), 1, impl->rgb_buf.size(), impl->ffmpeg)
+        != impl->rgb_buf.size()) {
         LOG_ERROR("fwrite to ffmpeg pipe failed");
         return false;
     }
@@ -2425,6 +2445,12 @@ bool init_video_recorder(VideoRecorder *, mjModel *, const char *, int, int, int
     return false;
 }
 bool record_frame(VideoRecorder *, mjModel *, mjData *) { return false; }
+bool init_offscreen(VideoRecorder *, mjModel *, int, int)
+{
+    LOG_ERROR("offscreen rendering requires EGL; rebuild with -DBUILD_RECORDER=ON");
+    return false;
+}
+bool render_rgb(VideoRecorder *, mjModel *, mjData *, std::uint8_t *) { return false; }
 void cleanup(VideoRecorder *vr)
 {
     if (vr) vr->_impl = nullptr;
