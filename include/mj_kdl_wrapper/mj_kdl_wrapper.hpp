@@ -9,6 +9,7 @@
 #include <kdl/chain.hpp>
 #include <kdl/frames.hpp>
 #include <kdl/jntarray.hpp>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -747,6 +748,33 @@ bool init_video_recorder(
  * @return true on success; false on render or pipe write error.
  */
 bool record_frame(VideoRecorder *vr, mjModel *model, mjData *data);
+
+/**
+ * @ingroup grp_recorder
+ * Initialise offscreen rendering only: EGL context and MuJoCo render buffers,
+ * no ffmpeg process and no output file. Use with render_rgb() to grab frames;
+ * use_camera(VideoRecorder*, ...) and cleanup(VideoRecorder*) work unchanged.
+ *
+ * @param vr      VideoRecorder to initialise; freed by cleanup(VideoRecorder*).
+ * @param model   MuJoCo model for the rendering context.
+ * @param width   Frame width in pixels.
+ * @param height  Frame height in pixels.
+ * @return true on success; false if EGL init fails.
+ */
+bool init_offscreen(VideoRecorder *vr, mjModel *model, int width, int height);
+
+/**
+ * @ingroup grp_recorder
+ * Render the current simulation state into a caller-owned top-down RGB8 buffer
+ * of width*height*3 bytes.
+ *
+ * @param vr    VideoRecorder initialised by init_offscreen() or init_video_recorder().
+ * @param model MuJoCo model.
+ * @param data  MuJoCo data (current state).
+ * @param out   Destination buffer, width*height*3 bytes.
+ * @return true on success.
+ */
+bool render_rgb(VideoRecorder *vr, mjModel *model, mjData *data, std::uint8_t *out);
 
 /**
  * @ingroup grp_recorder
