@@ -1397,6 +1397,38 @@ bool step_n(Robot *s, int n)
 
 bool step(Viewer *v, mjModel *m, mjData *d) { return tick_impl(v, m, d, false); }
 
+/* Pacing is the caller's job, not step()'s: a physics call that sleeps spends a time budget it
+ * does not own, and does so invisibly at the call site. A loop with no timing of its own calls
+ * this to track wall time; a loop that paces itself reads realtime_factor_of() and scales its
+ * own period instead. */
+void pace_realtime(Viewer *v, const mjModel *m)
+{
+    using Clock = std::chrono::steady_clock;
+    using Dur   = std::chrono::duration<double>;
+    if (!v || !m) return;
+    const double wall_per_step =
+      (v->realtime_factor > 0.0) ? m->opt.timestep / v->realtime_factor : 0.0;
+    const auto now = Clock::now();
+    if (wall_per_step > 0.0 && v->_tick_t.time_since_epoch().count() != 0) {
+        const auto next = v->_tick_t + Dur(wall_per_step);
+        if (now < next) std::this_thread::sleep_until(next);
+    }
+    v->_tick_t = Clock::now();
+}
+
+/* The user's current speed setting; 0.0 means uncapped. Read without a lock because the render
+ * thread only ever pushes into the rtf_step atomic -- realtime_factor itself is written on the
+ * control thread, inside tick_impl, where that atomic is drained. */
+double realtime_factor_of(const Viewer *v) { return v ? v->realtime_factor : 1.0; }
+
+/* Same, for the common example shape that owns a Robot and lets the library hold the viewer.
+ * A no-op with no viewer, so a headless run needs no branch at the call site. */
+void pace_realtime(Robot *r)
+{
+    if (!r || !r->model || !g_viewer) return;
+    pace_realtime(g_viewer, r->model);
+}
+
 static void sync_robot_after_reset(Robot *r)
 {
     if (!r || !r->model || !r->data) return;
@@ -2138,14 +2170,6 @@ static bool tick_impl(Viewer *v, mjModel *m, mjData *d, bool paused)
         if (rtf_changed) sim->SetWrapperRealtimeFactor(v->realtime_factor);
         handle_recorder_request(ss, m);
 
-        double wall_per_step =
-          (v->realtime_factor > 0.0) ? m->opt.timestep / v->realtime_factor : 0.0;
-        auto now = Clock::now();
-        if (wall_per_step > 0.0 && v->_tick_t.time_since_epoch().count() != 0) {
-            auto next = v->_tick_t + Dur(wall_per_step);
-            if (now < next) std::this_thread::sleep_until(next);
-        }
-        v->_tick_t = Clock::now();
 
         {
             /* step() is the sole physics driver; the render thread only renders.
@@ -2184,14 +2208,6 @@ static bool tick_impl(Viewer *v, mjModel *m, mjData *d, bool paused)
     // simple viewer path (init_window)
     if (!v->window || glfwWindowShouldClose(v->window)) return false;
 
-    // Real-time sync: sleep until last tick time + wall time per step.
-    auto   now           = Clock::now();
-    double wall_per_step = (v->realtime_factor > 0.0) ? m->opt.timestep / v->realtime_factor : 0.0;
-    if (wall_per_step > 0.0 && v->_tick_t.time_since_epoch().count() != 0) {
-        auto next = v->_tick_t + Dur(wall_per_step);
-        if (now < next) std::this_thread::sleep_until(next);
-    }
-    v->_tick_t = Clock::now();
 
     if (!paused) {
         if (v->pert.active) mjv_applyPerturbForce(m, d, &v->pert);

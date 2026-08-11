@@ -206,6 +206,7 @@ def settle_and_tare(env: mjk.Env, robot: mjk.Robot) -> list[float]:
         hold(robot, HOME)
         if not robot.step():
             break
+        robot.pace()
     robot.update()
     return xyz(robot.ft_sensor_frame("wrist_ft").M * robot.ft_sensor("wrist_ft").force)
 
@@ -343,6 +344,7 @@ def run_gui(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dict) -> 
 
             if not viewer.step():
                 break
+            viewer.pace()
     finally:
         env.set_body_wrench(TOOL_BODY, (0.0, 0.0, 0.0))
         viewer.close()
@@ -370,6 +372,7 @@ def run_selfcheck(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dic
         helix_track_err = max(helix_track_err, vnorm(err))
         if not robot.step():
             break
+        robot.pace()
 
     handoff_force = 0.0
     t_handoff = env.time()
@@ -382,6 +385,7 @@ def run_selfcheck(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dic
         helix_track_err = max(helix_track_err, vnorm(err))
         if not robot.step():
             break
+        robot.pace()
     robot.update()
     state["bias"] = tare_force(robot)
     for _ in range(100):
@@ -392,6 +396,7 @@ def run_selfcheck(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dic
         admittance_step(env, robot, nominal, state, force)
         if not robot.step():
             break
+        robot.pace()
 
     helix_settle_err = 0.0
     t_settle = env.time()
@@ -404,6 +409,7 @@ def run_selfcheck(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dic
         helix_settle_err = max(helix_settle_err, vnorm(err))
         if not robot.step():
             break
+        robot.pace()
 
     pre_push = state["offset"][:]
     t1 = env.time()
@@ -423,6 +429,7 @@ def run_selfcheck(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dic
             settled = state["offset"][:]
         if not robot.step():
             break
+        robot.pace()
     env.set_body_wrench(TOOL_BODY, (0.0, 0.0, 0.0))
     return {
         "helix_react": helix_react,

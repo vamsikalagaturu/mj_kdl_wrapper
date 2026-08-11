@@ -301,6 +301,7 @@ int main(int argc, char **argv)
     if (headless) {
         for (int i = 0; i < 2000; ++i) {
             if (!step_control() || !mj_kdl::step(&robot)) break;
+            mj_kdl::pace_realtime(&robot);
         }
         mj_kdl::update(&robot);
         fill_q_state(robot, q, qd);
@@ -322,6 +323,7 @@ int main(int argc, char **argv)
                 reset_scene();
             prev_sim_time = data->time;
             if (!step_control() || !mj_kdl::step(&robot)) break;
+            mj_kdl::pace_realtime(&robot);
         }
         mj_kdl::cleanup(&viewer);
     }

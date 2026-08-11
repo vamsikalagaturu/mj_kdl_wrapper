@@ -46,6 +46,7 @@ def run_gui(scene: mjk.Scene) -> None:
         while viewer.is_running():
             if not viewer.step():
                 break
+            viewer.pace()
     finally:
         viewer.close()
 

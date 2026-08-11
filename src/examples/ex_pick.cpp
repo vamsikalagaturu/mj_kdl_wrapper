@@ -384,6 +384,8 @@ int main(int argc, char *argv[])
                 }
 
                 if (!mj_kdl::step(&robot)) {
+
+                mj_kdl::pace_realtime(&robot);
                     sm.state = PickState::DONE;
                     break;
                 }
@@ -423,6 +425,8 @@ int main(int argc, char *argv[])
                 }
 
                 if (!mj_kdl::step(&robot)) {
+
+                mj_kdl::pace_realtime(&robot);
                     sm.state = PickState::DONE;
                     break;
                 }
@@ -462,6 +466,8 @@ int main(int argc, char *argv[])
                 }
 
                 if (!mj_kdl::step(&robot)) {
+
+                mj_kdl::pace_realtime(&robot);
                     sm.state = PickState::DONE;
                     break;
                 }
@@ -501,6 +507,8 @@ int main(int argc, char *argv[])
                 }
 
                 if (!mj_kdl::step(&robot)) {
+
+                mj_kdl::pace_realtime(&robot);
                     sm.state = PickState::DONE;
                     break;
                 }
@@ -540,6 +548,8 @@ int main(int argc, char *argv[])
                 }
 
                 if (!mj_kdl::step(&robot)) {
+
+                mj_kdl::pace_realtime(&robot);
                     sm.state = PickState::DONE;
                     break;
                 }
@@ -579,6 +589,8 @@ int main(int argc, char *argv[])
                 }
 
                 if (!mj_kdl::step(&robot)) {
+
+                mj_kdl::pace_realtime(&robot);
                     sm.state = PickState::DONE;
                     break;
                 }

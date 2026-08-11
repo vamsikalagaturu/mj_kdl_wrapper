@@ -807,6 +807,35 @@ bool step(Viewer *v, mjModel *m, mjData *d);
 
 /**
  * @ingroup grp_viewer
+ * Sleeps until this step's share of wall time has elapsed, so a loop with no timing of its own
+ * runs at the viewer's real-time factor.
+ *
+ * step() never sleeps: pacing is the caller's job. A loop that already paces itself must not
+ * call this -- it reads realtime_factor_of() and scales its own period instead, so that only
+ * one component owns the loop's timing.
+ * @param[in,out] v  Viewer whose real-time factor and last tick time are used.
+ * @param[in]     m  Shared MuJoCo model, for its timestep.
+ */
+void pace_realtime(Viewer *v, const mjModel *m);
+
+/**
+ * @ingroup grp_viewer
+ * The viewer's current real-time factor, as the user has set it with the speed keys.
+ * @param[in] v  Viewer, or nullptr.
+ * @return the factor; 0.0 means uncapped ("RTF: MAX"), 1.0 if @p v is nullptr.
+ */
+double realtime_factor_of(const Viewer *v);
+
+/**
+ * @ingroup grp_viewer
+ * Paces a loop that drives a Robot, using the viewer the library holds.
+ * Does nothing when the run has no viewer, so a headless path needs no branch.
+ * @param[in,out] r  Robot being stepped.
+ */
+void pace_realtime(Robot *r);
+
+/**
+ * @ingroup grp_viewer
  * Returns true if the viewer window is open and not scheduled for closing.
  * @param[in] v  Viewer created by init_window().
  */

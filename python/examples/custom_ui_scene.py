@@ -30,6 +30,7 @@ def main() -> int:
                 robot.update()
                 if not viewer.step():
                     break
+                viewer.pace()
         finally:
             viewer.close()
     finally:

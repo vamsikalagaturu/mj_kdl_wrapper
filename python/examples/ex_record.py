@@ -75,6 +75,7 @@ def main() -> int:
             robot.update()
             robot.jnt_trq_cmd = list(robot.gravity_torques(GRAVITY_Z))
             robot.step()
+            robot.pace()
             if step % steps_per_frame == 0:
                 recorder.set_free_camera(
                     distance=1.8,

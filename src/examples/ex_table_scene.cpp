@@ -218,6 +218,7 @@ int main(int argc, char *argv[])
         for (int step = 0; step < 500; ++step) {
             ctrl_step();
             mj_kdl::step(&robot);
+            mj_kdl::pace_realtime(&robot);
         }
 
         KDL::JntArray q_end(n);
@@ -242,6 +243,7 @@ int main(int argc, char *argv[])
             prev_sim_time = data->time;
             ctrl_step();
             if (!mj_kdl::step(&robot)) break;
+            mj_kdl::pace_realtime(&robot);
         }
 
         mj_kdl::cleanup(&viewer);

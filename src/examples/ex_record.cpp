@@ -120,6 +120,7 @@ int main(int argc, char *argv[])
         dyn.JntToGravity(q, g);
         for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = g(i);
         mj_kdl::step(&robot);
+        mj_kdl::pace_realtime(&robot);
 
         // Record a frame at the target frame rate.
         if (step % steps_per_frame == 0) {

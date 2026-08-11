@@ -98,6 +98,7 @@ def main() -> int:
                     step()
                     if not viewer.step():
                         break
+                    viewer.pace()
             finally:
                 viewer.close()
         else:
@@ -105,6 +106,7 @@ def main() -> int:
             while env.time() < end:
                 step()
                 arm1.step()
+                arm1.pace()
             arm1_frame = arm1.fk_frame()
             arm2_frame = arm2.fk_frame()
             arm1_pos = [arm1_frame.p.x(), arm1_frame.p.y(), arm1_frame.p.z()]
