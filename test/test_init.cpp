@@ -206,6 +206,26 @@ TEST_F(InitTest, EnvResetInvokesHookAndSyncsRobot)
     env.data  = nullptr;
 }
 
+TEST(SceneFloor, PlacedAtFloorZ)
+{
+    mj_kdl::SceneSpec sc;
+    sc.timestep   = 0.002;
+    sc.add_floor  = true;
+    sc.floor_z    = -0.72;
+    sc.add_skybox = false;
+
+    mjModel *model = nullptr;
+    mjData  *data  = nullptr;
+    ASSERT_TRUE(mj_kdl::build_scene(&model, &data, &sc));
+
+    const int floor_id = mj_name2id(model, mjOBJ_GEOM, "floor");
+    ASSERT_GE(floor_id, 0);
+    EXPECT_DOUBLE_EQ(model->geom_pos[3 * floor_id + 2], -0.72);
+
+    mj_deleteData(data);
+    mj_deleteModel(model);
+}
+
 int main(int argc, char *argv[])
 {
     testing::InitGoogleTest(&argc, argv);

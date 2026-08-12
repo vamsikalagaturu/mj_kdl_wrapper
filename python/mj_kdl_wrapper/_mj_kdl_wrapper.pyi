@@ -108,6 +108,7 @@ class SceneSpec:
     timestep: Optional[float]
     gravity_z: float
     add_floor: Optional[bool]
+    floor_z: float
     add_skybox: Optional[bool]
     objects: list[SceneObject]
     cameras: list[CameraSpec]

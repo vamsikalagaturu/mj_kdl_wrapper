@@ -239,6 +239,7 @@ struct SceneSpec
     double                   timestep;          // required; suggested 0.002 [s]
     double                   gravity_z = -9.81; // Earth gravity [m/s^2]
     bool                     add_floor;         // required; checker groundplane geom
+    double                   floor_z = 0.0;     // floor plane height in the world frame [m]
     bool                     add_skybox;        // required; gradient sky + directional light
     std::vector<SceneObject> objects;
     std::vector<CameraSpec>  cameras; // static world cameras added to worldbody
@@ -1056,9 +1057,10 @@ void add_skybox_to_spec(mjSpec *spec);
 /**
  * @ingroup grp_advanced
  * Add a checker groundplane texture, material, and floor plane geom to spec.
- * Corresponds to SceneSpec::add_floor.
+ * Corresponds to SceneSpec::add_floor, placed at floor_z along the world z axis
+ * so a scene whose world frame is not at ground level still gets a ground.
  */
-void add_floor_to_spec(mjSpec *spec);
+void add_floor_to_spec(mjSpec *spec, double floor_z = 0.0);
 
 /**
  * @ingroup grp_advanced

@@ -288,7 +288,7 @@ void add_skybox_to_spec(mjSpec *spec)
     sun->pos[2]   = kSunHeight;
 }
 
-void add_floor_to_spec(mjSpec *spec)
+void add_floor_to_spec(mjSpec *spec, double floor_z)
 {
     mjsBody *wb = world_body(spec);
 
@@ -317,6 +317,7 @@ void add_floor_to_spec(mjSpec *spec)
     mjs_setString(mjs_getName(floor->element), "floor");
     mjs_setString(floor->material, "groundplane");
     floor->type        = mjGEOM_PLANE;
+    floor->pos[2]      = floor_z;
     floor->size[0]     = kFloorHalfSize;
     floor->size[1]     = kFloorHalfSize;
     floor->size[2]     = kFloorThickness;
@@ -873,7 +874,7 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     // Scene decorations go in before any object/robot so they exist as world
     // anchors regardless of declaration order.
     if (sc->add_skybox) add_skybox_to_spec(scene.get());
-    if (sc->add_floor) add_floor_to_spec(scene.get());
+    if (sc->add_floor) add_floor_to_spec(scene.get(), sc->floor_z);
 
     // Objects come before robots so a robot can attach to a SceneObject (e.g.
     // {AttachKind::Site, "table_mount"}). A child object that references
