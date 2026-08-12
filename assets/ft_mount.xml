@@ -1,0 +1,20 @@
+<mujoco model="ft_mount">
+  <worldbody>
+    <!-- The wrist tool coupler as it is built: a 65 mm cylinder bolted to the Kinova
+         bracelet, with the FT300-S sensing element at its mid-height and the 2F-85
+         bolted to its far face. The body origin is the bracelet mating face. -->
+    <body name="wrist_ft_body">
+      <inertial pos="0 0 0.0325" mass="0.133396" diaginertia="9.386e-5 9.386e-5 9.379e-5"/>
+      <geom name="wrist_ft_geom" type="cylinder" pos="0 0 0.0325" size="0.0375 0.0325"
+            contype="0" conaffinity="0" rgba="0.15 0.15 0.15 1"/>
+      <site name="wrist_ft_site" pos="0 0 0.0325" size="0.012"/>
+      <!-- Where the gripper attaches; carries no geometry of its own. -->
+      <site name="wrist_ft_mount" pos="0 0 0.065" size="0.001" rgba="0 0 0 0"/>
+    </body>
+  </worldbody>
+
+  <sensor>
+    <force name="wrist_ft_force" site="wrist_ft_site"/>
+    <torque name="wrist_ft_torque" site="wrist_ft_site"/>
+  </sensor>
+</mujoco>
