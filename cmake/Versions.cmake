@@ -1,4 +1,4 @@
-set(MJ_KDL_VERSION "0.3.4")
+set(MJ_KDL_VERSION "0.3.5")
 set(MJ_KDL_MUJOCO_VERSION "3.9.0")
 
 if(NOT MJ_KDL_MUJOCO_VERSION MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$")
