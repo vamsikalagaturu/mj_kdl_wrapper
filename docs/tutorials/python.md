@@ -198,7 +198,9 @@ if __name__ == "__main__":
 ## 1. Start With One Robot Scene
 
 `SceneSpec.timestep`, `add_floor`, and `add_skybox` are required. They are
-explicit choices, not defaults the wrapper invents.
+explicit choices, not defaults the wrapper invents. `floor_z` (default `0.0`)
+places the ground plane along the world z axis, for a scene whose world frame
+sits above ground level.
 
 ```python
 import mj_kdl_wrapper as mjk

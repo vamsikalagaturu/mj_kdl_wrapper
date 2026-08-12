@@ -91,6 +91,7 @@ struct PySceneSpec
     std::optional<double>      timestep;
     double                     gravity_z = -9.81;
     std::optional<bool>        add_floor;
+    double                     floor_z = 0.0;
     std::optional<bool>        add_skybox;
     std::vector<PySceneObject> objects;
     std::vector<PyCameraSpec>  cameras;
@@ -198,6 +199,7 @@ SceneSpec to_cpp(const PySceneSpec &src)
     out.timestep   = *src.timestep;
     out.gravity_z  = src.gravity_z;
     out.add_floor  = *src.add_floor;
+    out.floor_z    = src.floor_z;
     out.add_skybox = *src.add_skybox;
     out.robots.reserve(src.robots.size());
     for (const auto &item : src.robots) out.robots.push_back(to_cpp(item));
@@ -1330,6 +1332,9 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       )
       .def_readwrite(
         "add_floor", &PySceneSpec::add_floor, "Required flag for checker ground plane."
+      )
+      .def_readwrite(
+        "floor_z", &PySceneSpec::floor_z, "Ground plane height in the world frame; defaults to 0."
       )
       .def_readwrite("add_skybox", &PySceneSpec::add_skybox, "Required flag for skybox and light.")
       .def_readwrite("objects", &PySceneSpec::objects, "Scene objects and fixtures.")

@@ -36,7 +36,8 @@ guide.)
 `SceneSpec` has no defaults for `timestep`, `add_floor`, or `add_skybox`.
 Those are choices, not values the library can guess. `build_scene()` rejects
 `timestep <= 0` at runtime. `SceneSpec::robots` may be empty; object-only
-scenes are valid.
+scenes are valid. `floor_z` places the ground plane along the world z axis
+(default `0.0`), for scenes whose world frame is not at ground level.
 
 ```cpp
 #include "example_paths.hpp"
