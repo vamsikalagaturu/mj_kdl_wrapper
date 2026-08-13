@@ -2,10 +2,13 @@
 
 ## Release pipeline
 
-`main` is protected and **squash-only**: merging a PR puts one commit on `main`, so `main` and
-`dev` diverge by construction at every release. The merge back is not optional tidying -- skip
-it and the next release's PR opens with conflicts in the version files and in whatever `main`
-squashed away.
+The release PR is merged with a **merge commit**, not a squash. That is what keeps `main` and
+`dev` from diverging: a merge makes `dev` an ancestor of `main`, so bringing `main` back is a
+fast-forward with nothing to resolve. A squash would put a commit on `main` that `dev` has no
+history of, and every later release would open with conflicts in the version files.
+
+Squash is still fine for feature PRs into `dev` -- it is release PRs into `main` that must
+merge.
 
 Cutting `vX.Y.Z`, in order:
 
@@ -15,15 +18,14 @@ Cutting `vX.Y.Z`, in order:
 2. **PR `dev` -> `main`.** All CI checks must pass: `build`, `test`, `docs`,
    `bindings (3.10/3.11/3.12)`, `colcon (jazzy/lyrical)`. `deploy-docs` reports `skipping` and
    is not required.
-3. **Squash merge it.** Merge commits and rebase merges are disabled on this repository.
+3. **Merge it** (`gh pr merge --merge`), never squash.
 4. **Tag on `main`.** Check out `main`, fast-forward, then `git tag -a vX.Y.Z` and push the tag.
    Never tag `dev`.
 5. **Publish the GitHub release** for that tag. This is what deploys the docs to
    <https://mj-kdl-wrapper.vamsi.sh/> -- `docs.yml` only uploads the Pages artifact when
    `github.event_name == 'release'`.
-6. **Merge `main` back into `dev`, then bump.** Set both version files to the next patch
+6. **Fast-forward `dev` to `main`, then bump.** Set both version files to the next patch
    version and commit on `dev`.
 
-Expect the merge in step 6 to conflict on `cmake/Versions.cmake` and `pyproject.toml`: `main`
-holds the version just released and `dev` the next one. Keep `dev`'s. Any other conflict is a
-real one -- `main` only ever holds what a squash put there.
+If step 6 wants to merge rather than fast-forward, something landed on `main` that did not come
+through the release PR -- find out what before resolving anything.
