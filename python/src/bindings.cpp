@@ -85,6 +85,14 @@ struct PyCameraSpec
     std::optional<double>                fovy;
 };
 
+struct PySiteSpec
+{
+    std::string         body;
+    std::string         name;
+    std::vector<double> pos  = { 0.0, 0.0, 0.0 };
+    std::vector<double> quat = { 0.0, 0.0, 0.0, 1.0 };
+};
+
 struct PySceneSpec
 {
     std::vector<PyRobotSpec>   robots;
@@ -94,6 +102,7 @@ struct PySceneSpec
     double                     floor_z = 0.0;
     std::optional<bool>        add_skybox;
     std::vector<PySceneObject> objects;
+    std::vector<PySiteSpec>    sites;
     std::vector<PyCameraSpec>  cameras;
 };
 
@@ -205,6 +214,15 @@ SceneSpec to_cpp(const PySceneSpec &src)
     for (const auto &item : src.robots) out.robots.push_back(to_cpp(item));
     out.objects.reserve(src.objects.size());
     for (const auto &item : src.objects) out.objects.push_back(to_cpp(item));
+    out.sites.reserve(src.sites.size());
+    for (const auto &item : src.sites) {
+        mj_kdl::SiteSpec site;
+        site.body = item.body;
+        site.name = item.name;
+        std::copy(item.pos.begin(), item.pos.end(), site.pos);
+        std::copy(item.quat.begin(), item.quat.end(), site.quat);
+        out.sites.push_back(site);
+    }
     out.cameras.reserve(src.cameras.size());
     for (const auto &item : src.cameras) out.cameras.push_back(to_cpp(item));
     return out;
@@ -1310,6 +1328,13 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "friction", &PySceneObject::friction, "Required primitive [slide, spin, roll] friction."
       );
 
+    py::class_<PySiteSpec>(m, "SiteSpec", "A frame marked on a body of the assembled scene.")
+      .def(py::init<>())
+      .def_readwrite("body", &PySiteSpec::body, "Body to add the site to, by name.")
+      .def_readwrite("name", &PySiteSpec::name, "Site name, unique within the scene.")
+      .def_readwrite("pos", &PySiteSpec::pos, "Offset in the body frame, in meters.")
+      .def_readwrite("quat", &PySiteSpec::quat, "Orientation in the body frame [x, y, z, w].");
+
     py::class_<PyCameraSpec>(
       m, "CameraSpec", "Named fixed world camera. pos and fovy are required."
     )
@@ -1338,6 +1363,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       )
       .def_readwrite("add_skybox", &PySceneSpec::add_skybox, "Required flag for skybox and light.")
       .def_readwrite("objects", &PySceneSpec::objects, "Scene objects and fixtures.")
+      .def_readwrite("sites", &PySceneSpec::sites, "Frames to mark on the scene's bodies.")
       .def_readwrite("cameras", &PySceneSpec::cameras, "Named fixed world cameras.");
 
     py::class_<PyForceTorqueSensorSpec>(

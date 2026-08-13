@@ -212,6 +212,23 @@ struct SceneObject
 
 /**
  * @ingroup grp_types
+ * A frame to mark on a body of the assembled scene, as a MuJoCo site.
+ *
+ * Sites are what a model's own frames become: the scene states where they sit, and the
+ * runtime can then address and draw them. Added after every robot and object, so `body`
+ * may name anything the assembled scene holds. A site the asset already declares under
+ * this name is left alone -- the asset's own is authoritative.
+ */
+struct SiteSpec
+{
+    std::string body;                          // body to add the site to, by name
+    std::string name;                          // site name, unique within the scene
+    double      pos[3]  = { 0.0, 0.0, 0.0 };    // offset in the body frame [m]
+    double      quat[4] = { 0.0, 0.0, 0.0, 1.0 }; // orientation in the body frame [x, y, z, w]
+};
+
+/**
+ * @ingroup grp_types
  * A named fixed camera to add to the world body of the scene.
  * After build_scene() the camera is accessible by name via get_camera_names()
  * and can be activated on a Viewer or VideoRecorder with use_camera().
@@ -242,6 +259,7 @@ struct SceneSpec
     double                   floor_z = 0.0;     // floor plane height in the world frame [m]
     bool                     add_skybox;        // required; gradient sky + directional light
     std::vector<SceneObject> objects;
+    std::vector<SiteSpec>    sites;   // frames marked on the assembled scene's bodies
     std::vector<CameraSpec>  cameras; // static world cameras added to worldbody
 };
 

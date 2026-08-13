@@ -86,6 +86,10 @@ static constexpr int    kFloorTexRepeat   = 5;    // checker tile repeat
 static constexpr float  kFloorReflectance = 0.2f; // floor material reflectance
 static constexpr int    kSkyTexSize       = 200;  // skybox gradient texture size [px]
 static constexpr double kSunHeight        = 4.0;  // overhead directional light z [m]
+// Frame sites are markers, not geometry: small, and in their own group so the viewer can
+// switch them off without hiding the sites an asset declares for attaching.
+static constexpr double kFrameSiteSize    = 0.005; // frame-site marker radius [m]
+static constexpr int    kFrameSiteGroup   = 4;     // viewer group for frame sites
 
 // Numerical tolerances. Frame-equality test treats relative deviations below
 // kIdentityTol as zero; sim-time guard rejects steps shorter than kSimTimeEps
@@ -121,6 +125,8 @@ static constexpr EGLint kEglDepthBits   = 24;
 // Sole owner of the MuJoCo worldbody name. Every other site that needs the
 // worldbody (skybox light, floor geom, resolve_parent with kind == World,
 // cameras) calls this so the literal "world" exists in one place.
+// The name is MuJoCo's, not ours to choose: its compiler decides what is top level by this
+// name, so renaming the root body makes every free joint under it fail to compile.
 static mjsBody *world_body(mjSpec *spec) { return mjs_findBody(spec, "world"); }
 
 // MuJoCo quaternion [w,x,y,z] <-> KDL::Rotation [x,y,z,w]. Single source so
@@ -313,8 +319,10 @@ void add_floor_to_spec(mjSpec *spec, double floor_z)
     mat->texrepeat[1] = kFloorTexRepeat;
     mat->reflectance  = kFloorReflectance;
 
+    // Left unnamed on purpose: nothing here looks the ground plane up, and naming it "floor"
+    // makes the scene fail to compile against any asset that has a geom of that name (a tray
+    // bottom, a room model) unless the caller happens to attach it under a prefix.
     mjsGeom *floor = mjs_addGeom(wb, nullptr);
-    mjs_setString(mjs_getName(floor->element), "floor");
     mjs_setString(floor->material, "groundplane");
     floor->type        = mjGEOM_PLANE;
     floor->pos[2]      = floor_z;
@@ -449,6 +457,32 @@ static void add_cameras_to_spec(mjSpec *spec, const std::vector<CameraSpec> &cam
         cam->pos[2] = cs.pos[2];
         cam->fovy   = cs.fovy;
         quat_xyzw_to_mj_quat(cs.quat, cam->quat);
+    }
+}
+
+static void add_sites_to_spec(mjSpec *spec, const std::vector<SiteSpec> &sites)
+{
+    for (const auto &ss : sites) {
+        mjsBody *body = mjs_findBody(spec, ss.body.c_str());
+        if (!body) {
+            LOG_WARN("site '" << ss.name << "': no body '" << ss.body << "' in the scene");
+            continue;
+        }
+        // The asset's own site wins: it is the one its author placed, and re-adding the
+        // name would fail the compile on a duplicate.
+        if (mjs_findElement(spec, mjOBJ_SITE, ss.name.c_str())) continue;
+
+        mjsSite *site = mjs_addSite(body, nullptr);
+        mjs_setString(mjs_getName(site->element), ss.name.c_str());
+        site->type   = mjGEOM_SPHERE;
+        site->size[0] = kFrameSiteSize;
+        site->size[1] = kFrameSiteSize;
+        site->size[2] = kFrameSiteSize;
+        site->group  = kFrameSiteGroup;
+        site->pos[0] = ss.pos[0];
+        site->pos[1] = ss.pos[1];
+        site->pos[2] = ss.pos[2];
+        quat_xyzw_to_mj_quat(ss.quat, site->quat);
     }
 }
 
@@ -930,6 +964,8 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     }
 
     if (!sc->cameras.empty()) add_cameras_to_spec(scene.get(), sc->cameras);
+    // Last: a site may mark a frame on any body the robots and objects brought in.
+    if (!sc->sites.empty()) add_sites_to_spec(scene.get(), sc->sites);
     // compile_and_make_data takes ownership of the raw spec and always deletes it.
     return compile_and_make_data(scene.release(), out_model, out_data);
 }

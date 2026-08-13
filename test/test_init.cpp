@@ -218,7 +218,12 @@ TEST(SceneFloor, PlacedAtFloorZ)
     mjData  *data  = nullptr;
     ASSERT_TRUE(mj_kdl::build_scene(&model, &data, &sc));
 
-    const int floor_id = mj_name2id(model, mjOBJ_GEOM, "floor");
+    // By type, not by name: the ground plane is deliberately unnamed so it cannot collide
+    // with an asset that has a geom called "floor".
+    int floor_id = -1;
+    for (int i = 0; i < model->ngeom; ++i) {
+        if (model->geom_type[i] == mjGEOM_PLANE) floor_id = i;
+    }
     ASSERT_GE(floor_id, 0);
     EXPECT_DOUBLE_EQ(model->geom_pos[3 * floor_id + 2], -0.72);
 
