@@ -185,6 +185,13 @@ const char help_title[] =
 static constexpr int kConstraintNum = 5;
 static constexpr int kCostNum = 3;
 
+// How many characters of an element name fit in a Frames checkbox before the UI clips it.
+static constexpr int kFrameLabelChars = 16;
+// Frames section layout: the static that spells out a name, and the first per-element toggle
+// (after the scale slider, that static, and the "Bodies" separator).
+static constexpr int kFrameNameItem = 1;
+static constexpr int kFrameFirstToggle = 4;
+
 // init profiler figures
 void InitializeProfiler(mj::Simulate* sim) {
   // set figures to default
@@ -1226,6 +1233,24 @@ void MakeGroupSection(mj::Simulate* sim) {
   mjui_add(&sim->ui0, defGroup);
 }
 
+// Fit an element name into a checkbox label by dropping the middle, not the tail: names
+// here share long prefixes (robot-table-body_) and long suffixes (_com), so either end
+// alone identifies nothing. The full name is drawn on the frame itself in the scene.
+void ElideMiddle(const char* name, char* out, int out_size) {
+  const int len = static_cast<int>(std::strlen(name));
+  if (len < out_size) {
+    std::memcpy(out, name, len + 1);
+    return;
+  }
+  const int keep = out_size - 2;          // room for the ellipsis and the terminator
+  const int tail = keep / 2;
+  const int head = keep - tail;
+  std::memcpy(out, name, head);
+  out[head] = '~';
+  std::memcpy(out + head + 1, name + len - tail, tail);
+  out[head + 1 + tail] = '\0';
+}
+
 // add one show-frame checkbox per body/site to the Frames section
 void AddFrameCheckboxes(mj::Simulate* sim, mjtObj objtype,
                         std::vector<int>& show, int count, int* itemcnt) {
@@ -1238,7 +1263,7 @@ void AddFrameCheckboxes(mj::Simulate* sim, mjtObj objtype,
     defCheck[0].pdata = &show[i];
     const char* name = mj_id2name(sim->m_, objtype, i);
     if (name && name[0]) {
-      mju::strcpy_arr(defCheck[0].name, name);
+      ElideMiddle(name, defCheck[0].name, kFrameLabelChars);
     } else {
       mju::sprintf_arr(defCheck[0].name, "%d", i);
     }
@@ -1247,11 +1272,41 @@ void AddFrameCheckboxes(mj::Simulate* sim, mjtObj objtype,
   }
 }
 
+// spell out the frame a Frames-section toggle belongs to, in the section's static line
+void UpdateFrameName(mj::Simulate* sim, int itemid) {
+  if (sim->frame_sect_ < 0 || !sim->m_) {
+    return;
+  }
+  // slider, name, "Bodies" separator, one toggle per body, "Sites" separator, then sites
+  const int nbody = mjMIN(sim->m_->nbody, static_cast<int>(sim->body_show_frame_.size()));
+  const int first_body = kFrameFirstToggle;
+  const int first_site = first_body + nbody + 1;
+
+  const char* name = nullptr;
+  if (itemid >= first_body && itemid < first_body + nbody) {
+    name = mj_id2name(sim->m_, mjOBJ_BODY, itemid - first_body);
+  } else if (itemid >= first_site) {
+    name = mj_id2name(sim->m_, mjOBJ_SITE, itemid - first_site);
+  }
+  if (!name || !name[0]) {
+    return;
+  }
+
+  mjuiItem& item = sim->ui1.sect[sim->frame_sect_].item[kFrameNameItem];
+  item.multi.nelem = 1;
+  mju::strcpy_arr(item.multi.name[0], name);
+  mjui_update(sim->frame_sect_, kFrameNameItem, &sim->ui1, &sim->uistate,
+              &sim->platform_ui->mjr_context());
+}
+
 // make frames section of UI: scale slider + per-body/per-site frame toggles
 void MakeFrameSection(mj::Simulate* sim) {
   mjuiDef defFrame[] = {
     {mjITEM_SECTION,   "Frames",   mjPRESERVE, nullptr, "AF"},
     {mjITEM_SLIDERNUM, "Scale",    2, &sim->frame_scale_, "0 0.3"},
+    // A checkbox only ever gets half the panel, and mjUI has no way to widen it. This is a
+    // static, which spans the row: click a toggle and its name is spelled out here in full.
+    {mjITEM_STATIC,    "Name",     2, nullptr, "(click a frame)"},
     {mjITEM_SEPARATOR, "Bodies",   1},
     {mjITEM_END}
   };
@@ -1260,10 +1315,11 @@ void MakeFrameSection(mj::Simulate* sim) {
     {mjITEM_END}
   };
 
+  sim->frame_sect_ = sim->ui1.nsect;
   mjui_add(&sim->ui1, defFrame);
 
-  // slider + two separators already occupy section items
-  int itemcnt = 3;
+  // slider + name + two separators already occupy section items
+  int itemcnt = 4;
   AddFrameCheckboxes(sim, mjOBJ_BODY, sim->body_show_frame_, sim->m_->nbody, &itemcnt);
   if (sim->m_->nsite > 0) {
     mjui_add(&sim->ui1, defSitesSep);
@@ -1296,7 +1352,7 @@ void MakePerturbSection(mj::Simulate* sim) {
 
 // append an RGB triad (x red, y green, z blue) at a world pose; mat is row-major
 void AddTriad(mjvScene* scn, const mjtNum* pos, const mjtNum* mat,
-              mjtNum len, mjtNum wid) {
+              mjtNum len, mjtNum wid, const char* label) {
   static const float kAxisRgba[3][4] = {
     {1, 0, 0, 1},  // x: red
     {0, 1, 0, 1},  // y: green
@@ -1317,6 +1373,11 @@ void AddTriad(mjvScene* scn, const mjtNum* pos, const mjtNum* mat,
     g->category = mjCAT_DECOR;
     g->objtype = mjOBJ_UNKNOWN;
     g->objid = -1;
+    // On the z axis only, so a frame is named once. The name is drawn in the scene rather
+    // than in the element list, where a long one is cut off at whatever the panel is wide.
+    if (label && axis == 2) {
+      mju::strcpy_arr(g->label, label);
+    }
     scn->ngeom++;
   }
 }
@@ -1336,14 +1397,16 @@ void AddFrameGeoms(mj::Simulate* sim) {
   int nbody = mjMIN(m->nbody, static_cast<int>(sim->body_show_frame_.size()));
   for (int b = 0; b < nbody; b++) {
     if (sim->body_show_frame_[b]) {
-      AddTriad(scn, d->xpos + 3 * b, d->xmat + 9 * b, len, wid);
+      AddTriad(scn, d->xpos + 3 * b, d->xmat + 9 * b, len, wid,
+               mj_id2name(m, mjOBJ_BODY, b));
     }
   }
 
   int nsite = mjMIN(m->nsite, static_cast<int>(sim->site_show_frame_.size()));
   for (int s = 0; s < nsite; s++) {
     if (sim->site_show_frame_[s]) {
-      AddTriad(scn, d->site_xpos + 3 * s, d->site_xmat + 9 * s, len, wid);
+      AddTriad(scn, d->site_xpos + 3 * s, d->site_xmat + 9 * s, len, wid,
+               mj_id2name(m, mjOBJ_SITE, s));
     }
   }
 }
@@ -2043,6 +2106,11 @@ void UiEvent(mjuiState* state) {
       if (it->itemid==0) {
         sim->pending_.zero_ctrl = true;
       }
+    }
+
+    // frames section: say which element the clicked toggle belongs to
+    else if (it && it->sectionid==sim->frame_sect_) {
+      UpdateFrameName(sim, it->itemid);
     }
 
     // stop if UI processed event

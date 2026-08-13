@@ -120,9 +120,12 @@ class Simulate {
   std::vector<int> body_parentid_;
 
   // Frames UI panel: per-body/per-site frame toggles + axis length (fraction of
-  // model extent)
+  // model extent). frame_sect_ is the section, so the name of a clicked toggle can be
+  // written into its first item -- a checkbox only ever gets half the panel, and element
+  // names are longer than that.
   std::vector<int> body_show_frame_;
   std::vector<int> site_show_frame_;
+  int frame_sect_ = -1;
   double frame_scale_ = 0.08;
 
   // EE trajectory trace (Trace panel); ee frame set by the wrapper
