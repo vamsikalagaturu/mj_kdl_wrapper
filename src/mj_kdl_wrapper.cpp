@@ -16,6 +16,7 @@
 
 #ifdef MJ_KDL_HAS_EGL
 #include <EGL/egl.h>
+#include <EGL/eglext.h>
 #endif
 #ifdef MJ_KDL_RELOCATABLE_PLUGINS
 #include <dlfcn.h>
@@ -2273,6 +2274,37 @@ struct VideoRecorderImpl
     std::vector<uint8_t> rgb_buf;
 };
 
+static constexpr EGLint kEglMaxDevices = 8;
+
+/* An initialized EGL display for offscreen rendering, or EGL_NO_DISPLAY.
+
+   EGL_DEFAULT_DISPLAY names no native display, so the loader guesses a platform from the
+   process's window-system state; in a viewer process that already holds a Wayland context it
+   can answer EGL_NO_DISPLAY with no error set. Name a GPU device instead, which is what
+   offscreen rendering wants anyway, and keep the default as the fallback for loaders without
+   EGL_EXT_platform_device. */
+static EGLDisplay vr_egl_display(EGLint *major, EGLint *minor)
+{
+    auto query_devices =
+      reinterpret_cast<PFNEGLQUERYDEVICESEXTPROC>(eglGetProcAddress("eglQueryDevicesEXT"));
+    auto platform_display = reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
+      eglGetProcAddress("eglGetPlatformDisplayEXT")
+    );
+
+    EGLDeviceEXT devices[kEglMaxDevices];
+    EGLint       count = 0;
+    if (query_devices && platform_display && query_devices(kEglMaxDevices, devices, &count)) {
+        for (EGLint i = 0; i < count; ++i) {
+            EGLDisplay dpy = platform_display(EGL_PLATFORM_DEVICE_EXT, devices[i], nullptr);
+            if (dpy != EGL_NO_DISPLAY && eglInitialize(dpy, major, minor)) return dpy;
+        }
+    }
+
+    EGLDisplay dpy = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    if (dpy != EGL_NO_DISPLAY && eglInitialize(dpy, major, minor)) return dpy;
+    return EGL_NO_DISPLAY;
+}
+
 static bool vr_egl_init(VideoRecorderImpl *impl)
 {
     const EGLint attrs[] = {
@@ -2283,15 +2315,10 @@ static bool vr_egl_init(VideoRecorderImpl *impl)
         EGL_RENDERABLE_TYPE,   EGL_OPENGL_BIT,  EGL_NONE
     };
 
-    impl->egl_dpy = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-    if (impl->egl_dpy == EGL_NO_DISPLAY) {
-        LOG_ERROR("EGL: no display (error 0x" << std::hex << eglGetError() << ")");
-        return false;
-    }
-
     EGLint major = 0, minor = 0;
-    if (!eglInitialize(impl->egl_dpy, &major, &minor)) {
-        LOG_ERROR("EGL: init failed (error 0x" << std::hex << eglGetError() << ")");
+    impl->egl_dpy = vr_egl_display(&major, &minor);
+    if (impl->egl_dpy == EGL_NO_DISPLAY) {
+        LOG_ERROR("EGL: no device display and no default display could be initialized");
         return false;
     }
 
