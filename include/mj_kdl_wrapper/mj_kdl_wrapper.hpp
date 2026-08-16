@@ -1002,15 +1002,32 @@ std::string scene_object_site_name(const SceneObject &obj, const char *site_name
 
 /**
  * @ingroup grp_scene
+ * Say that xpos/xmat are current, or that they are not. The frame getters below forward only
+ * when they are not, so a caller reading many frames per step pays one solve rather than one
+ * each. step(), reset() and a forwarding set_joint_pos() already report themselves; a caller
+ * that writes qpos or a body pose behind the wrapper's back must call the stale form.
+ */
+void mark_kinematics_fresh(const mjData *data);
+void mark_kinematics_stale();
+
+/**
+ * @ingroup grp_scene
+ * Forget any currency recorded against this mjData, because it is about to be freed and the
+ * allocator may hand its address to the next one. destroy_scene() already does this.
+ */
+void mark_kinematics_forgotten(const mjData *data);
+
+/**
+ * @ingroup grp_scene
  * Read a named MuJoCo site as a world-frame KDL frame.
- * Calls mj_forward() before reading site_xpos/site_xmat.
+ * Forwards first only when the kinematics are not already current.
  */
 bool get_site_frame(const mjModel *model, mjData *data, const char *site_name, KDL::Frame *out);
 
 /**
  * @ingroup grp_scene
  * Read a named MuJoCo body as a world-frame KDL frame.
- * Calls mj_forward() before reading xpos/xmat.
+ * Forwards first only when the kinematics are not already current.
  */
 bool get_body_frame(const mjModel *model, mjData *data, const char *body_name, KDL::Frame *out);
 

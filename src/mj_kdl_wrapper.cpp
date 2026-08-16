@@ -523,6 +523,7 @@ static bool get_site_frame_in_body(
     if (!model || !data || !body_name || !site_name || !out) return false;
 
     mj_forward(model, data);
+    mark_kinematics_fresh(data);
 
     int body_id = mj_name2id(model, mjOBJ_BODY, body_name);
     int site_id = mj_name2id(model, mjOBJ_SITE, site_name);
@@ -811,6 +812,10 @@ bool save_model_xml(const mjModel *model, const char *path)
 
 void destroy_scene(mjModel *model, mjData *data)
 {
+    // The allocator is free to hand the next mjData the address this one had, and a currency
+    // recorded against a pointer would then vouch for a scene that has never been forwarded.
+    // Freeing is the one moment that is certain to end it.
+    if (data) mark_kinematics_forgotten(data);
     if (data) mj_deleteData(data);
     if (model) mj_deleteModel(model);
 }
@@ -1036,14 +1041,81 @@ std::string scene_object_site_name(const SceneObject &obj, const char *site_name
     return obj.name.empty() ? std::string(site_name) : obj.name + "_" + site_name;
 }
 
+/* xpos/xmat mean nothing until a forward or a step has produced them, so every frame getter used
+ * to run mj_forward itself. Correct, and ruinous: a control loop reading ten frames a tick paid
+ * ten forward-dynamics solves on top of its step, which is most of a 1 kHz budget. Track whether
+ * they are current instead, and a tick pays once.
+ *
+ * Freshness is claimed by whatever produced it and dropped by whatever invalidates it, all in
+ * this file -- a caller writing d->qpos behind the wrapper's back has to say so with
+ * mark_kinematics_stale(). One control thread by design, as with g_robot and g_viewer. */
+namespace {
+const mjData *g_kin_data  = nullptr;
+bool          g_kin_fresh = false;
+}   // namespace
+
+void mark_kinematics_fresh(const mjData *data)
+{
+    g_kin_data  = data;
+    g_kin_fresh = true;
+}
+
+void mark_kinematics_stale() { g_kin_fresh = false; }
+
+void mark_kinematics_forgotten(const mjData *data)
+{
+    if (g_kin_data == data) {
+        g_kin_data  = nullptr;
+        g_kin_fresh = false;
+    }
+}
+
+/* mj_forward, but only when something has happened since the last one. */
+static void ensure_kinematics(const mjModel *model, mjData *data)
+{
+    if (g_kin_fresh && g_kin_data == data) return;
+    mj_forward(model, data);
+    mark_kinematics_fresh(data);
+}
+
+/* mj_name2id walks a hash chain and compares strings, and these are called with the same string
+ * literals every tick. Small beside a forward solve, but the same waste one level down. */
+static int cached_name2id(const mjModel *model, mjtObj type, const char *name)
+{
+    struct Key {
+        const mjModel *model;
+        int            type;
+        std::string    name;
+        bool operator==(const Key &o) const
+        {
+            return model == o.model && type == o.type && name == o.name;
+        }
+    };
+    struct Hash {
+        std::size_t operator()(const Key &k) const
+        {
+            return std::hash<const void *>{}(k.model) ^ (std::hash<std::string>{}(k.name) << 1)
+                 ^ (static_cast<std::size_t>(k.type) << 3);
+        }
+    };
+    static std::unordered_map<Key, int, Hash> cache;
+
+    const Key  key{ model, static_cast<int>(type), name };
+    const auto found = cache.find(key);
+    if (found != cache.end()) return found->second;
+    const int id = mj_name2id(model, type, name);
+    cache.emplace(key, id);
+    return id;
+}
+
 bool get_site_frame(const mjModel *model, mjData *data, const char *site_name, KDL::Frame *out)
 {
     if (!model || !data || !site_name || !out) return false;
 
-    int sid = mj_name2id(model, mjOBJ_SITE, site_name);
+    int sid = cached_name2id(model, mjOBJ_SITE, site_name);
     if (sid < 0) return false;
 
-    mj_forward(model, data);
+    ensure_kinematics(model, data);
     const double *p = data->site_xpos + 3 * sid;
     const double *R = data->site_xmat + 9 * sid;
     *out            = KDL::Frame(mj_xmat_to_kdl_rot(R), KDL::Vector(p[0], p[1], p[2]));
@@ -1054,10 +1126,10 @@ bool get_body_frame(const mjModel *model, mjData *data, const char *body_name, K
 {
     if (!model || !data || !body_name || !out) return false;
 
-    int bid = mj_name2id(model, mjOBJ_BODY, body_name);
+    int bid = cached_name2id(model, mjOBJ_BODY, body_name);
     if (bid < 0) return false;
 
-    mj_forward(model, data);
+    ensure_kinematics(model, data);
     const double *p = data->xpos + 3 * bid;
     const double *R = data->xmat + 9 * bid;
     *out            = KDL::Frame(mj_xmat_to_kdl_rot(R), KDL::Vector(p[0], p[1], p[2]));
@@ -1068,10 +1140,10 @@ bool get_joint_position(const mjModel *model, mjData *data, const char *name, do
 {
     if (!model || !data || !name || !out) return false;
 
-    int jid = mj_name2id(model, mjOBJ_JOINT, name);
+    int jid = cached_name2id(model, mjOBJ_JOINT, name);
     if (jid < 0) {
         // Not a joint name: accept an actuator name and resolve its transmission joint.
-        const int aid = mj_name2id(model, mjOBJ_ACTUATOR, name);
+        const int aid = cached_name2id(model, mjOBJ_ACTUATOR, name);
         if (aid < 0) return false;
         if (model->actuator_trntype[aid] == mjTRN_JOINT) {
             jid = model->actuator_trnid[2 * aid];
@@ -1238,6 +1310,7 @@ bool init_robot_from_mjcf(
         int tip_bid = mj_name2id(model, mjOBJ_BODY, tip_body);
         // Ensure xpos/xmat are valid for inertia computation.
         mj_forward(model, data);
+        mark_kinematics_fresh(data);
         std::vector<int>      subtree      = collect_subtree(model, tool_bid);
         KDL::RigidBodyInertia tool_inertia = compute_tool_inertia(model, data, tip_bid, subtree);
         LOG_INFO(
@@ -1377,7 +1450,12 @@ void set_joint_pos(Robot *r, const KDL::JntArray &q, bool call_forward)
     if (!r->model || !r->data) return;
     int n = std::min((int)q.rows(), r->n_joints);
     for (int i = 0; i < n; ++i) r->data->qpos[r->kdl_to_mj_qpos[i]] = q(i);
-    if (call_forward) mj_forward(r->model, r->data);
+    if (call_forward) {
+        mj_forward(r->model, r->data);
+        mark_kinematics_fresh(r->data);
+    } else {
+        mark_kinematics_stale();
+    }
 }
 
 void set_body_pose(
@@ -1410,6 +1488,7 @@ void set_body_pose(
     data->qpos[qadr + 4] = quat ? quat[1] : 0.0;
     data->qpos[qadr + 5] = quat ? quat[2] : 0.0;
     data->qpos[qadr + 6] = quat ? quat[3] : 0.0;
+    mark_kinematics_stale();
     for (int k = 0; k < 6; ++k) data->qvel[dadr + k] = 0.0;
 }
 
@@ -1423,6 +1502,7 @@ bool step(Robot *s)
     if (g_viewer) return tick_impl(g_viewer, s->model, s->data, s->paused);
     if (s->paused) return true;
     mj_step(s->model, s->data);
+    mark_kinematics_fresh(s->data);
     return true;
 }
 
@@ -1526,6 +1606,7 @@ static ResetInfo reset_runtime(
     if (hook) hook(&ctx);
 
     mj_forward(model, data);
+    mark_kinematics_fresh(data);
     for (Robot *robot : robots) sync_robot_after_reset(robot);
 
     return info;
@@ -2142,6 +2223,7 @@ static bool init_window_sim_core(
     {
         std::unique_lock<std::recursive_mutex> lock(ss->sim->mtx);
         mj_forward(m, d);
+        mark_kinematics_fresh(d);
     }
 
     /* Allocate the overlay user scene and hand it to Simulate, which merges it
@@ -2231,9 +2313,11 @@ static bool tick_impl(Viewer *v, mjModel *m, mjData *d, bool paused)
             if (sim->run) {
                 if (sim->pert.active) mjv_applyPerturbForce(m, d, &sim->pert);
                 mj_step(m, d);
+                mark_kinematics_fresh(d);
                 sim->AddToHistory();
             } else {
                 mj_forward(m, d);
+                mark_kinematics_fresh(d);
             }
         }
 
