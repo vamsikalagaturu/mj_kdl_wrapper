@@ -812,6 +812,10 @@ bool save_model_xml(const mjModel *model, const char *path)
 
 void destroy_scene(mjModel *model, mjData *data)
 {
+    // The allocator is free to hand the next mjData the address this one had, and a currency
+    // recorded against a pointer would then vouch for a scene that has never been forwarded.
+    // Freeing is the one moment that is certain to end it.
+    if (data) mark_kinematics_forgotten(data);
     if (data) mj_deleteData(data);
     if (model) mj_deleteModel(model);
 }
@@ -1057,6 +1061,14 @@ void mark_kinematics_fresh(const mjData *data)
 }
 
 void mark_kinematics_stale() { g_kin_fresh = false; }
+
+void mark_kinematics_forgotten(const mjData *data)
+{
+    if (g_kin_data == data) {
+        g_kin_data  = nullptr;
+        g_kin_fresh = false;
+    }
+}
 
 /* mj_forward, but only when something has happened since the last one. */
 static void ensure_kinematics(const mjModel *model, mjData *data)

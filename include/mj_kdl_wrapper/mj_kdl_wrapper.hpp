@@ -1012,6 +1012,13 @@ void mark_kinematics_stale();
 
 /**
  * @ingroup grp_scene
+ * Forget any currency recorded against this mjData, because it is about to be freed and the
+ * allocator may hand its address to the next one. destroy_scene() already does this.
+ */
+void mark_kinematics_forgotten(const mjData *data);
+
+/**
+ * @ingroup grp_scene
  * Read a named MuJoCo site as a world-frame KDL frame.
  * Forwards first only when the kinematics are not already current.
  */
