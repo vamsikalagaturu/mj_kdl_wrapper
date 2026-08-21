@@ -29,6 +29,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <csignal>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -89,8 +90,8 @@ static constexpr int    kSkyTexSize       = 200;  // skybox gradient texture siz
 static constexpr double kSunHeight        = 4.0;  // overhead directional light z [m]
 // Frame sites are markers, not geometry: small, and in their own group so the viewer can
 // switch them off without hiding the sites an asset declares for attaching.
-static constexpr double kFrameSiteSize    = 0.005; // frame-site marker radius [m]
-static constexpr int    kFrameSiteGroup   = 4;     // viewer group for frame sites
+static constexpr double kFrameSiteSize  = 0.005; // frame-site marker radius [m]
+static constexpr int    kFrameSiteGroup = 4;     // viewer group for frame sites
 
 // Numerical tolerances. Frame-equality test treats relative deviations below
 // kIdentityTol as zero; sim-time guard rejects steps shorter than kSimTimeEps
@@ -116,6 +117,111 @@ static constexpr int kRgbBytesPerPixel = 3;
 // Defaults applied when the Simulate UI omits recorder fields.
 static constexpr int kRecorderDefaultResIndex = 2; // 720p (see recorder_resolution_from_index)
 static constexpr int kRecorderDefaultFps      = 30;
+
+/* An ffmpeg process taking raw RGB24 on stdin and writing H.264 MP4. Both recordings feed one:
+   the offscreen renderer, and the window capture that reads back the frame already drawn. */
+struct FfmpegSink
+{
+    FILE       *pipe = nullptr;
+    std::string path;
+    int         width  = 0;
+    int         height = 0;
+    int         frames = 0;
+};
+
+/* Start ffmpeg reading in_w x in_h frames. An out_w x out_h that differs is scaled by ffmpeg,
+   so a view of any size can be recorded at the resolution that was asked for.
+
+   `flip` is for frames straight out of mjr_readPixels, which MuJoCo fills bottom-to-top: the
+   filter chain turns them over, as the record sample in the MuJoCo docs does, rather than the
+   caller walking every frame to swap its rows. */
+static bool sink_open(
+  FfmpegSink *sink,
+  const char *out_path,
+  int         in_w,
+  int         in_h,
+  int         out_w,
+  int         out_h,
+  int         fps,
+  bool        flip
+)
+{
+    // -g <fps>: ~1s GOP (vs x264's 250-frame default) so scrubbing seeks land near a keyframe.
+    const int gop = std::max(1, fps);
+
+    /* libx264 in yuv420p refuses an odd width or height, and both a window's size and a 16:9
+       width for an odd height can be odd, so drop the stray row or column here. */
+    const int target_w = ((out_w > 0 ? out_w : in_w) / 2) * 2;
+    const int target_h = ((out_h > 0 ? out_h : in_h) / 2) * 2;
+    if (target_w <= 0 || target_h <= 0) {
+        LOG_ERROR("recording: frame is " << in_w << "x" << in_h << ", too small to encode");
+        return false;
+    }
+
+    const bool scaling    = target_w != in_w || target_h != in_h;
+    char       chain[160] = "";
+    if (flip && scaling) {
+        snprintf(chain, sizeof(chain), "vflip,scale=%d:%d", target_w, target_h);
+    } else if (flip) {
+        snprintf(chain, sizeof(chain), "vflip");
+    } else if (scaling) {
+        snprintf(chain, sizeof(chain), "scale=%d:%d", target_w, target_h);
+    }
+    char filters[192] = "";
+    if (chain[0]) snprintf(filters, sizeof(filters), "-vf \"%s\" ", chain);
+
+    char cmd[2048];
+    snprintf(
+      cmd,
+      sizeof(cmd),
+      "ffmpeg -hide_banner -loglevel error -nostats -y "
+      "-f rawvideo -vcodec rawvideo -pix_fmt rgb24 -s %dx%d -r %d "
+      "-i pipe:0 -an %s-vcodec libx264 -pix_fmt yuv420p -preset medium -crf 18 -g %d \"%s\"",
+      in_w,
+      in_h,
+      fps,
+      filters,
+      gop,
+      out_path
+    );
+    /* An ffmpeg that dies mid-recording must not take the simulation down with it: without this
+       the next write raises SIGPIPE, whose default is to kill the process. */
+    std::signal(SIGPIPE, SIG_IGN);
+
+    sink->pipe   = popen(cmd, "w");
+    sink->path   = out_path;
+    sink->width  = in_w;
+    sink->height = in_h;
+    sink->frames = 0;
+    if (!sink->pipe) {
+        LOG_ERROR("popen(ffmpeg) failed - is ffmpeg installed and in PATH?");
+        return false;
+    }
+    return true;
+}
+
+static bool sink_write(FfmpegSink *sink, const std::uint8_t *rgb, std::size_t bytes)
+{
+    if (!sink->pipe) return false;
+    if (fwrite(rgb, 1, bytes, sink->pipe) != bytes) {
+        LOG_ERROR("fwrite to ffmpeg pipe failed");
+        return false;
+    }
+    ++sink->frames;
+    return true;
+}
+
+static void sink_close(FfmpegSink *sink)
+{
+    if (!sink->pipe) return;
+    const int status = pclose(sink->pipe);
+    sink->pipe       = nullptr;
+    if (status == 0 && sink->frames > 0) {
+        std::fprintf(stderr, "[mj_kdl] recording saved to %s\n", sink->path.c_str());
+    } else if (status != 0) {
+        LOG_ERROR("ffmpeg failed while saving recording to '" << sink->path << "'");
+    }
+}
 
 #ifdef MJ_KDL_HAS_EGL
 // EGL framebuffer attribute values for the headless recorder.
@@ -475,14 +581,14 @@ static void add_sites_to_spec(mjSpec *spec, const std::vector<SiteSpec> &sites)
 
         mjsSite *site = mjs_addSite(body, nullptr);
         mjs_setString(mjs_getName(site->element), ss.name.c_str());
-        site->type   = mjGEOM_SPHERE;
+        site->type    = mjGEOM_SPHERE;
         site->size[0] = kFrameSiteSize;
         site->size[1] = kFrameSiteSize;
         site->size[2] = kFrameSiteSize;
-        site->group  = kFrameSiteGroup;
-        site->pos[0] = ss.pos[0];
-        site->pos[1] = ss.pos[1];
-        site->pos[2] = ss.pos[2];
+        site->group   = kFrameSiteGroup;
+        site->pos[0]  = ss.pos[0];
+        site->pos[1]  = ss.pos[1];
+        site->pos[2]  = ss.pos[2];
         quat_xyzw_to_mj_quat(ss.quat, site->quat);
     }
 }
@@ -1050,9 +1156,9 @@ std::string scene_object_site_name(const SceneObject &obj, const char *site_name
  * this file -- a caller writing d->qpos behind the wrapper's back has to say so with
  * mark_kinematics_stale(). One control thread by design, as with g_robot and g_viewer. */
 namespace {
-const mjData *g_kin_data  = nullptr;
-bool          g_kin_fresh = false;
-}   // namespace
+    const mjData *g_kin_data  = nullptr;
+    bool          g_kin_fresh = false;
+} // namespace
 
 void mark_kinematics_fresh(const mjData *data)
 {
@@ -1082,20 +1188,22 @@ static void ensure_kinematics(const mjModel *model, mjData *data)
  * literals every tick. Small beside a forward solve, but the same waste one level down. */
 static int cached_name2id(const mjModel *model, mjtObj type, const char *name)
 {
-    struct Key {
+    struct Key
+    {
         const mjModel *model;
         int            type;
         std::string    name;
-        bool operator==(const Key &o) const
+        bool           operator==(const Key &o) const
         {
             return model == o.model && type == o.type && name == o.name;
         }
     };
-    struct Hash {
+    struct Hash
+    {
         std::size_t operator()(const Key &k) const
         {
             return std::hash<const void *>{}(k.model) ^ (std::hash<std::string>{}(k.name) << 1)
-                 ^ (static_cast<std::size_t>(k.type) << 3);
+                   ^ (static_cast<std::size_t>(k.type) << 3);
         }
     };
     static std::unordered_map<Key, int, Hash> cache;
@@ -1351,9 +1459,8 @@ bool init_robot_from_chain(
 )
 {
     LOG_INFO(
-      "init_robot_from_chain: " << chain.getNrOfSegments() << " segments, "
-                                << chain.getNrOfJoints() << " joints, prefix='"
-                                << (prefix ? prefix : "") << "'"
+      "init_robot_from_chain: " << chain.getNrOfSegments() << " segments, " << chain.getNrOfJoints()
+                                << " joints, prefix='" << (prefix ? prefix : "") << "'"
     );
     if (joint_names.size() != chain.getNrOfJoints()) {
         LOG_ERROR(
@@ -1917,6 +2024,16 @@ struct SimUiState
     int record_camera        = 0; // 0=current, 1=free, 2=tracking, 3+=fixed cam
     int record_frame_stride  = 1;
     int record_frame_counter = 0;
+    /* Recording the view already on screen: the render thread hands its frames to this sink,
+     * so the scene is rendered once rather than once for the window and once for the file.
+     * Written and read on the render thread; the physics thread only starts and stops it. */
+    FfmpegSink                            window_sink;
+    bool                                  window_capture = false;
+    int                                   window_fps     = kRecorderDefaultFps;
+    int                                   window_out_w   = 0;
+    int                                   window_out_h   = 0;
+    std::string                           window_path;
+    std::chrono::steady_clock::time_point window_next{};
     /* User scene merged into each render frame by Simulate (overlay polylines,
      * e.g. the EE trajectory trace). Guarded by user_scn_mtx because the control
      * thread appends to it while the render thread reads it. */
@@ -1939,6 +2056,91 @@ static VideoResolution recorder_resolution_from_index(int index)
     }
 }
 
+/* Height of each resolution preset, for scaling a window frame to what the UI asked for. */
+static int recorder_height_from_index(int index)
+{
+    return static_cast<int>(recorder_resolution_from_index(index));
+}
+
+static void stop_window_capture(SimUiState *ss)
+{
+    if (!ss->window_capture) return;
+    /* Clear the flag before closing: the render thread checks it before handing over a frame,
+       so once it is false no further write can reach the pipe. */
+    ss->sim->wrapper_capture_window.store(false);
+    ss->sim->wrapper_window_frame = nullptr;
+    ss->window_capture            = false;
+    sink_close(&ss->window_sink);
+}
+
+/* Record what the window shows, by taking the frame the render thread has just presented.
+   The sink is opened on the first frame, when the window's size is known. */
+static bool
+  start_window_capture(SimUiState *ss, const char *out_path, int out_w, int out_h, int fps)
+{
+    if (!ss->sim || !ss->glfw_window) return false;
+
+    ss->window_fps     = std::max(1, fps);
+    ss->window_out_h   = out_h;
+    ss->window_out_w   = out_w;
+    ss->window_path    = out_path;
+    ss->window_next    = std::chrono::steady_clock::now();
+    ss->window_capture = true;
+    /* Ask the render thread to scale on the GPU before the frame is read back. */
+    ss->sim->wrapper_capture_width.store(ss->window_out_w);
+    ss->sim->wrapper_capture_height.store(ss->window_out_h);
+
+    ss->sim->wrapper_window_frame = [ss](const unsigned char *rgb, int width, int height) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now < ss->window_next) return; // the display runs faster than the recording asks for
+        ss->window_next = now + std::chrono::microseconds(1000000 / ss->window_fps);
+
+        if (!ss->window_sink.pipe) {
+            if (!sink_open(
+                  &ss->window_sink,
+                  ss->window_path.c_str(),
+                  width,
+                  height,
+                  ss->window_out_w,
+                  ss->window_out_h,
+                  ss->window_fps,
+                  true
+                )) {
+                ss->sim->SetWrapperRecorderState(2);
+                ss->sim->wrapper_capture_window.store(false);
+                return;
+            }
+            LOG_INFO(
+              "window recording: " << width << "x" << height << " -> " << ss->window_out_w << "x"
+                                   << ss->window_out_h << " @ " << ss->window_fps << " fps -> "
+                                   << ss->window_path
+            );
+        }
+        /* A window resized mid-recording cannot change the stream's frame size: show what fits
+           and leave the rest black, rather than ending the recording. */
+        const std::size_t frame_bytes = static_cast<std::size_t>(ss->window_sink.width)
+                                        * ss->window_sink.height * kRgbBytesPerPixel;
+        if (width == ss->window_sink.width && height == ss->window_sink.height) {
+            sink_write(&ss->window_sink, rgb, frame_bytes);
+            return;
+        }
+        std::vector<std::uint8_t> fitted(frame_bytes, 0);
+        const int                 rows = std::min(height, ss->window_sink.height);
+        const int                 cols = std::min(width, ss->window_sink.width) * kRgbBytesPerPixel;
+        for (int row = 0; row < rows; ++row) {
+            std::memcpy(
+              fitted.data()
+                + static_cast<std::size_t>(row) * ss->window_sink.width * kRgbBytesPerPixel,
+              rgb + static_cast<std::size_t>(row) * width * kRgbBytesPerPixel,
+              static_cast<std::size_t>(cols)
+            );
+        }
+        sink_write(&ss->window_sink, fitted.data(), fitted.size());
+    };
+    ss->sim->wrapper_capture_window.store(true);
+    return true;
+}
+
 static void handle_recorder_request(SimUiState *ss, mjModel *m)
 {
     if (!ss || !ss->sim || !m) return;
@@ -1952,6 +2154,7 @@ static void handle_recorder_request(SimUiState *ss, mjModel *m)
     if (!request) return;
 
     if (request == 2) {
+        stop_window_capture(ss);
         if (ss->recorder_active) cleanup(&ss->recorder);
         ss->recorder_active      = false;
         ss->record_frame_counter = 0;
@@ -1959,9 +2162,27 @@ static void handle_recorder_request(SimUiState *ss, mjModel *m)
         return;
     }
 
+    stop_window_capture(ss);
     if (ss->recorder_active) cleanup(&ss->recorder);
 
     const char *out_path = path[0] ? path : "recording.mp4";
+
+    /* "Current" is the view the window is already drawing: record that frame instead of
+       rendering the scene a second time from the same camera. Any other camera is a different
+       viewpoint, which only an offscreen render can produce. */
+    if (camera == 0) {
+        const int height = recorder_height_from_index(resolution);
+        const int width  = ((height * 16 / 9) + 1) / 2 * 2; // even: the encoder needs it
+        if (start_window_capture(ss, out_path, width, height, fps)) {
+            ss->recorder_active      = false;
+            ss->record_camera        = camera;
+            ss->record_frame_counter = 0;
+            ss->sim->SetWrapperRecorderState(1);
+            return;
+        }
+        LOG_ERROR("window capture failed; falling back to an offscreen render");
+    }
+
     if (!init_video_recorder(
           &ss->recorder, m, out_path, recorder_resolution_from_index(resolution), std::max(1, fps)
         )) {
@@ -2078,12 +2299,105 @@ void set_free_camera(
     set_free_camera_impl(&v->cam, distance, azimuth, elevation, lookat);
 }
 
+/* Window recording for the simple viewer path: what init_window() draws, read back after each
+   render. init_window_sim() records through its own UI panel, which uses the same idea. */
+struct WindowRecorderImpl
+{
+    FfmpegSink                sink;
+    int                       fps   = kRecorderDefaultFps;
+    int                       out_w = 0;
+    int                       out_h = 0;
+    std::string               path;
+    std::vector<std::uint8_t> rgb;
+};
+
+bool start_window_recording(Viewer *v, const char *out_path, int fps, int width, int height)
+{
+    if (!v || !out_path) return false;
+    /* A simulate-UI window renders on its own thread, so the frames come from there rather than
+       from the caller's record_window_frame(). Same recording, different source of frames. */
+    if (v->_sim_ui) {
+        auto *ss = static_cast<SimUiState *>(v->_sim_ui);
+        return start_window_capture(ss, out_path, width, height, fps);
+    }
+    if (!v->window) return false;
+    stop_window_recording(v);
+
+    int window_w = 0;
+    int window_h = 0;
+    glfwGetFramebufferSize(v->window, &window_w, &window_h);
+    if (window_w <= 0 || window_h <= 0) return false;
+
+    auto *impl  = new WindowRecorderImpl();
+    impl->fps   = std::max(1, fps);
+    impl->out_w = width > 0 ? width : window_w;
+    impl->out_h = height > 0 ? height : window_h;
+    impl->path  = out_path;
+    impl->rgb.assign(
+      static_cast<std::size_t>(window_w) * window_h * kRgbBytesPerPixel, static_cast<uint8_t>(0)
+    );
+    if (!sink_open(
+          &impl->sink, out_path, window_w, window_h, impl->out_w, impl->out_h, impl->fps, true
+        )) {
+        delete impl;
+        return false;
+    }
+    v->_record = impl;
+    LOG_INFO(
+      "window recording: " << window_w << "x" << window_h << " -> " << impl->out_w << "x"
+                           << impl->out_h << " @ " << impl->fps << " fps -> " << out_path
+    );
+    return true;
+}
+
+bool record_window_frame(Viewer *v)
+{
+    if (!v) return false;
+    // The simulate UI feeds its own frames from the render thread; nothing to do per tick here.
+    if (v->_sim_ui) return static_cast<SimUiState *>(v->_sim_ui)->window_capture;
+    if (!v->_record || !v->window) return false;
+    auto *impl = static_cast<WindowRecorderImpl *>(v->_record);
+    if (!impl->sink.pipe) return false;
+
+    int window_w = 0;
+    int window_h = 0;
+    glfwGetFramebufferSize(v->window, &window_w, &window_h);
+
+    /* The stream's frame size is fixed when recording starts: read what fits into it and leave
+       the rest black, so resizing the window does not end the recording. */
+    std::fill(impl->rgb.begin(), impl->rgb.end(), static_cast<uint8_t>(0));
+    mjrRect viewport = {
+        0, 0, std::min(window_w, impl->sink.width), std::min(window_h, impl->sink.height)
+    };
+    if (viewport.width <= 0 || viewport.height <= 0) return false;
+    mjr_readPixels(impl->rgb.data(), nullptr, viewport, &v->con);
+
+    // Bottom-up, as MuJoCo fills it: the sink's filter chain turns it over.
+    return sink_write(&impl->sink, impl->rgb.data(), impl->rgb.size());
+}
+
+void stop_window_recording(Viewer *v)
+{
+    if (!v) return;
+    if (v->_sim_ui) {
+        stop_window_capture(static_cast<SimUiState *>(v->_sim_ui));
+        return;
+    }
+    if (!v->_record) return;
+    auto *impl = static_cast<WindowRecorderImpl *>(v->_record);
+    sink_close(&impl->sink);
+    delete impl;
+    v->_record = nullptr;
+}
+
 void cleanup(Viewer *v)
 {
     if (v->_sim_ui) {
         auto *ss             = static_cast<SimUiState *>(v->_sim_ui);
         ss->sim->exitrequest = 1;
         if (ss->render_thread.joinable()) ss->render_thread.join();
+        /* The render thread has stopped, so nothing can hand another frame to the sink. */
+        stop_window_capture(ss);
         if (ss->recorder_active) cleanup(&ss->recorder);
         /* Render thread has stopped, so no one is reading user_scn now. */
         mjv_freeScene(&ss->user_scn);
@@ -2095,6 +2409,7 @@ void cleanup(Viewer *v)
         }
         return;
     }
+    stop_window_recording(v);
     if (!v->window) return;
     mjv_freeScene(&v->scn);
     mjr_freeContext(&v->con);
@@ -2162,8 +2477,8 @@ bool render(Viewer *v, mjModel *m, mjData *d)
 
 bool render(Viewer *v, const Robot *r) { return render(v, r->model, r->data); }
 
-static bool init_window_sim_core(
-  Viewer *v, mjModel *m, mjData *d, const char *tcp_site, const char *title)
+static bool
+  init_window_sim_core(Viewer *v, mjModel *m, mjData *d, const char *tcp_site, const char *title)
 {
     if (!v || !m || !d) return false;
     if (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY")) return false;
@@ -2237,9 +2552,7 @@ static bool init_window_sim_core(
     ss->sim->user_scn  = &ss->user_scn;
 
     // trace follows the robot's TCP site (Frames panel "Trace EE")
-    if (tcp_site && *tcp_site) {
-        ss->sim->ee_trace_site_ = mj_name2id(m, mjOBJ_SITE, tcp_site);
-    }
+    if (tcp_site && *tcp_site) { ss->sim->ee_trace_site_ = mj_name2id(m, mjOBJ_SITE, tcp_site); }
 
     v->_sim_ui = ss;
     g_viewer   = v;
@@ -2350,11 +2663,9 @@ struct VideoRecorderImpl
     EGLContext           egl_ctx = EGL_NO_CONTEXT;
     mjvScene             scn{};
     mjrContext           con{};
-    FILE                *ffmpeg = nullptr;
-    std::string          out_path;
+    FfmpegSink           sink;
     int                  width  = 0;
     int                  height = 0;
-    int                  frames = 0;
     std::vector<uint8_t> rgb_buf;
 };
 
@@ -2371,9 +2682,9 @@ static EGLDisplay vr_egl_display(EGLint *major, EGLint *minor)
 {
     auto query_devices =
       reinterpret_cast<PFNEGLQUERYDEVICESEXTPROC>(eglGetProcAddress("eglQueryDevicesEXT"));
-    auto platform_display = reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
-      eglGetProcAddress("eglGetPlatformDisplayEXT")
-    );
+    auto platform_display =
+      reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(eglGetProcAddress("eglGetPlatformDisplayEXT"
+      ));
 
     EGLDeviceEXT devices[kEglMaxDevices];
     EGLint       count = 0;
@@ -2490,33 +2801,12 @@ bool init_video_recorder(
     if (!out_path) return false;
     if (!init_offscreen(vr, model, width, height)) return false;
 
-    auto *impl     = static_cast<VideoRecorderImpl *>(vr->_impl);
-    impl->out_path = out_path;
+    auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
     impl->rgb_buf.resize(
       static_cast<size_t>(width) * static_cast<size_t>(height) * kRgbBytesPerPixel
     );
 
-    // Launch ffmpeg: reads raw RGB24 frames from stdin, writes H.264 MP4.
-    // -g <fps>: ~1s GOP (vs x264's 250-frame default) so scrubbing seeks land
-    // near a keyframe instead of decoding seconds of frames.
-    const int gop = std::max(1, fps);
-    char      cmd[2048];
-    snprintf(
-      cmd,
-      sizeof(cmd),
-      "ffmpeg -hide_banner -loglevel error -nostats -y "
-      "-f rawvideo -vcodec rawvideo -pix_fmt rgb24 -s %dx%d -r %d "
-      "-i pipe:0 -an -vcodec libx264 -pix_fmt yuv420p -preset medium -crf 18 -g %d \"%s\" "
-      "2>/dev/null",
-      width,
-      height,
-      fps,
-      gop,
-      out_path
-    );
-    impl->ffmpeg = popen(cmd, "w");
-    if (!impl->ffmpeg) {
-        LOG_ERROR("popen(ffmpeg) failed - is ffmpeg installed and in PATH?");
+    if (!sink_open(&impl->sink, out_path, width, height, width, height, fps, true)) {
         cleanup(vr);
         return false;
     }
@@ -2525,7 +2815,8 @@ bool init_video_recorder(
     return true;
 }
 
-bool render_rgb(VideoRecorder *vr, mjModel *model, mjData *data, std::uint8_t *out)
+// Renders into `out` the way MuJoCo fills it: bottom row first.
+static bool render_bottom_up(VideoRecorder *vr, mjModel *model, mjData *data, std::uint8_t *out)
 {
     if (!vr || !vr->_impl || !model || !data || !out) return false;
     auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
@@ -2538,8 +2829,15 @@ bool render_rgb(VideoRecorder *vr, mjModel *model, mjData *data, std::uint8_t *o
     mjrRect vp = { 0, 0, impl->width, impl->height };
     mjr_render(vp, &impl->scn, &impl->con);
     mjr_readPixels(out, nullptr, vp, &impl->con);
+    return true;
+}
 
-    // MuJoCo fills the buffer bottom-to-top; flip to top-down.
+bool render_rgb(VideoRecorder *vr, mjModel *model, mjData *data, std::uint8_t *out)
+{
+    if (!render_bottom_up(vr, model, data, out)) return false;
+    auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
+
+    // Callers of the public API get the image top-down, as every image format wants it.
     const int            row_bytes = kRgbBytesPerPixel * impl->width;
     std::vector<uint8_t> tmp(static_cast<size_t>(row_bytes));
     for (int top = 0, bot = impl->height - 1; top < bot; ++top, --bot) {
@@ -2554,17 +2852,10 @@ bool record_frame(VideoRecorder *vr, mjModel *model, mjData *data)
 {
     if (!vr || !vr->_impl) return false;
     auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
-    if (!impl->ffmpeg) return false;
-
-    if (!render_rgb(vr, model, data, impl->rgb_buf.data())) return false;
-
-    if (fwrite(impl->rgb_buf.data(), 1, impl->rgb_buf.size(), impl->ffmpeg)
-        != impl->rgb_buf.size()) {
-        LOG_ERROR("fwrite to ffmpeg pipe failed");
-        return false;
-    }
-    ++impl->frames;
-    return true;
+    if (!impl->sink.pipe) return false;
+    // No flip here: the sink's filter chain turns the frame over on its way into the encoder.
+    if (!render_bottom_up(vr, model, data, impl->rgb_buf.data())) return false;
+    return sink_write(&impl->sink, impl->rgb_buf.data(), impl->rgb_buf.size());
 }
 
 bool init_video_recorder(
@@ -2575,9 +2866,10 @@ bool init_video_recorder(
   int             fps
 )
 {
-    /* 16:9 width for each named height. */
+    /* 16:9 width for each named height, rounded up to even: 480p is 853.3 wide, and the encoder
+       takes no odd dimension. */
     int h = static_cast<int>(resolution);
-    int w = h * 16 / 9;
+    int w = ((h * 16 / 9) + 1) / 2 * 2;
     return init_video_recorder(vr, model, out_path, w, h, fps);
 }
 
@@ -2585,15 +2877,7 @@ void cleanup(VideoRecorder *vr)
 {
     if (!vr || !vr->_impl) return;
     auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
-    if (impl->ffmpeg) {
-        int status   = pclose(impl->ffmpeg);
-        impl->ffmpeg = nullptr;
-        if (status == 0 && impl->frames > 0) {
-            std::fprintf(stderr, "[mj_kdl] recording saved to %s\n", impl->out_path.c_str());
-        } else if (status != 0) {
-            LOG_ERROR("ffmpeg failed while saving recording to '" << impl->out_path << "'");
-        }
-    }
+    sink_close(&impl->sink);
     mjr_freeContext(&impl->con);
     mjv_freeScene(&impl->scn);
     vr_egl_done(impl);

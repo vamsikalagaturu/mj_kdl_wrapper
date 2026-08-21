@@ -425,6 +425,29 @@ captures the current state; step the scene or robot before each call.
 The recorder camera list includes `Current`, `Free`, `Tracking`, robot MJCF
 cameras, and cameras added through `SceneSpec.cameras`.
 
+## Recording a Window
+
+A `VideoRecorder` renders the scene a second time, which is what a viewpoint the
+window is not showing costs. To record the view already on screen, ask the
+viewer for it instead: the frame it has just drawn is read back and encoded, so
+the recording costs a pixel copy rather than a render.
+
+```python
+viewer = mjk.SimulateViewer.open(robot, "MuJoCo")
+viewer.start_recording("window.mp4", fps=30)   # 3D view only, no UI panels
+
+while viewer.step():
+    robot.update()
+
+viewer.stop_recording()   # close() does this too
+viewer.close()
+```
+
+`width`/`height` default to the view's own size; giving smaller ones scales the
+frame on the GPU before it is read back, which is the cheaper way to record a
+large window. Encoding runs in an `ffmpeg` subprocess, so it stays off the
+control loop.
+
 ## Viewer Controls
 
 `SimulateViewer.open(robot)` starts the custom MuJoCo Simulate UI and binds it
