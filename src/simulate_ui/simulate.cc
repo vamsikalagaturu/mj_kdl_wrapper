@@ -3223,6 +3223,53 @@ void Simulate::Render() {
     ShowSensor(this, smallrect);
   }
 
+  // hand the presented frame to a recording of this same view: it is already rendered, so
+  // reading it back costs a copy where rendering it again costs a frame. rect[3] is the 3D
+  // view alone - a camera recording is of the scene, not of the panels drawn over it.
+  if (this->wrapper_capture_window.load() && this->wrapper_window_frame) {
+    const mjrRect view = rect;
+    if (view.width > 0 && view.height > 0) {
+      mjrContext& con = this->platform_ui->mjr_context();
+      int w = view.width;
+      int h = view.height;
+      // Blit the view into the offscreen buffer at the size the recording wants and read that
+      // instead: the GPU does the scaling, and the copy carries only the pixels that are kept.
+      // The offscreen buffer is the model's (visual global offwidth/offheight); when it cannot
+      // hold the target, read the view as it is and let the encoder scale.
+      const int want_w = this->wrapper_capture_width.load();
+      const int want_h = this->wrapper_capture_height.load();
+      mjrRect source = view;
+      bool downscale = want_w > 0 && want_h > 0 && want_w < view.width && want_h < view.height;
+      if (downscale) {
+        // The offscreen buffer is sized by the model (visual/global offwidth, offheight), and a
+        // context may not have one at all, so ask for it and check what was given.
+        mjr_setBuffer(mjFB_OFFSCREEN, &con);
+        const mjrRect offscreen = mjr_maxViewport(&con);
+        downscale = con.currentBuffer == mjFB_OFFSCREEN &&
+                    offscreen.width >= want_w && offscreen.height >= want_h;
+        if (downscale) {
+          const mjrRect target = {0, 0, want_w, want_h};
+          mjr_blitBuffer(view, target, 1, 0, &con);  // colour only; depth is not recorded
+          source = target;
+          w = want_w;
+          h = want_h;
+        } else {
+          mjr_setBuffer(mjFB_WINDOW, &con);
+        }
+      }
+      wrapper_window_rgb_.resize(static_cast<std::size_t>(3) * w * h);
+      mjr_readPixels(wrapper_window_rgb_.data(), nullptr, source, &con);
+      if (downscale) {
+        mjr_setBuffer(mjFB_WINDOW, &con);  // the window is what the swap presents
+      }
+      if (const int gl_error = mjr_getError()) {  // otherwise a bad frame is written silently
+        std::fprintf(stderr, "[mj_kdl] recording: OpenGL error %d\n", gl_error);
+      }
+      // Bottom-up, as MuJoCo fills it: the encoder's filter chain turns it over.
+      this->wrapper_window_frame(wrapper_window_rgb_.data(), w, h);
+    }
+  }
+
   // take screenshot, save to file
   if (this->screenshotrequest.exchange(false)) {
     const unsigned int h = uistate.rect[0].height;

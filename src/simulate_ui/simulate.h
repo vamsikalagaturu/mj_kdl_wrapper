@@ -16,6 +16,7 @@
 #define MUJOCO_SIMULATE_SIMULATE_H_
 
 #include <atomic>
+#include <functional>
 #include <chrono>
 #include <condition_variable>
 #include <memory>
@@ -260,6 +261,15 @@ class Simulate {
   std::atomic<double> wrapper_realtime_factor = 1.0;
   std::atomic_int wrapper_record_request = 0;  // 0 none, 1 start, 2 stop
   std::atomic_int wrapper_record_state = 0;    // 0 idle, 1 recording, 2 failed
+  // Set by the wrapper when the recording is of the view already on screen: the render thread
+  // hands each presented frame here instead of the scene being rendered a second time.
+  std::atomic_bool wrapper_capture_window = false;
+  std::function<void(const unsigned char* rgb, int width, int height)> wrapper_window_frame;
+  std::vector<unsigned char> wrapper_window_rgb_;  // reused readback buffer, render thread only
+  // Size the recording wants. Downscaling on the GPU before the frame is read back is what
+  // makes the copy small: a 1080p view recorded at 480p moves a sixth of the pixels.
+  std::atomic_int wrapper_capture_width = 0;
+  std::atomic_int wrapper_capture_height = 0;
   int wrapper_record_camera = 0;               // 0=current, 1=free, 2=tracking, 3+=fixed cam
   int wrapper_record_resolution = 2;           // 0=360p, 1=480p, 2=720p, 3=1080p
   int wrapper_record_fps = 30;
