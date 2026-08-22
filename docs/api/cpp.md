@@ -434,35 +434,20 @@ Interactive recording is available from the Simulate UI:
 The recorder camera list includes `Current`, `Free`, `Tracking`, robot MJCF
 cameras, and cameras added through `SceneSpec::cameras`.
 
-## Recording A Window
+## Recording What The Window Shows
 
-A `VideoRecorder` renders the scene a second time, which is what a viewpoint the
-window is not showing costs. To record the view already on screen, record the
-window: the frame it has just drawn is read back and encoded, so it costs a
-pixel copy rather than a render.
+Recording is offscreen only: a `VideoRecorder` has its own headless context and
+its own thread, so a window never stalls on a readback while it records. To
+record the view a freshly opened GUI window shows, point the recorder at the
+default free camera:
 
 ```cpp
-mj_kdl::start_window_recording(&viewer, "window.mp4", 30);
-
-while (mj_kdl::is_running(&viewer)) {
-    mj_kdl::update(&robot);
-    mj_kdl::step(&viewer, model, data);
-    mj_kdl::record_window_frame(&viewer);   // not needed with init_window_sim()
-}
-
-mj_kdl::stop_window_recording(&viewer);   // cleanup(&viewer) does this too
+mj_kdl::use_camera(&vr, model, "");   // mjv_defaultFreeCamera, the view a window opens with
 ```
 
-Both window kinds work. An `init_window()` viewer renders on the calling thread,
-so call `record_window_frame()` after each render. An `init_window_sim()` viewer
-renders on its own thread and supplies the frames itself, and records the 3D view
-alone, without the UI panels drawn over it. Resizing the view mid-recording scales
-it into the frame size the recording opened with.
-
-`width`/`height` default to the window's own size; giving smaller ones scales the
-frame on the GPU before it is read back, which is the cheaper way to record a
-large window. Encoding runs in an `ffmpeg` subprocess, so it stays off the
-control loop.
+The Simulate UI's Recorder panel offers `Current`, `Free`, `Tracking`, and the
+fixed model cameras; every one of them renders offscreen. `Current` follows the
+camera the GUI is being driven with, frame by frame.
 
 ## Runtime Add And Remove Objects
 

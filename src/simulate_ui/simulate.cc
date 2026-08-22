@@ -1866,14 +1866,6 @@ void UiLayout(mjuiState* state) {
   rect[3].width = mjMAX(0, rect[0].width - rect[1].width - rect[2].width);
   rect[3].bottom = 0;
   rect[3].height = rect[0].height;
-
-  // A recording of the scene wants the window, not the strip left between the panels. While
-  // one runs the 3D view spans the window and the panels draw over it: the scene is rendered
-  // once, as before, and what the recording reads back is all of it. Everything that maps a
-  // click into the scene reads this same rect, so picking follows the view.
-  if (sim->wrapper_capture_window.load()) {
-    rect[3] = rect[0];
-  }
 }
 
 // modify UI
@@ -3007,15 +2999,6 @@ void Simulate::Render() {
     UiModify(&this->ui1, &this->uistate, &this->platform_ui->mjr_context());
   }
 
-  // The layout callback only runs on resize, but starting or stopping a recording changes
-  // what rect[3] should span. Re-run it when the flag has flipped, so the first captured
-  // frame is already the whole window.
-  const bool capturing = this->wrapper_capture_window.load();
-  if (capturing != this->wrapper_capture_laid_out_) {
-    this->wrapper_capture_laid_out_ = capturing;
-    UiLayout(&this->uistate);
-  }
-
   // get 3D rectangle and reduced for profiler
   mjrRect rect = this->uistate.rect[3];
   mjrRect smallrect = rect;
@@ -3155,24 +3138,6 @@ void Simulate::Render() {
 
   // render scene
   mjr_render(rect, &this->scn, &this->platform_ui->mjr_context());
-
-  // Read the scene straight off the buffer it was just rendered into, before anything is
-  // drawn over it: one render, and the frame is the whole view including what the panels
-  // will cover.
-  if (this->wrapper_capture_window.load() && this->wrapper_window_frame && rect.width > 0 &&
-      rect.height > 0 && std::chrono::steady_clock::now() >= this->wrapper_capture_next_) {
-    const long long interval = this->wrapper_capture_interval_ns.load();
-    this->wrapper_capture_next_ =
-        std::chrono::steady_clock::now() + std::chrono::nanoseconds(mjMAX(0, interval));
-    mjrContext& con = this->platform_ui->mjr_context();
-    wrapper_window_rgb_.resize(static_cast<std::size_t>(3) * rect.width * rect.height);
-    mjr_readPixels(wrapper_window_rgb_.data(), nullptr, rect, &con);
-    if (const int gl_error = mjr_getError()) {  // otherwise a bad frame is written silently
-      std::fprintf(stderr, "[mj_kdl] recording: OpenGL error %d\n", gl_error);
-    }
-    // Bottom-up, as MuJoCo fills it: the encoder's filter chain turns it over.
-    this->wrapper_window_frame(wrapper_window_rgb_.data(), rect.width, rect.height);
-  }
 
   // show last loading error
   if (this->load_error[0]) {

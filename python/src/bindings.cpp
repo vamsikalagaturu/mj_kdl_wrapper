@@ -888,20 +888,6 @@ struct PySimulateViewer
         if (!active) throw std::runtime_error("viewer is closed");
         mj_kdl::set_free_camera(&viewer, distance, azimuth, elevation, lookat);
     }
-
-    void start_recording(const std::string &out_path, int fps, int width, int height)
-    {
-        if (!active) throw std::runtime_error("viewer is closed");
-        if (!mj_kdl::start_window_recording(&viewer, out_path.c_str(), fps, width, height)) {
-            throw std::runtime_error("start_window_recording failed");
-        }
-    }
-
-    void stop_recording()
-    {
-        if (!active) return;
-        mj_kdl::stop_window_recording(&viewer);
-    }
 };
 
 struct PyVideoRecorder
@@ -1786,22 +1772,6 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         py::arg("lookat") = std::array<double, 3>{ 0.0, 0.0, 0.0 },
         "Configure the free orbit camera (distance, azimuth/elevation in degrees, "
         "lookat xyz in meters)."
-      )
-      .def(
-        "start_recording",
-        &PySimulateViewer::start_recording,
-        py::arg("out_path"),
-        py::arg("fps")    = 30,
-        py::arg("width")  = 0,
-        py::arg("height") = 0,
-        "Record the 3D view to an MP4, without the UI panels drawn over it. The frames come "
-        "from the window's own render, so recording costs a pixel copy rather than a second "
-        "render. width/height default to the view's own size."
-      )
-      .def(
-        "stop_recording",
-        &PySimulateViewer::stop_recording,
-        "Finish the recording and close its file. close() does this too."
       )
       .def_property(
         "realtime_factor",

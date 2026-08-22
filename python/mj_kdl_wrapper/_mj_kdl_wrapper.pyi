@@ -272,14 +272,6 @@ class SimulateViewer:
         elevation: float,
         lookat: tuple[float, float, float] = (0.0, 0.0, 0.0),
     ) -> None: ...
-    def start_recording(
-        self,
-        out_path: str,
-        fps: int = 30,
-        width: int = 0,
-        height: int = 0,
-    ) -> None: ...
-    def stop_recording(self) -> None: ...
 
 
 class VideoRecorder:
