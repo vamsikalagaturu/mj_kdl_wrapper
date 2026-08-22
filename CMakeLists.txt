@@ -374,6 +374,39 @@ if(BUILD_RECORDER AND EGL_LIBRARY)
     target_compile_definitions(mj_kdl_wrapper PRIVATE MJ_KDL_HAS_EGL)
 endif()
 
+# Optional ROS component: publishes an already-rendered camera frame as sensor_msgs/Image.
+# AUTO builds it when rclcpp and sensor_msgs are both findable; a ROS-less configure simply
+# leaves the target out, and the core library is unchanged either way.
+set(MJ_KDL_WITH_ROS "AUTO" CACHE STRING "Build the camera_ros target: AUTO, ON, or OFF")
+set_property(CACHE MJ_KDL_WITH_ROS PROPERTY STRINGS AUTO ON OFF)
+set(MJ_KDL_ROS_ENABLED OFF)
+if(NOT MJ_KDL_WITH_ROS STREQUAL "OFF")
+    if(MJ_KDL_WITH_ROS STREQUAL "AUTO")
+        find_package(rclcpp QUIET)
+        find_package(sensor_msgs QUIET)
+    else()
+        find_package(rclcpp REQUIRED)
+        find_package(sensor_msgs REQUIRED)
+    endif()
+    if(rclcpp_FOUND AND sensor_msgs_FOUND)
+        set(MJ_KDL_ROS_ENABLED ON)
+    endif()
+endif()
+if(MJ_KDL_ROS_ENABLED)
+    add_library(mj_kdl_camera_ros SHARED src/camera_ros.cpp)
+    add_library(mj_kdl_wrapper::camera_ros ALIAS mj_kdl_camera_ros)
+    set_target_properties(mj_kdl_camera_ros PROPERTIES EXPORT_NAME camera_ros)
+    target_link_libraries(mj_kdl_camera_ros PUBLIC
+      mj_kdl_wrapper
+      rclcpp::rclcpp
+      ${sensor_msgs_TARGETS}
+    )
+    target_compile_options(mj_kdl_camera_ros PRIVATE -Wall -Wextra -Wpedantic)
+    message(STATUS "ROS    : camera_ros enabled (mj_kdl_wrapper::camera_ros)")
+else()
+    message(STATUS "ROS    : rclcpp/sensor_msgs not found; camera_ros not built")
+endif()
+
 option(BUILD_PYTHON_BINDINGS "Build Python bindings" OFF)
 if(BUILD_PYTHON_BINDINGS)
     # The wheel does not bundle libmujoco; it reuses the shared library shipped
@@ -637,6 +670,14 @@ if(MJ_KDL_INSTALL_CPP_PACKAGE)
       LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
       ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     )
+    if(TARGET mj_kdl_camera_ros)
+        install(TARGETS mj_kdl_camera_ros
+          EXPORT mj_kdl_wrapperTargets
+          RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+          LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+          ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        )
+    endif()
     install(FILES
       NOTICE
       THIRD_PARTY_LICENSES.md

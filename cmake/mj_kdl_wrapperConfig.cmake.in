@@ -12,6 +12,14 @@ find_dependency(OpenGL)
 find_dependency(glfw3)
 find_dependency(orocos_kdl)
 
+# The camera_ros target is only in the export when the install was built with ROS; consumers
+# test for it with if(TARGET mj_kdl_wrapper::camera_ros).
+set(MJ_KDL_WRAPPER_WITH_ROS @MJ_KDL_ROS_ENABLED@)
+if(MJ_KDL_WRAPPER_WITH_ROS)
+  find_dependency(rclcpp)
+  find_dependency(sensor_msgs)
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/mj_kdl_wrapperTargets.cmake")
 
 check_required_components(mj_kdl_wrapper)
