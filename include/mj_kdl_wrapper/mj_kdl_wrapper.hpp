@@ -383,8 +383,6 @@ struct Viewer
     std::chrono::steady_clock::time_point _tick_t{};
     /* internal: non-null when init_window_sim() is used; holds SimUiState*. */
     void *_sim_ui = nullptr;
-    /* internal: non-null while start_window_recording() is active; holds WindowRecorderImpl*. */
-    void *_record = nullptr;
 };
 
 /**
@@ -1075,54 +1073,6 @@ void set_free_camera(
  * @return true if the camera name was found; false if not found (recorder unchanged).
  */
 bool use_camera(VideoRecorder *vr, const mjModel *model, const char *name);
-
-/**
- * @ingroup grp_recorder
- * Record what the viewer window already draws, without rendering the scene again.
- *
- * A VideoRecorder renders its own frame offscreen, which is what headless recording needs and
- * what a second viewpoint costs. A window is already showing one: this reads that frame back
- * and writes it, so recording the view you are watching costs a pixel copy rather than a
- * render. It records whatever the window shows, including a camera chosen with use_camera().
- *
- * Call record_window_frame() after each render(); stop_window_recording() closes the file, and
- * cleanup(Viewer*) calls it for you. A viewer from init_window_sim() renders on its own thread,
- * so it supplies the frames itself and record_window_frame() is not needed there; that path
- * records the 3D view alone, without the UI panels drawn over it, and scales it to the frame
- * size the recording opened with when the view is resized.
- *
- * @param v         Viewer created by init_window() or init_window_sim().
- * @param out_path  Output MP4 path.
- * @param fps       Playback frame rate (default 30).
- * @param width     Recording width, or 0 for the window's current width.
- * @param height    Recording height, or 0 for the window's current height.
- * @return true on success; false if the window is missing or ffmpeg fails to launch.
- */
-bool start_window_recording(
-  Viewer     *v,
-  const char *out_path,
-  int         fps    = 30,
-  int         width  = 0,
-  int         height = 0
-);
-
-/**
- * @ingroup grp_recorder
- * Write one frame of what the window currently shows. Call it after render().
- *
- * The window may be resized while recording; the frame keeps the size the recording started
- * with, showing what fits and black where the window is smaller.
- *
- * @param v Viewer with an active start_window_recording().
- * @return true if a frame was written; false when no recording is active or the pipe failed.
- */
-bool record_window_frame(Viewer *v);
-
-/**
- * @ingroup grp_recorder
- * Finish a window recording and close its file. Safe to call when none is active.
- */
-void stop_window_recording(Viewer *v);
 
 /**
  * Internal spec-building helpers.
