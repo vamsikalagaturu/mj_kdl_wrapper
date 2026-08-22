@@ -455,8 +455,9 @@ mj_kdl::stop_window_recording(&viewer);   // cleanup(&viewer) does this too
 
 Both window kinds work. An `init_window()` viewer renders on the calling thread,
 so call `record_window_frame()` after each render. An `init_window_sim()` viewer
-renders on its own thread and supplies the frames itself, and records the 3D
-view alone, without the UI panels drawn over it.
+renders on its own thread and supplies the frames itself, and records the 3D view
+alone, without the UI panels drawn over it. Resizing the view mid-recording scales
+it into the frame size the recording opened with.
 
 `width`/`height` default to the window's own size; giving smaller ones scales the
 frame on the GPU before it is read back, which is the cheaper way to record a

@@ -1088,7 +1088,8 @@ bool use_camera(VideoRecorder *vr, const mjModel *model, const char *name);
  * Call record_window_frame() after each render(); stop_window_recording() closes the file, and
  * cleanup(Viewer*) calls it for you. A viewer from init_window_sim() renders on its own thread,
  * so it supplies the frames itself and record_window_frame() is not needed there; that path
- * records the 3D view alone, without the UI panels drawn over it.
+ * records the 3D view alone, without the UI panels drawn over it, and scales it to the frame
+ * size the recording opened with when the view is resized.
  *
  * @param v         Viewer created by init_window() or init_window_sim().
  * @param out_path  Output MP4 path.
