@@ -32,5 +32,15 @@ foreach(test_name ${ALL_TESTS})
   gtest_discover_tests(${test_name} DISCOVERY_TIMEOUT 60 PROPERTIES RUN_SERIAL TRUE)
 endforeach()
 
+# The camera publisher only exists when the wrapper was configured with ROS, so its test
+# follows the target rather than the list above.
+if(TARGET mj_kdl_wrapper::camera_ros)
+  add_executable(test_camera_ros test_camera_ros.cpp)
+  target_link_libraries(test_camera_ros PRIVATE mj_kdl_wrapper::camera_ros GTest::gtest)
+  target_compile_options(test_camera_ros PRIVATE -Wall -Wextra)
+  gtest_discover_tests(test_camera_ros DISCOVERY_TIMEOUT 60 PROPERTIES RUN_SERIAL TRUE)
+  list(APPEND ALL_TESTS test_camera_ros)
+endif()
+
 install(TARGETS ${ALL_TESTS}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
