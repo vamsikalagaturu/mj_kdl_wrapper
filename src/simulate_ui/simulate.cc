@@ -1866,6 +1866,14 @@ void UiLayout(mjuiState* state) {
   rect[3].width = mjMAX(0, rect[0].width - rect[1].width - rect[2].width);
   rect[3].bottom = 0;
   rect[3].height = rect[0].height;
+
+  // A recording of the scene wants the window, not the strip left between the panels. While
+  // one runs the 3D view spans the window and the panels draw over it: the scene is rendered
+  // once, as before, and what the recording reads back is all of it. Everything that maps a
+  // click into the scene reads this same rect, so picking follows the view.
+  if (sim->wrapper_capture_window.load()) {
+    rect[3] = rect[0];
+  }
 }
 
 // modify UI
@@ -2999,6 +3007,15 @@ void Simulate::Render() {
     UiModify(&this->ui1, &this->uistate, &this->platform_ui->mjr_context());
   }
 
+  // The layout callback only runs on resize, but starting or stopping a recording changes
+  // what rect[3] should span. Re-run it when the flag has flipped, so the first captured
+  // frame is already the whole window.
+  const bool capturing = this->wrapper_capture_window.load();
+  if (capturing != this->wrapper_capture_laid_out_) {
+    this->wrapper_capture_laid_out_ = capturing;
+    UiLayout(&this->uistate);
+  }
+
   // get 3D rectangle and reduced for profiler
   mjrRect rect = this->uistate.rect[3];
   mjrRect smallrect = rect;
@@ -3139,6 +3156,24 @@ void Simulate::Render() {
   // render scene
   mjr_render(rect, &this->scn, &this->platform_ui->mjr_context());
 
+  // Read the scene straight off the buffer it was just rendered into, before anything is
+  // drawn over it: one render, and the frame is the whole view including what the panels
+  // will cover.
+  if (this->wrapper_capture_window.load() && this->wrapper_window_frame && rect.width > 0 &&
+      rect.height > 0 && std::chrono::steady_clock::now() >= this->wrapper_capture_next_) {
+    const long long interval = this->wrapper_capture_interval_ns.load();
+    this->wrapper_capture_next_ =
+        std::chrono::steady_clock::now() + std::chrono::nanoseconds(mjMAX(0, interval));
+    mjrContext& con = this->platform_ui->mjr_context();
+    wrapper_window_rgb_.resize(static_cast<std::size_t>(3) * rect.width * rect.height);
+    mjr_readPixels(wrapper_window_rgb_.data(), nullptr, rect, &con);
+    if (const int gl_error = mjr_getError()) {  // otherwise a bad frame is written silently
+      std::fprintf(stderr, "[mj_kdl] recording: OpenGL error %d\n", gl_error);
+    }
+    // Bottom-up, as MuJoCo fills it: the encoder's filter chain turns it over.
+    this->wrapper_window_frame(wrapper_window_rgb_.data(), rect.width, rect.height);
+  }
+
   // show last loading error
   if (this->load_error[0]) {
     mjr_overlay(mjFONT_NORMAL, mjGRID_BOTTOMLEFT, rect, this->load_error, 0,
@@ -3221,53 +3256,6 @@ void Simulate::Render() {
   // show sensor
   if (this->sensor) {
     ShowSensor(this, smallrect);
-  }
-
-  // hand the presented frame to a recording of this same view: it is already rendered, so
-  // reading it back costs a copy where rendering it again costs a frame. rect[3] is the 3D
-  // view alone - a camera recording is of the scene, not of the panels drawn over it.
-  if (this->wrapper_capture_window.load() && this->wrapper_window_frame) {
-    const mjrRect view = rect;
-    if (view.width > 0 && view.height > 0) {
-      mjrContext& con = this->platform_ui->mjr_context();
-      int w = view.width;
-      int h = view.height;
-      // Blit the view into the offscreen buffer at the size the recording wants and read that
-      // instead: the GPU does the scaling, and the copy carries only the pixels that are kept.
-      // The offscreen buffer is the model's (visual global offwidth/offheight); when it cannot
-      // hold the target, read the view as it is and let the encoder scale.
-      const int want_w = this->wrapper_capture_width.load();
-      const int want_h = this->wrapper_capture_height.load();
-      mjrRect source = view;
-      bool downscale = want_w > 0 && want_h > 0 && want_w < view.width && want_h < view.height;
-      if (downscale) {
-        // The offscreen buffer is sized by the model (visual/global offwidth, offheight), and a
-        // context may not have one at all, so ask for it and check what was given.
-        mjr_setBuffer(mjFB_OFFSCREEN, &con);
-        const mjrRect offscreen = mjr_maxViewport(&con);
-        downscale = con.currentBuffer == mjFB_OFFSCREEN &&
-                    offscreen.width >= want_w && offscreen.height >= want_h;
-        if (downscale) {
-          const mjrRect target = {0, 0, want_w, want_h};
-          mjr_blitBuffer(view, target, 1, 0, &con);  // colour only; depth is not recorded
-          source = target;
-          w = want_w;
-          h = want_h;
-        } else {
-          mjr_setBuffer(mjFB_WINDOW, &con);
-        }
-      }
-      wrapper_window_rgb_.resize(static_cast<std::size_t>(3) * w * h);
-      mjr_readPixels(wrapper_window_rgb_.data(), nullptr, source, &con);
-      if (downscale) {
-        mjr_setBuffer(mjFB_WINDOW, &con);  // the window is what the swap presents
-      }
-      if (const int gl_error = mjr_getError()) {  // otherwise a bad frame is written silently
-        std::fprintf(stderr, "[mj_kdl] recording: OpenGL error %d\n", gl_error);
-      }
-      // Bottom-up, as MuJoCo fills it: the encoder's filter chain turns it over.
-      this->wrapper_window_frame(wrapper_window_rgb_.data(), w, h);
-    }
   }
 
   // take screenshot, save to file

@@ -2086,9 +2086,12 @@ static bool
     ss->window_path    = out_path;
     ss->window_next    = std::chrono::steady_clock::now();
     ss->window_capture = true;
-    /* Ask the render thread to scale on the GPU before the frame is read back. */
+    /* Ask the render thread to scale on the GPU before the frame is read back, and to read
+       one back only as often as the recording keeps them. */
     ss->sim->wrapper_capture_width.store(ss->window_out_w);
     ss->sim->wrapper_capture_height.store(ss->window_out_h);
+    ss->sim->wrapper_capture_interval_ns.store(1000000000LL / ss->window_fps);
+    ss->sim->wrapper_capture_next_ = std::chrono::steady_clock::now();
 
     ss->sim->wrapper_window_frame = [ss](const unsigned char *rgb, int width, int height) {
         const auto now = std::chrono::steady_clock::now();
@@ -2110,30 +2113,40 @@ static bool
                 ss->sim->wrapper_capture_window.store(false);
                 return;
             }
+            /* The stream's frame size is settled now, so ask the render thread for exactly
+               that from here on: a view that changes size is then scaled into the frame
+               rather than left sitting in a corner of it. */
+            ss->sim->wrapper_capture_width.store(ss->window_sink.width);
+            ss->sim->wrapper_capture_height.store(ss->window_sink.height);
             LOG_INFO(
               "window recording: " << width << "x" << height << " -> " << ss->window_out_w << "x"
                                    << ss->window_out_h << " @ " << ss->window_fps << " fps -> "
                                    << ss->window_path
             );
         }
-        /* A window resized mid-recording cannot change the stream's frame size: show what fits
-           and leave the rest black, rather than ending the recording. */
-        const std::size_t frame_bytes = static_cast<std::size_t>(ss->window_sink.width)
-                                        * ss->window_sink.height * kRgbBytesPerPixel;
-        if (width == ss->window_sink.width && height == ss->window_sink.height) {
+        /* The stream's frame size is fixed when it opens, so a view that has been resized is
+           scaled into it. The GPU does this when the offscreen buffer is big enough to blit
+           through; when it is not, the frame is scaled here rather than padded with black. */
+        const int         out_w       = ss->window_sink.width;
+        const int         out_h       = ss->window_sink.height;
+        const std::size_t frame_bytes = static_cast<std::size_t>(out_w) * out_h * kRgbBytesPerPixel;
+        if (width == out_w && height == out_h) {
             sink_write(&ss->window_sink, rgb, frame_bytes);
             return;
         }
-        std::vector<std::uint8_t> fitted(frame_bytes, 0);
-        const int                 rows = std::min(height, ss->window_sink.height);
-        const int                 cols = std::min(width, ss->window_sink.width) * kRgbBytesPerPixel;
-        for (int row = 0; row < rows; ++row) {
-            std::memcpy(
-              fitted.data()
-                + static_cast<std::size_t>(row) * ss->window_sink.width * kRgbBytesPerPixel,
-              rgb + static_cast<std::size_t>(row) * width * kRgbBytesPerPixel,
-              static_cast<std::size_t>(cols)
-            );
+        std::vector<std::uint8_t> fitted(frame_bytes);
+        for (int row = 0; row < out_h; ++row) {
+            const unsigned char *source =
+              rgb + static_cast<std::size_t>(row * height / out_h) * width * kRgbBytesPerPixel;
+            std::uint8_t *target =
+              fitted.data() + static_cast<std::size_t>(row) * out_w * kRgbBytesPerPixel;
+            for (int col = 0; col < out_w; ++col) {
+                std::memcpy(
+                  target + static_cast<std::size_t>(col) * kRgbBytesPerPixel,
+                  source + static_cast<std::size_t>(col * width / out_w) * kRgbBytesPerPixel,
+                  kRgbBytesPerPixel
+                );
+            }
         }
         sink_write(&ss->window_sink, fitted.data(), fitted.size());
     };
