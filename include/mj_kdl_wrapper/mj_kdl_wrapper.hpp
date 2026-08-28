@@ -239,7 +239,8 @@ struct SiteSpec
 struct CameraSpec
 {
     std::string name;
-    double      pos[3];                           // world-frame position [m]
+    std::string body;                             // anchor body; empty = worldbody
+    double      pos[3];                           // position in the anchor body's frame [m]
     double      quat[4] = { 0.0, 0.0, 0.0, 1.0 }; // orientation [x, y, z, w]
     double      fovy;                             // vertical field of view [degrees]
 };
