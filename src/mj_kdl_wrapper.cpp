@@ -557,7 +557,15 @@ static void add_cameras_to_spec(mjSpec *spec, const std::vector<CameraSpec> &cam
 {
     mjsBody *wb = world_body(spec);
     for (const auto &cs : cameras) {
-        mjsCamera *cam = mjs_addCamera(wb, nullptr);
+        // The asset's own camera wins: it is the one its author placed, and re-adding the
+        // name would fail the compile on a duplicate.
+        if (mjs_findElement(spec, mjOBJ_CAMERA, cs.name.c_str())) continue;
+        mjsBody *anchor = cs.body.empty() ? wb : mjs_findBody(spec, cs.body.c_str());
+        if (!anchor) {
+            LOG_WARN("camera '" << cs.name << "': no body '" << cs.body << "' in the scene");
+            continue;
+        }
+        mjsCamera *cam = mjs_addCamera(anchor, nullptr);
         mjs_setString(mjs_getName(cam->element), cs.name.c_str());
         cam->pos[0] = cs.pos[0];
         cam->pos[1] = cs.pos[1];
