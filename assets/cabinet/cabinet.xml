@@ -98,4 +98,25 @@
       </body>
     </body>
   </worldbody>
+
+  <!-- Drawers are children of root, and MuJoCo's weld filter drops their contacts with
+       root's bay geoms whenever root is not welded to the world (a free-standing cabinet).
+       Explicit pairs bypass that filter so the drawers ride their bays in both cases. -->
+  <contact>
+    <pair geom1="drawer1_contact" geom2="bay1_shelf" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
+    <pair geom1="drawer1_contact" geom2="bay1_wall_l" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
+    <pair geom1="drawer1_contact" geom2="bay1_wall_r" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
+    <pair geom1="drawer1_contact" geom2="bay1_back" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
+    <pair geom1="drawer1_contact" geom2="bay2_shelf" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
+    <pair geom1="drawer2_contact" geom2="bay2_shelf" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
+    <pair geom1="drawer2_contact" geom2="bay2_wall_l" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
+    <pair geom1="drawer2_contact" geom2="bay2_wall_r" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
+    <pair geom1="drawer2_contact" geom2="bay2_back" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
+    <pair geom1="drawer2_contact" geom2="bay3_shelf" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
+    <pair geom1="drawer3_contact" geom2="bay3_shelf" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
+    <pair geom1="drawer3_contact" geom2="bay3_wall_l" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
+    <pair geom1="drawer3_contact" geom2="bay3_wall_r" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
+    <pair geom1="drawer3_contact" geom2="bay3_back" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
+    <pair geom1="drawer3_contact" geom2="top_shelf" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
+  </contact>
 </mujoco>

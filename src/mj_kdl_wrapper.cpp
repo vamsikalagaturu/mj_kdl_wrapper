@@ -481,6 +481,21 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
             if (attached && !obj.name.empty()) {
                 mjs_setString(mjs_getName(attached->element), obj.name.c_str());
             }
+            // A non-fixed MJCF object stands free, exactly like a non-fixed primitive: honor
+            // the flag with a free joint unless the asset already roots one of its own.
+            if (attached && !obj.fixed) {
+                bool has_joint = false;
+                for (mjsElement *el = mjs_firstChild(attached, mjOBJ_JOINT, 0); el;
+                     el = mjs_nextChild(attached, el, 0)) {
+                    has_joint = true;
+                    break;
+                }
+                if (!has_joint) {
+                    mjsJoint *fj = mjs_addJoint(attached, nullptr);
+                    mjs_setString(mjs_getName(fj->element), (obj.name + "_free").c_str());
+                    fj->type = mjJNT_FREE;
+                }
+            }
             continue;
         }
 
