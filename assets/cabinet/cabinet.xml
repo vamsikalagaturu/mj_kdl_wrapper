@@ -2,7 +2,7 @@
   <!--
     Attach-friendly cabinet asset for mj_kdl_wrapper: a single root body so it can be
     added as a SceneObject (mjs_attach). The parent scene provides floor/lights/option.
-    Standalone view (default headlight, no floor): python -m mujoco.viewer --mjcf=cabinet.xml
+    Standalone view (default headlight, no floor): python -m mujoco.viewer with mjcf=cabinet.xml
 
     Source 3D models (STL meshes are the authors' work, redistributed for simulation):
       Cabinet / drawers  -> "Office Desk Organizer - 3 Drawer Storage"
