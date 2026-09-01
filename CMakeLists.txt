@@ -513,6 +513,10 @@ if(BUILD_PYTHON_BINDINGS)
       licenses/Robotiq-2F85-BSD-2-Clause.txt
       DESTINATION mj_kdl_wrapper
     )
+    # Installed, not mapped in by pyproject: a wheel mapping above this package leaks sys.path.
+    install(DIRECTORY assets/
+      DESTINATION mj_kdl_wrapper/assets
+    )
     # libmujoco is intentionally not bundled: the wheel depends on the matching
     # `mujoco` pip package and links its shared library at runtime via the
     # $ORIGIN/../mujoco rpath set above. This avoids shipping a second copy.

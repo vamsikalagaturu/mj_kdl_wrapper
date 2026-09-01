@@ -57,8 +57,6 @@ sdist.include = [
 
 [tool.scikit-build.wheel.packages]
 mj_kdl_wrapper = "python/mj_kdl_wrapper"
-"mj_kdl_wrapper/examples" = "python/examples"
-"mj_kdl_wrapper/assets" = "assets"
 
 [tool.ruff]
 line-length = 100
