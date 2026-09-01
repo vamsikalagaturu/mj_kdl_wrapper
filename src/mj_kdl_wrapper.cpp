@@ -486,7 +486,7 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
             if (attached && !obj.fixed) {
                 bool has_joint = false;
                 for (mjsElement *el = mjs_firstChild(attached, mjOBJ_JOINT, 0); el;
-                     el = mjs_nextChild(attached, el, 0)) {
+                     el             = mjs_nextChild(attached, el, 0)) {
                     has_joint = true;
                     break;
                 }
@@ -2266,6 +2266,32 @@ void add_trace_segment(Viewer *v, const KDL::Vector &a, const KDL::Vector &b, co
     mjv_connector(g, mjGEOM_LINE, /*width=*/3.0, from, to);
 }
 
+void add_overlay_arrow(
+  Viewer            *v,
+  const KDL::Vector &from,
+  const KDL::Vector &dir,
+  double             length,
+  const float        rgba[4]
+)
+{
+    if (!v || !v->_sim_ui) return; // headless / no window
+    KDL::Vector unit = dir;
+    if (unit.Normalize() < 1e-9 || length <= 0.0) return; // nothing to point at
+    auto                       *ss = static_cast<SimUiState *>(v->_sim_ui);
+    std::lock_guard<std::mutex> lk(ss->user_scn_mtx);
+    if (ss->user_scn.ngeom >= ss->user_scn.maxgeom) return;
+    mjvGeom *g = &ss->user_scn.geoms[ss->user_scn.ngeom++];
+
+    static constexpr float kDefault[4] = { 1.0f, 0.5f, 0.1f, 1.0f }; // warm orange
+    const float           *col         = rgba ? rgba : kDefault;
+    mjv_initGeom(g, mjGEOM_ARROW, /*size=*/nullptr, /*pos=*/nullptr, /*mat=*/nullptr, col);
+
+    const KDL::Vector tip  = from + unit * length;
+    const mjtNum      a[3] = { from.x(), from.y(), from.z() };
+    const mjtNum      b[3] = { tip.x(), tip.y(), tip.z() };
+    mjv_connector(g, mjGEOM_ARROW, /*width=*/0.02, a, b);
+}
+
 bool is_running(const Viewer *v)
 {
     if (!v) return false;
@@ -2643,6 +2669,21 @@ static bool render_bottom_up(VideoRecorder *vr, mjModel *model, mjData *data, st
     eglMakeCurrent(impl->egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, impl->egl_ctx);
 
     mjv_updateScene(model, data, &vr->opt, nullptr, &vr->cam, mjCAT_ALL, &impl->scn);
+
+    // The overlay geoms a window shows live on the viewer's user scene, and this offscreen
+    // scene is rebuilt from the model every frame -- so append them the same way the UI thread
+    // does (simulate.cc), or a recording loses every trace segment and every arrow.
+    if (g_viewer && g_viewer->_sim_ui) {
+        auto                       *ss = static_cast<SimUiState *>(g_viewer->_sim_ui);
+        std::lock_guard<std::mutex> lk(ss->user_scn_mtx);
+        const int ngeom = std::min(ss->user_scn.ngeom, impl->scn.maxgeom - impl->scn.ngeom);
+        if (ngeom > 0) {
+            std::memcpy(
+              impl->scn.geoms + impl->scn.ngeom, ss->user_scn.geoms, ngeom * sizeof(mjvGeom)
+            );
+            impl->scn.ngeom += ngeom;
+        }
+    }
 
     mjrRect vp = { 0, 0, impl->width, impl->height };
     mjr_render(vp, &impl->scn, &impl->con);

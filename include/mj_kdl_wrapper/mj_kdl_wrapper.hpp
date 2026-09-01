@@ -693,6 +693,28 @@ void add_trace_segment(
 );
 
 /**
+ * @ingroup grp_viewer
+ * Append a world-space arrow to the viewer's user scene. Thread-safe.
+ * Shares the user scene with add_trace_segment(), so clear_trace() clears both
+ * and one call per frame is enough for either.
+ * dir need not be normalised; a zero-length dir draws nothing.
+ * Silently drops the arrow once the user-scene geom buffer is full.
+ * No-op when v is not backed by an init_window_sim() window (e.g. headless).
+ * @param[in,out] v       Viewer initialised by init_window_sim().
+ * @param[in]     from    Arrow tail (world frame) [m].
+ * @param[in]     dir     Direction the arrow points; normalised internally.
+ * @param[in]     length  Arrow length [m].
+ * @param[in]     rgba    Optional [r, g, b, a] colour; nullptr -> warm orange.
+ */
+void add_overlay_arrow(
+  Viewer            *v,
+  const KDL::Vector &from,
+  const KDL::Vector &dir,
+  double             length,
+  const float        rgba[4] = nullptr
+);
+
+/**
  * @ingroup grp_robot
  * Zero all Robot fields.  Does not free model or data; call destroy_scene() for that.
  * @param[in,out] r  Robot to tear down.

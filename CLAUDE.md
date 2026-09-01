@@ -47,9 +47,9 @@ pytest -q python/tests
 ```
 
 - `python/mj_kdl_wrapper/` -- the bindings package (`menagerie.py`, `fetch_examples.py`, type stubs).
-- `python/examples/ex_*.py` -- Python counterparts of the C++ `src/examples/ex_*.cpp`. They run headless by default and accept `--gui`.
+- `python/mj_kdl_wrapper/examples/ex_*.py` -- Python counterparts of the C++ `src/examples/ex_*.cpp`. They run headless by default and accept `--gui`.
 
-**Packaging (examples + assets ship in the wheel):** `pyproject.toml`'s `tool.scikit-build.wheel.packages` table maps `python/examples` -> `mj_kdl_wrapper/examples` and the repo-root `assets/` -> `mj_kdl_wrapper/assets` into the wheel. The table form is `dest = "source"` (wheel path on the left), and the final path components must match. Two console scripts populate a user's working directory:
+**Packaging (examples + assets ship in the wheel):** the examples live inside the package, so `tool.scikit-build.wheel.packages` maps only `mj_kdl_wrapper` -> `python/mj_kdl_wrapper`. The repo-root `assets/` is installed into the wheel by CMake (`install(DIRECTORY assets/ DESTINATION mj_kdl_wrapper/assets)`), never mapped: a wheel mapping to a directory outside the package makes the editable install add every parent it needs to reach it, and for `assets/` that reached the workspace `src/`, putting every sibling repository on `sys.path`. Two console scripts populate a user's working directory:
 
 - `mj-kdl-fetch-menagerie` (`menagerie:main`) -- clones the MuJoCo Menagerie into cache and copies bundled assets to `~/.cache/mj_kdl_wrapper/assets`.
 - `mj-kdl-fetch-examples` (`fetch_examples:main`) -- copies the bundled `examples/` and `assets/` out as sibling dirs (default `./mj_kdl_wrapper_examples`).
