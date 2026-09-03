@@ -2622,9 +2622,6 @@ bool init_offscreen(VideoRecorder *vr, mjModel *model, int width, int height)
     mjv_defaultScene(&impl->scn);
     mjr_defaultContext(&impl->con);
     mjv_makeScene(model, &impl->scn, 4000);
-    // Shadows cause severe acne in EGL offscreen rendering due to shadow-map
-    // precision limits with no antialiasing; disabled by default.
-    impl->scn.flags[mjRND_SHADOW] = 0;
     mjr_makeContext(model, &impl->con, mjFONTSCALE_150);
     mjr_setBuffer(mjFB_OFFSCREEN, &impl->con);
     mjr_resizeOffscreen(width, height, &impl->con);
