@@ -1064,6 +1064,13 @@ bool get_joint_position(const mjModel *model, mjData *data, const char *name, do
 
 /**
  * @ingroup grp_scene
+ * Read a joint's velocity (qvel) in physical units (rad/s or m/s), by joint name.
+ * Resolves the name exactly as get_joint_position() does.
+ */
+bool get_joint_velocity(const mjModel *model, mjData *data, const char *name, double *out);
+
+/**
+ * @ingroup grp_scene
  * Return the names of all cameras in a compiled model.
  * Includes cameras from robot MJCFs (e.g. the Kinova wrist camera) and any
  * cameras added via SceneSpec::cameras.
