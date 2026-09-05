@@ -1267,25 +1267,41 @@ bool get_body_frame(const mjModel *model, mjData *data, const char *body_name, K
     return true;
 }
 
+// A joint by name, or the transmission joint of an actuator by that name; -1 when neither.
+static int resolve_joint_id(const mjModel *model, const char *name)
+{
+    int jid = cached_name2id(model, mjOBJ_JOINT, name);
+    if (jid >= 0) return jid;
+    const int aid = cached_name2id(model, mjOBJ_ACTUATOR, name);
+    if (aid < 0) return -1;
+    if (model->actuator_trntype[aid] == mjTRN_JOINT) {
+        jid = model->actuator_trnid[2 * aid];
+    } else if (model->actuator_trntype[aid] == mjTRN_TENDON) {
+        const int tid = model->actuator_trnid[2 * aid];
+        jid           = model->wrap_objid[model->tendon_adr[tid]];
+    }
+    return jid;
+}
+
 bool get_joint_position(const mjModel *model, mjData *data, const char *name, double *out)
 {
     if (!model || !data || !name || !out) return false;
 
-    int jid = cached_name2id(model, mjOBJ_JOINT, name);
-    if (jid < 0) {
-        // Not a joint name: accept an actuator name and resolve its transmission joint.
-        const int aid = cached_name2id(model, mjOBJ_ACTUATOR, name);
-        if (aid < 0) return false;
-        if (model->actuator_trntype[aid] == mjTRN_JOINT) {
-            jid = model->actuator_trnid[2 * aid];
-        } else if (model->actuator_trntype[aid] == mjTRN_TENDON) {
-            const int tid = model->actuator_trnid[2 * aid];
-            jid           = model->wrap_objid[model->tendon_adr[tid]];
-        }
-        if (jid < 0) return false;
-    }
+    const int jid = resolve_joint_id(model, name);
+    if (jid < 0) return false;
 
     *out = data->qpos[model->jnt_qposadr[jid]];
+    return true;
+}
+
+bool get_joint_velocity(const mjModel *model, mjData *data, const char *name, double *out)
+{
+    if (!model || !data || !name || !out) return false;
+
+    const int jid = resolve_joint_id(model, name);
+    if (jid < 0) return false;
+
+    *out = data->qvel[model->jnt_dofadr[jid]];
     return true;
 }
 
