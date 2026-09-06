@@ -1771,7 +1771,26 @@ static mjtNum clamp_ctrlrange(const mjModel *m, int ci, mjtNum u)
     return u;
 }
 
-void update(Robot *r)
+void read_measurements(Robot *r)
+{
+    if (!r || !r->model || !r->data) return;
+
+    const mjData *d = r->data;
+
+    for (int i = 0; i < r->n_joints; ++i) {
+        r->jnt_pos_msr[i] = d->qpos[r->kdl_to_mj_qpos[i]];
+        r->jnt_vel_msr[i] = d->qvel[r->kdl_to_mj_dof[i]];
+        r->jnt_trq_msr[i] = d->qfrc_actuator[r->kdl_to_mj_dof[i]];
+    }
+
+    for (auto &sensor : r->ft_sensors) {
+        const double *f = d->sensordata + sensor.force_adr;
+        const double *t = d->sensordata + sensor.torque_adr;
+        sensor.wrench   = KDL::Wrench(KDL::Vector(f[0], f[1], f[2]), KDL::Vector(t[0], t[1], t[2]));
+    }
+}
+
+void apply_commands(Robot *r)
 {
     if (!r || !r->model || !r->data) return;
 
@@ -1782,10 +1801,6 @@ void update(Robot *r)
         const int qpos_id = r->kdl_to_mj_qpos[i];
         const int dof_id  = r->kdl_to_mj_dof[i];
         const int ctrl_id = r->kdl_to_mj_ctrl[i];
-
-        r->jnt_pos_msr[i] = d->qpos[qpos_id];
-        r->jnt_vel_msr[i] = d->qvel[dof_id];
-        r->jnt_trq_msr[i] = d->qfrc_actuator[dof_id];
 
         switch (r->ctrl_mode) {
         case CtrlMode::POSITION:
@@ -1807,11 +1822,177 @@ void update(Robot *r)
             break;
         }
     }
+}
 
-    for (auto &sensor : r->ft_sensors) {
-        const double *f = d->sensordata + sensor.force_adr;
-        const double *t = d->sensordata + sensor.torque_adr;
-        sensor.wrench   = KDL::Wrench(KDL::Vector(f[0], f[1], f[2]), KDL::Vector(t[0], t[1], t[2]));
+void update(Robot *r)
+{
+    read_measurements(r);
+    apply_commands(r);
+}
+
+bool init_scene_state(SceneState *s, const mjModel *model)
+{
+    if (!s || !model) {
+        LOG_ERROR("init_scene_state: null scene state or model");
+        return false;
+    }
+    s->model = model;
+    s->joints.clear();
+    s->free_bodies.clear();
+    s->wrenches.clear();
+    s->actuators.clear();
+    return true;
+}
+
+// The free joint a body owns, or -1 when it owns none.
+static int free_joint_of_body(const mjModel *model, int bid)
+{
+    const int start = model->body_jntadr[bid];
+    const int count = model->body_jntnum[bid];
+    for (int k = 0; k < count; ++k) {
+        if (model->jnt_type[start + k] == mjJNT_FREE) return start + k;
+    }
+    return -1;
+}
+
+SceneJointSlot *bind_scene_joint(SceneState *s, const char *joint_name)
+{
+    if (!s || !s->model || !joint_name) {
+        LOG_ERROR("bind_scene_joint: null scene state or name");
+        return nullptr;
+    }
+    const int jid = mj_name2id(s->model, mjOBJ_JOINT, joint_name);
+    if (jid < 0) {
+        LOG_ERROR("bind_scene_joint: no joint named '" << joint_name << "'");
+        return nullptr;
+    }
+    const int type = s->model->jnt_type[jid];
+    if (type == mjJNT_FREE || type == mjJNT_BALL) {
+        LOG_ERROR("bind_scene_joint: joint '" << joint_name << "' is not a scalar joint");
+        return nullptr;
+    }
+    for (const auto &slot : s->joints) {
+        if (slot.name == joint_name) {
+            LOG_ERROR("bind_scene_joint: joint '" << joint_name << "' is already bound");
+            return nullptr;
+        }
+    }
+    s->joints.push_back(SceneJointSlot{
+      joint_name, s->model->jnt_qposadr[jid], s->model->jnt_dofadr[jid], 0.0, 0.0, 0 });
+    return &s->joints.back();
+}
+
+SceneFreeBodySlot *bind_scene_free_body(SceneState *s, const char *body_name)
+{
+    if (!s || !s->model || !body_name) {
+        LOG_ERROR("bind_scene_free_body: null scene state or name");
+        return nullptr;
+    }
+    const int bid = mj_name2id(s->model, mjOBJ_BODY, body_name);
+    if (bid < 0) {
+        LOG_ERROR("bind_scene_free_body: no body named '" << body_name << "'");
+        return nullptr;
+    }
+    const int jid = free_joint_of_body(s->model, bid);
+    if (jid < 0) {
+        LOG_ERROR("bind_scene_free_body: body '" << body_name << "' owns no free joint");
+        return nullptr;
+    }
+    for (const auto &slot : s->free_bodies) {
+        if (slot.name == body_name) {
+            LOG_ERROR("bind_scene_free_body: body '" << body_name << "' is already bound");
+            return nullptr;
+        }
+    }
+    s->free_bodies.push_back(SceneFreeBodySlot{
+      body_name, s->model->jnt_qposadr[jid], KDL::Frame::Identity(), 0 });
+    return &s->free_bodies.back();
+}
+
+SceneWrenchSlot *bind_scene_wrench(SceneState *s, const char *body_name)
+{
+    if (!s || !s->model || !body_name) {
+        LOG_ERROR("bind_scene_wrench: null scene state or name");
+        return nullptr;
+    }
+    const int bid = mj_name2id(s->model, mjOBJ_BODY, body_name);
+    if (bid < 0) {
+        LOG_ERROR("bind_scene_wrench: no body named '" << body_name << "'");
+        return nullptr;
+    }
+    for (const auto &slot : s->wrenches) {
+        if (slot.name == body_name) {
+            LOG_ERROR("bind_scene_wrench: body '" << body_name << "' is already bound");
+            return nullptr;
+        }
+    }
+    s->wrenches.push_back(SceneWrenchSlot{ body_name, bid, KDL::Wrench::Zero() });
+    return &s->wrenches.back();
+}
+
+SceneActuatorSlot *bind_scene_actuator(SceneState *s, const char *name)
+{
+    if (!s || !s->model || !name) {
+        LOG_ERROR("bind_scene_actuator: null scene state or name");
+        return nullptr;
+    }
+    const mjModel *m   = s->model;
+    int            aid = mj_name2id(m, mjOBJ_ACTUATOR, name);
+    if (aid < 0) {
+        // A model commands the joint it means; the actuator driving it carries its own name.
+        const int jid = mj_name2id(m, mjOBJ_JOINT, name);
+        for (int i = 0; aid < 0 && jid >= 0 && i < m->nu; ++i) {
+            if (m->actuator_trntype[i] == mjTRN_JOINT && m->actuator_trnid[2 * i] == jid) aid = i;
+        }
+    }
+    if (aid < 0) {
+        LOG_ERROR("bind_scene_actuator: nothing actuates '" << name << "'");
+        return nullptr;
+    }
+    for (const auto &slot : s->actuators) {
+        if (slot.name == name) {
+            LOG_ERROR("bind_scene_actuator: '" << name << "' is already bound");
+            return nullptr;
+        }
+    }
+    s->actuators.push_back(SceneActuatorSlot{ name, aid, 0.0 });
+    return &s->actuators.back();
+}
+
+void read_scene_state(SceneState *s, const mjData *data)
+{
+    if (!s || !data) return;
+
+    for (auto &slot : s->joints) {
+        slot.position = data->qpos[slot.qpos_adr];
+        slot.velocity = data->qvel[slot.dof_adr];
+        ++slot.seq;
+    }
+    for (auto &slot : s->free_bodies) {
+        const double *p = data->qpos + slot.qpos_adr;
+        // MuJoCo stores the freejoint quaternion as [w x y z]; KDL takes [x y z w].
+        slot.pose = KDL::Frame(
+          KDL::Rotation::Quaternion(p[4], p[5], p[6], p[3]), KDL::Vector(p[0], p[1], p[2])
+        );
+        ++slot.seq;
+    }
+}
+
+void apply_scene_state(SceneState *s, mjData *data)
+{
+    if (!s || !data) return;
+
+    for (const auto &slot : s->wrenches) {
+        double *target = data->xfrc_applied + 6 * slot.body_id;
+        target[0]      = slot.wrench.force.x();
+        target[1]      = slot.wrench.force.y();
+        target[2]      = slot.wrench.force.z();
+        target[3]      = slot.wrench.torque.x();
+        target[4]      = slot.wrench.torque.y();
+        target[5]      = slot.wrench.torque.z();
+    }
+    for (const auto &slot : s->actuators) {
+        data->ctrl[slot.ctrl_id] = clamp_ctrlrange(s->model, slot.ctrl_id, slot.command);
     }
 }
 
