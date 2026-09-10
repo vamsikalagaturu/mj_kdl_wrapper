@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <functional>
 #include <sstream>
 #include <string>
@@ -475,6 +476,68 @@ struct Env
     mjData              *data  = nullptr;
     std::vector<Robot *> robots;
     ResetHook            on_reset;
+};
+
+/**
+ * @ingroup grp_scene
+ * A joint the world model reads that no Robot samples: a gripper mimic, an object hinge.
+ */
+struct SceneJointSlot
+{
+    std::string   name;
+    int           qpos_adr = -1;
+    int           dof_adr  = -1;
+    double        position = 0.0;
+    double        velocity = 0.0;
+    std::uint64_t seq      = 0;
+};
+
+/**
+ * @ingroup grp_scene
+ * A free body: its freejoint's qpos is the body pose in the world frame.
+ */
+struct SceneFreeBodySlot
+{
+    std::string   name;
+    int           qpos_adr = -1;
+    KDL::Frame    pose;
+    std::uint64_t seq = 0;
+};
+
+/**
+ * @ingroup grp_scene
+ * A body a controller pushes: the wrench is applied as xfrc_applied at the body origin.
+ */
+struct SceneWrenchSlot
+{
+    std::string name;
+    int         body_id = -1;
+    KDL::Wrench wrench;
+};
+
+/**
+ * @ingroup grp_scene
+ * An actuator a controller commands directly, outside the KDL chain: a gripper drive.
+ */
+struct SceneActuatorSlot
+{
+    std::string name;
+    int         ctrl_id = -1;
+    double      command = 0.0;
+};
+
+/**
+ * @ingroup grp_scene
+ * Every non-robot primitive of the scene, resolved once, read and applied per cycle.
+ * Deques: a pointer to a slot stays valid as more are bound.
+ */
+struct SceneState
+{
+    const mjModel                *model = nullptr;
+    std::deque<SceneJointSlot>    joints;
+    std::deque<SceneFreeBodySlot> free_bodies;
+    std::deque<SceneWrenchSlot>   wrenches;
+    std::deque<SceneActuatorSlot> actuators;
 };
 
 /**
@@ -982,6 +1045,72 @@ bool render(Viewer *v, mjModel *m, mjData *d);
  * Joints with kdl_to_mj_ctrl[i] == -1 are skipped for ctrl writes.
  */
 void update(Robot *r);
+
+/**
+ * @ingroup grp_robot
+ * The read half of update(): qpos/qvel/qfrc_actuator -> *_msr, and the FT sensor samples.
+ */
+void read_measurements(Robot *r);
+
+/**
+ * @ingroup grp_robot
+ * The apply half of update(): *_cmd -> data->ctrl / data->qfrc_applied per CtrlMode.
+ */
+void apply_commands(Robot *r);
+
+/**
+ * @ingroup grp_scene
+ * Bind a SceneState to a compiled model. Clears any slots it already holds.
+ * @return true on success; false when model is null.
+ */
+bool init_scene_state(SceneState *s, const mjModel *model);
+
+/**
+ * @ingroup grp_scene
+ * Resolve a scalar joint by name and keep a slot for it.
+ * Rejects an unknown name, a free or ball joint, and a name already bound.
+ * @return the slot, or nullptr on failure. The address stays valid across further binds.
+ */
+SceneJointSlot *bind_scene_joint(SceneState *s, const char *joint_name);
+
+/**
+ * @ingroup grp_scene
+ * Resolve a free-floating body by name and keep a slot for its pose.
+ * Rejects an unknown name, a body that owns no mjJNT_FREE joint, and a name already bound.
+ * @return the slot, or nullptr on failure. The address stays valid across further binds.
+ */
+SceneFreeBodySlot *bind_scene_free_body(SceneState *s, const char *body_name);
+
+/**
+ * @ingroup grp_scene
+ * Resolve a body by name and keep a slot for the wrench applied to it.
+ * Rejects an unknown name and a name already bound.
+ * @return the slot, or nullptr on failure. The address stays valid across further binds.
+ */
+SceneWrenchSlot *bind_scene_wrench(SceneState *s, const char *body_name);
+
+/**
+ * @ingroup grp_scene
+ * Resolve the actuator named, or the one driving the joint of that name, and keep a slot for
+ * its command. Rejects a name that reaches no actuator, and a name already bound.
+ * @return the slot, or nullptr on failure. The address stays valid across further binds.
+ */
+SceneActuatorSlot *bind_scene_actuator(SceneState *s, const char *name);
+
+/**
+ * @ingroup grp_scene
+ * Sample every bound slot straight out of qpos/qvel and bump its seq.
+ * Reads the integrated state, not the derived body poses, so nothing lags a step behind.
+ */
+void read_scene_state(SceneState *s, const mjData *data);
+
+/**
+ * @ingroup grp_scene
+ * Write every bound command slot out: each wrench into xfrc_applied, zeros included (the field
+ * persists across steps, so a slot left alone would keep pushing after its source stopped), and
+ * each actuator command into ctrl.
+ */
+void apply_scene_state(SceneState *s, mjData *data);
 
 /**
  * @ingroup grp_robot

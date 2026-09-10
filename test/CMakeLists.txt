@@ -21,6 +21,7 @@ set(ALL_TESTS
   test_mjcf_trq_ctrl
   test_mjcf_ft_sensor
   test_mjcf_pick
+  test_scene_state
 )
 
 foreach(test_name ${ALL_TESTS})
