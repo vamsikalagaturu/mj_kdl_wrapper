@@ -590,6 +590,44 @@ static void add_cameras_to_spec(mjSpec *spec, const std::vector<CameraSpec> &cam
     }
 }
 
+static void add_site_to_spec(mjSpec *spec, mjsBody *body, const SiteSpec &ss)
+{
+    // The asset's own site wins: it is the one its author placed, and re-adding the
+    // name would fail the compile on a duplicate.
+    if (mjs_findElement(spec, mjOBJ_SITE, ss.name.c_str())) return;
+
+    mjsSite *site = mjs_addSite(body, nullptr);
+    mjs_setString(mjs_getName(site->element), ss.name.c_str());
+    site->type    = mjGEOM_SPHERE;
+    site->size[0] = kFrameSiteSize;
+    site->size[1] = kFrameSiteSize;
+    site->size[2] = kFrameSiteSize;
+    site->group   = kFrameSiteGroup;
+    site->pos[0]  = ss.pos[0];
+    site->pos[1]  = ss.pos[1];
+    site->pos[2]  = ss.pos[2];
+    quat_xyzw_to_mj_quat(ss.quat, site->quat);
+}
+
+// Every pending site whose body has arrived, added now and struck off the list.
+//
+// Sites cannot all wait until the end: a site marks a frame the scene states, and a robot may
+// have to bolt to one -- an arm to the `left_arm_attachment` frame on the platform's base_link.
+// An attach target has to exist before the attach, which is the same reason objects go in ahead
+// of robots. What no body carries yet stays pending for the next round.
+static void add_ready_sites(mjSpec *spec, std::vector<SiteSpec> &pending)
+{
+    for (auto it = pending.begin(); it != pending.end();) {
+        mjsBody *body = mjs_findBody(spec, it->body.c_str());
+        if (!body) {
+            ++it;
+            continue;
+        }
+        add_site_to_spec(spec, body, *it);
+        it = pending.erase(it);
+    }
+}
+
 static void add_sites_to_spec(mjSpec *spec, const std::vector<SiteSpec> &sites)
 {
     for (const auto &ss : sites) {
@@ -598,21 +636,7 @@ static void add_sites_to_spec(mjSpec *spec, const std::vector<SiteSpec> &sites)
             LOG_WARN("site '" << ss.name << "': no body '" << ss.body << "' in the scene");
             continue;
         }
-        // The asset's own site wins: it is the one its author placed, and re-adding the
-        // name would fail the compile on a duplicate.
-        if (mjs_findElement(spec, mjOBJ_SITE, ss.name.c_str())) continue;
-
-        mjsSite *site = mjs_addSite(body, nullptr);
-        mjs_setString(mjs_getName(site->element), ss.name.c_str());
-        site->type    = mjGEOM_SPHERE;
-        site->size[0] = kFrameSiteSize;
-        site->size[1] = kFrameSiteSize;
-        site->size[2] = kFrameSiteSize;
-        site->group   = kFrameSiteGroup;
-        site->pos[0]  = ss.pos[0];
-        site->pos[1]  = ss.pos[1];
-        site->pos[2]  = ss.pos[2];
-        quat_xyzw_to_mj_quat(ss.quat, site->quat);
+        add_site_to_spec(spec, body, ss);
     }
 }
 
@@ -1050,6 +1074,10 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     // another object must appear after its parent in SceneSpec::objects.
     if (!sc->objects.empty()) add_objects_to_spec(scene.get(), sc->objects);
 
+    // Sites land as their bodies arrive, so a later attach can name one -- see add_ready_sites.
+    std::vector<SiteSpec> pending_sites = sc->sites;
+    add_ready_sites(scene.get(), pending_sites);
+
     bool first_arm      = true;
     char err[kMjErrBuf] = {};
     for (int ai = 0; ai < (int)sc->robots.size(); ++ai) {
@@ -1089,6 +1117,7 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
             LOG_ERROR("attach failed for arm " << ai);
             return false;
         }
+        add_ready_sites(scene.get(), pending_sites);
         // arm (deep-copied into scene) is freed by MjSpecPtr at scope exit.
     }
 
@@ -1099,8 +1128,9 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     }
 
     if (!sc->cameras.empty()) add_cameras_to_spec(scene.get(), sc->cameras);
-    // Last: a site may mark a frame on any body the robots and objects brought in.
-    if (!sc->sites.empty()) add_sites_to_spec(scene.get(), sc->sites);
+    // Whatever is still pending: a site whose body no robot or object ever brought in, reported
+    // here rather than dropped in silence.
+    if (!pending_sites.empty()) add_sites_to_spec(scene.get(), pending_sites);
     // compile_and_make_data takes ownership of the raw spec and always deletes it.
     return compile_and_make_data(scene.release(), out_model, out_data);
 }
