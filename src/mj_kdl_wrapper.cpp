@@ -31,6 +31,7 @@
 #include <cstdio>
 #include <csignal>
 #include <cstring>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -480,6 +481,21 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
             // root body name. Other elements keep the obj.name + "_" prefix.
             if (attached && !obj.name.empty()) {
                 mjs_setString(mjs_getName(attached->element), obj.name.c_str());
+            }
+            // The scene's colour wins over the asset's: every geom under the root takes it.
+            if (attached && obj.has_rgba) {
+                std::function<void(mjsBody *)> recolour = [&](mjsBody *body) {
+                    for (mjsElement *el = mjs_firstChild(body, mjOBJ_GEOM, 0); el;
+                         el             = mjs_nextChild(body, el, 0)) {
+                        mjsGeom *g = mjs_asGeom(el);
+                        for (int k = 0; k < 4; ++k) g->rgba[k] = obj.rgba[k];
+                    }
+                    for (mjsElement *el = mjs_firstChild(body, mjOBJ_BODY, 0); el;
+                         el             = mjs_nextChild(body, el, 0)) {
+                        recolour(mjs_asBody(el));
+                    }
+                };
+                recolour(attached);
             }
             // A non-fixed MJCF object stands free, exactly like a non-fixed primitive: honor
             // the flag with a free joint unless the asset already roots one of its own.
@@ -1706,9 +1722,8 @@ void pace_realtime(Viewer *v, const mjModel *m)
     if (wall_per_step > 0.0 && v->_tick_t.time_since_epoch().count() != 0) {
         /* In the clock's own duration, so that the deadline can be carried
          * forward below without a lossy conversion on every step. */
-        const auto period =
-          std::chrono::duration_cast<Clock::duration>(Dur(wall_per_step));
-        const auto next = v->_tick_t + period;
+        const auto period = std::chrono::duration_cast<Clock::duration>(Dur(wall_per_step));
+        const auto next   = v->_tick_t + period;
         if (now < next) {
             std::this_thread::sleep_until(next);
             /* Carry the deadline rather than restarting from the wake time:
@@ -2403,8 +2418,10 @@ static void sim_ui_key_cb(GLFWwindow *w, int key, int scancode, int action, int 
      * A key the caller has claimed stops here and never reaches the UI. */
     if (g_viewer && g_viewer->_sim_ui && key >= 0 && key <= GLFW_KEY_LAST) {
         auto *ss = static_cast<SimUiState *>(g_viewer->_sim_ui);
-        if (action == GLFW_PRESS) ss->keys[key].store(true, std::memory_order_relaxed);
-        else if (action == GLFW_RELEASE) ss->keys[key].store(false, std::memory_order_relaxed);
+        if (action == GLFW_PRESS)
+            ss->keys[key].store(true, std::memory_order_relaxed);
+        else if (action == GLFW_RELEASE)
+            ss->keys[key].store(false, std::memory_order_relaxed);
         if (ss->captured[key].load(std::memory_order_relaxed)) return;
     }
 

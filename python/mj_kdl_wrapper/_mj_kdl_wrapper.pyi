@@ -77,7 +77,8 @@ class RobotSpec:
 
 
 class SceneObject:
-    """MJCF asset or primitive object. Primitive size, rgba, mass, and friction are required."""
+    """MJCF asset or primitive object. Primitive size, rgba, mass, and friction are required;
+    rgba on an asset recolors its geoms."""
     name: str
     mjcf_path: str
     attach_to: AttachTarget

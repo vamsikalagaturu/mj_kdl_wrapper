@@ -194,6 +194,11 @@ enum class Condim : int { Tangential = 3, Torsional = 4, Rolling = 6 };
  * explicitly by the caller. They are arbitrary visual/material/dynamic
  * choices, not neutral identities, so the API refuses to invent placeholder
  * values.
+ *
+ * rgba / has_rgba:
+ *   A primitive's colour, required. On an MJCF asset it is optional: with
+ *   has_rgba set, every geom under the asset's root body takes it, so a scene
+ *   can state the colour an object is drawn in without editing the asset.
  */
 struct SceneObject
 {
@@ -205,7 +210,8 @@ struct SceneObject
     double pos[3]  = { 0.0, 0.0, 0.0 };      // offset in resolved parent frame [m]
     double quat[4] = { 0.0, 0.0, 0.0, 1.0 }; // orientation offset [x, y, z, w]
     float  rgba[4];                          // [r, g, b, a]; required for primitives
-    bool   fixed = false;
+    bool   has_rgba = false;                 // rgba is set; recolours an asset's geoms
+    bool   fixed    = false;
     double mass; // [kg]; required for primitives
     Condim condim = Condim::Tangential;
     double friction[3]; // [slide, spin, roll]; required for primitives
