@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 include(cmake/Versions.cmake)
 
-project(mj_kdl_wrapper VERSION ${MJ_KDL_VERSION} LANGUAGES CXX)
+project(mj_kdl_wrapper VERSION ${MJ_KDL_VERSION} LANGUAGES C CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
