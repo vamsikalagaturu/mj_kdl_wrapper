@@ -1,10 +1,14 @@
 name: build
 
 on:
-  # Branch pushes only; a PR branch raises both events and runs each check twice.
+  # Only main: dev is both a push target and the release PR's head, so it ran twice.
   push:
-    branches: [main, dev]
+    branches: [main]
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
