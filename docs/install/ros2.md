@@ -98,6 +98,8 @@ target_link_libraries(my_node mj_kdl_wrapper::mj_kdl_wrapper)
 # KDL is available too:
 find_package(orocos_kdl REQUIRED)
 target_link_libraries(my_node orocos-kdl)
+# or MuJoCo alone, without KDL, glfw and OpenGL:
+target_link_libraries(my_node mujoco::mujoco)
 ```
 
 ### Build ordering

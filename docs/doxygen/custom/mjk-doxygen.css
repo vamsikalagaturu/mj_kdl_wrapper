@@ -690,9 +690,18 @@ div.nav-sync-icon {
   background: var(--mjk-border) !important;
 }
 
+#nav-tree .selected {
+  background: var(--mjk-selected) !important;
+}
+
+/* The row already carries the highlight; tinting the anchor too stacks a second, denser box
+   around the text. */
+#nav-tree .selected a {
+  background: transparent !important;
+}
+
 #nav-tree .selected,
 #nav-tree .selected a {
-  background: var(--mjk-selected) !important;
   color: var(--mjk-accent-strong) !important;
   text-shadow: none !important;
 }
@@ -702,6 +711,16 @@ div.nav-sync-icon {
   box-sizing: border-box;
 }
 
+/* navtree indents parents with padding-left on top of a 16px width, which the global
+   border-box collapses to a zero-width content area and drops the arrowhead on the label. */
+#nav-tree .arrow {
+  box-sizing: content-box;
+  display: inline-flex;
+  align-items: center;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
 #nav-tree a,
 #nav-tree a:visited {
   color: var(--mjk-text);
@@ -709,6 +728,35 @@ div.nav-sync-icon {
 
 #nav-tree a:hover {
   color: var(--mjk-accent-strong);
+}
+
+/* search.css hardcodes black for the dropdown items and blue for result symbols. */
+a.SelectItem,
+a.SelectItem:focus,
+a.SelectItem:active {
+  color: var(--mjk-text) !important;
+}
+
+a.SelectItem:hover {
+  color: var(--mjk-panel) !important;
+  background-color: var(--mjk-accent) !important;
+}
+
+span.SelectionMark {
+  color: var(--mjk-accent) !important;
+}
+
+.SRSymbol,
+a.SRScope,
+a.SRScope:visited,
+.SRPage .SRStatus {
+  color: var(--mjk-link) !important;
+}
+
+.SRResult .SRPage,
+#MSearchResults,
+#MSearchResults .SRResult {
+  color: var(--mjk-text) !important;
 }
 
 #MSearchBox,

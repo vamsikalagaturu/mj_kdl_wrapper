@@ -59,14 +59,16 @@ def main() -> int:
         (f"mujoco-{old_version}", f"mujoco-{new_version}"),
         (f"MuJoCo {old_major_minor}", f"MuJoCo {new_major_minor}"),
     ]
-    for relpath in [
-        "README.md",
-        "CLAUDE.md",
-        "docs/howto/urdf_to_mjcf.md",
-        ".github/workflows/ci.yml",
-        "pyproject.toml",
-    ]:
-        replace(ROOT / relpath, common)
+    paths = [
+        ROOT / "README.md",
+        ROOT / "CLAUDE.md",
+        ROOT / "docs/howto/urdf_to_mjcf.md",
+        ROOT / "pyproject.toml",
+    ]
+    # Globbed: the hardcoded ci.yml went stale when it was split into five workflows.
+    paths += sorted((ROOT / ".github/workflows").glob("*.yml"))
+    for path in paths:
+        replace(path, common)
 
     return 0
 
