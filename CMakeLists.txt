@@ -164,6 +164,14 @@ list(APPEND CMAKE_BUILD_RPATH "${MUJOCO_LIB_DIR}")
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 message(STATUS "MuJoCo : ${MUJOCO_LIBRARY}")
 
+# For consumers wanting MuJoCo without the KDL, glfw and OpenGL that mj_kdl_wrapper brings.
+if(NOT TARGET mujoco::mujoco)
+    add_library(mujoco::mujoco SHARED IMPORTED GLOBAL)
+    set_target_properties(mujoco::mujoco PROPERTIES
+      IMPORTED_LOCATION "${MUJOCO_LIBRARY}"
+      INTERFACE_INCLUDE_DIRECTORIES "${MUJOCO_INCLUDE_DIR}")
+endif()
+
 find_package(glfw3 REQUIRED)
 find_package(OpenGL REQUIRED)
 
