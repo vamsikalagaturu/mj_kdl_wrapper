@@ -115,6 +115,17 @@ find_package(orocos_kdl REQUIRED)
 target_link_libraries(my_app orocos-kdl)
 ```
 
+A consumer wanting MuJoCo without KDL, glfw and OpenGL links `mujoco::mujoco`, which the config
+recreates for the exact copy this wrapper was built against:
+
+```cmake
+find_package(mj_kdl_wrapper REQUIRED)
+target_link_libraries(my_app mujoco::mujoco)       # MuJoCo alone
+```
+
+`MJ_KDL_MUJOCO_DIR` and `MJ_KDL_MUJOCO_VERSION` are set alongside it for anyone who needs the
+path rather than the target.
+
 MuJoCo is intentionally not bundled into the prefix; consumers resolve it from
 `MJ_KDL_MUJOCO_DIR` (or the `mujoco` pip package). Set
 `-DMJ_KDL_INSTALL_BUNDLED_KDL=OFF` to keep KDL out of a shared prefix such as
