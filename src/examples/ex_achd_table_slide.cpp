@@ -1,7 +1,7 @@
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "example_paths.hpp"
 
-#include <kdl/chainhdsolver_vereshchagin_fixed_joint.hpp>
+#include <kdl/chainhdsolver_vereshchagin.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chainidsolver_recursive_newton_euler.hpp>
 #include <kdl/kinfam_io.hpp>
@@ -71,7 +71,7 @@ static void print_contact_heights(mjModel *model, mjData *data)
 static bool control_step(
   mj_kdl::Robot                               &robot,
   KDL::ChainFkSolverPos_recursive             &fk_pos,
-  KDL::ChainHdSolver_Vereshchagin_Fixed_Joint &achd,
+  KDL::ChainHdSolver_Vereshchagin &achd,
   KDL::ChainIdSolver_RNE                      &rnea,
   const KDL::Frame                            &target,
   KDL::JntArray                               &q,
@@ -205,7 +205,7 @@ int main(int argc, char **argv)
     target.p += KDL::Vector(kMoveX, 0.0, 0.0);
 
     KDL::Twist root_acc(KDL::Vector(0.0, 0.0, -scene.gravity_z), KDL::Vector::Zero());
-    KDL::ChainHdSolver_Vereshchagin_Fixed_Joint achd(robot.chain, root_acc, 5);
+    KDL::ChainHdSolver_Vereshchagin achd(robot.chain, root_acc, 5);
     KDL::ChainIdSolver_RNE rnea(robot.chain, KDL::Vector(0.0, 0.0, scene.gravity_z));
 
     KDL::JntArray qdd(n), beta(5), ff_tau(n), constraint_tau(n), tau_cmd(n);
@@ -222,7 +222,7 @@ int main(int argc, char **argv)
         fk_pos.JntToCart(q, cmp_current);
         const KDL::Twist cmp_err = KDL::diff(cmp_current, target);
 
-        KDL::ChainHdSolver_Vereshchagin_Fixed_Joint achd6(robot.chain, root_acc, 6);
+        KDL::ChainHdSolver_Vereshchagin achd6(robot.chain, root_acc, 6);
         KDL::JntArray qdd6(n), beta6(6), ff6(n), ctau6(n), tau6(n);
         KDL::Jacobian alpha6(6);
         alpha6.setColumn(0, KDL::Twist(KDL::Vector(1, 0, 0), KDL::Vector(0, 0, 0)));
@@ -246,7 +246,7 @@ int main(int argc, char **argv)
         print_array("constraint_tau6", ctau6);
         print_array("tau_cmd6", tau6);
 
-        KDL::ChainHdSolver_Vereshchagin_Fixed_Joint achd5(robot.chain, root_acc, 5);
+        KDL::ChainHdSolver_Vereshchagin achd5(robot.chain, root_acc, 5);
         KDL::JntArray qdd5(n), beta5(5), ff5(n), ctau5(n), tau5(n);
         KDL::Jacobian alpha5(5);
         set_alpha_no_linear_z(alpha5);

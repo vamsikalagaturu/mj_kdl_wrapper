@@ -485,7 +485,7 @@ def main() -> int:
             "vel": [0.0, 0.0, 0.0],
             # Vereshchagin root acceleration carries gravity as +z (its sign
             # convention); RNEA below uses the usual -z gravity.
-            "achd": kdl.ChainHdSolver_Vereshchagin_Fixed_Joint(
+            "achd": kdl.ChainHdSolver_Vereshchagin(
                 chain, kdl.Twist(kdl.Vector(0.0, 0.0, 9.81), kdl.Vector.Zero()), 6
             ),
             "rnea": kdl.ChainIdSolver_RNE(chain, kdl.Vector(0.0, 0.0, -9.81)),

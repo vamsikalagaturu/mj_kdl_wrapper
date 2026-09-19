@@ -116,7 +116,7 @@ def main() -> int:
     try:
         chain = robot.kdl_chain()
         fk = kdl.ChainFkSolverPos_recursive(chain)
-        achd = kdl.ChainHdSolver_Vereshchagin_Fixed_Joint(
+        achd = kdl.ChainHdSolver_Vereshchagin(
             chain, kdl.Twist(kdl.Vector(0.0, 0.0, 9.81), kdl.Vector.Zero()), 5
         )
         rnea = kdl.ChainIdSolver_RNE(chain, kdl.Vector(0.0, 0.0, -9.81))

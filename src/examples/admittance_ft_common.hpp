@@ -4,7 +4,7 @@
 #include "example_paths.hpp"
 
 #include <kdl/chainfksolverpos_recursive.hpp>
-#include <kdl/chainhdsolver_vereshchagin_fixed_joint.hpp>
+#include <kdl/chainhdsolver_vereshchagin.hpp>
 #include <kdl/chainidsolver_recursive_newton_euler.hpp>
 #include <kdl/chainiksolvervel_wdls.hpp>
 #include <kdl/chainjnttojacsolver.hpp>

@@ -1,7 +1,7 @@
 /* ex_achd_pick_place.cpp
  * Kinova GEN3 + Robotiq 2F-85 picks a cube from one table location and places
  * it at another using Cartesian acceleration-constrained hybrid dynamics
- * via KDL ChainHdSolver_Vereshchagin_Fixed_Joint + RNEA:
+ * via KDL ChainHdSolver_Vereshchagin + RNEA:
  *
  *   Xddot_des = Kp * diff(T_tcp, T_target) + Kd * d/dt(diff)
  *   beta      = alpha^T * Xddot_des, with alpha = I_6
@@ -19,7 +19,7 @@
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "example_paths.hpp"
 
-#include <kdl/chainhdsolver_vereshchagin_fixed_joint.hpp>
+#include <kdl/chainhdsolver_vereshchagin.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chainfksolvervel_recursive.hpp>
 #include <kdl/chainidsolver_recursive_newton_euler.hpp>
@@ -149,7 +149,7 @@ static void achd_cartesian_ctrl(
   unsigned                                     n,
   KDL::ChainFkSolverPos_recursive             &fk_pos,
   KDL::ChainFkSolverVel_recursive             &fk_vel,
-  KDL::ChainHdSolver_Vereshchagin_Fixed_Joint &achd,
+  KDL::ChainHdSolver_Vereshchagin &achd,
   KDL::ChainIdSolver_RNE                      &rnea,
   KDL::JntArray                               &q,
   KDL::JntArray                               &qdot,
@@ -324,7 +324,7 @@ int main(int argc, char *argv[])
     KDL::ChainFkSolverPos_recursive fk_pos(robot.chain);
     KDL::ChainFkSolverVel_recursive fk_vel(robot.chain);
     KDL::Twist                      root_acc(KDL::Vector(0.0, 0.0, -scene.gravity_z), KDL::Vector::Zero());
-    KDL::ChainHdSolver_Vereshchagin_Fixed_Joint achd(robot.chain, root_acc, 6);
+    KDL::ChainHdSolver_Vereshchagin achd(robot.chain, root_acc, 6);
     KDL::ChainIdSolver_RNE rnea(robot.chain, KDL::Vector(0.0, 0.0, scene.gravity_z));
     KDL::JntArray q_buf(n), qdot_buf(n), qddot(n), ff_torques(n), constraint_torques(n), tau_cmd(n);
     KDL::Wrenches f_ext_achd(ns, KDL::Wrench::Zero());
