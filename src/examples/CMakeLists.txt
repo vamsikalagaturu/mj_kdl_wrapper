@@ -11,6 +11,7 @@ set(EXAMPLES
   ex_rnea_pick_place
   ex_achd_table_slide
   ex_achd_pick_place
+  ex_achd_press
   ex_table_pour
   ex_table_scene
   ex_dual_arm
