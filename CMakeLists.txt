@@ -55,7 +55,7 @@ set(
 )
 set(
   MJ_KDL_OROCOS_KDL_GIT_TAG
-  "feature/achd_fixed_joint"
+  "vereshchagin-driver-weighting"
   CACHE STRING
   "Orocos KDL fork branch, tag, or commit to build"
 )

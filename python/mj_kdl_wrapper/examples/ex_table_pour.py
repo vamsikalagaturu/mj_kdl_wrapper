@@ -211,6 +211,7 @@ def apply_pd_gravity(robot: mjk.Robot, target: list[float]) -> None:
         KP[i] * (target[i] - robot.jnt_pos_msr[i]) - KD[i] * robot.jnt_vel_msr[i] + gravity[i]
         for i in range(robot.n_joints)
     ]
+    robot.update()
 
 
 def max_abs_joint_err(robot: mjk.Robot, target: list[float]) -> float:

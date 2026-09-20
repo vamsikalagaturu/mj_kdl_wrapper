@@ -87,7 +87,7 @@ private:
 
     admittance_ft::SceneHandles &h;
     KDL::ChainFkSolverPos_recursive fk;
-    KDL::ChainHdSolver_Vereshchagin_Fixed_Joint achd;
+    KDL::ChainHdSolver_Vereshchagin achd;
     KDL::ChainIdSolver_RNE rnea;
     KDL::JntArray q;
     KDL::JntArray qd;

@@ -196,6 +196,7 @@ def rnea_track(robot: mjk.Robot, state: dict, target: kdl.Frame) -> None:
     if state["id_solver"].CartToJnt(q, qdot, qddot, wrenches, tau) < 0:
         raise RuntimeError("RNEA inverse dynamics failed")
     robot.jnt_trq_cmd = [clamp(tau[i], -TAU_MAX, TAU_MAX) for i in range(robot.n_joints)]
+    robot.update()
 
 
 def close_gripper(env: mjk.Env) -> None:

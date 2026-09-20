@@ -105,6 +105,7 @@ def achd_step(robot, chain, fk, achd, rnea, target, err_prev, first_pid):
     if rnea.CartToJnt(q, qd, qdd, rnea_wrenches, tau) < 0:
         raise RuntimeError("PyKDL RNEA failed")
     robot.jnt_trq_cmd = [clamp_abs(tau[i], TAU_MAX) for i in range(n)]
+    robot.update()
 
 
 def main() -> int:
@@ -116,7 +117,7 @@ def main() -> int:
     try:
         chain = robot.kdl_chain()
         fk = kdl.ChainFkSolverPos_recursive(chain)
-        achd = kdl.ChainHdSolver_Vereshchagin_Fixed_Joint(
+        achd = kdl.ChainHdSolver_Vereshchagin(
             chain, kdl.Twist(kdl.Vector(0.0, 0.0, 9.81), kdl.Vector.Zero()), 5
         )
         rnea = kdl.ChainIdSolver_RNE(chain, kdl.Vector(0.0, 0.0, -9.81))

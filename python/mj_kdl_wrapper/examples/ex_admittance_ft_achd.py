@@ -209,6 +209,7 @@ def achd_track(robot: mjk.Robot, state: dict, target: kdl.Frame) -> None:
     if state["rnea"].CartToJnt(q, qd, qdd, f_ext, tau) < 0:
         raise RuntimeError("RNEA inverse dynamics failed")
     robot.jnt_trq_cmd = [clamp(tau[i], -TAU_MAX, TAU_MAX) for i in range(n)]
+    robot.update()
 
 
 def close_gripper(env: mjk.Env) -> None:
@@ -485,7 +486,7 @@ def main() -> int:
             "vel": [0.0, 0.0, 0.0],
             # Vereshchagin root acceleration carries gravity as +z (its sign
             # convention); RNEA below uses the usual -z gravity.
-            "achd": kdl.ChainHdSolver_Vereshchagin_Fixed_Joint(
+            "achd": kdl.ChainHdSolver_Vereshchagin(
                 chain, kdl.Twist(kdl.Vector(0.0, 0.0, 9.81), kdl.Vector.Zero()), 6
             ),
             "rnea": kdl.ChainIdSolver_RNE(chain, kdl.Vector(0.0, 0.0, -9.81)),
