@@ -7,7 +7,11 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "mj-kdl-wrapper"
+<<<<<<< HEAD
 version = "0.3.21"
+=======
+version = "0.3.20"
+>>>>>>> origin/main
 description = "Python bindings for mj_kdl_wrapper: MuJoCo physics with Orocos KDL kinematics and dynamics"
 readme = "README.md"
 requires-python = ">=3.10"
