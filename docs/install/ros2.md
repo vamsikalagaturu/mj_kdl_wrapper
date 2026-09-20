@@ -66,7 +66,7 @@ the wrapper against it:
 ```bash
 # Workspace with the KDL fork and the wrapper as sibling packages
 mkdir -p ~/ros2_ws/src && cd ~/ros2_ws
-git clone -b feature/achd_fixed_joint \
+git clone -b vereshchagin-driver-weighting \
   https://github.com/secorolab/orocos_kinematics_dynamics.git src/orocos_kinematics_dynamics
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git src/mj_kdl_wrapper
 

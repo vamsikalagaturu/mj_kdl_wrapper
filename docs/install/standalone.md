@@ -25,7 +25,7 @@ Instructions target Ubuntu/Debian. CMake checks `mjVERSION_HEADER` and stops if
 | Dependency | Version / source | Notes |
 |------------|------------------|-------|
 | MuJoCo | `3.9.0` from `cmake/Versions.cmake` | Native library and pinned `mujoco` Python package must match |
-| Orocos KDL | secorolab fork, `feature/achd_fixed_joint` | Built from source; system `liborocos-kdl` is not used |
+| Orocos KDL | secorolab fork, `vereshchagin-driver-weighting` | Built from source; system `liborocos-kdl` is not used |
 | CMake | `>=3.16` | Required to configure the C++ build |
 | C++ compiler | C++20-capable | `CMAKE_CXX_STANDARD` is set to 20 |
 | Python | `>=3.10` | Required for the Python package |
@@ -255,7 +255,7 @@ Paths / sources:
 | `MJ_KDL_MUJOCO_URL` | (release) | MuJoCo archive URL to download |
 | `MJ_KDL_FETCH_OROCOS_KDL` | `ON` | Clone and build the secorolab Orocos KDL fork (the only KDL used) |
 | `MJ_KDL_OROCOS_KDL_GIT_REPOSITORY` | secorolab fork | Orocos KDL git source to build |
-| `MJ_KDL_OROCOS_KDL_GIT_TAG` | `feature/achd_fixed_joint` | Orocos KDL branch/tag to build |
+| `MJ_KDL_OROCOS_KDL_GIT_TAG` | `vereshchagin-driver-weighting` | Orocos KDL branch/tag to build |
 | `MJ_KDL_OROCOS_KDL_DIR` | `third_party/orocos_kinematics_dynamics` | Fork source/clone destination; built in place if present, else cloned here when fetch is ON |
 | `MJ_KDL_OROCOS_KDL_INSTALL_DIR` | (empty) | Pre-installed Orocos KDL prefix to consume (skips building and bundling the fork) |
 | `MJ_KDL_OROCOS_KDL_FROM_PACKAGE` | `OFF` | Consume Orocos KDL via `find_package(orocos_kdl)` on `CMAKE_PREFIX_PATH`; skips building and bundling the fork |
