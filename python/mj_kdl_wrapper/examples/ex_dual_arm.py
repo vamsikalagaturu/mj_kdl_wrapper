@@ -33,6 +33,7 @@ def apply(robot: mjk.Robot, target: list[float]) -> None:
         KP[i] * (target[i] - robot.jnt_pos_msr[i]) - KD[i] * robot.jnt_vel_msr[i] + grav[i]
         for i in range(robot.n_joints)
     ]
+    robot.update()
 
 
 def main() -> int:

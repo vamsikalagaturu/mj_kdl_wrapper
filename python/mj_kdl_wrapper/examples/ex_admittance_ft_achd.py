@@ -209,6 +209,7 @@ def achd_track(robot: mjk.Robot, state: dict, target: kdl.Frame) -> None:
     if state["rnea"].CartToJnt(q, qd, qdd, f_ext, tau) < 0:
         raise RuntimeError("RNEA inverse dynamics failed")
     robot.jnt_trq_cmd = [clamp(tau[i], -TAU_MAX, TAU_MAX) for i in range(n)]
+    robot.update()
 
 
 def close_gripper(env: mjk.Env) -> None:

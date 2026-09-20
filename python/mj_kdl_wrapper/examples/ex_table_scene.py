@@ -144,6 +144,7 @@ def main() -> int:
         def step():
             robot.update()
             robot.jnt_trq_cmd = robot.gravity_torques(-9.81)
+            robot.update()
             if env.has_actuator("g_fingers_actuator"):
                 env.set_actuator_ctrl(
                     "g_fingers_actuator", 255.0 if math.fmod(env.time(), 6.0) < 3.0 else 0.0

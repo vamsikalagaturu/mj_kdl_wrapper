@@ -124,6 +124,7 @@ def rnea_controller(robot, solver, chain, target: list[float]) -> None:
     if solver.CartToJnt(q, qdot, qddot, wrenches, tau) < 0:
         raise RuntimeError("PyKDL RNEA failed")
     robot.jnt_trq_cmd = as_list(tau)
+    robot.update()
 
 
 def step_once(env, robot, viewer, state) -> bool:

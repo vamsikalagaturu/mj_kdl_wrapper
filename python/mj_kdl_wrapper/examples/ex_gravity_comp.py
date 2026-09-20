@@ -69,6 +69,7 @@ def main() -> int:
         def step():
             robot.update()
             robot.jnt_trq_cmd = robot.gravity_torques(-9.81)
+            robot.update()
 
         run_loop(env, robot, step, duration=2.0, gui=args.gui)
         end_frame = robot.fk_frame()

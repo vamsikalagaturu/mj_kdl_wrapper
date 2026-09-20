@@ -9,16 +9,30 @@ An Env on_reset hook re-homes the arm, re-poses the cube, and opens the gripper.
 from __future__ import annotations
 
 import argparse
+import math
 
 import PyKDL as kdl
 import mj_kdl_wrapper as mjk
 
 HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 SURFACE_Z = 0.70
-KP_LIN, KD_LIN = 160.0, 30.0
-KP_ROT, KD_ROT = 100.0, 35.0
-BETA_LIN_MAX, BETA_ROT_MAX, TAU_MAX = 100.0, 70.0, 59.0
-CUBE_START = [0.40, 0.0, SURFACE_Z + 0.02]
+CUBE_HS = 0.02
+PICK_X, PICK_Y = 0.40, 0.00
+PLACE_X, PLACE_Y = 0.40, 0.24
+CUBE_START = [PICK_X, PICK_Y, SURFACE_Z + CUBE_HS]
+
+# With alpha = I_6 the PID's output is the desired TCP acceleration, which ACHD consumes.
+KP_LIN, KI_LIN, KD_LIN = 200.0, 100.0, 40.0
+KP_ROT, KI_ROT, KD_ROT = 120.0, 50.0, 80.0
+BETA_LIN_MAX, BETA_ROT_MAX = 120.0, 80.0
+INTEGRAL_MAX, TAU_MAX = 0.5, 59.0
+
+# Rides the 7th joint's redundancy: keeps the arm from folding near the table.
+SUPPORT_LINK = "half_arm_2_link"
+SUPPORT_KP, SUPPORT_KD, SUPPORT_F_MAX, SUPPORT_LIFT = 800.0, 80.0, 45.0, 0.06
+SUPPORT_PHASES = ("PLACE_ABOVE", "PLACE", "OPEN", "RETREAT")
+
+GRIPPER_CLOSED = 0.8  # the 2f85 actuator's ctrlrange is 0 to 0.82
 
 
 class ResetRequested(Exception):
@@ -35,7 +49,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     cube = mjk.SceneObject()
     cube.name = "cube"
     cube.shape = mjk.Shape.BOX
-    cube.size = [0.02, 0.02, 0.02]
+    cube.size = [CUBE_HS, CUBE_HS, CUBE_HS]
     cube.pos = CUBE_START[:]
     cube.rgba = [0.1, 0.35, 1.0, 1.0]
     cube.mass = 0.1
@@ -89,42 +103,75 @@ def alpha_identity() -> kdl.Jacobian:
     return alpha
 
 
-def achd_step(robot, chain, fk, achd, rnea, alpha, target, err_prev, first_pid) -> None:
+def segment_index(chain: kdl.Chain, name: str) -> int:
+    for i in range(chain.getNrOfSegments()):
+        if chain.getSegment(i).getName() == name:
+            return i
+    return -1
+
+
+def link_world_z(fk: kdl.ChainFkSolverPos_recursive, q: kdl.JntArray, index: int) -> float:
+    frame = kdl.Frame()
+    fk.JntToCart(q, frame, index + 1)
+    return SURFACE_Z + frame.p.z()
+
+
+def support_wrench(z_world: float, z_ref: float, vz: float) -> kdl.Wrench:
+    fz = min(SUPPORT_F_MAX, max(0.0, SUPPORT_KP * (z_ref - z_world) - SUPPORT_KD * vz))
+    return kdl.Wrench(kdl.Vector(0.0, 0.0, fz), kdl.Vector.Zero())
+
+
+def achd_step(ctx, target: kdl.Frame, target_twist: kdl.Twist, f_ext: list, state: dict) -> None:
+    robot = ctx["robot"]
     robot.update()
     n = robot.n_joints
     q = jnt(robot.jnt_pos_msr)
     qd = jnt(robot.jnt_vel_msr)
 
     current = kdl.Frame()
-    fk.JntToCart(q, current)
-    err = kdl.diff(current, target)
-    dt = 0.002
-    e = [err.vel.x(), err.vel.y(), err.vel.z(), err.rot.x(), err.rot.y(), err.rot.z()]
-    if first_pid[0]:
-        err_prev[:] = e
-        first_pid[0] = False
-    de = [(e[i] - err_prev[i]) / dt for i in range(6)]
-    err_prev[:] = e
+    ctx["fk"].JntToCart(q, current)
+    current_vel = kdl.FrameVel()
+    ctx["fk_vel"].JntToCart(kdl.JntArrayVel(q, qd), current_vel)
+    tcp_twist = current_vel.deriv()
 
+    err = kdl.diff(current, target)
+    dt = ctx["dt"]
+    e = [err.vel.x(), err.vel.y(), err.vel.z(), err.rot.x(), err.rot.y(), err.rot.z()]
+    if state["first"]:
+        state["err_prev"] = e[:]
+        state["first"] = False
+    de = [(e[i] - state["err_prev"][i]) / dt for i in range(6)]
+    state["err_prev"] = e[:]
+    ei = state["err_i"]
+    for i in range(6):
+        ei[i] = clamp_abs(ei[i] + e[i] * dt, INTEGRAL_MAX)
+
+    # Damped against the measured angular velocity: the target's own rotation is not an error rate.
+    d_rot = [
+        target_twist.rot.x() - tcp_twist.rot.x(),
+        target_twist.rot.y() - tcp_twist.rot.y(),
+        target_twist.rot.z() - tcp_twist.rot.z(),
+    ]
     beta = kdl.JntArray(6)
-    beta[0] = clamp_abs(KP_LIN * e[0] + KD_LIN * de[0], BETA_LIN_MAX)
-    beta[1] = clamp_abs(KP_LIN * e[1] + KD_LIN * de[1], BETA_LIN_MAX)
-    beta[2] = clamp_abs(KP_LIN * e[2] + KD_LIN * de[2], BETA_LIN_MAX)
-    beta[3] = clamp_abs(KP_ROT * e[3] + KD_ROT * de[3], BETA_ROT_MAX)
-    beta[4] = clamp_abs(KP_ROT * e[4] + KD_ROT * de[4], BETA_ROT_MAX)
-    beta[5] = clamp_abs(KP_ROT * e[5] + KD_ROT * de[5], BETA_ROT_MAX)
+    for i in range(3):
+        beta[i] = clamp_abs(KP_LIN * e[i] + KI_LIN * ei[i] + KD_LIN * de[i], BETA_LIN_MAX)
+    for i in range(3):
+        beta[3 + i] = clamp_abs(
+            KP_ROT * e[3 + i] + KI_ROT * ei[3 + i] + KD_ROT * d_rot[i], BETA_ROT_MAX
+        )
 
     qdd = kdl.JntArray(n)
     ff = kdl.JntArray(n)
     constraint_tau = kdl.JntArray(n)
-    f_ext = [kdl.Wrench.Zero() for _ in range(chain.getNrOfSegments())]
-    if achd.CartToJnt(q, qd, qdd, alpha, beta, f_ext, ff, constraint_tau) < 0:
+    if ctx["achd"].CartToJnt(q, qd, qdd, ctx["alpha"], beta, f_ext, ff, constraint_tau) < 0:
         raise RuntimeError("PyKDL ACHD failed")
 
+    # RNEA re-prices the resolved acceleration for MuJoCo, and never sees the wrench.
     tau = kdl.JntArray(n)
-    if rnea.CartToJnt(q, qd, qdd, f_ext, tau) < 0:
+    if ctx["rnea"].CartToJnt(q, qd, qdd, ctx["f_ext_zero"], tau) < 0:
         raise RuntimeError("PyKDL RNEA failed")
     robot.jnt_trq_cmd = [clamp_abs(tau[i], TAU_MAX) for i in range(n)]
+    robot.update()
 
 
 def step_once(env, robot, viewer, state) -> bool:
@@ -139,23 +186,89 @@ def step_once(env, robot, viewer, state) -> bool:
     return True
 
 
-def run_phase(env, robot, chain, fk, achd, rnea, alpha, phase, viewer, state) -> bool:
+def run_phase(ctx, phase: dict, viewer, state) -> bool:
     print(f"State: {phase['name']}")
-    start = robot.fk_frame()
+    env, robot = ctx["env"], ctx["robot"]
+    robot.update()
+    phase_start = robot.fk_frame()
     t0 = env.time()
-    err_prev = [0.0] * 6
-    first_pid = [True]
-    while env.time() - t0 < phase["duration"]:
-        t = smoothstep((env.time() - t0) / phase["duration"])
-        target = kdl.addDelta(start, kdl.diff(start, phase["target"]), t)
-        achd_step(robot, chain, fk, achd, rnea, alpha, target, err_prev, first_pid)
+    pid = {"err_prev": [0.0] * 6, "err_i": [0.0] * 6, "first": True}
+    prev_target = phase_start
+    first_target = True
+    support = state["support"]
+    if phase["name"] == "PLACE_ABOVE" or (phase["name"] in SUPPORT_PHASES and not support["valid"]):
+        q = jnt(robot.jnt_pos_msr)
+        support["z_ref"] = link_world_z(ctx["fk"], q, ctx["support_segment"]) + SUPPORT_LIFT
+        support["prev_z"] = support["z_ref"]
+        support["valid"] = True
+
+    while True:
+        elapsed = env.time() - t0
+        alpha_t = smoothstep(elapsed / phase["duration"]) if phase["duration"] > 0.0 else 1.0
+        target = kdl.addDelta(phase_start, kdl.diff(phase_start, phase["target"]), alpha_t)
+        target_twist = kdl.Twist.Zero()
+        if not first_target:
+            target_twist = kdl.diff(prev_target, target, ctx["dt"])
+        prev_target = target
+        first_target = False
+
+        f_ext = [kdl.Wrench.Zero() for _ in range(ctx["n_segments"])]
+        if phase["name"] in SUPPORT_PHASES and support["valid"]:
+            q = jnt(robot.jnt_pos_msr)
+            z_world = link_world_z(ctx["fk"], q, ctx["support_segment"])
+            vz = (z_world - support["prev_z"]) / ctx["dt"]
+            support["prev_z"] = z_world
+            f_ext[ctx["support_segment"]] = support_wrench(z_world, support["z_ref"], vz)
+
+        achd_step(ctx, target, target_twist, f_ext, pid)
         if env.has_actuator("g_fingers_actuator"):
             env.set_actuator_ctrl("g_fingers_actuator", phase["gripper"])
+
+        err = kdl.diff(robot.fk_frame(), phase["target"])
+        settled = phase["pos_tol"] < 0.0 or (
+            err.vel.Norm() <= phase["pos_tol"] and err.rot.Norm() <= phase["rot_tol"]
+        )
+        if (elapsed >= phase["duration"] and settled) or elapsed >= phase["timeout"]:
+            return True
         if viewer is not None and not viewer.is_running():
             return False
         if not step_once(env, robot, viewer, state):
             return False
-    return True
+
+
+def build_phases(robot, chain) -> list[dict]:
+    # The grasp orientation is the tool frame's own: the pinch axis points at the table.
+    grasp_rot = robot.tip_to_tcp.M
+    z_grasp = CUBE_HS
+    z_above = z_grasp + 0.20
+    z_lift = z_grasp + 0.30
+
+    def at(x: float, y: float, z: float) -> kdl.Frame:
+        return kdl.Frame(grasp_rot, kdl.Vector(x, y, z))
+
+    def phase(name, target, duration, timeout, pos_tol, rot_tol, gripper) -> dict:
+        return {
+            "name": name,
+            "target": target,
+            "duration": duration,
+            "timeout": timeout,
+            "pos_tol": pos_tol,
+            "rot_tol": rot_tol,
+            "gripper": gripper,
+        }
+
+    closed = GRIPPER_CLOSED
+    return [
+        phase("HOME", robot.fk_frame(), 1.0, 2.5, 0.03, 0.05, 0.0),
+        phase("PICK_ABOVE", at(PICK_X, PICK_Y, z_above), 8.0, 14.0, 0.04, 0.03, 0.0),
+        phase("PICK", at(PICK_X, PICK_Y, z_grasp), 5.0, 12.0, 0.02, 0.03, 0.0),
+        phase("CLOSE", at(PICK_X, PICK_Y, z_grasp), 1.5, 2.5, -1.0, -1.0, closed),
+        phase("LIFT", at(PICK_X, PICK_Y, z_lift), 3.0, 8.0, 0.04, 0.03, closed),
+        phase("PLACE_ABOVE", at(PLACE_X, PLACE_Y, z_above), 5.0, 12.0, 0.04, 0.03, closed),
+        phase("PLACE", at(PLACE_X, PLACE_Y, z_grasp), 5.0, 14.0, 0.02, 0.03, closed),
+        phase("OPEN", at(PLACE_X, PLACE_Y, z_grasp), 1.0, 2.0, -1.0, -1.0, 0.0),
+        phase("RETREAT", at(PLACE_X, PLACE_Y, z_above), 3.0, 6.0, 0.04, 0.08, 0.0),
+    ]
 
 
 def main() -> int:
@@ -166,16 +279,29 @@ def main() -> int:
     env, robot = build_env()
     try:
         chain = robot.kdl_chain()
-        fk = kdl.ChainFkSolverPos_recursive(chain)
-        achd = kdl.ChainHdSolver_Vereshchagin(
-            chain, kdl.Twist(kdl.Vector(0.0, 0.0, 9.81), kdl.Vector.Zero()), 6
-        )
-        rnea = kdl.ChainIdSolver_RNE(chain, kdl.Vector(0.0, 0.0, -9.81))
-        alpha = alpha_identity()
+        support_seg = segment_index(chain, SUPPORT_LINK)
+        if support_seg < 0:
+            raise RuntimeError(f"support segment not found: {SUPPORT_LINK}")
+
+        ctx = {
+            "env": env,
+            "robot": robot,
+            "dt": env.timestep(),
+            "n_segments": chain.getNrOfSegments(),
+            "support_segment": support_seg,
+            "fk": kdl.ChainFkSolverPos_recursive(chain),
+            "fk_vel": kdl.ChainFkSolverVel_recursive(chain),
+            "achd": kdl.ChainHdSolver_Vereshchagin(
+                chain, kdl.Twist(kdl.Vector(0.0, 0.0, 9.81), kdl.Vector.Zero()), 6
+            ),
+            "rnea": kdl.ChainIdSolver_RNE(chain, kdl.Vector(0.0, 0.0, -9.81)),
+            "alpha": alpha_identity(),
+            "f_ext_zero": [kdl.Wrench.Zero() for _ in range(chain.getNrOfSegments())],
+        }
 
         robot.ctrl_mode = mjk.CtrlMode.TORQUE
 
-        def on_reset(ctx):
+        def on_reset(ctx_unused):
             robot.set_joint_pos(HOME, call_forward=False)
             env.set_body_pose("cube", CUBE_START)
             if env.has_actuator("g_fingers_actuator"):
@@ -183,36 +309,21 @@ def main() -> int:
 
         env.on_reset = on_reset
         env.reset()
-
         robot.update()
-        grasp_rot = robot.fk_frame().M
+        phases = build_phases(robot, chain)
 
-        def target(x: float, y: float, z: float) -> kdl.Frame:
-            return kdl.Frame(grasp_rot, kdl.Vector(x, y, z))
-
-        phases = [
-            {"name": "HOME", "target": robot.fk_frame(), "duration": 0.8, "gripper": 0.0},
-            {"name": "PICK_ABOVE", "target": target(0.40, 0.0, 0.24), "duration": 2.0, "gripper": 0.0},
-            {"name": "PICK", "target": target(0.40, 0.0, 0.04), "duration": 1.8, "gripper": 0.0},
-            {"name": "CLOSE", "target": target(0.40, 0.0, 0.04), "duration": 1.0, "gripper": 255.0},
-            {"name": "LIFT", "target": target(0.40, 0.0, 0.34), "duration": 1.6, "gripper": 255.0},
-            {"name": "PLACE_ABOVE", "target": target(0.40, 0.24, 0.24), "duration": 1.8, "gripper": 255.0},
-            {"name": "PLACE", "target": target(0.40, 0.24, 0.04), "duration": 1.8, "gripper": 255.0},
-            {"name": "OPEN", "target": target(0.40, 0.24, 0.04), "duration": 0.8, "gripper": 0.0},
-            {"name": "RETREAT", "target": target(0.40, 0.24, 0.24), "duration": 1.2, "gripper": 0.0},
-        ]
-
-        state = {"prev": env.time()}
+        state = {"prev": env.time(), "support": {"valid": False, "z_ref": 0.0, "prev_z": 0.0}}
         if args.gui:
             viewer = mjk.SimulateViewer.open(robot, "ex_achd_pick_place.py")
             try:
                 while viewer.is_running():
                     try:
                         for phase in phases:
-                            if not run_phase(env, robot, chain, fk, achd, rnea, alpha, phase, viewer, state):
+                            if not run_phase(ctx, phase, viewer, state):
                                 raise StopIteration
                         break
                     except ResetRequested:
+                        state["support"] = {"valid": False, "z_ref": 0.0, "prev_z": 0.0}
                         continue
                     except StopIteration:
                         break
@@ -220,10 +331,18 @@ def main() -> int:
                 viewer.close()
         else:
             for phase in phases:
-                if not run_phase(env, robot, chain, fk, achd, rnea, alpha, phase, None, state):
+                if not run_phase(ctx, phase, None, state):
                     break
+
         cube = env.body_frame("cube")
-        print(f"cube final position: {[round(v, 3) for v in [cube.p.x(), cube.p.y(), cube.p.z()]]}")
+        error_xy = math.hypot(cube.p.x() - PLACE_X, cube.p.y() - PLACE_Y)
+        print(
+            f"cube final position: [{cube.p.x():.3f}, {cube.p.y():.3f}, {cube.p.z():.3f}]"
+            f" target=[{PLACE_X:.3f}, {PLACE_Y:.3f}, {SURFACE_Z + CUBE_HS:.3f}]"
+            f" xy_error={error_xy:.3f}"
+        )
+        if not args.gui and error_xy > 0.08:
+            return 1
     finally:
         env.close()
     return 0

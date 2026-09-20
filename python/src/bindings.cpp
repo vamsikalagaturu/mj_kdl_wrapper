@@ -1555,7 +1555,9 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "Create a robot handle from a Scene and build its KDL chain."
       )
       .def("update", &PyRobot::update, "Synchronize measured joint state from MuJoCo.")
-      .def("step", &PyRobot::step, "Apply commands and step the robot's MuJoCo scene.")
+      .def("step", &PyRobot::step,
+           "Advance the robot's MuJoCo scene by one step. Commands reach MuJoCo through "
+           "update(), so call that after setting them and before stepping.")
       .def("pace", &PyRobot::pace,
            "Sleep until this step's share of wall time has elapsed. step() never sleeps.")
       .def("step_n", &PyRobot::step_n, py::arg("n"), "Run step() n times.")

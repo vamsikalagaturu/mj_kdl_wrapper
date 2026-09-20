@@ -74,6 +74,7 @@ def main() -> int:
         for step in range(total_steps):
             robot.update()
             robot.jnt_trq_cmd = list(robot.gravity_torques(GRAVITY_Z))
+            robot.update()
             robot.step()
             robot.pace()
             if step % steps_per_frame == 0:

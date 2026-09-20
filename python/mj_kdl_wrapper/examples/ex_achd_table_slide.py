@@ -105,6 +105,7 @@ def achd_step(robot, chain, fk, achd, rnea, target, err_prev, first_pid):
     if rnea.CartToJnt(q, qd, qdd, rnea_wrenches, tau) < 0:
         raise RuntimeError("PyKDL RNEA failed")
     robot.jnt_trq_cmd = [clamp_abs(tau[i], TAU_MAX) for i in range(n)]
+    robot.update()
 
 
 def main() -> int:

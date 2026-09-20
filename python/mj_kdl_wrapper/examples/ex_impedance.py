@@ -50,6 +50,7 @@ def apply_pd_gravity(robot: mjk.Robot, target: list[float]) -> None:
         KP[i] * (target[i] - robot.jnt_pos_msr[i]) - KD[i] * robot.jnt_vel_msr[i] + grav[i]
         for i in range(robot.n_joints)
     ]
+    robot.update()
 
 
 def run_loop(env: mjk.Env, robot: mjk.Robot, step_fn, *, duration: float, gui: bool) -> None:
