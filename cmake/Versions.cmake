@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 set(MJ_KDL_VERSION "0.3.21")
-=======
-set(MJ_KDL_VERSION "0.3.20")
->>>>>>> origin/main
 set(MJ_KDL_MUJOCO_VERSION "3.9.0")
 
 if(NOT MJ_KDL_MUJOCO_VERSION MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$")
