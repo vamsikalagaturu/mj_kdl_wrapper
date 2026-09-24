@@ -468,6 +468,9 @@ if(BUILD_PYTHON_BINDINGS)
             -Dpybind11_DIR=${pybind11_DIR}
             -DPYTHON_SITE_PACKAGES_INSTALL_DIR=.
             "-DCMAKE_INSTALL_RPATH=\$ORIGIN/mj_kdl_wrapper"
+            # DT_RPATH, as for the wrapper: LD_LIBRARY_PATH must not swap in a system KDL.
+            -DCMAKE_MODULE_LINKER_FLAGS=-Wl,--disable-new-dtags
+            -DCMAKE_SHARED_LINKER_FLAGS=-Wl,--disable-new-dtags
           UPDATE_DISCONNECTED TRUE
         )
         # Bundle PyKDL (top-level module) and the Orocos KDL shared library from the
