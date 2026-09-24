@@ -31,6 +31,7 @@
 #include <cstdio>
 #include <csignal>
 #include <cstring>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -481,6 +482,21 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
             if (attached && !obj.name.empty()) {
                 mjs_setString(mjs_getName(attached->element), obj.name.c_str());
             }
+            // The scene's colour wins over the asset's: every geom under the root takes it.
+            if (attached && obj.has_rgba) {
+                std::function<void(mjsBody *)> recolour = [&](mjsBody *body) {
+                    for (mjsElement *el = mjs_firstChild(body, mjOBJ_GEOM, 0); el;
+                         el             = mjs_nextChild(body, el, 0)) {
+                        mjsGeom *g = mjs_asGeom(el);
+                        for (int k = 0; k < 4; ++k) g->rgba[k] = obj.rgba[k];
+                    }
+                    for (mjsElement *el = mjs_firstChild(body, mjOBJ_BODY, 0); el;
+                         el             = mjs_nextChild(body, el, 0)) {
+                        recolour(mjs_asBody(el));
+                    }
+                };
+                recolour(attached);
+            }
             // A non-fixed MJCF object stands free, exactly like a non-fixed primitive: honor
             // the flag with a free joint unless the asset already roots one of its own.
             if (attached && !obj.fixed) {
@@ -590,6 +606,44 @@ static void add_cameras_to_spec(mjSpec *spec, const std::vector<CameraSpec> &cam
     }
 }
 
+static void add_site_to_spec(mjSpec *spec, mjsBody *body, const SiteSpec &ss)
+{
+    // The asset's own site wins: it is the one its author placed, and re-adding the
+    // name would fail the compile on a duplicate.
+    if (mjs_findElement(spec, mjOBJ_SITE, ss.name.c_str())) return;
+
+    mjsSite *site = mjs_addSite(body, nullptr);
+    mjs_setString(mjs_getName(site->element), ss.name.c_str());
+    site->type    = mjGEOM_SPHERE;
+    site->size[0] = kFrameSiteSize;
+    site->size[1] = kFrameSiteSize;
+    site->size[2] = kFrameSiteSize;
+    site->group   = kFrameSiteGroup;
+    site->pos[0]  = ss.pos[0];
+    site->pos[1]  = ss.pos[1];
+    site->pos[2]  = ss.pos[2];
+    quat_xyzw_to_mj_quat(ss.quat, site->quat);
+}
+
+// Every pending site whose body has arrived, added now and struck off the list.
+//
+// Sites cannot all wait until the end: a site marks a frame the scene states, and a robot may
+// have to bolt to one -- an arm to the `left_arm_attachment` frame on the platform's base_link.
+// An attach target has to exist before the attach, which is the same reason objects go in ahead
+// of robots. What no body carries yet stays pending for the next round.
+static void add_ready_sites(mjSpec *spec, std::vector<SiteSpec> &pending)
+{
+    for (auto it = pending.begin(); it != pending.end();) {
+        mjsBody *body = mjs_findBody(spec, it->body.c_str());
+        if (!body) {
+            ++it;
+            continue;
+        }
+        add_site_to_spec(spec, body, *it);
+        it = pending.erase(it);
+    }
+}
+
 static void add_sites_to_spec(mjSpec *spec, const std::vector<SiteSpec> &sites)
 {
     for (const auto &ss : sites) {
@@ -598,21 +652,7 @@ static void add_sites_to_spec(mjSpec *spec, const std::vector<SiteSpec> &sites)
             LOG_WARN("site '" << ss.name << "': no body '" << ss.body << "' in the scene");
             continue;
         }
-        // The asset's own site wins: it is the one its author placed, and re-adding the
-        // name would fail the compile on a duplicate.
-        if (mjs_findElement(spec, mjOBJ_SITE, ss.name.c_str())) continue;
-
-        mjsSite *site = mjs_addSite(body, nullptr);
-        mjs_setString(mjs_getName(site->element), ss.name.c_str());
-        site->type    = mjGEOM_SPHERE;
-        site->size[0] = kFrameSiteSize;
-        site->size[1] = kFrameSiteSize;
-        site->size[2] = kFrameSiteSize;
-        site->group   = kFrameSiteGroup;
-        site->pos[0]  = ss.pos[0];
-        site->pos[1]  = ss.pos[1];
-        site->pos[2]  = ss.pos[2];
-        quat_xyzw_to_mj_quat(ss.quat, site->quat);
+        add_site_to_spec(spec, body, ss);
     }
 }
 
@@ -1050,6 +1090,10 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     // another object must appear after its parent in SceneSpec::objects.
     if (!sc->objects.empty()) add_objects_to_spec(scene.get(), sc->objects);
 
+    // Sites land as their bodies arrive, so a later attach can name one -- see add_ready_sites.
+    std::vector<SiteSpec> pending_sites = sc->sites;
+    add_ready_sites(scene.get(), pending_sites);
+
     bool first_arm      = true;
     char err[kMjErrBuf] = {};
     for (int ai = 0; ai < (int)sc->robots.size(); ++ai) {
@@ -1089,6 +1133,7 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
             LOG_ERROR("attach failed for arm " << ai);
             return false;
         }
+        add_ready_sites(scene.get(), pending_sites);
         // arm (deep-copied into scene) is freed by MjSpecPtr at scope exit.
     }
 
@@ -1099,8 +1144,9 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     }
 
     if (!sc->cameras.empty()) add_cameras_to_spec(scene.get(), sc->cameras);
-    // Last: a site may mark a frame on any body the robots and objects brought in.
-    if (!sc->sites.empty()) add_sites_to_spec(scene.get(), sc->sites);
+    // Whatever is still pending: a site whose body no robot or object ever brought in, reported
+    // here rather than dropped in silence.
+    if (!pending_sites.empty()) add_sites_to_spec(scene.get(), pending_sites);
     // compile_and_make_data takes ownership of the raw spec and always deletes it.
     return compile_and_make_data(scene.release(), out_model, out_data);
 }
@@ -1676,9 +1722,8 @@ void pace_realtime(Viewer *v, const mjModel *m)
     if (wall_per_step > 0.0 && v->_tick_t.time_since_epoch().count() != 0) {
         /* In the clock's own duration, so that the deadline can be carried
          * forward below without a lossy conversion on every step. */
-        const auto period =
-          std::chrono::duration_cast<Clock::duration>(Dur(wall_per_step));
-        const auto next = v->_tick_t + period;
+        const auto period = std::chrono::duration_cast<Clock::duration>(Dur(wall_per_step));
+        const auto next   = v->_tick_t + period;
         if (now < next) {
             std::this_thread::sleep_until(next);
             /* Carry the deadline rather than restarting from the wake time:
@@ -1786,7 +1831,26 @@ static mjtNum clamp_ctrlrange(const mjModel *m, int ci, mjtNum u)
     return u;
 }
 
-void update(Robot *r)
+void read_measurements(Robot *r)
+{
+    if (!r || !r->model || !r->data) return;
+
+    const mjData *d = r->data;
+
+    for (int i = 0; i < r->n_joints; ++i) {
+        r->jnt_pos_msr[i] = d->qpos[r->kdl_to_mj_qpos[i]];
+        r->jnt_vel_msr[i] = d->qvel[r->kdl_to_mj_dof[i]];
+        r->jnt_trq_msr[i] = d->qfrc_actuator[r->kdl_to_mj_dof[i]];
+    }
+
+    for (auto &sensor : r->ft_sensors) {
+        const double *f = d->sensordata + sensor.force_adr;
+        const double *t = d->sensordata + sensor.torque_adr;
+        sensor.wrench   = KDL::Wrench(KDL::Vector(f[0], f[1], f[2]), KDL::Vector(t[0], t[1], t[2]));
+    }
+}
+
+void apply_commands(Robot *r)
 {
     if (!r || !r->model || !r->data) return;
 
@@ -1797,10 +1861,6 @@ void update(Robot *r)
         const int qpos_id = r->kdl_to_mj_qpos[i];
         const int dof_id  = r->kdl_to_mj_dof[i];
         const int ctrl_id = r->kdl_to_mj_ctrl[i];
-
-        r->jnt_pos_msr[i] = d->qpos[qpos_id];
-        r->jnt_vel_msr[i] = d->qvel[dof_id];
-        r->jnt_trq_msr[i] = d->qfrc_actuator[dof_id];
 
         switch (r->ctrl_mode) {
         case CtrlMode::POSITION:
@@ -1822,11 +1882,177 @@ void update(Robot *r)
             break;
         }
     }
+}
 
-    for (auto &sensor : r->ft_sensors) {
-        const double *f = d->sensordata + sensor.force_adr;
-        const double *t = d->sensordata + sensor.torque_adr;
-        sensor.wrench   = KDL::Wrench(KDL::Vector(f[0], f[1], f[2]), KDL::Vector(t[0], t[1], t[2]));
+void update(Robot *r)
+{
+    read_measurements(r);
+    apply_commands(r);
+}
+
+bool init_scene_state(SceneState *s, const mjModel *model)
+{
+    if (!s || !model) {
+        LOG_ERROR("init_scene_state: null scene state or model");
+        return false;
+    }
+    s->model = model;
+    s->joints.clear();
+    s->free_bodies.clear();
+    s->wrenches.clear();
+    s->actuators.clear();
+    return true;
+}
+
+// The free joint a body owns, or -1 when it owns none.
+static int free_joint_of_body(const mjModel *model, int bid)
+{
+    const int start = model->body_jntadr[bid];
+    const int count = model->body_jntnum[bid];
+    for (int k = 0; k < count; ++k) {
+        if (model->jnt_type[start + k] == mjJNT_FREE) return start + k;
+    }
+    return -1;
+}
+
+SceneJointSlot *bind_scene_joint(SceneState *s, const char *joint_name)
+{
+    if (!s || !s->model || !joint_name) {
+        LOG_ERROR("bind_scene_joint: null scene state or name");
+        return nullptr;
+    }
+    const int jid = mj_name2id(s->model, mjOBJ_JOINT, joint_name);
+    if (jid < 0) {
+        LOG_ERROR("bind_scene_joint: no joint named '" << joint_name << "'");
+        return nullptr;
+    }
+    const int type = s->model->jnt_type[jid];
+    if (type == mjJNT_FREE || type == mjJNT_BALL) {
+        LOG_ERROR("bind_scene_joint: joint '" << joint_name << "' is not a scalar joint");
+        return nullptr;
+    }
+    for (const auto &slot : s->joints) {
+        if (slot.name == joint_name) {
+            LOG_ERROR("bind_scene_joint: joint '" << joint_name << "' is already bound");
+            return nullptr;
+        }
+    }
+    s->joints.push_back(SceneJointSlot{
+      joint_name, s->model->jnt_qposadr[jid], s->model->jnt_dofadr[jid], 0.0, 0.0, 0 });
+    return &s->joints.back();
+}
+
+SceneFreeBodySlot *bind_scene_free_body(SceneState *s, const char *body_name)
+{
+    if (!s || !s->model || !body_name) {
+        LOG_ERROR("bind_scene_free_body: null scene state or name");
+        return nullptr;
+    }
+    const int bid = mj_name2id(s->model, mjOBJ_BODY, body_name);
+    if (bid < 0) {
+        LOG_ERROR("bind_scene_free_body: no body named '" << body_name << "'");
+        return nullptr;
+    }
+    const int jid = free_joint_of_body(s->model, bid);
+    if (jid < 0) {
+        LOG_ERROR("bind_scene_free_body: body '" << body_name << "' owns no free joint");
+        return nullptr;
+    }
+    for (const auto &slot : s->free_bodies) {
+        if (slot.name == body_name) {
+            LOG_ERROR("bind_scene_free_body: body '" << body_name << "' is already bound");
+            return nullptr;
+        }
+    }
+    s->free_bodies.push_back(SceneFreeBodySlot{
+      body_name, s->model->jnt_qposadr[jid], KDL::Frame::Identity(), 0 });
+    return &s->free_bodies.back();
+}
+
+SceneWrenchSlot *bind_scene_wrench(SceneState *s, const char *body_name)
+{
+    if (!s || !s->model || !body_name) {
+        LOG_ERROR("bind_scene_wrench: null scene state or name");
+        return nullptr;
+    }
+    const int bid = mj_name2id(s->model, mjOBJ_BODY, body_name);
+    if (bid < 0) {
+        LOG_ERROR("bind_scene_wrench: no body named '" << body_name << "'");
+        return nullptr;
+    }
+    for (const auto &slot : s->wrenches) {
+        if (slot.name == body_name) {
+            LOG_ERROR("bind_scene_wrench: body '" << body_name << "' is already bound");
+            return nullptr;
+        }
+    }
+    s->wrenches.push_back(SceneWrenchSlot{ body_name, bid, KDL::Wrench::Zero() });
+    return &s->wrenches.back();
+}
+
+SceneActuatorSlot *bind_scene_actuator(SceneState *s, const char *name)
+{
+    if (!s || !s->model || !name) {
+        LOG_ERROR("bind_scene_actuator: null scene state or name");
+        return nullptr;
+    }
+    const mjModel *m   = s->model;
+    int            aid = mj_name2id(m, mjOBJ_ACTUATOR, name);
+    if (aid < 0) {
+        // A model commands the joint it means; the actuator driving it carries its own name.
+        const int jid = mj_name2id(m, mjOBJ_JOINT, name);
+        for (int i = 0; aid < 0 && jid >= 0 && i < m->nu; ++i) {
+            if (m->actuator_trntype[i] == mjTRN_JOINT && m->actuator_trnid[2 * i] == jid) aid = i;
+        }
+    }
+    if (aid < 0) {
+        LOG_ERROR("bind_scene_actuator: nothing actuates '" << name << "'");
+        return nullptr;
+    }
+    for (const auto &slot : s->actuators) {
+        if (slot.name == name) {
+            LOG_ERROR("bind_scene_actuator: '" << name << "' is already bound");
+            return nullptr;
+        }
+    }
+    s->actuators.push_back(SceneActuatorSlot{ name, aid, 0.0 });
+    return &s->actuators.back();
+}
+
+void read_scene_state(SceneState *s, const mjData *data)
+{
+    if (!s || !data) return;
+
+    for (auto &slot : s->joints) {
+        slot.position = data->qpos[slot.qpos_adr];
+        slot.velocity = data->qvel[slot.dof_adr];
+        ++slot.seq;
+    }
+    for (auto &slot : s->free_bodies) {
+        const double *p = data->qpos + slot.qpos_adr;
+        // MuJoCo stores the freejoint quaternion as [w x y z]; KDL takes [x y z w].
+        slot.pose = KDL::Frame(
+          KDL::Rotation::Quaternion(p[4], p[5], p[6], p[3]), KDL::Vector(p[0], p[1], p[2])
+        );
+        ++slot.seq;
+    }
+}
+
+void apply_scene_state(SceneState *s, mjData *data)
+{
+    if (!s || !data) return;
+
+    for (const auto &slot : s->wrenches) {
+        double *target = data->xfrc_applied + 6 * slot.body_id;
+        target[0]      = slot.wrench.force.x();
+        target[1]      = slot.wrench.force.y();
+        target[2]      = slot.wrench.force.z();
+        target[3]      = slot.wrench.torque.x();
+        target[4]      = slot.wrench.torque.y();
+        target[5]      = slot.wrench.torque.z();
+    }
+    for (const auto &slot : s->actuators) {
+        data->ctrl[slot.ctrl_id] = clamp_ctrlrange(s->model, slot.ctrl_id, slot.command);
     }
 }
 
@@ -2192,8 +2418,10 @@ static void sim_ui_key_cb(GLFWwindow *w, int key, int scancode, int action, int 
      * A key the caller has claimed stops here and never reaches the UI. */
     if (g_viewer && g_viewer->_sim_ui && key >= 0 && key <= GLFW_KEY_LAST) {
         auto *ss = static_cast<SimUiState *>(g_viewer->_sim_ui);
-        if (action == GLFW_PRESS) ss->keys[key].store(true, std::memory_order_relaxed);
-        else if (action == GLFW_RELEASE) ss->keys[key].store(false, std::memory_order_relaxed);
+        if (action == GLFW_PRESS)
+            ss->keys[key].store(true, std::memory_order_relaxed);
+        else if (action == GLFW_RELEASE)
+            ss->keys[key].store(false, std::memory_order_relaxed);
         if (ss->captured[key].load(std::memory_order_relaxed)) return;
     }
 

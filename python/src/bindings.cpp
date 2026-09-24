@@ -170,6 +170,10 @@ SceneObject to_cpp(const PySceneObject &src)
     std::copy(src.quat.begin(), src.quat.end(), out.quat);
     out.fixed  = src.fixed;
     out.condim = src.condim;
+    if (src.rgba) {
+        std::copy(src.rgba->begin(), src.rgba->end(), out.rgba);
+        out.has_rgba = true;
+    }
     if (src.mjcf_path.empty()) {
         if (!src.size)
             throw std::runtime_error("SceneObject.size must be set for primitive objects");
@@ -181,7 +185,6 @@ SceneObject to_cpp(const PySceneObject &src)
             throw std::runtime_error("SceneObject.friction must be set for primitive objects");
         }
         std::copy(src.size->begin(), src.size->end(), out.size);
-        std::copy(src.rgba->begin(), src.rgba->end(), out.rgba);
         out.mass = *src.mass;
         std::copy(src.friction->begin(), src.friction->end(), out.friction);
     }
@@ -839,9 +842,11 @@ struct PySimulateViewer
     void pace()
     {
         if (!active) throw std::runtime_error("viewer is closed");
-        if (robot_owner) { mj_kdl::pace_realtime(&robot_owner->robot); return; }
-        if (!scene_owner || !scene_owner->model)
-            throw std::runtime_error("scene is closed");
+        if (robot_owner) {
+            mj_kdl::pace_realtime(&robot_owner->robot);
+            return;
+        }
+        if (!scene_owner || !scene_owner->model) throw std::runtime_error("scene is closed");
         mj_kdl::pace_realtime(&viewer, scene_owner->model);
     }
 
@@ -1299,9 +1304,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def_readwrite("prefix", &PyRobotSpec::prefix, "Name prefix for multi-robot scenes.")
       .def_readwrite("attach_to", &PyRobotSpec::attach_to, "Placement parent; defaults to world.")
       .def_readwrite("pos", &PyRobotSpec::pos, "Placement offset in the parent frame, in meters.")
-      .def_readwrite(
-        "quat", &PyRobotSpec::quat, "Placement orientation offset [x, y, z, w]."
-      )
+      .def_readwrite("quat", &PyRobotSpec::quat, "Placement orientation offset [x, y, z, w].")
       .def_readwrite("attachments", &PyRobotSpec::attachments, "Ordered attachment chain.");
 
     py::class_<PySceneObject>(
@@ -1317,10 +1320,10 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def_readwrite("shape", &PySceneObject::shape, "Primitive shape when mjcf_path is empty.")
       .def_readwrite("size", &PySceneObject::size, "Required primitive size.")
       .def_readwrite("pos", &PySceneObject::pos, "Placement offset in the parent frame, in meters.")
+      .def_readwrite("quat", &PySceneObject::quat, "Placement orientation offset [x, y, z, w].")
       .def_readwrite(
-        "quat", &PySceneObject::quat, "Placement orientation offset [x, y, z, w]."
+        "rgba", &PySceneObject::rgba, "Primitive color, required; on an asset, recolors its geoms."
       )
-      .def_readwrite("rgba", &PySceneObject::rgba, "Required primitive color.")
       .def_readwrite(
         "fixed", &PySceneObject::fixed, "If true, primitives are welded to their parent."
       )
@@ -1338,12 +1341,16 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def_readwrite("quat", &PySiteSpec::quat, "Orientation in the body frame [x, y, z, w].");
 
     py::class_<PyCameraSpec>(
-      m, "CameraSpec", "Named camera on a body, or in the world when body is empty. pos and fovy are required."
+      m,
+      "CameraSpec",
+      "Named camera on a body, or in the world when body is empty. pos and fovy are required."
     )
       .def(py::init<>())
       .def_readwrite("name", &PyCameraSpec::name, "Camera name.")
       .def_readwrite("body", &PyCameraSpec::body, "Anchor body name; empty means the worldbody.")
-      .def_readwrite("pos", &PyCameraSpec::pos, "Required position in the anchor body's frame, in meters.")
+      .def_readwrite(
+        "pos", &PyCameraSpec::pos, "Required position in the anchor body's frame, in meters."
+      )
       .def_readwrite("quat", &PyCameraSpec::quat, "Orientation [x, y, z, w].")
       .def_readwrite("fovy", &PyCameraSpec::fovy, "Required vertical field of view, in degrees.");
 
@@ -1558,8 +1565,11 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def("step", &PyRobot::step,
            "Advance the robot's MuJoCo scene by one step. Commands reach MuJoCo through "
            "update(), so call that after setting them and before stepping.")
-      .def("pace", &PyRobot::pace,
-           "Sleep until this step's share of wall time has elapsed. step() never sleeps.")
+      .def(
+        "pace",
+        &PyRobot::pace,
+        "Sleep until this step's share of wall time has elapsed. step() never sleeps."
+      )
       .def("step_n", &PyRobot::step_n, py::arg("n"), "Run step() n times.")
       .def(
         "set_joint_pos",
@@ -1738,8 +1748,11 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "is_running", &PySimulateViewer::is_running, "Return false once the user closes the viewer."
       )
       .def("step", &PySimulateViewer::step, "Step simulation and update the viewer.")
-      .def("pace", &PySimulateViewer::pace,
-           "Sleep until this step's share of wall time has elapsed. step() never sleeps.")
+      .def(
+        "pace",
+        &PySimulateViewer::pace,
+        "Sleep until this step's share of wall time has elapsed. step() never sleeps."
+      )
       .def("step_n", &PySimulateViewer::step_n, py::arg("n"), "Run step() n times.")
       .def("clear_trace", &PySimulateViewer::clear_trace, "Clear viewer trace geometry.")
       .def(
