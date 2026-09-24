@@ -33,6 +33,33 @@ foreach(test_name ${ALL_TESTS})
   gtest_discover_tests(${test_name} DISCOVERY_TIMEOUT 60 PROPERTIES RUN_SERIAL TRUE)
 endforeach()
 
+# The examples self-check under --headless and exit non-zero on failure. ex_record is left out:
+# it only writes a video.
+if(BUILD_EXAMPLES)
+  set(HEADLESS_EXAMPLES
+    ex_gravity_comp
+    ex_pos_ctrl
+    ex_vel_ctrl
+    ex_impedance
+    ex_admittance_ft
+    ex_admittance_ft_rnea
+    ex_admittance_ft_achd
+    ex_pick
+    ex_table_pick_place
+    ex_rnea_pick_place
+    ex_achd_table_slide
+    ex_achd_pick_place
+    ex_achd_press
+    ex_table_pour
+    ex_table_scene
+    ex_dual_arm
+  )
+  foreach(ex ${HEADLESS_EXAMPLES})
+    add_test(NAME ${ex}_headless COMMAND ${ex} --headless)
+    set_tests_properties(${ex}_headless PROPERTIES RUN_SERIAL TRUE TIMEOUT 300)
+  endforeach()
+endif()
+
 # The camera publisher only exists when the wrapper was configured with ROS, so its test
 # follows the target rather than the list above.
 if(TARGET mj_kdl_wrapper::camera_ros)

@@ -85,5 +85,12 @@ jobs:
       - name: Build
         run: cmake --build build
 
+      # A partial cache restore can leave the models out; the tests would then skip, not fail.
+      - name: Check Menagerie
+        run: test -f ~/.cache/mj_kdl_wrapper/menagerie/kinova_gen3/gen3.xml
+
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: |
+          set -o pipefail
+          ctest --test-dir build --output-on-failure --timeout 300 | tee ctest.log
+          ! grep -q "tests did not run" ctest.log
