@@ -367,6 +367,7 @@ struct Robot
     std::vector<int> kdl_to_mj_qpos; // KDL index -> MuJoCo qpos address
     std::vector<int> kdl_to_mj_dof;  // KDL index -> MuJoCo dof address
     std::vector<int> kdl_to_mj_ctrl; // KDL index -> MuJoCo ctrl index (-1 if none)
+    std::string      mj_prefix;      // joint name prefix, kept to re-resolve after a rebuild
 };
 
 /**
@@ -733,6 +734,13 @@ bool init_window_sim(Viewer *v, Robot *r, const char *title = "MuJoCo");
  * @return true on success.
  */
 bool init_window_sim(Viewer *v, mjModel *m, mjData *d, const char *title = "MuJoCo");
+
+/**
+ * @ingroup grp_viewer
+ * Show a recompiled model/data in a live simulate UI; call before freeing the old pair.
+ * An active recording is stopped. @return false if v has no simulate UI.
+ */
+bool viewer_reload(Viewer *v, mjModel *m, mjData *d);
 
 /**
  * @ingroup grp_viewer
@@ -1119,6 +1127,13 @@ void read_scene_state(SceneState *s, const mjData *data);
 void apply_scene_state(SceneState *s, mjData *data);
 
 /**
+ * @ingroup grp_scene
+ * Re-resolve every slot by name on a recompiled model. A slot whose name is gone is unbound and
+ * skipped by read/apply. @return false if any slot was unbound.
+ */
+bool rebind_scene_state(SceneState *s, const mjModel *model);
+
+/**
  * @ingroup grp_robot
  * Write KDL joint positions into MuJoCo qpos (KDL chain order -> MuJoCo addresses).
  * @param[in,out] r            Robot with a valid data pointer.
@@ -1164,8 +1179,8 @@ bool scene_add_object(mjModel **model, mjData **data, SceneSpec *spec, const Sce
 
 /**
  * @ingroup grp_scene
- * Env overload: adds obj, rebuilds, and re-initialises all robots registered in env.
- * env->model, env->data, and each Robot's model/data pointers are updated automatically.
+ * Env overload: adds obj, rebuilds, re-resolves every robot registered in env against the new
+ * model, and reloads a simulate UI showing env. SceneStates need rebind_scene_state().
  * @return true on success; env unchanged on failure.
  */
 bool scene_add_object(Env *env, const SceneObject &obj);
@@ -1186,9 +1201,9 @@ bool scene_remove_object(mjModel **model, mjData **data, SceneSpec *spec, const 
 
 /**
  * @ingroup grp_scene
- * Env overload: removes the named object, rebuilds, and re-initialises all robots registered
- * in env. env->model, env->data, and each Robot's model/data pointers are updated automatically.
- * @return true on success; false if name not found or rebuild fails.
+ * Env overload: removes the named object, rebuilds, re-resolves every robot registered in env
+ * against the new model, and reloads a simulate UI showing env. SceneStates need
+ * rebind_scene_state(). @return true on success; false if name not found or rebuild fails.
  */
 bool scene_remove_object(Env *env, const std::string &name);
 

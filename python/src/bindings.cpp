@@ -455,46 +455,28 @@ struct PyScene : std::enable_shared_from_this<PyScene>
         return mj_name2id(model, mjOBJ_ACTUATOR, name.c_str()) >= 0;
     }
 
+    // The C++ rebuild reloads a viewer still showing the old model before freeing it.
     void add_object(const PySceneObject &object)
     {
-        PySceneSpec next_spec = spec;
-        next_spec.objects.push_back(object);
-
-        mjModel  *next_model = nullptr;
-        mjData   *next_data  = nullptr;
-        SceneSpec cpp_spec   = to_cpp(next_spec);
-        if (!mj_kdl::build_scene(&next_model, &next_data, &cpp_spec)) {
+        SceneSpec cpp_spec = to_cpp(spec);
+        if (!mj_kdl::scene_add_object(&model, &data, &cpp_spec, to_cpp(object))) {
             throw std::runtime_error("add_object rebuild failed");
         }
-
-        mj_kdl::destroy_scene(model, data);
-        spec  = std::move(next_spec);
-        model = next_model;
-        data  = next_data;
+        spec.objects.push_back(object);
         reinit_robots();
     }
 
     void remove_object(const std::string &name)
     {
-        PySceneSpec next_spec = spec;
-        auto        it =
-          std::find_if(next_spec.objects.begin(), next_spec.objects.end(), [&](const auto &obj) {
-              return obj.name == name;
-          });
-        if (it == next_spec.objects.end()) throw std::runtime_error("object not found");
-        next_spec.objects.erase(it);
-
-        mjModel  *next_model = nullptr;
-        mjData   *next_data  = nullptr;
-        SceneSpec cpp_spec   = to_cpp(next_spec);
-        if (!mj_kdl::build_scene(&next_model, &next_data, &cpp_spec)) {
+        auto it = std::find_if(spec.objects.begin(), spec.objects.end(), [&](const auto &obj) {
+            return obj.name == name;
+        });
+        if (it == spec.objects.end()) throw std::runtime_error("object not found");
+        SceneSpec cpp_spec = to_cpp(spec);
+        if (!mj_kdl::scene_remove_object(&model, &data, &cpp_spec, name)) {
             throw std::runtime_error("remove_object rebuild failed");
         }
-
-        mj_kdl::destroy_scene(model, data);
-        spec  = std::move(next_spec);
-        model = next_model;
-        data  = next_data;
+        spec.objects.erase(it);
         reinit_robots();
     }
 };
@@ -1045,25 +1027,6 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         env.robots.clear();
     }
 
-    void rebuild(PySceneSpec next_spec, const char *error_message)
-    {
-        PySceneSpec old_spec = spec;
-        spec                 = std::move(next_spec);
-
-        mj_kdl::Env next_env;
-        SceneSpec   cpp_spec = to_cpp(spec);
-        if (!mj_kdl::init_env(&next_env, &cpp_spec)) {
-            spec                   = std::move(old_spec);
-            SceneSpec old_cpp_spec = to_cpp(spec);
-            env.spec               = old_cpp_spec;
-            throw std::runtime_error(error_message);
-        }
-
-        mj_kdl::cleanup(&env);
-        env = next_env;
-        reinit_robots();
-        wire_reset_hook();
-    }
 
     std::shared_ptr<PyRobot> create_robot(
       const std::string     &base_body,
@@ -1087,25 +1050,34 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         return mj_kdl::reset(&env, options);
     }
 
+    // The C++ rebuild reloads a viewer still showing the old model before freeing it. env.spec
+    // points into spec's strings, so it is refreshed after spec changes.
     void add_object(const PySceneObject &object)
     {
         if (!env.model || !env.data) throw std::runtime_error("env is closed");
-        PySceneSpec next_spec = spec;
-        next_spec.objects.push_back(object);
-        rebuild(std::move(next_spec), "scene_add_object failed");
+        SceneSpec cpp_spec = to_cpp(spec);
+        if (!mj_kdl::scene_add_object(&env.model, &env.data, &cpp_spec, to_cpp(object))) {
+            throw std::runtime_error("scene_add_object failed");
+        }
+        spec.objects.push_back(object);
+        env.spec = to_cpp(spec);
+        reinit_robots();
     }
 
     void remove_object(const std::string &name)
     {
         if (!env.model || !env.data) throw std::runtime_error("env is closed");
-        PySceneSpec next_spec = spec;
-        auto        it =
-          std::find_if(next_spec.objects.begin(), next_spec.objects.end(), [&](const auto &obj) {
-              return obj.name == name;
-          });
-        if (it == next_spec.objects.end()) throw std::runtime_error("object not found");
-        next_spec.objects.erase(it);
-        rebuild(std::move(next_spec), "scene_remove_object failed");
+        auto it = std::find_if(spec.objects.begin(), spec.objects.end(), [&](const auto &obj) {
+            return obj.name == name;
+        });
+        if (it == spec.objects.end()) throw std::runtime_error("object not found");
+        SceneSpec cpp_spec = to_cpp(spec);
+        if (!mj_kdl::scene_remove_object(&env.model, &env.data, &cpp_spec, name)) {
+            throw std::runtime_error("scene_remove_object failed");
+        }
+        spec.objects.erase(it);
+        env.spec = to_cpp(spec);
+        reinit_robots();
     }
 
     std::vector<std::string> camera_names() const

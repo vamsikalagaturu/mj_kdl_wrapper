@@ -226,6 +226,27 @@ TEST_F(TableSceneTest, EnvAddRemoveReinitsRobot)
 
     int nq_before = env.model->nq;
 
+    // Objects are compiled ahead of the robot, so each rebuild moves every robot address.
+    auto expect_maps_match_model = [&] {
+        for (int i = 0; i < s_.n_joints; ++i) {
+            const int jid = mj_name2id(env.model, mjOBJ_JOINT, s_.joint_names[i].c_str());
+            ASSERT_GE(jid, 0);
+            EXPECT_EQ(s_.kdl_to_mj_qpos[i], env.model->jnt_qposadr[jid]) << s_.joint_names[i];
+            EXPECT_EQ(s_.kdl_to_mj_dof[i], env.model->jnt_dofadr[jid]) << s_.joint_names[i];
+            env.data->qpos[env.model->jnt_qposadr[jid]] = 0.1 * (i + 1);
+        }
+        mj_kdl::update(&s_);
+        for (int i = 0; i < s_.n_joints; ++i) EXPECT_DOUBLE_EQ(s_.jnt_pos_msr[i], 0.1 * (i + 1));
+    };
+
+    mj_kdl::SceneState scene;
+    ASSERT_TRUE(mj_kdl::init_scene_state(&scene, env.model));
+    mj_kdl::SceneFreeBodySlot *red = mj_kdl::bind_scene_free_body(&scene, "red_cube");
+    ASSERT_NE(red, nullptr);
+
+    KDL::Frame yellow_frame;
+    EXPECT_FALSE(mj_kdl::get_body_frame(env.model, env.data, "yellow_cube", &yellow_frame));
+
     const double        surface_z = 0.7;
     mj_kdl::SceneObject extra =
       make_box("yellow_cube", 0.0, 0.4, 0.03, 0.03, 0.03, 1.0f, 1.0f, 0.0f, surface_z);
@@ -234,10 +255,24 @@ TEST_F(TableSceneTest, EnvAddRemoveReinitsRobot)
     EXPECT_GT(env.model->nq, nq_before) << "nq should grow after adding a free object";
     EXPECT_EQ(s_.n_joints, 7) << "robot chain should still have 7 joints after rebuild";
     EXPECT_EQ(s_.model, env.model) << "robot model pointer should be updated";
+    expect_maps_match_model();
+    // A name looked up on the freed model must not answer for the new one at the same address.
+    EXPECT_TRUE(mj_kdl::get_body_frame(env.model, env.data, "yellow_cube", &yellow_frame));
+
+    ASSERT_TRUE(mj_kdl::rebind_scene_state(&scene, env.model));
+    mj_kdl::SceneFreeBodySlot *yellow = mj_kdl::bind_scene_free_body(&scene, "yellow_cube");
+    ASSERT_NE(yellow, nullptr);
 
     ASSERT_TRUE(mj_kdl::scene_remove_object(&env, "yellow_cube")) << "Env scene_remove_object() failed";
     EXPECT_EQ(env.model->nq, nq_before) << "nq should return to original after removal";
     EXPECT_EQ(s_.n_joints, 7) << "robot chain should still have 7 joints after removal";
+    expect_maps_match_model();
+
+    EXPECT_FALSE(mj_kdl::rebind_scene_state(&scene, env.model)) << "yellow_cube is gone";
+    EXPECT_EQ(yellow->qpos_adr, -1);
+    const int red_bid = mj_name2id(env.model, mjOBJ_BODY, "red_cube");
+    EXPECT_EQ(red->qpos_adr, env.model->jnt_qposadr[env.model->body_jntadr[red_bid]]);
+    mj_kdl::read_scene_state(&scene, env.data);
 
     mj_kdl::cleanup(&env);
     s_cleaned_ = true;

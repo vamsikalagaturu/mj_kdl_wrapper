@@ -853,6 +853,7 @@ static bool build_index_map(Robot *s, const std::string &pfx = "")
     s->kdl_to_mj_qpos.clear();
     s->kdl_to_mj_dof.clear();
     s->kdl_to_mj_ctrl.clear();
+    s->mj_prefix = pfx;
     if (!s->model) return false;
     for (const auto &name : s->joint_names) {
         int id = mj_name2id(s->model, mjOBJ_JOINT, (pfx + name).c_str());
@@ -979,12 +980,15 @@ bool save_model_xml(const mjModel *model, const char *path)
     return ok != 0;
 }
 
+static void forget_cached_names(const mjModel *model);
+
 void destroy_scene(mjModel *model, mjData *data)
 {
     // The allocator is free to hand the next mjData the address this one had, and a currency
     // recorded against a pointer would then vouch for a scene that has never been forwarded.
     // Freeing is the one moment that is certain to end it.
     if (data) mark_kinematics_forgotten(data);
+    if (model) forget_cached_names(model);
     if (data) mj_deleteData(data);
     if (model) mj_deleteModel(model);
 }
@@ -1151,6 +1155,17 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     return compile_and_make_data(scene.release(), out_model, out_data);
 }
 
+static bool viewer_shows(const Viewer *v, const mjModel *model);
+
+// The old pair stays alive until the viewer has let go of it.
+static void replace_scene(mjModel **model, mjData **data, mjModel *nm, mjData *nd)
+{
+    if (viewer_shows(g_viewer, *model)) viewer_reload(g_viewer, nm, nd);
+    destroy_scene(*model, *data);
+    *model = nm;
+    *data  = nd;
+}
+
 bool scene_add_object(mjModel **model, mjData **data, SceneSpec *spec, const SceneObject &obj)
 {
     spec->objects.push_back(obj);
@@ -1160,9 +1175,7 @@ bool scene_add_object(mjModel **model, mjData **data, SceneSpec *spec, const Sce
         spec->objects.pop_back();
         return false;
     }
-    destroy_scene(*model, *data);
-    *model = nm;
-    *data  = nd;
+    replace_scene(model, data, nm, nd);
     return true;
 }
 
@@ -1180,34 +1193,56 @@ bool scene_remove_object(mjModel **model, mjData **data, SceneSpec *spec, const 
         spec->objects.push_back(removed);
         return false;
     }
-    destroy_scene(*model, *data);
-    *model = nm;
-    *data  = nd;
+    replace_scene(model, data, nm, nd);
     return true;
 }
 
-static void reinit_robot(Robot *r, mjModel *model, mjData *data)
+// Every MuJoCo address a Robot holds is only valid for the model it was resolved on.
+static bool rebind_env_robots(Env *env)
 {
-    /* Objects are always appended after robot bodies in build_scene(), so MuJoCo's
-     * compilation preserves all robot joint indices.  Only the pointers change. */
-    r->model = model;
-    r->data  = data;
+    const mjModel *m  = env->model;
+    bool           ok = true;
+    for (Robot *r : env->robots) {
+        const std::vector<double> pos_cmd = r->jnt_pos_cmd;
+        const std::vector<double> trq_cmd = r->jnt_trq_cmd;
+        r->model                          = env->model;
+        r->data                           = env->data;
+        if (!build_index_map(r, r->mj_prefix)) {
+            ok = false;
+            continue;
+        }
+        r->jnt_pos_cmd = pos_cmd;
+        r->jnt_trq_cmd = trq_cmd;
+        for (ForceTorqueSensor &sensor : r->ft_sensors) {
+            const int force_id  = mj_name2id(m, mjOBJ_SENSOR, sensor.force_sensor.c_str());
+            const int torque_id = mj_name2id(m, mjOBJ_SENSOR, sensor.torque_sensor.c_str());
+            const int site_id =
+              sensor.frame_site.empty() ? -1 : mj_name2id(m, mjOBJ_SITE, sensor.frame_site.c_str());
+            if (force_id < 0 || torque_id < 0 || (!sensor.frame_site.empty() && site_id < 0)) {
+                LOG_ERROR("FT sensor '" << sensor.name << "' is gone from the rebuilt model");
+                ok = false;
+                continue;
+            }
+            sensor.force_adr     = m->sensor_adr[force_id];
+            sensor.torque_adr    = m->sensor_adr[torque_id];
+            sensor.frame_site_id = site_id;
+        }
+    }
+    return ok;
 }
 
 bool scene_add_object(Env *env, const SceneObject &obj)
 {
     if (!env) return false;
     if (!scene_add_object(&env->model, &env->data, &env->spec, obj)) return false;
-    for (Robot *r : env->robots) reinit_robot(r, env->model, env->data);
-    return true;
+    return rebind_env_robots(env);
 }
 
 bool scene_remove_object(Env *env, const std::string &name)
 {
     if (!env) return false;
     if (!scene_remove_object(&env->model, &env->data, &env->spec, name)) return false;
-    for (Robot *r : env->robots) reinit_robot(r, env->model, env->data);
-    return true;
+    return rebind_env_robots(env);
 }
 
 std::string scene_object_site_name(const SceneObject &obj, const char *site_name)
@@ -1255,34 +1290,44 @@ static void ensure_kinematics(const mjModel *model, mjData *data)
 
 /* mj_name2id walks a hash chain and compares strings, and these are called with the same string
  * literals every tick. Small beside a forward solve, but the same waste one level down. */
-static int cached_name2id(const mjModel *model, mjtObj type, const char *name)
-{
-    struct Key
+namespace {
+    struct NameKey
     {
         const mjModel *model;
         int            type;
         std::string    name;
-        bool           operator==(const Key &o) const
+        bool           operator==(const NameKey &o) const
         {
             return model == o.model && type == o.type && name == o.name;
         }
     };
-    struct Hash
+    struct NameKeyHash
     {
-        std::size_t operator()(const Key &k) const
+        std::size_t operator()(const NameKey &k) const
         {
             return std::hash<const void *>{}(k.model) ^ (std::hash<std::string>{}(k.name) << 1)
                    ^ (static_cast<std::size_t>(k.type) << 3);
         }
     };
-    static std::unordered_map<Key, int, Hash> cache;
+    std::unordered_map<NameKey, int, NameKeyHash> g_name_cache;
+} // namespace
 
-    const Key  key{ model, static_cast<int>(type), name };
-    const auto found = cache.find(key);
-    if (found != cache.end()) return found->second;
+static int cached_name2id(const mjModel *model, mjtObj type, const char *name)
+{
+    const NameKey key{ model, static_cast<int>(type), name };
+    const auto    found = g_name_cache.find(key);
+    if (found != g_name_cache.end()) return found->second;
     const int id = mj_name2id(model, type, name);
-    cache.emplace(key, id);
+    g_name_cache.emplace(key, id);
     return id;
+}
+
+// A freed model's address can come back for the next one; its ids must not.
+static void forget_cached_names(const mjModel *model)
+{
+    for (auto it = g_name_cache.begin(); it != g_name_cache.end();) {
+        it = (it->first.model == model) ? g_name_cache.erase(it) : std::next(it);
+    }
 }
 
 bool get_site_frame(const mjModel *model, mjData *data, const char *site_name, KDL::Frame *out)
@@ -1990,14 +2035,10 @@ SceneWrenchSlot *bind_scene_wrench(SceneState *s, const char *body_name)
     return &s->wrenches.back();
 }
 
-SceneActuatorSlot *bind_scene_actuator(SceneState *s, const char *name)
+// The actuator of that name, or the one driving the joint of that name; -1 if neither.
+static int actuator_for_name(const mjModel *m, const char *name)
 {
-    if (!s || !s->model || !name) {
-        LOG_ERROR("bind_scene_actuator: null scene state or name");
-        return nullptr;
-    }
-    const mjModel *m   = s->model;
-    int            aid = mj_name2id(m, mjOBJ_ACTUATOR, name);
+    int aid = mj_name2id(m, mjOBJ_ACTUATOR, name);
     if (aid < 0) {
         // A model commands the joint it means; the actuator driving it carries its own name.
         const int jid = mj_name2id(m, mjOBJ_JOINT, name);
@@ -2005,6 +2046,16 @@ SceneActuatorSlot *bind_scene_actuator(SceneState *s, const char *name)
             if (m->actuator_trntype[i] == mjTRN_JOINT && m->actuator_trnid[2 * i] == jid) aid = i;
         }
     }
+    return aid;
+}
+
+SceneActuatorSlot *bind_scene_actuator(SceneState *s, const char *name)
+{
+    if (!s || !s->model || !name) {
+        LOG_ERROR("bind_scene_actuator: null scene state or name");
+        return nullptr;
+    }
+    const int aid = actuator_for_name(s->model, name);
     if (aid < 0) {
         LOG_ERROR("bind_scene_actuator: nothing actuates '" << name << "'");
         return nullptr;
@@ -2024,11 +2075,13 @@ void read_scene_state(SceneState *s, const mjData *data)
     if (!s || !data) return;
 
     for (auto &slot : s->joints) {
+        if (slot.qpos_adr < 0) continue;
         slot.position = data->qpos[slot.qpos_adr];
         slot.velocity = data->qvel[slot.dof_adr];
         ++slot.seq;
     }
     for (auto &slot : s->free_bodies) {
+        if (slot.qpos_adr < 0) continue;
         const double *p = data->qpos + slot.qpos_adr;
         // MuJoCo stores the freejoint quaternion as [w x y z]; KDL takes [x y z w].
         slot.pose = KDL::Frame(
@@ -2043,6 +2096,7 @@ void apply_scene_state(SceneState *s, mjData *data)
     if (!s || !data) return;
 
     for (const auto &slot : s->wrenches) {
+        if (slot.body_id < 0) continue;
         double *target = data->xfrc_applied + 6 * slot.body_id;
         target[0]      = slot.wrench.force.x();
         target[1]      = slot.wrench.force.y();
@@ -2052,8 +2106,43 @@ void apply_scene_state(SceneState *s, mjData *data)
         target[5]      = slot.wrench.torque.z();
     }
     for (const auto &slot : s->actuators) {
+        if (slot.ctrl_id < 0) continue;
         data->ctrl[slot.ctrl_id] = clamp_ctrlrange(s->model, slot.ctrl_id, slot.command);
     }
+}
+
+bool rebind_scene_state(SceneState *s, const mjModel *model)
+{
+    if (!s || !model) {
+        LOG_ERROR("rebind_scene_state: null scene state or model");
+        return false;
+    }
+    s->model = model;
+    std::string unbound;
+    for (auto &slot : s->joints) {
+        const int  jid = mj_name2id(model, mjOBJ_JOINT, slot.name.c_str());
+        const bool scalar =
+          jid >= 0 && model->jnt_type[jid] != mjJNT_FREE && model->jnt_type[jid] != mjJNT_BALL;
+        slot.qpos_adr = scalar ? model->jnt_qposadr[jid] : -1;
+        slot.dof_adr  = scalar ? model->jnt_dofadr[jid] : -1;
+        if (!scalar) unbound += " joint '" + slot.name + "'";
+    }
+    for (auto &slot : s->free_bodies) {
+        const int bid = mj_name2id(model, mjOBJ_BODY, slot.name.c_str());
+        const int jid = bid >= 0 ? free_joint_of_body(model, bid) : -1;
+        slot.qpos_adr = jid >= 0 ? model->jnt_qposadr[jid] : -1;
+        if (jid < 0) unbound += " free body '" + slot.name + "'";
+    }
+    for (auto &slot : s->wrenches) {
+        slot.body_id = mj_name2id(model, mjOBJ_BODY, slot.name.c_str());
+        if (slot.body_id < 0) unbound += " body '" + slot.name + "'";
+    }
+    for (auto &slot : s->actuators) {
+        slot.ctrl_id = actuator_for_name(model, slot.name.c_str());
+        if (slot.ctrl_id < 0) unbound += " actuator '" + slot.name + "'";
+    }
+    if (!unbound.empty()) LOG_ERROR("rebind_scene_state: gone from the model, unbound:" << unbound);
+    return unbound.empty();
 }
 
 // GLFW/UI
@@ -2307,8 +2396,9 @@ struct SimUiState
     /* User scene merged into each render frame by Simulate (overlay polylines,
      * e.g. the EE trajectory trace). Guarded by user_scn_mtx because the control
      * thread appends to it while the render thread reads it. */
-    mjvScene   user_scn{};
-    std::mutex user_scn_mtx;
+    mjvScene    user_scn{};
+    std::mutex  user_scn_mtx;
+    std::string trace_site; // TCP site the EE trace follows, re-resolved on viewer_reload()
     /* Key state as the render thread's key callback sees it, so that a caller
      * driving physics on another thread can read the keyboard without touching
      * GLFW, which requires its window calls on the owning thread. */
@@ -2691,10 +2781,48 @@ static bool
     ss->sim->user_scn  = &ss->user_scn;
 
     // trace follows the robot's TCP site (Frames panel "Trace EE")
-    if (tcp_site && *tcp_site) { ss->sim->ee_trace_site_ = mj_name2id(m, mjOBJ_SITE, tcp_site); }
+    if (tcp_site && *tcp_site) {
+        ss->trace_site          = tcp_site;
+        ss->sim->ee_trace_site_ = mj_name2id(m, mjOBJ_SITE, tcp_site);
+    }
 
     v->_sim_ui = ss;
     g_viewer   = v;
+    return true;
+}
+
+static bool viewer_shows(const Viewer *v, const mjModel *model)
+{
+    if (!v || !v->_sim_ui || !model) return false;
+    const auto *ss = static_cast<const SimUiState *>(v->_sim_ui);
+    return ss->sim && ss->sim->m_ == model;
+}
+
+bool viewer_reload(Viewer *v, mjModel *m, mjData *d)
+{
+    if (!v || !v->_sim_ui || !m || !d) return false;
+    auto *ss = static_cast<SimUiState *>(v->_sim_ui);
+    // Camera, geom and site ids move with a recompile, so a recording cannot carry on.
+    if (ss->recorder_active) {
+        LOG_WARN("viewer_reload: scene rebuilt, recording stopped");
+        cleanup(&ss->recorder);
+        ss->recorder_active      = false;
+        ss->record_frame_counter = 0;
+        ss->sim->SetWrapperRecorderState(0);
+    }
+    ss->sim->Load(m, d, ss->sim->filename);
+    {
+        // Sync() copies user_scn under sim->mtx; the control thread appends under user_scn_mtx.
+        std::unique_lock<std::recursive_mutex> lock(ss->sim->mtx);
+        std::lock_guard<std::mutex>            lk(ss->user_scn_mtx);
+        mjv_freeScene(&ss->user_scn);
+        mjv_makeScene(m, &ss->user_scn, /*maxgeom=*/8192);
+        ss->user_scn.ngeom = 0;
+        ss->sim->ee_trace_site_ =
+          ss->trace_site.empty() ? -1 : mj_name2id(m, mjOBJ_SITE, ss->trace_site.c_str());
+        mj_forward(m, d);
+        mark_kinematics_fresh(d);
+    }
     return true;
 }
 
