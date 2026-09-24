@@ -490,11 +490,10 @@ int main(int argc, char *argv[])
                 if ((done_time && done_pose) || done_timeout) break;
 
                 if (!mj_kdl::step(&robot)) {
-
-                mj_kdl::pace_realtime(&robot);
                     aborted = true;
                     break;
                 }
+                mj_kdl::pace_realtime(&robot);
                 ++sim_step;
                 if (recorder_ok && sim_step % steps_per_frame == 0) {
                     if (!mj_kdl::record_frame(&recorder, model, data)) {

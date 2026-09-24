@@ -17,9 +17,14 @@ JUG_X = 0.30
 JUG_Y = 0.14
 RETREAT_X = JUG_X - 0.08
 RETREAT_Y = JUG_Y - 0.08
+JUG_RADIUS = 0.028
+JUG_HEIGHT = 0.084
 BALL_RADIUS = 0.007
 NUM_BALLS = 36
 POUR_TILT_RAD = 1.95
+TILT_OUTLET_Z = TABLE_Z + 0.18
+GRIPPER_CLOSED = 0.8
+MIN_BALLS_IN_RECEIVER = 4
 IK_TOL = 3e-3
 KP = [120.0, 220.0, 120.0, 220.0, 110.0, 190.0, 90.0]
 KD = [12.0, 22.0, 12.0, 22.0, 11.0, 18.0, 9.0]
@@ -130,13 +135,6 @@ def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
-def clamp_joint(value: float, limit: tuple[float, float]) -> float:
-    low, high = limit
-    if math.isfinite(low) and math.isfinite(high) and high > low:
-        return clamp(value, low, high)
-    return value
-
-
 def joint_limit_arrays(robot: mjk.Robot) -> tuple[kdl.JntArray, kdl.JntArray]:
     q_min = kdl.JntArray(robot.n_joints)
     q_max = kdl.JntArray(robot.n_joints)
@@ -190,11 +188,28 @@ def build_waypoints(env: mjk.Env, robot: mjk.Robot) -> dict[str, list[float]]:
             raise RuntimeError(f"IK pose error for {name}")
         return as_list(out)
 
+    # Gen3's wrist joint is continuous: the tilt may run past pi, so it is not clamped.
+    def tilted(q_pour: list[float]) -> list[float]:
+        q_tilt = q_pour[:]
+        q_tilt[-1] += POUR_TILT_RAD
+        return q_tilt
+
     q_pre_pour = solve("pre-pour", HOME, kdl.Vector(JUG_X, JUG_Y, TABLE_Z + 0.27))
-    q_pour = solve("pour", q_pre_pour, kdl.Vector(JUG_X, JUG_Y, TABLE_Z + 0.20))
+    pour_pos = kdl.Vector(JUG_X, JUG_Y, TABLE_Z + 0.20)
+    q_pour = solve("pour", q_pre_pour, pour_pos)
+    q_tilt = tilted(q_pour)
+    # Tilting swings the outlet away from where the untilted pose put it; shift the pour pose
+    # until the tilted outlet sits over the receiver.
+    for _ in range(4):
+        robot.set_joint_pos(q_tilt, call_forward=False)
+        outlet = env.site_frame("pour_outlet").p
+        err = kdl.Vector(JUG_X, JUG_Y, TILT_OUTLET_Z) - outlet
+        if err.Norm() < 5e-3:
+            break
+        pour_pos = pour_pos + err
+        q_pour = solve("pour", q_pre_pour, pour_pos)
+        q_tilt = tilted(q_pour)
     q_retreat = solve("retreat", q_pour, kdl.Vector(RETREAT_X, RETREAT_Y, TABLE_Z + 0.27))
-    q_tilt = q_pour[:]
-    q_tilt[-1] = clamp_joint(q_tilt[-1] + POUR_TILT_RAD, robot.joint_limits[-1])
     return {
         "home": HOME[:],
         "pre_pour": q_pre_pour,
@@ -244,18 +259,22 @@ def balls_in_receiver(env: mjk.Env) -> tuple[int, list[float]]:
         pos = [frame.p.x(), frame.p.y(), frame.p.z()]
         centroid = [a + b for a, b in zip(centroid, pos)]
         if (
-            abs(pos[0] - JUG_X) < 0.040
-            and abs(pos[1] - JUG_Y) < 0.040
-            and TABLE_Z + 0.004 < pos[2] < TABLE_Z + 0.13
+            abs(pos[0] - JUG_X) < JUG_RADIUS - 0.012
+            and abs(pos[1] - JUG_Y) < JUG_RADIUS - 0.012
+            and TABLE_Z + 0.006 < pos[2] < TABLE_Z + JUG_HEIGHT + 0.04
         ):
             count += 1
     return count, [value / NUM_BALLS for value in centroid]
 
 
 def step_once(robot: mjk.Robot, viewer: mjk.SimulateViewer | None) -> bool:
-    if viewer is not None:
-        return viewer.step()
-    return robot.step()
+    if viewer is None:
+        return robot.step()
+    # step() never sleeps; without pacing the physics loop starves the render thread.
+    if not viewer.step():
+        return False
+    viewer.pace()
+    return True
 
 
 def run_phase(
@@ -313,20 +332,22 @@ def main() -> int:
         def on_reset(ctx):
             place_balls_in_bottle(env, robot)  # also re-homes the arm
             if env.has_actuator("g_fingers_actuator"):
-                env.set_actuator_ctrl("g_fingers_actuator", 255.0)
+                env.set_actuator_ctrl("g_fingers_actuator", GRIPPER_CLOSED)
 
         env.on_reset = on_reset
         env.reset()
 
         waypoints = build_waypoints(env, robot)
+        env.reset()  # waypoint search moved the arm; start the run from home again
+        g = GRIPPER_CLOSED
         phases = [
-            Phase("HOME", waypoints["home"], 0.8, 2.0, 0.08, 255.0),
-            Phase("PRE_POUR", waypoints["pre_pour"], 2.0, 4.0, 0.08, 255.0),
-            Phase("POUR", waypoints["pour"], 1.8, 4.0, 0.07, 255.0),
-            Phase("TILT", waypoints["tilt"], 3.0, 5.0, 0.07, 255.0),
-            Phase("POUR_HOLD", waypoints["tilt"], 2.5 if not args.gui else 10.0, 0.0, -1.0, 255.0),
-            Phase("RETREAT", waypoints["retreat"], 1.6, 3.0, 0.08, 255.0),
-            Phase("HOLD", waypoints["retreat"], 1.0 if not args.gui else 10.0, 0.0, -1.0, 255.0),
+            Phase("HOME", waypoints["home"], 1.0, 2.5, 0.08, g),
+            Phase("PRE_POUR", waypoints["pre_pour"], 4.0, 6.5, 0.08, g),
+            Phase("POUR", waypoints["pour"], 3.5, 5.5, 0.07, g),
+            Phase("TILT", waypoints["tilt"], 7.0, 10.0, 0.07, g),
+            Phase("POUR_HOLD", waypoints["tilt"], 10.0 if args.gui else 9.0, 0.0, -1.0, g),
+            Phase("RETREAT", waypoints["retreat"], 2.0, 4.0, 0.08, g),
+            Phase("HOLD", waypoints["retreat"], 10.0 if args.gui else 1.0, 0.0, -1.0, g),
         ]
 
         fps = 60
@@ -365,6 +386,9 @@ def main() -> int:
         print(f"grain centroid: {[round(v, 3) for v in centroid]} receiver center={[JUG_X, JUG_Y]}")
         if recorder is not None:
             print(f"recorded: {args.record}")
+        if not args.gui and in_receiver < MIN_BALLS_IN_RECEIVER:
+            print("pour failed: too few balls reached the receiver")
+            return 1
     finally:
         if recorder is not None:
             recorder.close()
