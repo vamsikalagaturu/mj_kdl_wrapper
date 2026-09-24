@@ -366,6 +366,9 @@ target_link_libraries(mj_kdl_wrapper PUBLIC
 target_link_libraries(mj_kdl_wrapper PRIVATE
   mujoco_simulate_ui
 )
+# DT_RPATH, not RUNPATH: LD_LIBRARY_PATH must not swap the KDL fork for a system liborocos-kdl
+# with the same soname.
+target_link_options(mj_kdl_wrapper PUBLIC "LINKER:--disable-new-dtags")
 
 # When KDL is built via ExternalProject, its headers and library only exist
 # after that build step. Order it before the wrapper compiles/links.
