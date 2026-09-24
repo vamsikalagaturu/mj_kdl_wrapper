@@ -48,9 +48,9 @@ TABLE_Z = 0.70
 
 # Cartesian computed-torque inner-loop gains. A Cartesian PD produces desired
 # TCP acceleration; WDLS maps it to qddot; RNEA maps qddot to torque.
-KP_LIN, KD_LIN = 11520.0, 514.3
-KP_ROT, KD_ROT = 7200.0, 600.1
-BETA_LIN_MAX, BETA_ROT_MAX = 7200.0, 5040.0
+KP_LIN, KD_LIN = 2500.0, 100.0
+KP_ROT, KD_ROT = 2500.0, 100.0
+BETA_LIN_MAX, BETA_ROT_MAX = 300.0, 300.0
 TAU_MAX = 141.6
 
 # Admittance outer loop: virtual mass, damping, stiffness (isotropic).

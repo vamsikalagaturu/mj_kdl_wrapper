@@ -22,6 +22,7 @@ set(ALL_TESTS
   test_mjcf_ft_sensor
   test_mjcf_pick
   test_scene_state
+  test_control_modes
 )
 
 foreach(test_name ${ALL_TESTS})
@@ -32,6 +33,8 @@ foreach(test_name ${ALL_TESTS})
   # RUN_SERIAL avoids conflicts over shared temp files and MuJoCo global XML state.
   gtest_discover_tests(${test_name} DISCOVERY_TIMEOUT 60 PROPERTIES RUN_SERIAL TRUE)
 endforeach()
+target_compile_definitions(test_control_modes PRIVATE
+  MJ_KDL_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 
 # The examples self-check under --headless and exit non-zero on failure. ex_record is left out:
 # it only writes a video.

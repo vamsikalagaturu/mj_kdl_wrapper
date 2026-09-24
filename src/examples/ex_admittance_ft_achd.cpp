@@ -3,12 +3,13 @@
 namespace
 {
 
-static constexpr double kKpLin = 5760.0;
-static constexpr double kKdLin = 378.0;
-static constexpr double kKpRot = 3600.0;
-static constexpr double kKdRot = 441.0;
-static constexpr double kBetaLinMax = 3600.0;
-static constexpr double kBetaRotMax = 2520.0;
+static constexpr double kKpLin = 2500.0;
+static constexpr double kKdLin = 100.0;
+static constexpr double kKpRot = 2500.0;
+static constexpr double kKdRot = 100.0;
+static constexpr double kBetaLinMax = 300.0;
+static constexpr double kBetaRotMax = 300.0;
+static constexpr double kKdNull = 10.0;
 static constexpr double kTauMax = 212.4;
 
 class AchdController final : public admittance_ft::Controller
@@ -68,7 +69,9 @@ public:
         beta(5) = admittance_ft::clamp(kKpRot * e[5] + kKdRot * ((e[5] - err_prev[5]) / dt), -kBetaRotMax, kBetaRotMax);
         for (unsigned i = 0; i < 6; ++i) err_prev[i] = e[i];
 
-        KDL::SetToZero(ff_tau);
+        // The 6 task constraints leave the elbow's null space free to fall under gravity; damp
+        // it. With zero driver weights the constraint cancels ff_tau in the task directions.
+        for (int i = 0; i < h.robot.n_joints; ++i) ff_tau(i) = -kKdNull * qd(i);
         if (achd.CartToJnt(q, qd, qdd, alpha, beta, f_ext_achd, ff_tau, constraint_tau) < 0) return;
         if (rnea.CartToJnt(q, qd, qdd, f_ext_rnea, tau) < 0) return;
         for (int i = 0; i < h.robot.n_joints; ++i) {

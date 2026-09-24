@@ -104,7 +104,7 @@ Robot  (KDL chain + joint index maps into MuJoCo arrays)
     +-- init_window_sim() + tick()  -- interactive event loop
 ```
 
-**Control cycle (`update()`):** reads `qpos`/`qvel`/`qfrc_actuator` from MuJoCo into `jnt_pos_msr` / `jnt_vel_msr` / `jnt_trq_msr`, then writes commands back according to `ctrl_mode`: POSITION writes `jnt_pos_cmd` to `data->ctrl`; TORQUE writes `jnt_trq_cmd` to `data->qfrc_applied` (and neutralises position actuators by zeroing their ctrl error).
+**Control cycle (`update()`):** reads `qpos`/`qvel`/`qfrc_actuator` from MuJoCo into `jnt_pos_msr` / `jnt_vel_msr` / `jnt_trq_msr`, then writes the active mode's command (`jnt_pos_cmd` / `jnt_vel_cmd` / `jnt_trq_cmd`) to that mode's actuators' `data->ctrl`. Each mode is an actuator group toggled via `opt.disableactuator` (see `docs/howto/torque_control.md`).
 
 **Index maps inside `Robot`:** `kdl_to_mj_qpos`, `kdl_to_mj_dof`, `kdl_to_mj_ctrl` translate between KDL joint ordering and MuJoCo array indices. These are built during `init_robot_from_mjcf()` and are the reason multi-robot and gripper scenes work correctly even when joint ordering differs.
 

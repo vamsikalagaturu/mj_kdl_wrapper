@@ -36,6 +36,17 @@ class Condim(Enum):
 class CtrlMode(Enum):
     POSITION: "CtrlMode"
     TORQUE: "CtrlMode"
+    VELOCITY: "CtrlMode"
+
+
+class CtrlModeSpec:
+    """A control mode build_scene adds to a robot, on its own actuator group."""
+    mode: CtrlMode
+    joints: list[str]
+    kv: float
+    def __init__(
+        self, mode: CtrlMode = CtrlMode.TORQUE, joints: Sequence[str] = (), kv: float = 0.0
+    ) -> None: ...
 
 
 class VideoResolution(Enum):
@@ -73,6 +84,8 @@ class RobotSpec:
     pos: list[float]
     quat: list[float]
     attachments: list[AttachmentSpec]
+    modes: list[CtrlModeSpec]
+    """Extra control modes; default [TORQUE], [] = native only."""
     def __init__(self) -> None: ...
 
 
@@ -190,6 +203,8 @@ class Scene:
     def has_actuator(self, name: str) -> bool: ...
     def add_object(self, object: SceneObject) -> None: ...
     """Rebuild the scene with an added object and rebind existing Robot handles."""
+    def set_control_mode(self, robot: int, mode: CtrlMode) -> None: ...
+    """Switch robot (its SceneSpec.robots index) to mode, for robots driven without a Robot."""
     def remove_object(self, name: str) -> None: ...
     """Rebuild the scene without the named object and rebind existing Robot handles."""
 
@@ -205,7 +220,10 @@ class Robot:
     jnt_vel_msr: list[float]
     jnt_trq_msr: list[float]
     jnt_pos_cmd: list[float]
+    jnt_vel_cmd: list[float]
     jnt_trq_cmd: list[float]
+    def set_control_mode(self, mode: CtrlMode) -> None: ...
+    """Switch mode without a jump: seeds the new mode's commands from the current state."""
     @staticmethod
     def from_scene(
         scene: Scene,
@@ -322,6 +340,8 @@ class Env:
     def reset(self, options: Optional[ResetOptions] = None) -> ResetInfo: ...
     def add_object(self, object: SceneObject) -> None: ...
     """Rebuild the environment with an added object and rebind existing Robot handles."""
+    def set_control_mode(self, robot: int, mode: CtrlMode) -> None: ...
+    """Switch robot (its SceneSpec.robots index) to mode, for robots driven without a Robot."""
     def remove_object(self, name: str) -> None: ...
     """Rebuild the environment without the named object and rebind existing Robot handles."""
     def camera_names(self) -> list[str]: ...

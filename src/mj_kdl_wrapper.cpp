@@ -35,6 +35,7 @@
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -880,15 +881,34 @@ static KDL::RigidBodyInertia mj_body_inertia(const mjModel *model, int bid)
 }
 
 
+// The mode an actuator gives on its own: a position servo (fixed gain kp, affine bias
+// [0, -kp, -kv]) is POSITION, a motor (fixed gain, no bias) is TORQUE; -1 for anything else.
+static int native_mode(int gaintype, const double *gainprm, int biastype, const double *biasprm,
+                       int dyntype)
+{
+    if (dyntype != mjDYN_NONE || gaintype != mjGAIN_FIXED || gainprm[0] == 0.0) return -1;
+    if (biastype == mjBIAS_NONE) return static_cast<int>(CtrlMode::TORQUE);
+    if (biastype == mjBIAS_AFFINE && biasprm[0] == 0.0 && biasprm[1] == -gainprm[0])
+        return static_cast<int>(CtrlMode::POSITION);
+    return -1;
+}
+
+static int mode_group(int robot, int mode) { return 1 + 3 * robot + mode; }
+
 static bool build_index_map(Robot *s, const std::string &pfx = "")
 {
     s->kdl_to_mj_qpos.clear();
     s->kdl_to_mj_dof.clear();
     s->kdl_to_mj_ctrl.clear();
-    s->mj_prefix = pfx;
+    for (auto &ctrl : s->mode_ctrl) ctrl.assign(s->joint_names.size(), -1);
+    s->robot_index  = -1;
+    s->mode_applied = false;
+    s->mj_prefix    = pfx;
     if (!s->model) return false;
-    for (const auto &name : s->joint_names) {
-        int id = mj_name2id(s->model, mjOBJ_JOINT, (pfx + name).c_str());
+    const mjModel *m = s->model;
+    for (size_t j = 0; j < s->joint_names.size(); ++j) {
+        const std::string &name = s->joint_names[j];
+        int                id   = mj_name2id(m, mjOBJ_JOINT, (pfx + name).c_str());
         if (id < 0) {
             LOG_ERROR(
               "joint '" << pfx << name
@@ -896,26 +916,55 @@ static bool build_index_map(Robot *s, const std::string &pfx = "")
             );
             return false;
         }
-        s->kdl_to_mj_qpos.push_back(s->model->jnt_qposadr[id]);
-        int dof = s->model->jnt_dofadr[id];
-        s->kdl_to_mj_dof.push_back(dof);
-        // Find the actuator that drives this joint (mjTRN_JOINT type).
-        int ctrl_idx = -1;
-        for (int ai = 0; ai < s->model->nu; ++ai) {
-            if (s->model->actuator_trntype[ai] == mjTRN_JOINT
-                && s->model->actuator_trnid[2 * ai] == id) {
-                ctrl_idx = ai;
-                break;
+        s->kdl_to_mj_qpos.push_back(m->jnt_qposadr[id]);
+        s->kdl_to_mj_dof.push_back(m->jnt_dofadr[id]);
+        // A mode group says which mode an actuator serves; ungrouped ones serve their native mode.
+        int first = -1;
+        for (int ai = 0; ai < m->nu; ++ai) {
+            if (m->actuator_trntype[ai] != mjTRN_JOINT || m->actuator_trnid[2 * ai] != id) continue;
+            if (first < 0) first = ai;
+            const int group = m->actuator_group[ai];
+            int       mode  = -1;
+            if (group >= 1 && group <= 30) {
+                mode           = (group - 1) % 3;
+                s->robot_index = (group - 1) / 3;
+            } else {
+                mode = native_mode(
+                  m->actuator_gaintype[ai],
+                  m->actuator_gainprm + mjNGAIN * ai,
+                  m->actuator_biastype[ai],
+                  m->actuator_biasprm + mjNBIAS * ai,
+                  m->actuator_dyntype[ai]
+                );
             }
+            if (mode >= 0 && s->mode_ctrl[mode][j] < 0) s->mode_ctrl[mode][j] = ai;
         }
-        s->kdl_to_mj_ctrl.push_back(ctrl_idx);
+        const int pos = s->mode_ctrl[static_cast<int>(CtrlMode::POSITION)][j];
+        s->kdl_to_mj_ctrl.push_back(pos >= 0 ? pos : first);
     }
     int n = s->n_joints;
     s->jnt_pos_msr.assign(n, 0.0);
     s->jnt_vel_msr.assign(n, 0.0);
     s->jnt_trq_msr.assign(n, 0.0);
     s->jnt_pos_cmd.assign(n, 0.0);
+    s->jnt_vel_cmd.assign(n, 0.0);
     s->jnt_trq_cmd.assign(n, 0.0);
+
+    // The mode the model is in now: the enabled mode group, else what every joint drives natively.
+    for (int mode = 0; mode < 3; ++mode) {
+        const bool live =
+          s->robot_index >= 0
+            ? !(m->opt.disableactuator & (1 << mode_group(s->robot_index, mode)))
+            : std::all_of(s->mode_ctrl[mode].begin(), s->mode_ctrl[mode].end(), [](int a) {
+                  return a >= 0;
+              });
+        if (live && n > 0) {
+            s->ctrl_mode    = static_cast<CtrlMode>(mode);
+            s->applied_mode = s->ctrl_mode;
+            s->mode_applied = true;
+            break;
+        }
+    }
     return true;
 }
 
@@ -989,7 +1038,10 @@ static bool
             KDL::Vector           axis   = bR * ja;
             KDL::Joint::JointType jtype =
               (model->jnt_type[jid] == mjJNT_HINGE) ? KDL::Joint::RotAxis : KDL::Joint::TransAxis;
-            jnt = KDL::Joint(jname ? jname : "", origin, axis, jtype);
+            // Rotor inertia (armature) is part of what the joint must drive; KDL's dynamics
+            // solvers add it, so the chain matches the simulated model.
+            const double armature = model->dof_armature[model->jnt_dofadr[jid]];
+            jnt = KDL::Joint(jname ? jname : "", origin, axis, jtype, 1.0, 0.0, armature);
             if (jname) {
                 s->joint_names.push_back(jname);
                 s->joint_limits.push_back(joint_range(model, jid));
@@ -1108,6 +1160,115 @@ bool attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
     return true;
 }
 
+static bool range_limited(mjtLimited flag, const double *range)
+{
+    return flag == mjLIMITED_TRUE || (flag == mjLIMITED_AUTO && range[0] < range[1]);
+}
+
+/* Give each listed joint one actuator per requested mode, each mode in its own group of this
+ * robot; the joint's own actuator joins the group of the mode it gives natively. Collects the
+ * groups to start disabled. */
+static bool add_mode_actuators(mjSpec *arm, const RobotSpec &rs, int robot, int *disable_bits)
+{
+    if (rs.modes.empty()) return true;
+    if (mode_group(robot, static_cast<int>(CtrlMode::VELOCITY)) > 30) {
+        LOG_ERROR("robots[" << robot << "]: control-mode groups only reach robot index 9");
+        return false;
+    }
+
+    std::map<std::string, std::vector<mjsActuator *>> by_joint;
+    for (mjsElement *e = mjs_firstElement(arm, mjOBJ_ACTUATOR); e; e = mjs_nextElement(arm, e)) {
+        mjsActuator *a = mjs_asActuator(e);
+        if (a->trntype == mjTRN_JOINT) by_joint[mjs_getString(a->target)].push_back(a);
+    }
+
+    int enabled = 0, used = 0;
+    for (const CtrlModeSpec &ms : rs.modes) {
+        // Every actuated joint when none are named: those that cannot take modes are skipped.
+        const bool               all    = ms.joints.empty();
+        std::vector<std::string> joints = ms.joints;
+        if (all)
+            for (const auto &entry : by_joint) joints.push_back(entry.first);
+
+        for (const std::string &joint : joints) {
+            const auto   it     = by_joint.find(joint);
+            mjsActuator *own    = (it != by_joint.end() && it->second.size() == 1) ? it->second.front() : nullptr;
+            const int    native = own ? native_mode(
+                                          own->gaintype, own->gainprm, own->biastype, own->biasprm, own->dyntype
+                                        )
+                                      : -1;
+            if (native < 0) {
+                if (all) {
+                    LOG_INFO("robots[" << robot << "]: joint '" << joint << "' takes no control modes");
+                    continue;
+                }
+                LOG_ERROR(
+                  "robots[" << robot << "]: joint '" << joint
+                            << "' needs exactly one position-servo or motor actuator"
+                );
+                return false;
+            }
+            own->group = mode_group(robot, native);
+            enabled |= 1 << own->group;
+            used |= 1 << own->group;
+
+            const int mode = static_cast<int>(ms.mode);
+            if (mode == native) continue;
+            if (ms.mode == CtrlMode::POSITION) {
+                LOG_ERROR(
+                  "robots[" << robot << "]: joint '" << joint << "' is motor-driven; POSITION is not supported"
+                );
+                return false;
+            }
+            if (ms.mode == CtrlMode::VELOCITY && ms.kv <= 0.0) {
+                LOG_ERROR("robots[" << robot << "]: VELOCITY needs kv > 0");
+                return false;
+            }
+
+            // Both limits below are in actuator-force units: a servo's forcerange, a motor's ctrl.
+            const bool    servo   = native == static_cast<int>(CtrlMode::POSITION);
+            const double *range   = servo ? own->forcerange : own->ctrlrange;
+            const bool    limited = range_limited(servo ? own->forcelimited : own->ctrllimited, range);
+
+            mjsActuator *added = mjs_addActuator(arm, nullptr);
+            added->trntype     = mjTRN_JOINT;
+            mjs_setString(added->target, joint.c_str());
+            added->gear[0] = own->gear[0];
+            added->group   = mode_group(robot, mode);
+            used |= 1 << added->group;
+            if (ms.mode == CtrlMode::TORQUE) {
+                mjs_setToMotor(added);
+                added->ctrllimited  = limited ? mjLIMITED_TRUE : mjLIMITED_FALSE;
+                added->ctrlrange[0] = range[0];
+                added->ctrlrange[1] = range[1];
+            } else {
+                mjs_setToVelocity(added, ms.kv);
+                added->forcelimited  = limited ? mjLIMITED_TRUE : mjLIMITED_FALSE;
+                added->forcerange[0] = range[0];
+                added->forcerange[1] = range[1];
+            }
+            const char *suffix = ms.mode == CtrlMode::TORQUE ? "_torque" : "_velocity";
+            mjs_setName(added->element, (joint + suffix).c_str());
+        }
+    }
+    *disable_bits |= used & ~enabled;
+
+    // A keyframe that sets ctrl sets one per actuator; the added ones come last and start at 0.
+    int nu = 0;
+    for (mjsElement *e = mjs_firstElement(arm, mjOBJ_ACTUATOR); e; e = mjs_nextElement(arm, e))
+        ++nu;
+    for (mjsElement *e = mjs_firstElement(arm, mjOBJ_KEY); e; e = mjs_nextElement(arm, e)) {
+        mjsKey       *key  = mjs_asKey(e);
+        int           size = 0;
+        const double *ctrl = mjs_getDouble(key->ctrl, &size);
+        if (size == 0 || size >= nu) continue;
+        std::vector<double> padded(ctrl, ctrl + size);
+        padded.resize(nu, 0.0);
+        mjs_setDouble(key->ctrl, padded.data(), nu);
+    }
+    return true;
+}
+
 bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
 {
     if (!sc) return false;
@@ -1147,6 +1308,7 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     add_ready_sites(scene.get(), pending_sites);
 
     bool first_arm      = true;
+    int  disable_bits   = 0;
     char err[kMjErrBuf] = {};
     for (int ai = 0; ai < (int)sc->robots.size(); ++ai) {
         const RobotSpec &rs = sc->robots[ai];
@@ -1161,6 +1323,8 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
             return false;
         }
         absolutize_asset_files(arm.get());
+        // Before the attachments are merged in, so only the robot's own joints take modes.
+        if (!add_mode_actuators(arm.get(), rs, ai, &disable_bits)) return false;
 
         // Inherit physics options (integrator, solver, etc.) from the first
         // arm, then apply the SceneSpec's user-controlled fields on top.
@@ -1195,6 +1359,8 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
         scene->option.timestep   = sc->timestep;
         scene->option.gravity[2] = sc->gravity_z;
     }
+    // Every robot starts in its native mode: its other mode groups are off.
+    scene->option.disableactuator |= disable_bits;
 
     if (!sc->cameras.empty()) add_cameras_to_spec(scene.get(), sc->cameras);
     // Whatever is still pending: a site whose body no robot or object ever brought in, reported
@@ -1253,14 +1419,19 @@ static bool rebind_env_robots(Env *env)
     bool           ok = true;
     for (Robot *r : env->robots) {
         const std::vector<double> pos_cmd = r->jnt_pos_cmd;
+        const std::vector<double> vel_cmd = r->jnt_vel_cmd;
         const std::vector<double> trq_cmd = r->jnt_trq_cmd;
+        const CtrlMode            mode    = r->ctrl_mode;
         r->model                          = env->model;
         r->data                           = env->data;
         if (!build_index_map(r, r->mj_prefix)) {
             ok = false;
             continue;
         }
+        // The rebuilt model starts in the native mode; carry on in the one the robot was in.
+        if (mode != r->ctrl_mode && !set_control_mode(r, mode)) ok = false;
         r->jnt_pos_cmd = pos_cmd;
+        r->jnt_vel_cmd = vel_cmd;
         r->jnt_trq_cmd = trq_cmd;
         for (ForceTorqueSensor &sensor : r->ft_sensors) {
             const int force_id  = mj_name2id(m, mjOBJ_SENSOR, sensor.force_sensor.c_str());
@@ -1851,17 +2022,22 @@ static void sync_robot_after_reset(Robot *r)
     for (int i = 0; i < r->n_joints; ++i) {
         const int    qpos_id = r->kdl_to_mj_qpos[i];
         const int    dof_id  = r->kdl_to_mj_dof[i];
-        const int    ctrl_id = r->kdl_to_mj_ctrl[i];
         const double q       = d->qpos[qpos_id];
 
         r->jnt_pos_msr[i] = q;
         r->jnt_vel_msr[i] = d->qvel[dof_id];
         r->jnt_trq_msr[i] = d->qfrc_actuator[dof_id];
         r->jnt_pos_cmd[i] = q;
+        r->jnt_vel_cmd[i] = 0.0;
         r->jnt_trq_cmd[i] = 0.0;
 
-        d->qfrc_applied[dof_id] = 0.0;
-        if (ctrl_id >= 0) d->ctrl[ctrl_id] = q;
+        // Hold the reset pose in whatever mode the robot is in.
+        for (int mode = 0; mode < 3; ++mode) {
+            const int a = r->mode_ctrl[mode][i];
+            if (a < 0) continue;
+            const double gear = r->model->actuator_gear[6 * a];
+            d->ctrl[a] = mode == static_cast<int>(CtrlMode::POSITION) ? gear * q : 0.0;
+        }
     }
 
     for (auto &sensor : r->ft_sensors) sensor.wrench = KDL::Wrench::Zero();
@@ -1940,37 +2116,84 @@ void read_measurements(Robot *r)
     }
 }
 
+bool set_control_mode(mjModel *m, mjData *d, int robot, CtrlMode mode)
+{
+    if (!m || !d || robot < 0 || robot > 9) return false;
+    const int target = mode_group(robot, static_cast<int>(mode));
+    bool      found  = false;
+    for (int a = 0; a < m->nu; ++a) {
+        if (m->actuator_group[a] != target) continue;
+        found = true;
+        // Seed the new actuator where the joint already is, so switching does not jump.
+        switch (mode) {
+        case CtrlMode::POSITION: d->ctrl[a] = d->actuator_length[a]; break;
+        case CtrlMode::VELOCITY: d->ctrl[a] = d->actuator_velocity[a]; break;
+        case CtrlMode::TORQUE: d->ctrl[a] = 0.0; break;
+        }
+    }
+    if (!found) {
+        LOG_ERROR("robot " << robot << " has no actuators for this control mode");
+        return false;
+    }
+    for (int k = 0; k < 3; ++k) m->opt.disableactuator |= 1 << mode_group(robot, k);
+    m->opt.disableactuator &= ~(1 << target);
+    return true;
+}
+
+// seed_ports: an explicit switch starts the new mode from where the joints are; a switch the
+// caller asked for by setting ctrl_mode keeps the commands it set alongside.
+static bool switch_control_mode(Robot *r, CtrlMode mode, bool seed_ports)
+{
+    if (!r || !r->model || !r->data) return false;
+    const int idx = static_cast<int>(mode);
+    for (int i = 0; i < r->n_joints; ++i) {
+        if (r->mode_ctrl[idx][i] < 0) {
+            LOG_ERROR(
+              "joint '" << r->joint_names[i] << "' has no actuator for this control mode"
+              << " (add it to RobotSpec::modes)"
+            );
+            return false;
+        }
+    }
+    if (r->robot_index >= 0 && !set_control_mode(r->model, r->data, r->robot_index, mode))
+        return false;
+    const mjData *d = r->data;
+    for (int i = 0; seed_ports && i < r->n_joints; ++i) {
+        r->jnt_pos_cmd[i] = d->qpos[r->kdl_to_mj_qpos[i]];
+        r->jnt_vel_cmd[i] = d->qvel[r->kdl_to_mj_dof[i]];
+        r->jnt_trq_cmd[i] = 0.0;
+    }
+    r->ctrl_mode    = mode;
+    r->applied_mode = mode;
+    r->mode_applied = true;
+    return true;
+}
+
+bool set_control_mode(Robot *r, CtrlMode mode) { return switch_control_mode(r, mode, true); }
+
 void apply_commands(Robot *r)
 {
     if (!r || !r->model || !r->data) return;
 
-    mjModel *m = r->model;
-    mjData  *d = r->data;
+    // ctrl_mode may have been set directly; switch before commanding the new mode's actuators.
+    if (!r->mode_applied) return;
+    if (r->ctrl_mode != r->applied_mode && !switch_control_mode(r, r->ctrl_mode, false))
+        r->ctrl_mode = r->applied_mode;
 
+    mjModel  *m    = r->model;
+    mjData   *d    = r->data;
+    const int mode = static_cast<int>(r->ctrl_mode);
     for (int i = 0; i < r->n_joints; ++i) {
-        const int qpos_id = r->kdl_to_mj_qpos[i];
-        const int dof_id  = r->kdl_to_mj_dof[i];
-        const int ctrl_id = r->kdl_to_mj_ctrl[i];
-
+        const int a = r->mode_ctrl[mode][i];
+        if (a < 0) continue;
+        const double gear = m->actuator_gear[6 * a];
+        double       u    = 0.0;
         switch (r->ctrl_mode) {
-        case CtrlMode::POSITION:
-            if (ctrl_id >= 0) d->ctrl[ctrl_id] = clamp_ctrlrange(m, ctrl_id, r->jnt_pos_cmd[i]);
-            break;
-        case CtrlMode::TORQUE:
-            if (ctrl_id >= 0) {
-                /* Null the position actuator completely (both kp and kv terms).
-                 * Actuator force = kp*(ctrl-pos) - kv*vel (affine bias, biastype=1).
-                 * Setting ctrl = pos + (kv/kp)*vel drives force to zero,
-                 * making qfrc_applied the sole torque source -- matching the
-                 * real robot's pure torque interface. */
-                const double kp     = m->actuator_gainprm[ctrl_id * mjNGAIN + 0];
-                const double kv     = -m->actuator_biasprm[ctrl_id * mjNBIAS + 2];
-                const double vel_ff = (kp > 0.0) ? (kv / kp) * d->qvel[dof_id] : 0.0;
-                d->ctrl[ctrl_id]    = d->qpos[qpos_id] + vel_ff;
-            }
-            d->qfrc_applied[dof_id] = r->jnt_trq_cmd[i];
-            break;
+        case CtrlMode::POSITION: u = gear * r->jnt_pos_cmd[i]; break;
+        case CtrlMode::VELOCITY: u = gear * r->jnt_vel_cmd[i]; break;
+        case CtrlMode::TORQUE: u = r->jnt_trq_cmd[i] / gear; break;
         }
+        d->ctrl[a] = clamp_ctrlrange(m, a, u);
     }
 }
 

@@ -148,6 +148,36 @@ def test_scene_and_env_close_invalidate_robot_handles():
         _ = env_robot.jnt_pos_msr
 
 
+def test_control_modes_switch_and_opt_out():
+    _skip_without_model()
+
+    assert [m.mode for m in mjk.RobotSpec().modes] == [mjk.CtrlMode.TORQUE]
+    env = mjk.Env.build(_scene_spec())
+    try:
+        robot = env.create_robot("base_link", "bracelet_link")
+        assert robot.ctrl_mode == mjk.CtrlMode.POSITION
+        robot.update()
+        robot.set_control_mode(mjk.CtrlMode.TORQUE)
+        assert robot.ctrl_mode == mjk.CtrlMode.TORQUE
+        assert robot.jnt_trq_cmd == [0.0] * robot.n_joints
+        assert len(robot.jnt_vel_cmd) == robot.n_joints
+        with pytest.raises(RuntimeError, match="control mode"):
+            robot.set_control_mode(mjk.CtrlMode.VELOCITY)
+        env.set_control_mode(0, mjk.CtrlMode.POSITION)
+    finally:
+        env.close()
+
+    spec = _scene_spec()
+    spec.robots[0].modes = []
+    env = mjk.Env.build(spec)
+    try:
+        robot = env.create_robot("base_link", "bracelet_link")
+        with pytest.raises(RuntimeError, match="control mode"):
+            robot.set_control_mode(mjk.CtrlMode.TORQUE)
+    finally:
+        env.close()
+
+
 def test_set_body_pose_accepts_python_xyzw_quaternion():
     _skip_without_model()
     kdl = pytest.importorskip("PyKDL")

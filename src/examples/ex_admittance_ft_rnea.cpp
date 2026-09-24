@@ -3,12 +3,12 @@
 namespace
 {
 
-static constexpr double kKpLin = 11520.0;
-static constexpr double kKdLin = 514.3;
-static constexpr double kKpRot = 7200.0;
-static constexpr double kKdRot = 600.1;
-static constexpr double kBetaLinMax = 7200.0;
-static constexpr double kBetaRotMax = 5040.0;
+static constexpr double kKpLin = 2500.0;
+static constexpr double kKdLin = 100.0;
+static constexpr double kKpRot = 2500.0;
+static constexpr double kKdRot = 100.0;
+static constexpr double kBetaLinMax = 300.0;
+static constexpr double kBetaRotMax = 300.0;
 static constexpr double kTauMax = 141.6;
 
 class RneaTaskController final : public admittance_ft::Controller

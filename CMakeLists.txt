@@ -624,7 +624,8 @@ if(BUILD_DOCS)
         )
         add_custom_command(
           OUTPUT ${MJ_KDL_KDL_TAG_FILE}
-          COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/docs
+          # Doxygen creates only the last level of HTML_OUTPUT (html/kdl).
+          COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/docs/html
           COMMAND ${DOXYGEN_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile.kdl
           DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile.kdl
           WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

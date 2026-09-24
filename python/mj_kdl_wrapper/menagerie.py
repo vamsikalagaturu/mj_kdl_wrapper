@@ -70,8 +70,12 @@ def model_path(name: str, *, env_var: str | None = None) -> str:
     except KeyError:
         raise KeyError(f"unknown Menagerie model '{name}'; known: {sorted(_MODELS)}") from None
 
+    # A bundled model derived from Menagerie's (kinova_gen3/gen3.xml) replaces the upstream copy;
+    # mirrored in src/examples/example_paths.hpp:find_menagerie_model.
     env = os.environ.get("MJ_KDL_MENAGERIE")
-    roots = (Path(env), _cache_dir()) if env else (_cache_dir(),)
+    roots = (assets_cache_dir(), _cache_dir())
+    if env:
+        roots = (Path(env), *roots)
     for root in roots:
         candidate = root / subdir / filename
         if candidate.exists():

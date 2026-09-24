@@ -27,6 +27,9 @@ inline std::string find_menagerie_model(const fs::path &relative)
         const auto path = fs::path(root) / relative;
         if (fs::exists(path)) return path.string();
     }
+    // A bundled model derived from Menagerie's (kinova_gen3/gen3.xml) replaces the upstream copy.
+    if (const auto bundled = cache_root() / "assets" / relative; fs::exists(bundled))
+        return bundled.string();
     const auto path = cache_root() / "menagerie" / relative;
     return fs::exists(path) ? path.string() : "";
 }

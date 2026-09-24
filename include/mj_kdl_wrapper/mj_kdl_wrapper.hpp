@@ -121,6 +121,27 @@ struct AttachmentSpec
 
 /**
  * @ingroup grp_types
+ * Joint-space control mode. Each mode drives its own actuator, in its own actuator group:
+ *   POSITION - jnt_pos_cmd to a position servo's ctrl.
+ *   TORQUE   - jnt_trq_cmd to a motor's ctrl.
+ *   VELOCITY - jnt_vel_cmd to a velocity actuator's ctrl.
+ */
+enum class CtrlMode { POSITION, TORQUE, VELOCITY };
+
+/**
+ * @ingroup grp_types
+ * A control mode for RobotSpec::modes. joints empty = every joint the robot's own MJCF
+ * actuates. kv is the VELOCITY actuator's gain [N m s/rad], required for VELOCITY.
+ */
+struct CtrlModeSpec
+{
+    CtrlMode                 mode = CtrlMode::TORQUE;
+    std::vector<std::string> joints;
+    double                   kv = 0.0;
+};
+
+/**
+ * @ingroup grp_types
  * One robot in a scene: a root MJCF (arm, mobile base, ...) with an ordered attachment
  * chain and a placement target.
  *
@@ -136,6 +157,14 @@ struct AttachmentSpec
  *
  * path is the root MJCF passed to build_scene(). prefix must be unique per robot
  * in multi-robot scenes.
+ *
+ * modes lists the control modes the robot offers beyond the one its own actuators give
+ * (a <position> servo gives POSITION, a <motor> gives TORQUE); by default every robot also gets
+ * TORQUE. build_scene() adds one actuator per extra mode on each listed joint and puts each mode
+ * in its own actuator group, switched with set_control_mode(). Only the robot's own joints take
+ * modes, never its attachments. With no joint list, joints that cannot take modes are skipped.
+ * Actuator groups 1-30 are reserved for this (group 1 + 3 * robot index + mode); the robot's MJCF
+ * must not assign actuator groups itself.
  */
 struct RobotSpec
 {
@@ -145,6 +174,7 @@ struct RobotSpec
     double                      pos[3]  = { 0, 0, 0 };    // offset in parent frame [m]
     double                      quat[4] = { 0, 0, 0, 1 }; // orientation offset [x, y, z, w]
     std::vector<AttachmentSpec> attachments;              // ordered attachment chain; empty = none
+    std::vector<CtrlModeSpec>   modes = { CtrlModeSpec{} };  // TORQUE; {} = native mode only
 };
 
 /** @ingroup grp_types
@@ -322,13 +352,6 @@ struct ToolFrameSpec
     std::vector<ForceTorqueSensorSpec> ft_sensors;
 };
 
-/**
- * @ingroup grp_types
- * Joint-space control mode for update().
- *   POSITION - writes jnt_pos_cmd to actuator ctrl inputs.
- *   TORQUE   - writes jnt_trq_cmd to qfrc_applied (generalized forces).
- */
-enum class CtrlMode { POSITION, TORQUE };
 
 /**
  * @ingroup grp_types
@@ -360,13 +383,18 @@ struct Robot
     std::vector<double> jnt_pos_msr; // [rad]   - measured joint positions   (written by update())
     std::vector<double> jnt_vel_msr; // [rad/s] - measured joint velocities  (written by update())
     std::vector<double> jnt_trq_msr; // [Nm]    - actuator output torques    (written by update())
-    std::vector<double> jnt_pos_cmd; // [rad] - position setpoints  (POSITION mode)
-    std::vector<double> jnt_trq_cmd; // [Nm]  - torque commands     (TORQUE mode)
+    std::vector<double> jnt_pos_cmd; // [rad]   - position setpoints  (POSITION mode)
+    std::vector<double> jnt_vel_cmd; // [rad/s] - velocity setpoints  (VELOCITY mode)
+    std::vector<double> jnt_trq_cmd; // [Nm]    - torque commands     (TORQUE mode)
 
     /* Internal state - populated by init_robot() / init_from_mjcf(). */
     std::vector<int> kdl_to_mj_qpos; // KDL index -> MuJoCo qpos address
     std::vector<int> kdl_to_mj_dof;  // KDL index -> MuJoCo dof address
     std::vector<int> kdl_to_mj_ctrl; // KDL index -> MuJoCo ctrl index (-1 if none)
+    std::vector<int> mode_ctrl[3];   // per CtrlMode: KDL index -> actuator of that mode (-1 if none)
+    int              robot_index = -1;    // SceneSpec::robots index owning mode groups; -1 = none
+    CtrlMode         applied_mode = CtrlMode::POSITION; // mode whose group is enabled
+    bool             mode_applied = false; // applied_mode is live in the model
     std::string      mj_prefix;      // joint name prefix, kept to re-resolve after a rebuild
 };
 
@@ -1050,13 +1078,26 @@ bool render(Viewer *v, mjModel *m, mjData *d);
 /**
  * @ingroup grp_robot
  * One control cycle: read MuJoCo into *_msr, then apply *_cmd to MuJoCo.
- * Read step: qpos -> jnt_pos_msr, qvel -> jnt_vel_msr, qfrc_actuator -> jnt_trq_msr.
- * Apply step: POSITION -> data->ctrl,
- *             TORQUE   -> qfrc_applied; also sets ctrl = qpos to neutralize
- *             position actuators (zeroes kp*(ctrl-qpos) restoring force).
- * Joints with kdl_to_mj_ctrl[i] == -1 are skipped for ctrl writes.
+ * Read step: qpos -> jnt_pos_msr, qvel -> jnt_vel_msr, qfrc_actuator -> jnt_trq_msr (only the
+ * active mode's actuators produce force, so this is the drive torque in every mode).
+ * Apply step: the active mode's command to its actuator's ctrl (gear applied, ctrlrange
+ * clamped). If ctrl_mode was changed directly, the switch runs first (set_control_mode()).
  */
 void update(Robot *r);
+
+/**
+ * @ingroup grp_robot
+ * Switch the robot to mode: seed the new actuators so nothing jumps, enable their group,
+ * disable the robot's other mode groups. @return false if the robot has no actuator for mode.
+ */
+bool set_control_mode(Robot *r, CtrlMode mode);
+
+/**
+ * @ingroup grp_robot
+ * The same switch for a robot driven outside a Robot chain (e.g. through SceneState):
+ * robot is its index in SceneSpec::robots. @return false if it has no actuators for mode.
+ */
+bool set_control_mode(mjModel *m, mjData *d, int robot, CtrlMode mode);
 
 /**
  * @ingroup grp_robot
@@ -1066,7 +1107,7 @@ void read_measurements(Robot *r);
 
 /**
  * @ingroup grp_robot
- * The apply half of update(): *_cmd -> data->ctrl / data->qfrc_applied per CtrlMode.
+ * The apply half of update(): the active CtrlMode's *_cmd -> its actuators' data->ctrl.
  */
 void apply_commands(Robot *r);
 

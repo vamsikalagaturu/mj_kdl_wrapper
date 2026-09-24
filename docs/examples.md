@@ -215,7 +215,7 @@ tau[i] = g[i] + Kp[i] * (q_des[i] - q[i]) - Kd[i] * dq[i]
 
 ## ACHD examples
 
-The ACHD examples use `ChainHdSolver_Vereshchagin_Fixed_Joint` to convert
+The ACHD examples use `ChainHdSolver_Vereshchagin` to convert
 Cartesian task accelerations into constrained joint accelerations.  For MuJoCo
 torque control, the examples command the full inverse-dynamics torque computed
 from that ACHD `qddot`:
@@ -255,7 +255,7 @@ examples share the outer loop and differ only in the inner loop:
   Cartesian PD on TCP pose error becomes desired TCP acceleration, WDLS maps it
   to `qddot`, and RNEA maps that to torque.
 - `ex_admittance_ft_achd` -- **ACHD task-space** inner loop (`CtrlMode::TORQUE`,
-  `ChainHdSolver_Vereshchagin_Fixed_Joint` + `ChainIdSolver_RNE`): a Cartesian PD on the TCP
+  `ChainHdSolver_Vereshchagin` + `ChainIdSolver_RNE`): a Cartesian PD on the TCP
   pose error is the desired acceleration (`beta`), ACHD resolves it into joint
   accelerations through the constrained dynamics, and RNEA maps those to torque.
   No IK step -- the Cartesian target feeds the solver directly.

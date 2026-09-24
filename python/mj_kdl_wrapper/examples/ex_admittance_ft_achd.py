@@ -50,9 +50,10 @@ TABLE_Z = 0.70
 
 # Task-space inner-loop gains: Cartesian PD -> desired acceleration (beta), with
 # per-component acceleration limits and a joint-torque clamp.
-KP_LIN, KD_LIN = 5760.0, 378.0
-KP_ROT, KD_ROT = 3600.0, 441.0
-BETA_LIN_MAX, BETA_ROT_MAX, TAU_MAX = 3600.0, 2520.0, 212.4
+KP_LIN, KD_LIN = 2500.0, 100.0
+KP_ROT, KD_ROT = 2500.0, 100.0
+BETA_LIN_MAX, BETA_ROT_MAX, TAU_MAX = 300.0, 300.0, 212.4
+KD_NULL = 10.0
 
 # Admittance outer loop: virtual mass, damping, stiffness (isotropic).
 # K_ADM = 0 -> pure hand-guiding: holds pose on release. Set > 0 to self-center.
@@ -199,7 +200,11 @@ def achd_track(robot: mjk.Robot, state: dict, target: kdl.Frame) -> None:
         beta[i] = clamp(KP_ROT * e[i] + KD_ROT * de[i], -BETA_ROT_MAX, BETA_ROT_MAX)
 
     qdd = kdl.JntArray(n)
+    # The 6 task constraints leave the elbow's null space free to fall under gravity; damp it.
+    # With zero driver weights the constraint cancels ff in the task directions.
     ff = kdl.JntArray(n)
+    for i in range(n):
+        ff[i] = -KD_NULL * qd[i]
     constraint_tau = kdl.JntArray(n)
     f_ext = [kdl.Wrench.Zero() for _ in range(state["n_seg"])]
     if state["achd"].CartToJnt(q, qd, qdd, state["alpha"], beta, f_ext, ff, constraint_tau) < 0:

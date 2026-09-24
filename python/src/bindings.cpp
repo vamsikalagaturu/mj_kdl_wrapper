@@ -59,6 +59,7 @@ struct PyRobotSpec
     std::array<double, 3>         pos  = { 0.0, 0.0, 0.0 };
     std::array<double, 4>         quat = { 0.0, 0.0, 0.0, 1.0 };
     std::vector<PyAttachmentSpec> attachments;
+    std::vector<mj_kdl::CtrlModeSpec> modes = mj_kdl::RobotSpec{}.modes;
 };
 
 struct PySceneObject
@@ -156,6 +157,7 @@ RobotSpec to_cpp(const PyRobotSpec &src)
     std::copy(src.quat.begin(), src.quat.end(), out.quat);
     out.attachments.reserve(src.attachments.size());
     for (const auto &item : src.attachments) out.attachments.push_back(to_cpp(item));
+    out.modes = src.modes;
     return out;
 }
 
@@ -582,6 +584,7 @@ struct PyRobot
         CtrlMode            ctrl_mode = robot.ctrl_mode;
         bool                paused    = robot.paused;
         std::vector<double> pos_cmd   = robot.jnt_pos_cmd;
+        std::vector<double> vel_cmd   = robot.jnt_vel_cmd;
         std::vector<double> trq_cmd   = robot.jnt_trq_cmd;
 
         invalidate();
@@ -589,6 +592,7 @@ struct PyRobot
         robot.ctrl_mode = ctrl_mode;
         robot.paused    = paused;
         if (static_cast<int>(pos_cmd.size()) == robot.n_joints) robot.jnt_pos_cmd = pos_cmd;
+        if (static_cast<int>(vel_cmd.size()) == robot.n_joints) robot.jnt_vel_cmd = vel_cmd;
         if (static_cast<int>(trq_cmd.size()) == robot.n_joints) robot.jnt_trq_cmd = trq_cmd;
     }
 
@@ -1218,7 +1222,25 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
 
     py::enum_<CtrlMode>(m, "CtrlMode")
       .value("POSITION", CtrlMode::POSITION)
-      .value("TORQUE", CtrlMode::TORQUE);
+      .value("TORQUE", CtrlMode::TORQUE)
+      .value("VELOCITY", CtrlMode::VELOCITY);
+
+    py::class_<mj_kdl::CtrlModeSpec>(
+      m, "CtrlModeSpec", "A control mode build_scene adds to a robot, on its own actuator group."
+    )
+      .def(
+        py::init([](CtrlMode mode, std::vector<std::string> joints, double kv) {
+            return mj_kdl::CtrlModeSpec{ mode, std::move(joints), kv };
+        }),
+        py::arg("mode")   = CtrlMode::TORQUE,
+        py::arg("joints") = std::vector<std::string>{},
+        py::arg("kv")     = 0.0
+      )
+      .def_readwrite("mode", &mj_kdl::CtrlModeSpec::mode)
+      .def_readwrite(
+        "joints", &mj_kdl::CtrlModeSpec::joints, "Joints to give the mode; empty = all actuated."
+      )
+      .def_readwrite("kv", &mj_kdl::CtrlModeSpec::kv, "VELOCITY actuator gain [N m s/rad].");
 
     py::enum_<mj_kdl::VideoResolution>(m, "VideoResolution")
       .value("R360p", mj_kdl::VideoResolution::R360p)
@@ -1277,7 +1299,10 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def_readwrite("attach_to", &PyRobotSpec::attach_to, "Placement parent; defaults to world.")
       .def_readwrite("pos", &PyRobotSpec::pos, "Placement offset in the parent frame, in meters.")
       .def_readwrite("quat", &PyRobotSpec::quat, "Placement orientation offset [x, y, z, w].")
-      .def_readwrite("attachments", &PyRobotSpec::attachments, "Ordered attachment chain.");
+      .def_readwrite("attachments", &PyRobotSpec::attachments, "Ordered attachment chain.")
+      .def_readwrite(
+        "modes", &PyRobotSpec::modes, "Extra control modes; default [TORQUE], [] = native only."
+      );
 
     py::class_<PySceneObject>(
       m,
@@ -1499,6 +1524,17 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "Rebuild the scene with an added object and rebind existing Robot handles."
       )
       .def(
+        "set_control_mode",
+        [](PyScene &self, int robot, CtrlMode mode) {
+            if (!self.model || !self.data) throw std::runtime_error("scene is closed");
+            if (!mj_kdl::set_control_mode(self.model, self.data, robot, mode))
+                throw std::runtime_error("robot has no actuators for this control mode");
+        },
+        py::arg("robot"),
+        py::arg("mode"),
+        "Switch robot (its SceneSpec.robots index) to mode, for robots driven without a Robot."
+      )
+      .def(
         "remove_object",
         &PyScene::remove_object,
         py::arg("name"),
@@ -1664,6 +1700,16 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         }
       )
       .def_property(
+        "jnt_vel_cmd",
+        [](const PyRobot &self) {
+            self.ensure_active();
+            return self.robot.jnt_vel_cmd;
+        },
+        [](PyRobot &self, const std::vector<double> &values) {
+            self.set_port(&mj_kdl::Robot::jnt_vel_cmd, values);
+        }
+      )
+      .def_property(
         "jnt_trq_cmd",
         [](const PyRobot &self) {
             self.ensure_active();
@@ -1672,6 +1718,16 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         [](PyRobot &self, const std::vector<double> &values) {
             self.set_port(&mj_kdl::Robot::jnt_trq_cmd, values);
         }
+      )
+      .def(
+        "set_control_mode",
+        [](PyRobot &self, CtrlMode mode) {
+            self.ensure_active();
+            if (!mj_kdl::set_control_mode(&self.robot, mode))
+                throw std::runtime_error("robot has no actuators for this control mode");
+        },
+        py::arg("mode"),
+        "Switch mode without a jump: seeds the new mode's commands from the current state."
       )
       .def_property_readonly(
         "has_tcp_frame",
@@ -1930,6 +1986,17 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         &PyEnv::add_object,
         py::arg("object"),
         "Rebuild the environment with an added object and rebind existing Robot handles."
+      )
+      .def(
+        "set_control_mode",
+        [](PyEnv &self, int robot, CtrlMode mode) {
+            if (!self.env.model || !self.env.data) throw std::runtime_error("env is closed");
+            if (!mj_kdl::set_control_mode(self.env.model, self.env.data, robot, mode))
+                throw std::runtime_error("robot has no actuators for this control mode");
+        },
+        py::arg("robot"),
+        py::arg("mode"),
+        "Switch robot (its SceneSpec.robots index) to mode, for robots driven without a Robot."
       )
       .def(
         "remove_object",
