@@ -104,6 +104,46 @@ TEST_F(MjcfLoadTest, FKHomePose)
     EXPECT_LE(dist, 1.1);
 }
 
+TEST_F(MjcfLoadTest, JointLimitsFollowTheModel)
+{
+    ASSERT_EQ(s_.joint_limits.size(), n_);
+    int unlimited = 0;
+    for (unsigned i = 0; i < n_; ++i) {
+        const int jid = mj_name2id(model_, mjOBJ_JOINT, s_.joint_names[i].c_str());
+        ASSERT_GE(jid, 0);
+        if (model_->jnt_limited[jid]) {
+            EXPECT_DOUBLE_EQ(s_.joint_limits[i].first, model_->jnt_range[2 * jid]);
+            EXPECT_DOUBLE_EQ(s_.joint_limits[i].second, model_->jnt_range[2 * jid + 1]);
+        } else {
+            EXPECT_TRUE(std::isinf(s_.joint_limits[i].first) && s_.joint_limits[i].first < 0);
+            EXPECT_TRUE(std::isinf(s_.joint_limits[i].second) && s_.joint_limits[i].second > 0);
+            ++unlimited;
+        }
+    }
+    EXPECT_GT(unlimited, 0) << "Gen3 has continuous joints";
+}
+
+TEST_F(MjcfLoadTest, SaveModelXmlRoundTrips)
+{
+    const int bid = mj_name2id(model_, mjOBJ_BODY, "base_link");
+    ASSERT_GE(bid, 0);
+    model_->body_mass[bid] = 1.77;
+
+    const fs::path path = fs::temp_directory_path() / "mj_kdl_save_model_xml_test.xml";
+    ASSERT_TRUE(mj_kdl::save_model_xml(model_, path.c_str()));
+
+    char     err[1000] = {};
+    mjModel *loaded    = mj_loadXML(path.c_str(), nullptr, err, sizeof(err));
+    fs::remove(path);
+    ASSERT_NE(loaded, nullptr) << err;
+    EXPECT_EQ(loaded->nq, model_->nq);
+    EXPECT_EQ(loaded->nbody, model_->nbody);
+    const int loaded_bid = mj_name2id(loaded, mjOBJ_BODY, "base_link");
+    ASSERT_GE(loaded_bid, 0);
+    EXPECT_DOUBLE_EQ(loaded->body_mass[loaded_bid], 1.77) << "runtime change was saved";
+    mj_deleteModel(loaded);
+}
+
 /* -------------------------------------------------------------------------
  * Fixture 2: arm + Robotiq 2F-85 gripper from gen3.xml + 2f85.xml
  * ------------------------------------------------------------------------- */

@@ -31,8 +31,10 @@
 #include <cstdio>
 #include <csignal>
 #include <cstring>
+#include <filesystem>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -264,6 +266,25 @@ static KDL::Rotation mj_xmat_to_kdl_rot(const double *m)
 using MjSpecPtr = std::unique_ptr<mjSpec, decltype(&mj_deleteSpec)>;
 static MjSpecPtr make_spec_ptr(mjSpec *s) { return { s, &mj_deleteSpec }; }
 
+/* A parsed spec's asset files are relative to its own file and meshdir/texturedir, which do not
+ * survive mjs_attach: resolve them now, or a scene saved with mj_saveXML cannot be reloaded. */
+static void absolutize_asset_files(mjSpec *spec)
+{
+    const std::filesystem::path base = mjs_getString(spec->modelfiledir);
+    const auto resolve = [&base](mjString *file, const mjString *dir) {
+        const std::filesystem::path f = mjs_getString(file);
+        if (f.empty() || f.is_absolute()) return;
+        const std::filesystem::path d = mjs_getString(dir);
+        mjs_setString(file, ((d.is_absolute() ? d : base / d) / f).lexically_normal().c_str());
+    };
+    for (mjsElement *e = mjs_firstElement(spec, mjOBJ_MESH); e; e = mjs_nextElement(spec, e))
+        resolve(mjs_asMesh(e)->file, spec->compiler.meshdir);
+    for (mjsElement *e = mjs_firstElement(spec, mjOBJ_HFIELD); e; e = mjs_nextElement(spec, e))
+        resolve(mjs_asHField(e)->file, spec->compiler.meshdir);
+    for (mjsElement *e = mjs_firstElement(spec, mjOBJ_TEXTURE); e; e = mjs_nextElement(spec, e))
+        resolve(mjs_asTexture(e)->file, spec->compiler.texturedir);
+}
+
 // Resolve an AttachTarget to its element in the accumulated spec.
 // Returns nullptr (and logs) when a non-World name is missing.
 static mjsElement *resolve_parent(mjSpec *spec, const AttachTarget &t)
@@ -360,7 +381,14 @@ static mjsBody *attach_child(
         kdl_rot_to_mj_quat(composed.M, child_root->quat);
     }
 
-    const char *pfx      = prefix ? prefix : "";
+    const char *pfx = prefix ? prefix : "";
+    // The child's unnamed top-level default class is written back nameless by mj_saveXML, which
+    // mj_loadXML then rejects; give it the child model's name.
+    mjSpec     *child     = mjs_getSpec(child_root->element);
+    mjsDefault *child_def = child ? mjs_getSpecDefault(child) : nullptr;
+    if (child_def && child->modelname) {
+        mjs_setName(child_def->element, (std::string(pfx) + mjs_getString(child->modelname)).c_str());
+    }
     mjsElement *attached = mjs_attach(attach_parent, child_root->element, pfx, "");
     if (!attached) {
         LOG_ERROR("mjs_attach failed: " << mjs_getError(spec));
@@ -453,6 +481,7 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
                 LOG_ERROR("mj_parseXML failed for object asset '" << obj.mjcf_path << "': " << err);
                 continue;
             }
+            absolutize_asset_files(asset.get());
 
             // Compile now so mesh files load while this spec's meshdir is alive:
             // mjs_attach defers file loading to the parent compile, but `asset`
@@ -657,25 +686,28 @@ static void add_sites_to_spec(mjSpec *spec, const std::vector<SiteSpec> &sites)
 }
 
 // Compile spec into a model and data; spec is always deleted.
+// A compiled model cannot be written back to XML on its own; mj_saveXML needs its spec.
+static std::unordered_map<const mjModel *, MjSpecPtr> g_model_specs;
+
 bool compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data)
 {
-    *out_model = mj_compile(spec, nullptr);
+    MjSpecPtr owned = make_spec_ptr(spec);
+    *out_model      = mj_compile(spec, nullptr);
     if (!*out_model) {
         LOG_ERROR("mj_compile failed: " << mjs_getError(spec));
-        mj_deleteSpec(spec);
         return false;
     }
     LOG_INFO(
       "scene compiled: nq=" << (*out_model)->nq << " nv=" << (*out_model)->nv
                             << " nbody=" << (*out_model)->nbody
     );
-    mj_deleteSpec(spec);
     *out_data = mj_makeData(*out_model);
     if (!*out_data) {
         mj_deleteModel(*out_model);
         *out_model = nullptr;
         return false;
     }
+    g_model_specs.insert_or_assign(*out_model, std::move(owned));
     return true;
 }
 
@@ -887,6 +919,18 @@ static bool build_index_map(Robot *s, const std::string &pfx = "")
     return true;
 }
 
+// A joint the model leaves unlimited (a continuous wrist) is unlimited here too, not +-pi.
+static std::pair<double, double> joint_range(const mjModel *model, int jid)
+{
+    if (jid >= 0 && model->jnt_limited[jid])
+        return { model->jnt_range[2 * jid], model->jnt_range[2 * jid + 1] };
+    LOG_INFO(
+      "joint '" << (jid >= 0 ? mj_id2name(model, mjOBJ_JOINT, jid) : "?") << "' is unlimited"
+    );
+    const double inf = std::numeric_limits<double>::infinity();
+    return { -inf, inf };
+}
+
 // Build KDL chain from compiled mjModel (no URDF needed)
 
 static bool
@@ -948,12 +992,7 @@ static bool
             jnt = KDL::Joint(jname ? jname : "", origin, axis, jtype);
             if (jname) {
                 s->joint_names.push_back(jname);
-                double lo = -M_PI, hi = M_PI;
-                if (model->jnt_limited[jid]) {
-                    lo = model->jnt_range[2 * jid];
-                    hi = model->jnt_range[2 * jid + 1];
-                }
-                s->joint_limits.emplace_back(lo, hi);
+                s->joint_limits.push_back(joint_range(model, jid));
             }
             break;
         }
@@ -970,8 +1009,15 @@ static bool
 
 bool save_model_xml(const mjModel *model, const char *path)
 {
-    char err[kMjErrBuf] = {};
-    int  ok             = mj_saveLastXML(path, model, err, sizeof(err));
+    char       err[kMjErrBuf] = {};
+    int        ok             = 0;
+    const auto spec           = g_model_specs.find(model);
+    if (spec != g_model_specs.end()) {
+        ok = mj_copyBack(spec->second.get(), model)
+             && mj_saveXML(spec->second.get(), path, err, sizeof(err)) == 0;
+    } else {
+        ok = mj_saveLastXML(path, model, err, sizeof(err));
+    }
     if (!ok) {
         LOG_ERROR("mj_saveLastXML failed for '" << path << "': " << err);
     } else {
@@ -989,6 +1035,7 @@ void destroy_scene(mjModel *model, mjData *data)
     // Freeing is the one moment that is certain to end it.
     if (data) mark_kinematics_forgotten(data);
     if (model) forget_cached_names(model);
+    if (model) g_model_specs.erase(model);
     if (data) mj_deleteData(data);
     if (model) mj_deleteModel(model);
 }
@@ -1039,6 +1086,7 @@ bool attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
         LOG_ERROR("mj_parseXML failed for attachment '" << a->mjcf_path << "': " << err);
         return false;
     }
+    absolutize_asset_files(att.get());
 
     mjsBody *att_root = first_root_body(att.get());
     if (!att_root) {
@@ -1112,6 +1160,7 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
             LOG_ERROR("mj_parseXML failed for '" << rs.path << "': " << err);
             return false;
         }
+        absolutize_asset_files(arm.get());
 
         // Inherit physics options (integrator, solver, etc.) from the first
         // arm, then apply the SceneSpec's user-controlled fields on top.
@@ -1616,13 +1665,9 @@ bool init_robot_from_chain(
     const std::string pfx = prefix ? prefix : "";
     r->joint_limits.clear();
     for (const auto &name : joint_names) {
-        double lo = -M_PI, hi = M_PI;
-        int    jid = mj_name2id(model, mjOBJ_JOINT, (pfx + name).c_str());
-        if (jid >= 0 && model->jnt_limited[jid]) {
-            lo = model->jnt_range[2 * jid];
-            hi = model->jnt_range[2 * jid + 1];
-        }
-        r->joint_limits.emplace_back(lo, hi);
+        r->joint_limits.push_back(
+          joint_range(model, mj_name2id(model, mjOBJ_JOINT, (pfx + name).c_str()))
+        );
     }
 
     if (!build_index_map(r, pfx)) return false;
@@ -2286,16 +2331,14 @@ static void cb_mouse_move(GLFWwindow *w, double x, double y)
         mjtMouse act = ms->btn_left    ? (shift ? mjMOUSE_ROTATE_H : mjMOUSE_ROTATE_V)
                        : ms->btn_right ? (shift ? mjMOUSE_MOVE_H : mjMOUSE_MOVE_V)
                                        : mjMOUSE_ZOOM;
-        mjv_moveCamera(g_robot->model, act, dx / wh, dy / wh, &g_viewer->scn, &g_viewer->cam);
+        mjv_moveCamera(g_robot->model, act, dx / wh, dy / wh, &g_viewer->cam);
     }
 }
 
 static void cb_scroll(GLFWwindow *, double, double yoff)
 {
     if (g_robot && g_viewer)
-        mjv_moveCamera(
-          g_robot->model, mjMOUSE_ZOOM, 0, -0.05 * yoff, &g_viewer->scn, &g_viewer->cam
-        );
+        mjv_moveCamera(g_robot->model, mjMOUSE_ZOOM, 0, -0.05 * yoff, &g_viewer->cam);
 }
 
 /* Hint GLFW to use the Wayland backend on pure Wayland sessions.
@@ -2396,9 +2439,8 @@ struct SimUiState
     /* User scene merged into each render frame by Simulate (overlay polylines,
      * e.g. the EE trajectory trace). Guarded by user_scn_mtx because the control
      * thread appends to it while the render thread reads it. */
-    mjvScene    user_scn{};
-    std::mutex  user_scn_mtx;
-    std::string trace_site; // TCP site the EE trace follows, re-resolved on viewer_reload()
+    mjvScene   user_scn{};
+    std::mutex user_scn_mtx;
     /* Key state as the render thread's key callback sees it, so that a caller
      * driving physics on another thread can read the keyboard without touching
      * GLFW, which requires its window calls on the owning thread. */
@@ -2706,8 +2748,7 @@ bool render(Viewer *v, mjModel *m, mjData *d)
 
 bool render(Viewer *v, const Robot *r) { return render(v, r->model, r->data); }
 
-static bool
-  init_window_sim_core(Viewer *v, mjModel *m, mjData *d, const char *tcp_site, const char *title)
+static bool init_window_sim_core(Viewer *v, mjModel *m, mjData *d, const char *title)
 {
     if (!v || !m || !d) return false;
     if (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY")) return false;
@@ -2780,12 +2821,6 @@ static bool
     ss->user_scn.ngeom = 0;
     ss->sim->user_scn  = &ss->user_scn;
 
-    // trace follows the robot's TCP site (Frames panel "Trace EE")
-    if (tcp_site && *tcp_site) {
-        ss->trace_site          = tcp_site;
-        ss->sim->ee_trace_site_ = mj_name2id(m, mjOBJ_SITE, tcp_site);
-    }
-
     v->_sim_ui = ss;
     g_viewer   = v;
     return true;
@@ -2818,8 +2853,6 @@ bool viewer_reload(Viewer *v, mjModel *m, mjData *d)
         mjv_freeScene(&ss->user_scn);
         mjv_makeScene(m, &ss->user_scn, /*maxgeom=*/8192);
         ss->user_scn.ngeom = 0;
-        ss->sim->ee_trace_site_ =
-          ss->trace_site.empty() ? -1 : mj_name2id(m, mjOBJ_SITE, ss->trace_site.c_str());
         mj_forward(m, d);
         mark_kinematics_fresh(d);
     }
@@ -2829,15 +2862,14 @@ bool viewer_reload(Viewer *v, mjModel *m, mjData *d)
 bool init_window_sim(Viewer *v, Robot *r, const char *title)
 {
     if (!r || !r->model || !r->data) return false;
-    const char *tcp = r->tcp_site.empty() ? nullptr : r->tcp_site.c_str();
-    if (!init_window_sim_core(v, r->model, r->data, tcp, title)) return false;
+    if (!init_window_sim_core(v, r->model, r->data, title)) return false;
     g_robot = r;
     return true;
 }
 
 bool init_window_sim(Viewer *v, mjModel *m, mjData *d, const char *title)
 {
-    if (!init_window_sim_core(v, m, d, nullptr, title)) return false;
+    if (!init_window_sim_core(v, m, d, title)) return false;
     g_robot = nullptr;
     return true;
 }

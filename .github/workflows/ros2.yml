@@ -21,8 +21,8 @@ jobs:
     container:
       image: ros:${{ matrix.ros_distro }}
     env:
-      MUJOCO_VERSION: 3.9.0
-      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.9.0
+      MUJOCO_VERSION: 3.14.0
+      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.14.0
     steps:
       # System build dependencies (KDL/MuJoCo are not installed from apt).
       - name: Install dependencies

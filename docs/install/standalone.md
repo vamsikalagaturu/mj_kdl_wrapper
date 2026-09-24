@@ -24,7 +24,7 @@ Instructions target Ubuntu/Debian. CMake checks `mjVERSION_HEADER` and stops if
 
 | Dependency | Version / source | Notes |
 |------------|------------------|-------|
-| MuJoCo | `3.9.0` from `cmake/Versions.cmake` | Native library and pinned `mujoco` Python package must match |
+| MuJoCo | `3.14.0` from `cmake/Versions.cmake` | Native library and pinned `mujoco` Python package must match |
 | Orocos KDL | secorolab fork, `vereshchagin-driver-weighting` | Built from source; system `liborocos-kdl` is not used |
 | CMake | `>=3.16` | Required to configure the C++ build |
 | C++ compiler | C++20-capable | `CMAKE_CXX_STANDARD` is set to 20 |
@@ -138,7 +138,7 @@ Each dependency is fetched by default, or can point at something you already hav
 
 | To... | Set |
 |-------|-----|
-| Use an existing MuJoCo install | `-DMJ_KDL_MUJOCO_DIR=/opt/mujoco-3.9.0` |
+| Use an existing MuJoCo install | `-DMJ_KDL_MUJOCO_DIR=/opt/mujoco-3.14.0` |
 | Override the MuJoCo download URL | `-DMJ_KDL_MUJOCO_URL=<url>` |
 | Skip the MuJoCo download | `-DMJ_KDL_FETCH_MUJOCO=OFF` (then set `MJ_KDL_MUJOCO_DIR`) |
 | Clone the KDL fork somewhere specific | `-DMJ_KDL_OROCOS_KDL_DIR=~/src/orocos_kinematics_dynamics` |
@@ -181,7 +181,7 @@ the [ROS 2 workflow](ros2.md) shares one KDL across a colcon overlay.
 ## Python
 
 `pip install` builds the extension, bundles MuJoCo's matching shared library
-dependency, the secorolab Orocos KDL fork, and PyKDL, and pins `mujoco==3.9.0`.
+dependency, the secorolab Orocos KDL fork, and PyKDL, and pins `mujoco==3.14.0`.
 The build is isolated and self-contained - it does not reuse any C++ build tree.
 
 PyKDL is bundled inside the wheel as a top-level extension module. It imports as

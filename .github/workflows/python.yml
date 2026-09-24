@@ -18,8 +18,8 @@ jobs:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
     env:
-      MUJOCO_VERSION: 3.9.0
-      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.9.0
+      MUJOCO_VERSION: 3.14.0
+      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.14.0
     steps:
       - uses: actions/checkout@v4
 

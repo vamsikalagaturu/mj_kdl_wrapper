@@ -30,7 +30,7 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Physics",
 ]
 dependencies = [
-  "mujoco==3.9.0",
+  "mujoco==3.14.0",
 ]
 
 [project.scripts]

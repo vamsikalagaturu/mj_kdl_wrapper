@@ -518,7 +518,6 @@ The right panel adds debug sections:
 | Section | Behavior |
 |---------|----------|
 | `Frames` | per-body/site coordinate triads (RViz-style), with a `Scale` slider |
-| `Trace` | `Trace EE` draws a trail following the robot TCP site |
 | `Perturb` | `Body` shows the double-clicked selection; `Drag` = `Camera`/`Force`/`Torque`, then left-drag to apply (or `Ctrl`+right/left-drag) |
 
 The `Equality` and `Group enable` sections are hidden by default; rebuild with

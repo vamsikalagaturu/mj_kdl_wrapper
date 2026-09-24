@@ -36,7 +36,7 @@ A C++ library bridging [MuJoCo](https://github.com/google-deepmind/mujoco) physi
 
 ## Install
 
-Ubuntu/Debian. Requires MuJoCo 3.9.0 (auto-downloaded), CMake >= 3.16, a C++20
+Ubuntu/Debian. Requires MuJoCo 3.14.0 (auto-downloaded), CMake >= 3.16, a C++20
 compiler, and (for Python) Python >= 3.10. The secorolab Orocos KDL fork is built
 from source; the system KDL is never used.
 

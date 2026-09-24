@@ -30,7 +30,7 @@ If you need to start from a URDF (vendor-supplied), the recommended path is:
 
 ```bash
 # the compile tool ships with MuJoCo; this project caches it under ~/.cache
-~/.cache/mj_kdl_wrapper/mujoco-3.9.0/bin/compile robot.urdf robot.xml
+~/.cache/mj_kdl_wrapper/mujoco-3.14.0/bin/compile robot.urdf robot.xml
 ```
 
 This produces a flat MJCF. It is a raw mechanical conversion -- no actuators, no sensors,

@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A C++ library bridging **MuJoCo 3.9** physics simulation with **KDL** (Kinematics and Dynamics Library) for robot kinematics/dynamics. The primary target is the Kinova GEN3 7-DOF arm with optional Robotiq 2F-85 gripper support. The same API is exposed to Python via pybind11 bindings (returning PyKDL types).
+A C++ library bridging **MuJoCo 3.14** physics simulation with **KDL** (Kinematics and Dynamics Library) for robot kinematics/dynamics. The primary target is the Kinova GEN3 7-DOF arm with optional Robotiq 2F-85 gripper support. The same API is exposed to Python via pybind11 bindings (returning PyKDL types).
 
 ## Build
 
-Requires: MuJoCo 3.9.0, downloaded into the user cache `~/.cache/mj_kdl_wrapper/mujoco-3.9.0` by default (`MJ_KDL_FETCH_MUJOCO=ON`; override with `-DMJ_KDL_MUJOCO_DIR=...` to use an existing install, no system paths are searched), apt packages `libglfw3-dev libgl-dev`, and the secorolab Orocos KDL fork. CMake fetches and builds the KDL fork by default; system `liborocos-kdl` is not used. Older MuJoCo releases are not supported; CMake validates the expected `mjVERSION_HEADER` from `cmake/Versions.cmake`.
+Requires: MuJoCo 3.14.0, downloaded into the user cache `~/.cache/mj_kdl_wrapper/mujoco-3.14.0` by default (`MJ_KDL_FETCH_MUJOCO=ON`; override with `-DMJ_KDL_MUJOCO_DIR=...` to use an existing install, no system paths are searched), apt packages `libglfw3-dev libgl-dev`, and the secorolab Orocos KDL fork. CMake fetches and builds the KDL fork by default; system `liborocos-kdl` is not used. Older MuJoCo releases are not supported; CMake validates the expected `mjVERSION_HEADER` from `cmake/Versions.cmake`.
 
 **Always build with all flags and verify tests pass before considering any task complete:**
 

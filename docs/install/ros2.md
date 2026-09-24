@@ -121,7 +121,7 @@ package's own `package.xml`:
 
 `rclpy` is only importable from the interpreter ROS 2 was built against (the
 system Python). Create the venv with `--system-site-packages` so it can import the
-system `rclpy` while keeping the wheel and its pinned `mujoco==3.9.0` inside the
+system `rclpy` while keeping the wheel and its pinned `mujoco==3.14.0` inside the
 venv:
 
 ```bash

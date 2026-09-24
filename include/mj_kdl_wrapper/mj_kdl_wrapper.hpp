@@ -351,7 +351,7 @@ struct Robot
     std::string                            tcp_site;
     int                                    n_joints = 0;
     std::vector<std::string>               joint_names;
-    std::vector<std::pair<double, double>> joint_limits;
+    std::vector<std::pair<double, double>> joint_limits; // [lo, hi]; +-inf for unlimited joints
     std::vector<ForceTorqueSensor>         ft_sensors;
 
     /* Ports - read/written each control cycle. */
@@ -549,12 +549,10 @@ struct SceneState
 
 /**
  * @ingroup grp_scene
- * Save the compiled model to an MJCF XML file for later reloading via build_scene().
- * Must be called with the model returned by the most recent build_scene() call -
- * MuJoCo only retains the last compiled model's XML internally.
- * Typical use: build a combined scene (dual-arm, arm+gripper, ...) once, save it,
- * then reload via build_scene() in subsequent runs to skip all build steps.
- * @param model  Model to save; must be the most recently compiled model.
+ * Save a model to an MJCF XML file, including runtime changes to its real-valued fields.
+ * Works for any live model from build_scene()/compile_and_make_data(), and for the last model
+ * loaded with mj_loadXML. Typical use: build a combined scene once, save it, reload it later.
+ * @param model  Model to save.
  * @param path   Output path for the MJCF XML file.
  * @return true on success.
  */
@@ -1328,9 +1326,9 @@ void add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects);
 
 /**
  * @ingroup grp_advanced
- * Compile spec into a model and create its data buffer.
- * spec is always deleted (on success and failure).
- * @param[in]  spec       MuJoCo spec to compile; always freed by this call.
+ * Compile spec into a model and create its data buffer. Takes ownership of spec: freed on
+ * failure, otherwise kept with the model (for save_model_xml) and freed by destroy_scene().
+ * @param[in]  spec       MuJoCo spec to compile; owned by the wrapper from here on.
  * @param[out] out_model  Newly allocated model on success; null on failure.
  * @param[out] out_data   Newly allocated data on success; null on failure.
  * @return true on success.
