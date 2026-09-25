@@ -59,7 +59,7 @@ def main() -> int:
             env.update()
             if state["arrived"]:
                 return
-            pos_cmd = robot.jnt_pos_cmd
+            pos_cmd = robot.jnt_pos_cmd.copy()
             max_err = 0.0
             for i in range(robot.n_joints):
                 err = TARGET_POSE[i] - robot.jnt_pos_msr[i]

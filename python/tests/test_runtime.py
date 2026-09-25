@@ -117,12 +117,12 @@ def test_control_modes_switch_and_opt_out():
         env.update()
         robot.set_control_mode(mjk.CtrlMode.TORQUE)
         assert robot.ctrl_mode == mjk.CtrlMode.TORQUE
-        assert robot.jnt_trq_cmd == [0.0] * robot.n_joints
+        assert robot.jnt_trq_cmd.tolist() == [0.0] * robot.n_joints
         assert len(robot.jnt_vel_cmd) == robot.n_joints
-        assert robot.jnt_saturated == [False] * robot.n_joints
+        assert not robot.jnt_saturated.any()
         robot.jnt_trq_cmd = [1000.0] * robot.n_joints
         env.update()
-        assert robot.jnt_saturated == [True] * robot.n_joints
+        assert robot.jnt_saturated.all()
         with pytest.raises(RuntimeError, match="control mode"):
             robot.set_control_mode(mjk.CtrlMode.VELOCITY)
         env.set_control_mode(0, mjk.CtrlMode.POSITION)
@@ -182,3 +182,28 @@ def test_reset_restores_commands_and_slots():
         assert env.body_frame("cube").p.z() < z0, "the reset cleared the lifting wrench"
     finally:
         env.close()
+
+
+def test_ports_are_written_whole_not_in_place():
+    _skip_without_model()
+
+    env = mjk.Env.build(_scene_spec())
+    try:
+        robot = env.create_robot("base_link", "bracelet_link")
+        with pytest.raises(ValueError, match="read-only"):
+            robot.jnt_pos_cmd[0] = 0.5
+        held = robot.jnt_pos_cmd
+        q = held.copy()
+        q[0] = 0.5
+        robot.jnt_pos_cmd = q
+        assert robot.jnt_pos_cmd[0] == 0.5
+        env.reset()
+        assert held[0] != 0.5, "a held port stays the copy it was"
+    finally:
+        env.close()
+
+
+def test_site_spec_quat_takes_four_values():
+    site = mjk.SiteSpec()
+    with pytest.raises(TypeError):
+        site.quat = [0.0, 0.0, 0.0, 1.0, 0.0]

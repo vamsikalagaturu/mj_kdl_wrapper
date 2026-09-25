@@ -4,6 +4,7 @@
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <mujoco/mujoco.h>
 #include <pybind11/functional.h>
+#include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
@@ -89,10 +90,10 @@ struct PyCameraSpec
 
 struct PySiteSpec
 {
-    std::string         body;
-    std::string         name;
-    std::vector<double> pos  = { 0.0, 0.0, 0.0 };
-    std::vector<double> quat = { 0.0, 0.0, 0.0, 1.0 };
+    std::string           body;
+    std::string           name;
+    std::array<double, 3> pos  = { 0.0, 0.0, 0.0 };
+    std::array<double, 4> quat = { 0.0, 0.0, 0.0, 1.0 };
 };
 
 struct PySceneSpec
@@ -261,6 +262,15 @@ KDL::JntArray to_jnt_array(const py::object &values, int expected)
         return out;
     }
     return to_jnt_array(values.cast<std::vector<double>>(), expected);
+}
+
+// A copy, not a view: reset() replaces the port buffers a view would point into.
+template<typename T, typename Values> py::array_t<T> read_only_array(const Values &values)
+{
+    py::array_t<T> out(static_cast<py::ssize_t>(values.size()));
+    std::copy(values.begin(), values.end(), out.mutable_data());
+    out.attr("setflags")(py::arg("write") = false);
+    return out;
 }
 
 py::object kdl_frame_to_py(const KDL::Frame &frame)
@@ -1109,7 +1119,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "jnt_pos_msr",
         [](const PyRobot &self) {
             self.ensure_active();
-            return self.robot.jnt_pos_msr;
+            return read_only_array<double>(self.robot.jnt_pos_msr);
         },
         [](PyRobot &self, const std::vector<double> &values) {
             self.set_port(&mj_kdl::RobotPorts::jnt_pos_msr, values);
@@ -1119,7 +1129,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "jnt_vel_msr",
         [](const PyRobot &self) {
             self.ensure_active();
-            return self.robot.jnt_vel_msr;
+            return read_only_array<double>(self.robot.jnt_vel_msr);
         },
         [](PyRobot &self, const std::vector<double> &values) {
             self.set_port(&mj_kdl::RobotPorts::jnt_vel_msr, values);
@@ -1129,7 +1139,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "jnt_trq_msr",
         [](const PyRobot &self) {
             self.ensure_active();
-            return self.robot.jnt_trq_msr;
+            return read_only_array<double>(self.robot.jnt_trq_msr);
         },
         [](PyRobot &self, const std::vector<double> &values) {
             self.set_port(&mj_kdl::RobotPorts::jnt_trq_msr, values);
@@ -1139,7 +1149,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "jnt_pos_cmd",
         [](const PyRobot &self) {
             self.ensure_active();
-            return self.robot.jnt_pos_cmd;
+            return read_only_array<double>(self.robot.jnt_pos_cmd);
         },
         [](PyRobot &self, const std::vector<double> &values) {
             self.set_port(&mj_kdl::RobotPorts::jnt_pos_cmd, values);
@@ -1149,7 +1159,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "jnt_vel_cmd",
         [](const PyRobot &self) {
             self.ensure_active();
-            return self.robot.jnt_vel_cmd;
+            return read_only_array<double>(self.robot.jnt_vel_cmd);
         },
         [](PyRobot &self, const std::vector<double> &values) {
             self.set_port(&mj_kdl::RobotPorts::jnt_vel_cmd, values);
@@ -1159,7 +1169,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "jnt_trq_cmd",
         [](const PyRobot &self) {
             self.ensure_active();
-            return self.robot.jnt_trq_cmd;
+            return read_only_array<double>(self.robot.jnt_trq_cmd);
         },
         [](PyRobot &self, const std::vector<double> &values) {
             self.set_port(&mj_kdl::RobotPorts::jnt_trq_cmd, values);
@@ -1169,8 +1179,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "jnt_saturated",
         [](const PyRobot &self) {
             self.ensure_active();
-            const auto &sat = self.robot.jnt_saturated;
-            return std::vector<bool>(sat.begin(), sat.end());
+            return read_only_array<bool>(self.robot.jnt_saturated);
         }
       )
       .def(
@@ -1289,7 +1298,12 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         py::arg("fps")        = 60,
         "Open an offscreen recorder for an Env with a resolution preset."
       )
-      .def("record_frame", &PyVideoRecorder::record_frame, "Render and append one frame.")
+      .def(
+        "record_frame",
+        &PyVideoRecorder::record_frame,
+        py::call_guard<py::gil_scoped_release>(),
+        "Render and append one frame."
+      )
       .def(
         "use_camera",
         &PyVideoRecorder::use_camera,
@@ -1311,7 +1325,13 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
     py::class_<PyEnv, std::shared_ptr<PyEnv>>(
       m, "Env", "The simulation: compiled scene, its robots, scene slots and viewer."
     )
-      .def_static("build", &PyEnv::build, py::arg("spec"), "Build an environment from a SceneSpec.")
+      .def_static(
+        "build",
+        &PyEnv::build,
+        py::arg("spec"),
+        py::call_guard<py::gil_scoped_release>(),
+        "Build an environment from a SceneSpec."
+      )
       .def("close", &PyEnv::close, "Close the viewer and free the model; robots become closed.")
       .def(
         "create_robot",
@@ -1335,6 +1355,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def(
         "step",
         &PyEnv::step,
+        py::call_guard<py::gil_scoped_release>(),
         "Advance one timestep; with the viewer open, honours its pause and perturbation. "
         "Returns False once the viewer window is closed."
       )
@@ -1346,6 +1367,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def(
         "pace",
         &PyEnv::pace,
+        py::call_guard<py::gil_scoped_release>(),
         "Sleep out this step's share of wall time at the viewer's real-time factor; no-op "
         "headless. step() never sleeps."
       )
@@ -1363,9 +1385,10 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def(
         "reset",
         [](PyEnv &self, const py::object &options) {
-            if (options.is_none()) return self.reset(nullptr);
-            auto cpp_options = options.cast<mj_kdl::ResetOptions>();
-            return self.reset(&cpp_options);
+            std::optional<mj_kdl::ResetOptions> cpp_options;
+            if (!options.is_none()) cpp_options = options.cast<mj_kdl::ResetOptions>();
+            py::gil_scoped_release nogil;
+            return self.reset(cpp_options ? &*cpp_options : nullptr);
         },
         py::arg("options") = py::none(),
         "Reset MuJoCo state, then on_reset, then every robot and scene slot."
@@ -1374,6 +1397,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "add_object",
         &PyEnv::add_object,
         py::arg("object"),
+        py::call_guard<py::gil_scoped_release>(),
         "Rebuild with an added object; robots and scene slots follow the new model."
       )
       .def(
@@ -1387,6 +1411,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "remove_object",
         &PyEnv::remove_object,
         py::arg("name"),
+        py::call_guard<py::gil_scoped_release>(),
         "Rebuild without the named object; robots and scene slots follow the new model."
       )
       .def("camera_names", &PyEnv::camera_names, "Return names of cameras in the compiled model.")
