@@ -15,8 +15,7 @@ namespace fs = std::filesystem;
 class MjcfFtSensorTest : public testing::Test
 {
   protected:
-    mjModel *model_ = nullptr;
-    mjData  *data_  = nullptr;
+    mj_kdl::Env env_;
 
     std::string arm_mjcf_;
     std::string ft_mjcf_;
@@ -55,10 +54,8 @@ class MjcfFtSensorTest : public testing::Test
         sc.add_skybox = true;
         sc.robots.push_back(rs);
 
-        ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc));
+        ASSERT_TRUE(mj_kdl::init_env(&env_, &sc));
     }
-
-    void TearDown() override { mj_kdl::destroy_scene(model_, data_); }
 };
 
 TEST_F(MjcfFtSensorTest, ReadsNamedWrench)
@@ -71,8 +68,7 @@ TEST_F(MjcfFtSensorTest, ReadsNamedWrench)
     };
 
     mj_kdl::Robot robot;
-    ASSERT_TRUE(
-      mj_kdl::init_robot_from_mjcf(&robot, model_, data_, "base_link", "bracelet_link", "", &tool)
+    ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&robot, &env_, "base_link", "bracelet_link", "", &tool)
     );
     EXPECT_EQ(robot.ft_sensors.size(), 1u);
     const mj_kdl::ForceTorqueSensor *sensor = mj_kdl::find_ft_sensor(&robot, "wrist_ft");
@@ -81,8 +77,8 @@ TEST_F(MjcfFtSensorTest, ReadsNamedWrench)
     EXPECT_EQ(sensor->torque_sensor, "wrist_ft_torque");
     EXPECT_GE(sensor->frame_site_id, 0);
 
-    mj_forward(model_, data_);
-    mj_kdl::update(&robot);
+    mj_forward(env_.model, env_.data);
+    mj_kdl::update(&env_);
     sensor = mj_kdl::find_ft_sensor(&robot, "wrist_ft");
     ASSERT_NE(sensor, nullptr);
     EXPECT_TRUE(std::isfinite(sensor->wrench.force.x()));
@@ -91,8 +87,25 @@ TEST_F(MjcfFtSensorTest, ReadsNamedWrench)
     EXPECT_TRUE(std::isfinite(sensor->wrench.torque.x()));
     EXPECT_TRUE(std::isfinite(sensor->wrench.torque.y()));
     EXPECT_TRUE(std::isfinite(sensor->wrench.torque.z()));
+}
 
-    mj_kdl::cleanup(&robot);
+TEST_F(MjcfFtSensorTest, ResetReReadsTheWrench)
+{
+    mj_kdl::ForceTorqueSensorSpec ft{ .name = "wrist_ft", .frame_site = "wrist_ft_site" };
+    mj_kdl::ToolFrameSpec         tool{ .tool_body = "g_base", .ft_sensors = { ft } };
+
+    mj_kdl::Robot robot;
+    ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&robot, &env_, "base_link", "bracelet_link", "", &tool)
+    );
+    robot.ft_sensors[0].wrench = KDL::Wrench(KDL::Vector(99, 99, 99), KDL::Vector(99, 99, 99));
+
+    mj_kdl::reset(&env_);
+
+    const mj_kdl::ForceTorqueSensor &sensor = robot.ft_sensors[0];
+    const double                    *f      = env_.data->sensordata + sensor.force_adr;
+    const double                    *t      = env_.data->sensordata + sensor.torque_adr;
+    EXPECT_EQ(sensor.wrench.force, KDL::Vector(f[0], f[1], f[2]));
+    EXPECT_EQ(sensor.wrench.torque, KDL::Vector(t[0], t[1], t[2]));
 }
 
 TEST_F(MjcfFtSensorTest, RejectsMissingTorqueSensor)
@@ -110,9 +123,9 @@ TEST_F(MjcfFtSensorTest, RejectsMissingTorqueSensor)
 
     mj_kdl::Robot robot;
     EXPECT_FALSE(
-      mj_kdl::init_robot_from_mjcf(&robot, model_, data_, "base_link", "bracelet_link", "", &tool)
+      mj_kdl::init_robot_from_mjcf(&robot, &env_, "base_link", "bracelet_link", "", &tool)
     );
-    mj_kdl::cleanup(&robot);
+    EXPECT_TRUE(env_.robots.empty()) << "a robot that failed to init is not registered";
 }
 
 int main(int argc, char *argv[])

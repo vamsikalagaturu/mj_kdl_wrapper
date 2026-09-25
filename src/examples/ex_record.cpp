@@ -64,17 +64,16 @@ int main(int argc, char *argv[])
     r.path = mjcf.c_str();
     sc.robots.push_back(r);
 
-    mjModel *model = nullptr;
-    mjData  *data  = nullptr;
-    if (!mj_kdl::build_scene(&model, &data, &sc)) {
-        std::cerr << "build_scene() failed\n";
+    mj_kdl::Env env;
+    if (!mj_kdl::init_env(&env, &sc)) {
+        std::cerr << "init_env() failed\n";
         return 1;
     }
+    const mjModel *model = env.model;
 
     mj_kdl::Robot robot;
-    if (!mj_kdl::init_robot_from_mjcf(&robot, model, data, "base_link", "bracelet_link")) {
+    if (!mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link")) {
         std::cerr << "init_robot_from_mjcf() failed\n";
-        mj_kdl::destroy_scene(model, data);
         return 1;
     }
 
@@ -85,7 +84,7 @@ int main(int argc, char *argv[])
     KDL::JntArray q_home(n);
     for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
     mj_kdl::set_joint_pos(&robot, q_home);
-    robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
+    if (!mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::TORQUE)) return 1;
 
     // Prime gravity torques so first step gets correct compensation.
     KDL::JntArray q(n), g(n);
@@ -94,10 +93,8 @@ int main(int argc, char *argv[])
 
     // Init video recorder
     mj_kdl::VideoRecorder vr;
-    if (!mj_kdl::init_video_recorder(&vr, model, outmp4.c_str(), res, kFps)) {
+    if (!mj_kdl::init_video_recorder(&vr, env.model, outmp4.c_str(), res, kFps)) {
         std::cerr << "init_video_recorder() failed -- is EGL available and ffmpeg installed?\n";
-        mj_kdl::cleanup(&robot);
-        mj_kdl::destroy_scene(model, data);
         return 1;
     }
 
@@ -115,17 +112,16 @@ int main(int argc, char *argv[])
 
     for (int step = 0; step < total_steps; ++step) {
         // Gravity compensation control
-        mj_kdl::update(&robot);
+        mj_kdl::update(&env);
         for (unsigned i = 0; i < n; ++i) q(i) = robot.jnt_pos_msr[i];
         dyn.JntToGravity(q, g);
         for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = g(i);
-        mj_kdl::step(&robot);
-        mj_kdl::pace_realtime(&robot);
+        mj_kdl::step(&env);
 
         // Record a frame at the target frame rate.
         if (step % steps_per_frame == 0) {
             vr.cam.azimuth = std::fmod(step * step_per_deg, 360.0);
-            if (!mj_kdl::record_frame(&vr, model, data)) {
+            if (!mj_kdl::record_frame(&vr, &env)) {
                 std::cerr << "record_frame() failed at step " << step << "\n";
                 break;
             }
@@ -136,7 +132,6 @@ int main(int argc, char *argv[])
 
     std::cout << "Saved: " << outmp4 << "\n";
 
-    mj_kdl::cleanup(&robot);
-    mj_kdl::destroy_scene(model, data);
+    mj_kdl::cleanup(&env);
     return 0;
 }

@@ -71,8 +71,8 @@ def alpha_no_linear_z() -> kdl.Jacobian:
     return alpha
 
 
-def achd_step(robot, chain, fk, achd, rnea, target, err_prev, first_pid):
-    robot.update()
+def achd_step(env, robot, chain, fk, achd, rnea, target, err_prev, first_pid):
+    env.update()
     q = jnt(robot.jnt_pos_msr)
     qd = jnt(robot.jnt_vel_msr)
     current = kdl.Frame()
@@ -105,7 +105,7 @@ def achd_step(robot, chain, fk, achd, rnea, target, err_prev, first_pid):
     if rnea.CartToJnt(q, qd, qdd, rnea_wrenches, tau) < 0:
         raise RuntimeError("PyKDL RNEA failed")
     robot.jnt_trq_cmd = [clamp_abs(tau[i], TAU_MAX) for i in range(n)]
-    robot.update()
+    env.update()
 
 
 def main() -> int:
@@ -121,49 +121,43 @@ def main() -> int:
             chain, kdl.Twist(kdl.Vector(0.0, 0.0, 9.81), kdl.Vector.Zero()), 5
         )
         rnea = kdl.ChainIdSolver_RNE(chain, kdl.Vector(0.0, 0.0, -9.81))
-        robot.ctrl_mode = mjk.CtrlMode.TORQUE
+        robot.set_control_mode(mjk.CtrlMode.TORQUE)
 
         err_prev = [0.0] * 5
         first_pid = [True]
 
         def on_reset(ctx):
-            robot.set_joint_pos(TABLE_POSE, call_forward=False)
+            robot.set_joint_pos(TABLE_POSE)
             first_pid[0] = True  # re-prime PID after a reset
 
         env.on_reset = on_reset
         env.reset()
 
-        robot.update()
+        env.update()
         start = kdl.Frame()
         fk.JntToCart(jnt(TABLE_POSE), start)
         target = kdl.Frame(start.M, start.p + kdl.Vector(MOVE_X, 0.0, 0.0))
 
         def step():
-            achd_step(robot, chain, fk, achd, rnea, target, err_prev, first_pid)
             if env.has_actuator("g_fingers_actuator"):
                 env.set_actuator_ctrl("g_fingers_actuator", 255.0)
+            achd_step(env, robot, chain, fk, achd, rnea, target, err_prev, first_pid)
 
         if args.gui:
-            viewer = mjk.SimulateViewer.open(robot, "ex_achd_table_slide.py")
-            prev = env.time()
-            try:
-                while viewer.is_running():
-                    if env.time() < prev - 1e-6:
-                        env.reset()
-                    prev = env.time()
-                    step()
-                    if not viewer.step():
-                        break
-                    viewer.pace()
-            finally:
-                viewer.close()
+            # The UI's reset button runs env's reset, on_reset included.
+            env.open_viewer("ex_achd_table_slide.py")
+            while env.viewer.is_running():
+                step()
+                if not env.step():
+                    break
+                env.pace()
         else:
             end = env.time() + 2.0
             while env.time() < end:
                 step()
-                if not robot.step():
+                if not env.step():
                     break
-                robot.pace()
+                env.pace()
         print(f"tcp target x shift: {MOVE_X:.3f} m")
         final_frame = robot.fk_frame()
         final_pos = [final_frame.p.x(), final_frame.p.y(), final_frame.p.z()]

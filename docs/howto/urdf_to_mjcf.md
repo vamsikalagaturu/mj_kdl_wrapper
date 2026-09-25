@@ -11,11 +11,12 @@ MuJoCo's URDF importer creates joints (hinge/slide) but does **not** create actu
 After loading a URDF, `model->nu == 0` -- there are no entries in `data->ctrl`.
 
 Consequence:
-- `CtrlMode::POSITION` and `CtrlMode::VELOCITY` write to `data->ctrl[kdl_to_mj_ctrl[i]]`,
-  which requires `kdl_to_mj_ctrl[i] >= 0` (a valid actuator index).
-- With a URDF model, all `kdl_to_mj_ctrl[i] == -1`, so every write is silently skipped.
-- Only `CtrlMode::TORQUE` works, because it writes to `data->qfrc_applied` which does
-  not depend on actuators.
+- Every `CtrlMode` writes the active mode's command to that mode's actuator `ctrl`;
+  `POSITION`, `VELOCITY` and `TORQUE` alike need an actuator on each joint.
+- `build_scene()` adds the actuators for extra modes (`RobotSpec::modes`) from the
+  one each joint already has, so a joint with none gets none.
+- With a URDF model there are no actuators at all, so no mode moves the robot and
+  `set_control_mode()` is refused.
 
 **Bottom line:** a URDF robot in MuJoCo is unactuated by default. You must add actuators
 manually (via `mjSpec`) or use a Menagerie MJCF that already has them.

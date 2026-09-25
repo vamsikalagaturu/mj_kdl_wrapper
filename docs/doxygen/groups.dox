@@ -10,32 +10,32 @@
  * @defgroup grp_scene Scene Building
  * @brief Build and modify MuJoCo scenes from MJCF specifications.
  *
- * The primary entry point is build_scene().  Use scene_add_object() and
- * scene_remove_object() to dynamically modify a running scene.
+ * init_env() builds the scene into an Env.  Use scene_add_object() and
+ * scene_remove_object() to modify a running Env; bind scene slots (joints, free
+ * bodies, wrenches, actuators outside a Robot chain) with bind_scene_*().
  */
 
 /**
  * @defgroup grp_robot Robot Initialization and Control
- * @brief Initialize KDL chains, read sensors, and apply joint commands.
+ * @brief Initialize KDL chains and command robots through their ports.
  *
- * Call init_robot_from_mjcf() once after build_scene(),
- * then call update() each control step to exchange data with MuJoCo.
+ * Call init_robot_from_mjcf() once after init_env(); it registers the robot
+ * with the Env, whose update() then reads and commands it every control step.
  */
 
 /**
  * @defgroup grp_env Runtime Environment
- * @brief Own compiled model/data and synchronize registered robots on reset.
+ * @brief The Env: owns model/data, robots, scene slots and the viewer.
  *
- * Use init_env() when an application needs reset hooks or a single owner for
- * model/data and scene mutation helpers.
+ * init_env() builds it; step(), update() and reset() drive it; cleanup(Env *)
+ * frees it.  reset() re-seeds every part it holds.
  */
 
 /**
  * @defgroup grp_viewer Visualization
- * @brief GLFW window management and the real-time render/tick loop.
+ * @brief The simulate UI of an Env and loop pacing.
  *
- * Use init_window_sim() + step() for the full simulate UI with physics panels.
- * Use init_window() + render() for a lightweight manual render loop.
+ * Use open_viewer() + step() for the simulate UI with physics panels.
  *
  * The simulate UI owns a user scene merged into every frame; draw your own
  * overlay geometry (e.g. a live end-effector trajectory trace) into it with

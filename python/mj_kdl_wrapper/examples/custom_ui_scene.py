@@ -19,22 +19,19 @@ def main() -> int:
     robot_spec.path = model_path
     spec.robots = [robot_spec]
 
-    scene = mjk.Scene.build(spec)
+    env = mjk.Env.build(spec)
     try:
-        robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link")
+        robot = env.create_robot("base_link", "bracelet_link")
         robot.jnt_pos_cmd = [0.0] * robot.n_joints
 
-        viewer = mjk.SimulateViewer.open(robot, TITLE)
-        try:
-            while viewer.is_running():
-                robot.update()
-                if not viewer.step():
-                    break
-                viewer.pace()
-        finally:
-            viewer.close()
+        env.open_viewer(TITLE)
+        while env.viewer.is_running():
+            env.update()
+            if not env.step():
+                break
+            env.pace()
     finally:
-        scene.close()
+        env.close()
 
     return 0
 

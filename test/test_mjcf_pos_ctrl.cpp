@@ -28,6 +28,7 @@ class MjcfPosCtrlTest : public testing::Test
 {
   protected:
     fs::path      root_;
+    mj_kdl::Env   env_;
     mjModel      *model_ = nullptr;
     mjData       *data_  = nullptr;
     mj_kdl::Robot s_;
@@ -47,27 +48,30 @@ class MjcfPosCtrlTest : public testing::Test
     sc.add_skybox = true;
         sc.robots.push_back(mj_kdl::RobotSpec{ .path = arm_mjcf.c_str(), .attachments = {} });
 
-        ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc));
-        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link"));
+        ASSERT_TRUE(mj_kdl::init_env(&env_, &sc));
+        model_ = env_.model;
+        data_  = env_.data;
+        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s_, &env_, "base_link", "bracelet_link"));
 
         n_ = static_cast<unsigned>(s_.n_joints);
 
         KDL::JntArray q_home(n_);
         for (unsigned i = 0; i < n_; ++i) q_home(i) = kHomePose[i];
-        mj_kdl::set_joint_pos(&s_, q_home, false);
-        mj_forward(model_, data_);
+        mj_kdl::set_joint_pos(&s_, q_home);
 
         s_.ctrl_mode = mj_kdl::CtrlMode::POSITION;
         for (unsigned i = 0; i < n_; ++i) { s_.jnt_pos_cmd[i] = kHomePose[i]; }
-        mj_kdl::update(&s_);
+        mj_kdl::update(&env_);
     }
 
-    void TearDown() override
+    // The position servo driving joint i: robot 0's POSITION group is 1.
+    int servo(unsigned i) const
     {
-        if (model_) {
-            mj_kdl::cleanup(&s_);
-            mj_kdl::destroy_scene(model_, data_);
+        const int jid = mj_name2id(model_, mjOBJ_JOINT, s_.joint_names[i].c_str());
+        for (int a = 0; a < model_->nu; ++a) {
+            if (model_->actuator_trnid[2 * a] == jid && model_->actuator_group[a] == 1) return a;
         }
+        return -1;
     }
 };
 
@@ -77,11 +81,11 @@ TEST_F(MjcfPosCtrlTest, TrajectoryTracking)
     const double t_end   = t_start + kMotionDuration + kSettleTime;
 
     while (data_->time < t_end) {
-        mj_kdl::update(&s_);
+        mj_kdl::update(&env_);
         double alpha = std::clamp((data_->time - t_start) / kMotionDuration, 0.0, 1.0);
         for (unsigned i = 0; i < n_; ++i)
             s_.jnt_pos_cmd[i] = kHomePose[i] + alpha * (kTargetPose[i] - kHomePose[i]);
-        mj_kdl::step(&s_);
+        mj_kdl::step(&env_);
     }
 
     double max_err = 0.0;
@@ -96,12 +100,13 @@ TEST_F(MjcfPosCtrlTest, ClampCtrlrange)
     // Set a command far outside any physical joint range and call update().
     // The ctrl[] written to MuJoCo must be clamped to [ctrlrange_lo, ctrlrange_hi].
     for (unsigned i = 0; i < n_; ++i) s_.jnt_pos_cmd[i] = 1e9;
-    mj_kdl::update(&s_);
+    mj_kdl::update(&env_);
 
     for (unsigned i = 0; i < n_; ++i) {
-        const int ci = s_.kdl_to_mj_ctrl[i];
-        if (ci < 0) continue;
+        const int ci = servo(i);
+        ASSERT_GE(ci, 0) << s_.joint_names[i];
         if (!model_->actuator_ctrllimited[ci]) continue;
+        EXPECT_EQ(s_.jnt_saturated[i], 1) << "joint " << i;
         double lo = model_->actuator_ctrlrange[2 * ci];
         double hi = model_->actuator_ctrlrange[2 * ci + 1];
         EXPECT_LE(data_->ctrl[ci], hi + 1e-12)

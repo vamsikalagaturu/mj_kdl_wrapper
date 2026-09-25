@@ -26,10 +26,10 @@ ctest --test-dir build --output-on-failure
 ctest --test-dir build --output-on-failure
 
 # Run a single test binary
-./build/test_init
+./build/test/test_init
 
-# Run with GUI (headless -> interactive)
-./build/test_mjcf_trq_ctrl --gui
+# Run the opt-in tests that open a Simulate window (gtest DISABLED_ prefix)
+./build/test/test_scene_state --gtest_also_run_disabled_tests --gtest_filter='*Viewer*'
 ```
 
 All tests self-skip when Menagerie is absent; `-DMJ_KDL_FETCH_MENAGERIE=ON` populates the user cache.
@@ -79,8 +79,9 @@ Column limit is 100. Indentation is 2 spaces. See `.clang-format` and `.clang-ti
 - `RobotSpec` -- MJCF path, position, orientation, prefix, optional `AttachmentSpec` chain
 - `AttachmentSpec` -- attachment MJCF, attach body, position/orientation, prefix, contact exclusions
 - `SceneSpec` -- aggregates robots, objects (`SceneObject`, including MJCF-backed assets), timestep, gravity
-- `Robot` -- runtime handle: holds `mjModel*`, `mjData*`, KDL chain, joint index maps, measured/commanded joint ports, `CtrlMode`
-- `Viewer` -- GLFW window + MuJoCo render context
+- `Env` -- owns `mjModel*`/`mjData*`, the registered `Robot`s, the scene slots (`env.scene`), the viewer (`env.viewer`) and the reset hook; not copied or moved
+- `Robot` -- derives from `RobotPorts` (measured/commanded joint ports, `CtrlMode`); holds the KDL chain, joint names/limits, F/T sensors; its MuJoCo index maps are private (`_impl`)
+- `Viewer` -- the Simulate UI of an `Env`, opened by `open_viewer()`
 
 **Typical usage flow:**
 
@@ -88,27 +89,22 @@ Column limit is 100. Indentation is 2 spaces. See `.clang-format` and `.clang-ti
 MJCF files
     |
     v
-build_scene()
+init_env()              -- build_scene() into an Env
     |
     v
-mjModel*, mjData*  (compiled MuJoCo simulation)
+init_robot_from_mjcf(&robot, &env, ...)   -- KDL chain; registers the robot
     |
-    v
-init_robot_from_mjcf()
-    |
-    v
-Robot  (KDL chain + joint index maps into MuJoCo arrays)
-    |
-    +-- update()           -- read sensors, apply commands (call every control step)
-    +-- step() / step_n()  -- advance simulation
-    +-- init_window_sim() + tick()  -- interactive event loop
+    +-- open_viewer(&env)   -- optional Simulate UI
+    +-- loop: step(&env); update(&env); compute commands into the ports
+    +-- reset(&env)         -- resets MuJoCo, on_reset, re-seeds every robot and slot
+    +-- cleanup(&env)
 ```
 
-**Control cycle (`update()`):** reads `qpos`/`qvel`/`qfrc_actuator` from MuJoCo into `jnt_pos_msr` / `jnt_vel_msr` / `jnt_trq_msr`, then writes the active mode's command (`jnt_pos_cmd` / `jnt_vel_cmd` / `jnt_trq_cmd`) to that mode's actuators' `data->ctrl`. Each mode is an actuator group toggled via `opt.disableactuator` (see `docs/howto/torque_control.md`).
+**Control cycle (`update(&env)`):** for every registered robot, reads `qpos`/`qvel`/`qfrc_actuator` into `jnt_pos_msr` / `jnt_vel_msr` / `jnt_trq_msr` and the F/T wrenches, then writes the active mode's command (`jnt_pos_cmd` / `jnt_vel_cmd` / `jnt_trq_cmd`) to that mode's actuators' `data->ctrl`; then samples and applies the scene slots. Each mode is an actuator group toggled via `opt.disableactuator` (see `docs/howto/torque_control.md`). `step(&env)` is `mj_step2` then `mj_step1`, so frames and sensors after it describe the new state.
 
-**Index maps inside `Robot`:** `kdl_to_mj_qpos`, `kdl_to_mj_dof`, `kdl_to_mj_ctrl` translate between KDL joint ordering and MuJoCo array indices. These are built during `init_robot_from_mjcf()` and are the reason multi-robot and gripper scenes work correctly even when joint ordering differs.
+**Reset by construction:** each part's runtime state is one struct (`RobotPorts`, `ForceTorqueReading`, `Scene*Reading` / `Scene*Command`) that `reset()` assigns afresh; parts go through `reset_parts()`, which requires a `reset_part()` overload per part at compile time. New runtime state belongs in one of those structs.
 
-**Scene patching:** `build_scene()` merges MJCF files using `mjSpec` (MuJoCo's programmatic spec API), then calls `patch_mjcf_*` helpers to inject floor, skybox, table, and objects. Runtime add/remove (`scene_add_object` / `scene_remove_object`) re-compiles the spec in place and updates all existing `Robot` handles.
+**Scene patching:** `build_scene()` merges MJCF files using `mjSpec` (MuJoCo's programmatic spec API), then injects floor, skybox, objects, sites and cameras. Runtime add/remove (`scene_add_object` / `scene_remove_object`) rebuilds the `Env`'s model and re-resolves its robots, scene slots and viewer.
 
 **Bundled dependencies:**
 - user cache `~/.cache/mj_kdl_wrapper/menagerie/` -- MuJoCo Menagerie fetched by `mj-kdl-fetch-menagerie` or CMake

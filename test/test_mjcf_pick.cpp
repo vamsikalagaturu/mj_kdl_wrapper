@@ -102,9 +102,10 @@ static void
 class MjcfPickTest : public testing::Test
 {
   protected:
-    fs::path root_;
-    mjModel *model_ = nullptr;
-    mjData  *data_  = nullptr;
+    fs::path    root_;
+    mj_kdl::Env env_;
+    mjModel    *model_ = nullptr;
+    mjData     *data_  = nullptr;
 
     mj_kdl::Robot s_;
     int           fingers_act_ = -1;
@@ -161,10 +162,12 @@ class MjcfPickTest : public testing::Test
         sc.robots.push_back(rs);
         sc.objects.push_back(cube);
 
-        ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc));
+        ASSERT_TRUE(mj_kdl::init_env(&env_, &sc));
+        model_ = env_.model;
+        data_  = env_.data;
         const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base", .tcp_site = "g_pinch" };
         ASSERT_TRUE(
-          mj_kdl::init_robot_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link", "", &tool)
+          mj_kdl::init_robot_from_mjcf(&s_, &env_, "base_link", "bracelet_link", "", &tool)
         );
 
         n_ = s_.chain.getNrOfJoints();
@@ -180,7 +183,7 @@ class MjcfPickTest : public testing::Test
         KDL::JntArray     q_min(n_), q_max(n_);
         std::vector<bool> joint_limited(n_, false);
         for (unsigned i = 0; i < n_; ++i) {
-            int jid = model_->dof_jntid[s_.kdl_to_mj_dof[i]];
+            int jid = mj_name2id(model_, mjOBJ_JOINT, s_.joint_names[i].c_str());
             if (model_->jnt_limited[jid]) {
                 joint_limited[i] = true;
                 q_min(i)         = model_->jnt_range[2 * jid];
@@ -227,33 +230,19 @@ class MjcfPickTest : public testing::Test
         }
     }
 
-    void TearDown() override
-    {
-        if (model_) {
-            mj_kdl::cleanup(&s_);
-            mj_kdl::destroy_scene(model_, data_);
-        }
-    }
-
     // Reset arm to home and cube to initial position.
     void reset_scene()
     {
-        mj_resetData(model_, data_);
-        mj_kdl::set_joint_pos(&s_, q_home_, false);
-        int qadr              = model_->jnt_qposadr[cube_jnt_];
-        data_->qpos[qadr]     = kCubeX;
-        data_->qpos[qadr + 1] = kCubeY;
-        data_->qpos[qadr + 2] = kCubeZ;
-        data_->qpos[qadr + 3] = 1.0;
-        data_->qpos[qadr + 4] = data_->qpos[qadr + 5] = data_->qpos[qadr + 6] = 0.0;
-        mj_forward(model_, data_);
+        mj_kdl::reset(&env_);
+        mj_kdl::set_joint_pos(&s_, q_home_);
+        const double cube_pos[3] = { kCubeX, kCubeY, kCubeZ };
+        mj_kdl::set_body_pose(&env_, "cube", cube_pos);
         s_.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
         for (unsigned i = 0; i < n_; ++i) {
-            s_.jnt_pos_cmd[i]                        = data_->qpos[s_.kdl_to_mj_qpos[i]];
-            s_.jnt_trq_cmd[i]                        = 0.0;
-            data_->qfrc_applied[s_.kdl_to_mj_dof[i]] = 0.0;
+            s_.jnt_pos_cmd[i] = q_home_(i);
+            s_.jnt_trq_cmd[i] = 0.0;
         }
-        mj_kdl::update(&s_);
+        mj_kdl::update(&env_);
         data_->ctrl[fingers_act_] = 0.0;
     }
 
@@ -274,13 +263,13 @@ class MjcfPickTest : public testing::Test
         KDL::JntArray q_des(n_);
 
         while (true) {
-            mj_kdl::update(&s_); // read current sensors
+            mj_kdl::update(&env_); // read current sensors
             double alpha = clamp01((data_->time - t_enter) / duration);
             lerp_q(q_enter, q_target, alpha, q_des);
             impedance_ctrl(s_, q_des, n_, *dyn_); // writes jnt_trq_cmd
             data_->ctrl[fingers_act_] = gripper_cmd;
-            mj_kdl::update(&s_); // apply current command through the wrapper
-            mj_kdl::step(&s_);
+            mj_kdl::update(&env_); // apply current command through the wrapper
+            mj_kdl::step(&env_);
 
             double t_rel     = data_->time - t_enter;
             bool   done_time = t_rel >= duration;
@@ -303,9 +292,7 @@ TEST_F(MjcfPickTest, KDLChain)
     mj_kdl::Robot wrist;
     const mj_kdl::ToolFrameSpec wrist_tool{ .tool_body = "g_base" };
     ASSERT_TRUE(
-      mj_kdl::init_robot_from_mjcf(
-        &wrist, model_, data_, "base_link", "bracelet_link", "", &wrist_tool
-      )
+      mj_kdl::init_robot_from_mjcf(&wrist, &env_, "base_link", "bracelet_link", "", &wrist_tool)
     );
     EXPECT_EQ(wrist.chain.getNrOfJoints(), s_.chain.getNrOfJoints());
 

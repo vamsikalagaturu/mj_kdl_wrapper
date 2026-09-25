@@ -287,34 +287,30 @@ int main(int argc, char *argv[])
     scene.objects.push_back(table);
     scene.objects.push_back(make_cube(kSceneBaseZ));
 
-    mjModel *model = nullptr;
-    mjData  *data  = nullptr;
-    if (!mj_kdl::build_scene(&model, &data, &scene)) {
-        std::cerr << "build_scene() failed\n";
+    mj_kdl::Env env;
+    if (!mj_kdl::init_env(&env, &scene)) {
+        std::cerr << "init_env() failed\n";
         return 1;
     }
+    mjModel *model = env.model;
+    mjData  *data  = env.data;
 
     mj_kdl::ToolFrameSpec tool;
     tool.tool_body = "g_base";
     tool.tcp_site  = "g_pinch";
 
     mj_kdl::Robot robot;
-    if (!mj_kdl::init_robot_from_mjcf(
-          &robot, model, data, "base_link", "bracelet_link", "", &tool
-        )) {
+    if (!mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool)) {
         std::cerr << "init_robot_from_mjcf() failed\n";
-        mj_kdl::destroy_scene(model, data);
         return 1;
     }
 
-    const unsigned n           = robot.chain.getNrOfJoints();
-    const unsigned ns          = robot.chain.getNrOfSegments();
-    const int      fingers_act = mj_name2id(model, mjOBJ_ACTUATOR, "g_fingers_actuator");
-    const int      cube_jnt    = mj_name2id(model, mjOBJ_JOINT, "cube_joint");
-    if (fingers_act < 0 || cube_jnt < 0) {
+    const unsigned             n        = robot.chain.getNrOfJoints();
+    const unsigned             ns       = robot.chain.getNrOfSegments();
+    mj_kdl::SceneActuatorSlot *fingers  = mj_kdl::bind_scene_actuator(&env.scene, "g_fingers_actuator");
+    const int                  cube_jnt = mj_name2id(model, mjOBJ_JOINT, "cube_joint");
+    if (!fingers || cube_jnt < 0) {
         std::cerr << "required actuator or cube joint not found\n";
-        mj_kdl::cleanup(&robot);
-        mj_kdl::destroy_scene(model, data);
         return 1;
     }
 
@@ -336,8 +332,6 @@ int main(int argc, char *argv[])
     const int support_segment = find_segment_index(robot.chain, kSupportLink);
     if (support_segment < 0) {
         std::cerr << "support segment not found: " << kSupportLink << "\n";
-        mj_kdl::cleanup(&robot);
-        mj_kdl::destroy_scene(model, data);
         return 1;
     }
     std::cout << "support segment: " << kSupportLink << " index=" << support_segment << "\n";
@@ -346,8 +340,8 @@ int main(int argc, char *argv[])
     const double z_above = z_grasp + 0.20;
     const double z_lift  = z_grasp + 0.30;
 
-    mj_kdl::set_joint_pos(&robot, q_home, false);
-    mj_kdl::update(&robot);
+    mj_kdl::set_joint_pos(&robot, q_home);
+    mj_kdl::update(&env);
     fill_q_state(robot, n, q_buf, qdot_buf);
     KDL::Frame home_tcp;
     fk_pos.JntToCart(q_buf, home_tcp);
@@ -370,7 +364,7 @@ int main(int argc, char *argv[])
         { "HOLD",        target_frame(kPlaceX, kPlaceY, kTableZ + z_above), headless ? 4.0 : 1e9, headless ? 4.0 : 1e9, -1.0, -1.0, 0.0 },
     };
 
-    robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
+    if (!mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::TORQUE)) return 1;
     int qadr = model->jnt_qposadr[cube_jnt];
 
     auto reset_cube = [&]() {
@@ -381,16 +375,10 @@ int main(int argc, char *argv[])
         data->qpos[qadr + 4] = data->qpos[qadr + 5] = data->qpos[qadr + 6] = 0.0;
     };
 
-    mj_kdl::Env env;
-    env.spec  = scene;
-    env.model = model;
-    env.data  = data;
-    mj_kdl::env_add_robot(&env, &robot);
-
     env.on_reset = [&](mj_kdl::ResetContext *) {
-        mj_kdl::set_joint_pos(&robot, q_home, false);
+        mj_kdl::set_joint_pos(&robot, q_home);
         reset_cube();
-        data->ctrl[fingers_act] = 0.0;
+        data->ctrl[fingers->ctrl_id] = 0.0;
     };
 
     double prev_sim_time = data->time;
@@ -405,11 +393,8 @@ int main(int argc, char *argv[])
 
     reset_scene();
 
-    mj_kdl::Viewer viewer;
-    if (!headless && !mj_kdl::init_window_sim(&viewer, &robot)) {
-        std::cerr << "init_window_sim() failed\n";
-        mj_kdl::cleanup(&robot);
-        mj_kdl::destroy_scene(model, data);
+    if (!headless && !mj_kdl::open_viewer(&env)) {
+        std::cerr << "open_viewer() failed\n";
         return 1;
     }
 
@@ -444,7 +429,7 @@ int main(int argc, char *argv[])
             if (aborted || restart) break;
             std::cout << "State: " << phase.name << "\n";
             double t_enter = data->time;
-            mj_kdl::update(&robot);
+            mj_kdl::update(&env);
             fill_q_state(robot, n, q_buf, qdot_buf);
             KDL::Frame phase_start;
             fk_pos.JntToCart(q_buf, phase_start);
@@ -476,7 +461,7 @@ int main(int argc, char *argv[])
                 if (!first_target) target_twist = KDL::diff(prev_target, target, dt);
                 prev_target = target;
                 first_target = false;
-                mj_kdl::update(&robot);
+                mj_kdl::update(&env);
                 fill_q_state(robot, n, q_buf, qdot_buf);
                 clear_wrenches(f_ext_achd);
                 clear_wrenches(f_ext_rnea_zero);
@@ -516,8 +501,8 @@ int main(int argc, char *argv[])
                   err_prev,
                   first_pid
                 );
-                mj_kdl::update(&robot);
-                data->ctrl[fingers_act] = phase.gripper_cmd;
+                fingers->command = phase.gripper_cmd;
+                mj_kdl::update(&env);
 
                 fill_q_state(robot, n, q_buf, qdot_buf);
                 KDL::Frame current;
@@ -548,14 +533,13 @@ int main(int argc, char *argv[])
                 bool   done_timeout = phase.timeout > 0.0 && t_rel >= phase.timeout;
                 if ((done_time && done_pose) || done_timeout) break;
 
-                if (!mj_kdl::step(&robot)) {
-
-                mj_kdl::pace_realtime(&robot);
+                if (!mj_kdl::step(&env)) {
                     aborted = true;
                     break;
                 }
+                mj_kdl::pace_realtime(&env);
                 if (recorder_ok && sim_step % steps_per_record_frame == 0) {
-                    if (!mj_kdl::record_frame(&recorder, model, data)) {
+                    if (!mj_kdl::record_frame(&recorder, &env)) {
                         std::cerr << "record_frame() failed at sim step " << sim_step << "\n";
                         mj_kdl::cleanup(&recorder);
                         recorder_ok = false;
@@ -585,12 +569,10 @@ int main(int argc, char *argv[])
                   << "] xy_error=" << place_err_xy << "\n";
         if (headless && place_err_xy > 0.08) ret = 1;
     }
-    if (!headless) mj_kdl::cleanup(&viewer);
     if (recorder_ok) {
         mj_kdl::cleanup(&recorder);
         std::cout << "Saved recording: " << record_path << "\n";
     }
-    mj_kdl::cleanup(&robot);
-    mj_kdl::destroy_scene(model, data);
+    mj_kdl::cleanup(&env);
     return ret;
 }

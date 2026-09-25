@@ -26,14 +26,12 @@ def attachment_gripper(path: str, prefix: str = "g_") -> mjk.AttachmentSpec:
     return spec
 
 
-def apply(robot: mjk.Robot, target: list[float]) -> None:
-    robot.update()
+def impedance(robot: mjk.Robot, target: list[float]) -> None:
     grav = robot.gravity_torques(-9.81)
     robot.jnt_trq_cmd = [
         KP[i] * (target[i] - robot.jnt_pos_msr[i]) - KD[i] * robot.jnt_vel_msr[i] + grav[i]
         for i in range(robot.n_joints)
     ]
-    robot.update()
 
 
 def main() -> int:
@@ -71,43 +69,39 @@ def main() -> int:
         arm1 = env.create_robot("base_link", "bracelet_link", tool=tool1)
         arm2 = env.create_robot("r2_base_link", "r2_bracelet_link", tool=tool2)
         for robot in (arm1, arm2):
-            robot.ctrl_mode = mjk.CtrlMode.TORQUE
+            robot.set_control_mode(mjk.CtrlMode.TORQUE)
 
         def on_reset(ctx):
-            arm1.set_joint_pos(HOME_POSE, call_forward=False)
-            arm2.set_joint_pos(HOME_POSE, call_forward=False)
+            arm1.set_joint_pos(HOME_POSE)
+            arm2.set_joint_pos(HOME_POSE)
 
         env.on_reset = on_reset
         env.reset()
 
         def step():
-            apply(arm1, HOME_POSE)
-            apply(arm2, HOME_POSE)
+            env.update()
+            impedance(arm1, HOME_POSE)
+            impedance(arm2, HOME_POSE)
             grip = 255.0 if math.fmod(env.time(), 6.0) < 3.0 else 0.0
             for name in ("g_fingers_actuator", "r2_g_fingers_actuator"):
                 if env.has_actuator(name):
                     env.set_actuator_ctrl(name, grip)
+            env.update()
 
         if args.gui:
-            viewer = mjk.SimulateViewer.open(arm1, "ex_dual_arm.py")
-            prev = env.time()
-            try:
-                while viewer.is_running():
-                    if env.time() < prev - 1e-6:
-                        env.reset()
-                    prev = env.time()
-                    step()
-                    if not viewer.step():
-                        break
-                    viewer.pace()
-            finally:
-                viewer.close()
+            # The UI's reset button re-homes both arms through on_reset.
+            env.open_viewer("ex_dual_arm.py")
+            while env.viewer.is_running():
+                step()
+                if not env.step():
+                    break
+                env.pace()
         else:
             end = env.time() + 1.2
             while env.time() < end:
                 step()
-                arm1.step()
-                arm1.pace()
+                env.step()
+                env.pace()
             arm1_frame = arm1.fk_frame()
             arm2_frame = arm2.fk_frame()
             arm1_pos = [arm1_frame.p.x(), arm1_frame.p.y(), arm1_frame.p.z()]

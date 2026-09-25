@@ -54,7 +54,7 @@ public:
         KDL::Frame current;
         fk.JntToCart(q, current);
         const KDL::Twist err = KDL::diff(current, target);
-        const double dt = h.model ? h.model->opt.timestep : 0.002;
+        const double dt = h.env.model->opt.timestep;
         const double e[6] = { err.vel.x(), err.vel.y(), err.vel.z(), err.rot.x(), err.rot.y(), err.rot.z() };
         if (first_pid) {
             for (unsigned i = 0; i < 6; ++i) err_prev[i] = e[i];

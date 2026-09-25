@@ -27,27 +27,21 @@ def build_env(model_path: str) -> tuple[mjk.Env, mjk.Robot]:
     return env, robot
 
 
-def run_loop(env: mjk.Env, robot: mjk.Robot, step_fn, *, duration: float, gui: bool) -> None:
+def run_loop(env: mjk.Env, step_fn, *, duration: float, gui: bool) -> None:
     if gui:
-        viewer = mjk.SimulateViewer.open(robot, "ex_gravity_comp.py")
-        prev = env.time()
-        try:
-            while viewer.is_running():
-                if env.time() < prev - 1e-6:  # user pressed reset in the UI
-                    env.reset()
-                prev = env.time()
-                step_fn()
-                if not viewer.step():
-                    break
-                viewer.pace()
-        finally:
-            viewer.close()
+        # The UI's reset button runs env's reset, on_reset included.
+        env.open_viewer("ex_gravity_comp.py")
+        while env.viewer.is_running():
+            step_fn()
+            if not env.step():
+                break
+            env.pace()
         return
     end = env.time() + duration
     while env.time() < end:
         step_fn()
-        robot.step()
-        robot.pace()
+        env.step()
+        env.pace()
 
 
 def main() -> int:
@@ -58,20 +52,20 @@ def main() -> int:
     model_path = mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
     env, robot = build_env(model_path)
     try:
-        robot.ctrl_mode = mjk.CtrlMode.TORQUE
-        env.on_reset = lambda ctx: robot.set_joint_pos(HOME_POSE, call_forward=False)
+        robot.set_control_mode(mjk.CtrlMode.TORQUE)
+        env.on_reset = lambda ctx: robot.set_joint_pos(HOME_POSE)
         env.reset()
 
-        robot.update()
+        env.update()
         start_frame = robot.fk_frame()
         start = [start_frame.p.x(), start_frame.p.y(), start_frame.p.z()]
 
         def step():
-            robot.update()
+            env.update()
             robot.jnt_trq_cmd = robot.gravity_torques(-9.81)
-            robot.update()
+            env.update()
 
-        run_loop(env, robot, step, duration=2.0, gui=args.gui)
+        run_loop(env, step, duration=2.0, gui=args.gui)
         end_frame = robot.fk_frame()
         end = [end_frame.p.x(), end_frame.p.y(), end_frame.p.z()]
         drift = sum((end[i] - start[i]) ** 2 for i in range(3)) ** 0.5

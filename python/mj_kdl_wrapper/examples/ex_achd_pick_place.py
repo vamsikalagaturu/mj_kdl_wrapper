@@ -123,7 +123,7 @@ def support_wrench(z_world: float, z_ref: float, vz: float) -> kdl.Wrench:
 
 def achd_step(ctx, target: kdl.Frame, target_twist: kdl.Twist, f_ext: list, state: dict) -> None:
     robot = ctx["robot"]
-    robot.update()
+    ctx["env"].update()
     n = robot.n_joints
     q = jnt(robot.jnt_pos_msr)
     qd = jnt(robot.jnt_vel_msr)
@@ -171,25 +171,24 @@ def achd_step(ctx, target: kdl.Frame, target_twist: kdl.Twist, f_ext: list, stat
     if ctx["rnea"].CartToJnt(q, qd, qdd, ctx["f_ext_zero"], tau) < 0:
         raise RuntimeError("PyKDL RNEA failed")
     robot.jnt_trq_cmd = [clamp_abs(tau[i], TAU_MAX) for i in range(n)]
-    robot.update()
+    ctx["env"].update()
 
 
-def step_once(env, robot, viewer, state) -> bool:
-    ok = viewer.step() if viewer is not None else robot.step()
-    if not ok:
+# The UI's reset button has already reset env (on_reset included); restart the phases.
+def step_once(env, gui, state) -> bool:
+    if not env.step():
         return False
-    if viewer is not None and env.time() < state["prev"] - 1e-6:
-        env.reset()
+    if gui and env.time() < state["prev"] - 1e-6:
         state["prev"] = env.time()
         raise ResetRequested()
     state["prev"] = env.time()
     return True
 
 
-def run_phase(ctx, phase: dict, viewer, state) -> bool:
+def run_phase(ctx, phase: dict, gui, state) -> bool:
     print(f"State: {phase['name']}")
     env, robot = ctx["env"], ctx["robot"]
-    robot.update()
+    env.update()
     phase_start = robot.fk_frame()
     t0 = env.time()
     pid = {"err_prev": [0.0] * 6, "err_i": [0.0] * 6, "first": True}
@@ -220,9 +219,9 @@ def run_phase(ctx, phase: dict, viewer, state) -> bool:
             support["prev_z"] = z_world
             f_ext[ctx["support_segment"]] = support_wrench(z_world, support["z_ref"], vz)
 
-        achd_step(ctx, target, target_twist, f_ext, pid)
         if env.has_actuator("g_fingers_actuator"):
             env.set_actuator_ctrl("g_fingers_actuator", phase["gripper"])
+        achd_step(ctx, target, target_twist, f_ext, pid)
 
         err = kdl.diff(robot.fk_frame(), phase["target"])
         settled = phase["pos_tol"] < 0.0 or (
@@ -230,9 +229,9 @@ def run_phase(ctx, phase: dict, viewer, state) -> bool:
         )
         if (elapsed >= phase["duration"] and settled) or elapsed >= phase["timeout"]:
             return True
-        if viewer is not None and not viewer.is_running():
+        if gui and not env.viewer.is_running():
             return False
-        if not step_once(env, robot, viewer, state):
+        if not step_once(env, gui, state):
             return False
 
 
@@ -299,39 +298,36 @@ def main() -> int:
             "f_ext_zero": [kdl.Wrench.Zero() for _ in range(chain.getNrOfSegments())],
         }
 
-        robot.ctrl_mode = mjk.CtrlMode.TORQUE
+        robot.set_control_mode(mjk.CtrlMode.TORQUE)
 
         def on_reset(ctx_unused):
-            robot.set_joint_pos(HOME, call_forward=False)
+            robot.set_joint_pos(HOME)
             env.set_body_pose("cube", CUBE_START)
             if env.has_actuator("g_fingers_actuator"):
                 env.set_actuator_ctrl("g_fingers_actuator", 0.0)
 
         env.on_reset = on_reset
         env.reset()
-        robot.update()
+        env.update()
         phases = build_phases(robot, chain)
 
         state = {"prev": env.time(), "support": {"valid": False, "z_ref": 0.0, "prev_z": 0.0}}
         if args.gui:
-            viewer = mjk.SimulateViewer.open(robot, "ex_achd_pick_place.py")
-            try:
-                while viewer.is_running():
-                    try:
-                        for phase in phases:
-                            if not run_phase(ctx, phase, viewer, state):
-                                raise StopIteration
-                        break
-                    except ResetRequested:
-                        state["support"] = {"valid": False, "z_ref": 0.0, "prev_z": 0.0}
-                        continue
-                    except StopIteration:
-                        break
-            finally:
-                viewer.close()
+            env.open_viewer("ex_achd_pick_place.py")
+            while env.viewer.is_running():
+                try:
+                    for phase in phases:
+                        if not run_phase(ctx, phase, True, state):
+                            raise StopIteration
+                    break
+                except ResetRequested:
+                    state["support"] = {"valid": False, "z_ref": 0.0, "prev_z": 0.0}
+                    continue
+                except StopIteration:
+                    break
         else:
             for phase in phases:
-                if not run_phase(ctx, phase, None, state):
+                if not run_phase(ctx, phase, False, state):
                     break
 
         cube = env.body_frame("cube")

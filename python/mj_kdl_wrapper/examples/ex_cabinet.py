@@ -19,7 +19,7 @@ def cabinet_path() -> str:
     return mjk.menagerie.asset_path("cabinet/cabinet.xml", env_var="MJ_KDL_CABINET")
 
 
-def build_scene() -> mjk.Scene:
+def build_scene() -> mjk.Env:
     cabinet = mjk.SceneObject()
     cabinet.name = "cabinet"
     cabinet.mjcf_path = cabinet_path()
@@ -30,25 +30,22 @@ def build_scene() -> mjk.Scene:
     spec.add_floor = True
     spec.add_skybox = True
     spec.objects = [cabinet]
-    return mjk.Scene.build(spec)
+    return mjk.Env.build(spec)
 
 
-def run_headless(scene: mjk.Scene) -> None:
-    scene.step()
+def run_headless(env: mjk.Env) -> None:
+    env.step()
     for name in GRASPS:
-        p = scene.site_frame(name).p
+        p = env.site_frame(name).p
         print(f"  {name}: world xyz = ({p.x():.3f}, {p.y():.3f}, {p.z():.3f})")
 
 
-def run_gui(scene: mjk.Scene) -> None:
-    viewer = mjk.SimulateViewer.open(scene, "ex_cabinet.py")
-    try:
-        while viewer.is_running():
-            if not viewer.step():
-                break
-            viewer.pace()
-    finally:
-        viewer.close()
+def run_gui(env: mjk.Env) -> None:
+    env.open_viewer("ex_cabinet.py")
+    while env.viewer.is_running():
+        if not env.step():
+            break
+        env.pace()
 
 
 def main() -> int:
@@ -56,14 +53,14 @@ def main() -> int:
     parser.add_argument("--gui", action="store_true", help="open the simulate UI")
     args = parser.parse_args()
 
-    scene = build_scene()
+    env = build_scene()
     try:
         if args.gui:
-            run_gui(scene)
+            run_gui(env)
         else:
-            run_headless(scene)
+            run_headless(env)
     finally:
-        scene.close()
+        env.close()
     return 0
 
 

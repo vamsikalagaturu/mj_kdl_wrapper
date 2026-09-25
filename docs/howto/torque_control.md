@@ -42,13 +42,13 @@ mj_kdl::RobotSpec drive{                                    // test/fixtures/mot
 };
 
 mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::TORQUE);  // or robot.ctrl_mode = TORQUE
-mj_kdl::set_control_mode(model, data, 1, mj_kdl::CtrlMode::VELOCITY);  // SceneState users
+mj_kdl::set_control_mode(&env, 1, mj_kdl::CtrlMode::VELOCITY);  // env.scene slot users
 ```
 
 `set_control_mode()` seeds the new group before enabling it (POSITION from the
 current joint position, VELOCITY from the current velocity, TORQUE at zero), so
 the switch does not jump. Assigning `ctrl_mode` directly switches on the next
-`update()` without the seeding, keeping commands you primed before the switch
+`update(&env)` without the seeding, keeping commands you primed before the switch
 (e.g. a gravity torque). In TORQUE, `jnt_trq_cmd / gear` goes to the motor's
 ctrl and is clamped to its ctrlrange, so a real drive's torque limit applies.
 
@@ -158,7 +158,7 @@ for (unsigned i = 0; i < n; ++i) {
 }
 rnea.CartToJnt(q, qdot, qddot_des, f_ext, torques);
 for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = torques(i);
-mj_kdl::update(&robot);
+mj_kdl::update(&env);
 ```
 
 With Kp[i] acting as a squared natural frequency (rad/s^2 per rad) and
@@ -263,7 +263,7 @@ rnea.CartToJnt(q, qd, qdd, f_ext_rnea_zero, tau_cmd);  // qdd is from ACHD
 
 for (unsigned i = 0; i < n; ++i)
     robot.jnt_trq_cmd[i] = clamp(tau_cmd(i), -tau_max, tau_max);
-mj_kdl::update(&robot);
+mj_kdl::update(&env);
 ```
 
 For the combined ACHD -> RNEA controller, do not pass ACHD task/support wrenches

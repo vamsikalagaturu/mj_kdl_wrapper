@@ -27,8 +27,9 @@ A C++ library bridging [MuJoCo](https://github.com/google-deepmind/mujoco) physi
   MuJoCo scene via `mjSpec`, with ordered attachment chains and relative placement.
 - **Multi-robot** -- multiple robots with independent KDL chains in one simulation.
 - **KDL from the model** -- builds the KDL chain directly from the compiled MuJoCo model.
-- **Control** -- POSITION / TORQUE ports plus KDL FK, IK, RNEA, and ACHD solvers.
-- **Runtime environments** -- `Env` with reset hooks for task setup and replay.
+- **Control** -- POSITION / VELOCITY / TORQUE ports plus KDL FK, IK, RNEA, and ACHD solvers.
+- **Runtime environments** -- one `Env` owns the model, robots, scene slots and viewer;
+  `step` / `update` / `reset` drive it, and reset re-seeds everything it holds.
 - **Interactive viewer** -- MuJoCo simulate UI with Frames / Trace / Perturb panels
   and overlay lines.
 - **Recording** -- interactive and headless EGL + ffmpeg MP4 capture.

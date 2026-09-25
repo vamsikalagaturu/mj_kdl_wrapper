@@ -23,6 +23,8 @@
 #include <string>
 
 static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
+static constexpr double kObjectMass  = 0.1;                    // [kg]
+static constexpr double kFriction[3] = { 1.0, 0.005, 0.0001 }; // MuJoCo's geom default
 
 static mj_kdl::SceneObject make_box(
   const char *name,
@@ -50,6 +52,8 @@ static mj_kdl::SceneObject make_box(
     o.rgba[1] = g;
     o.rgba[2] = b;
     o.rgba[3] = 1.0f;
+    o.mass    = kObjectMass;
+    for (int k = 0; k < 3; ++k) o.friction[k] = kFriction[k];
     return o;
 }
 
@@ -75,6 +79,8 @@ static mj_kdl::SceneObject make_sphere(
     o.rgba[1] = g;
     o.rgba[2] = b;
     o.rgba[3] = 1.0f;
+    o.mass    = kObjectMass;
+    for (int k = 0; k < 3; ++k) o.friction[k] = kFriction[k];
     return o;
 }
 
@@ -129,7 +135,7 @@ int main(int argc, char *argv[])
     );
 
     /* Static scene cameras.  The Kinova MJCF also contributes a "wrist" camera;
-     * all of them are enumerated by get_camera_names() after build_scene(). */
+     * all of them are enumerated by get_camera_names() after init_env(). */
     sc.cameras.push_back(mj_kdl::CameraSpec{
         .name = "overview",
         .pos  = { 0.0, -0.6, 1.6 }, // in front of and above the table
@@ -145,35 +151,30 @@ int main(int argc, char *argv[])
         .fovy = 50.0,
     });
 
-    mjModel      *model = nullptr;
-    mjData       *data  = nullptr;
+    mj_kdl::Env   env;
     mj_kdl::Robot robot;
-    if (!mj_kdl::build_scene(&model, &data, &sc)) {
-        std::cerr << "build_scene() failed\n";
+    if (!mj_kdl::init_env(&env, &sc)) {
+        std::cerr << "init_env() failed\n";
         return 1;
     }
 
     KDL::Frame world_T_table_top;
     const std::string table_top_site = mj_kdl::scene_object_site_name(table, "table_top");
-    if (!mj_kdl::get_site_frame(model, data, table_top_site.c_str(), &world_T_table_top)) {
+    if (!mj_kdl::get_site_frame(&env, table_top_site.c_str(), &world_T_table_top)) {
         std::cerr << "table_top site not found\n";
-        mj_kdl::destroy_scene(model, data);
         return 1;
     }
     std::cout << "table top z = " << world_T_table_top.p.z() << "\n";
 
     std::cout << "cameras:";
-    for (const auto &name : mj_kdl::get_camera_names(model))
+    for (const auto &name : mj_kdl::get_camera_names(env.model))
         std::cout << " " << name;
     std::cout << "\n";
 
     const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base", .tcp_site = "g_pinch" };
 
-    if (!mj_kdl::init_robot_from_mjcf(
-          &robot, model, data, "base_link", "bracelet_link", "", &tool
-        )) {
+    if (!mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool)) {
         std::cerr << "init_robot_from_mjcf() failed\n";
-        mj_kdl::destroy_scene(model, data);
         return 1;
     }
 
@@ -184,31 +185,26 @@ int main(int argc, char *argv[])
     KDL::JntArray q_home(n);
     for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
 
-    int fingers_act = mj_name2id(model, mjOBJ_ACTUATOR, "g_fingers_actuator");
+    mj_kdl::SceneActuatorSlot *fingers = mj_kdl::bind_scene_actuator(&env.scene, "g_fingers_actuator");
+    if (!fingers) return 1;
 
-    robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
+    if (!mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::TORQUE)) return 1;
 
-    mj_kdl::Env env;
-    env.spec  = sc;
-    env.model = model;
-    env.data  = data;
-    mj_kdl::env_add_robot(&env, &robot);
-
-    env.on_reset = [&](mj_kdl::ResetContext *) {
-        mj_kdl::set_joint_pos(&robot, q_home, false);
-        if (fingers_act >= 0) data->ctrl[fingers_act] = 0.8;
+    // reset() seeds the finger slot from ctrl, so the hook sets ctrl.
+    env.on_reset = [&](mj_kdl::ResetContext *ctx) {
+        mj_kdl::set_joint_pos(&robot, q_home);
+        ctx->data->ctrl[fingers->ctrl_id] = 0.8;
     };
 
     mj_kdl::reset(&env);
 
     KDL::JntArray q(n), g(n);
     auto          ctrl_step = [&]() {
-        mj_kdl::update(&robot);
+        mj_kdl::update(&env);
         for (unsigned i = 0; i < n; ++i) q(i) = robot.jnt_pos_msr[i];
         dyn.JntToGravity(q, g);
         for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = g(i);
-        if (fingers_act >= 0)
-            data->ctrl[fingers_act] = (std::fmod(data->time, 6.0) < 3.0) ? 0.8 : 0.0;
+        fingers->command = (std::fmod(env.data->time, 6.0) < 3.0) ? 0.8 : 0.0;
     };
 
     if (headless) {
@@ -217,8 +213,7 @@ int main(int argc, char *argv[])
 
         for (int step = 0; step < 500; ++step) {
             ctrl_step();
-            mj_kdl::step(&robot);
-            mj_kdl::pace_realtime(&robot);
+            mj_kdl::step(&env);
         }
 
         KDL::JntArray q_end(n);
@@ -229,27 +224,17 @@ int main(int argc, char *argv[])
         std::cout << "EE drift after 500 steps: " << std::fixed << std::setprecision(3)
                   << drift * 1000.0 << " mm\n";
     } else {
-        mj_kdl::Viewer viewer;
-        if (!mj_kdl::init_window_sim(&viewer, &robot)) {
-            std::cerr << "init_window_sim() failed\n";
-            mj_kdl::cleanup(&robot);
-            mj_kdl::destroy_scene(model, data);
+        if (!mj_kdl::open_viewer(&env)) {
+            std::cerr << "open_viewer() failed\n";
             return 1;
         }
-
-        double prev_sim_time = data->time;
         while (true) {
-            if (data->time < prev_sim_time - 1e-6) mj_kdl::reset(&env);
-            prev_sim_time = data->time;
             ctrl_step();
-            if (!mj_kdl::step(&robot)) break;
-            mj_kdl::pace_realtime(&robot);
+            if (!mj_kdl::step(&env)) break;
+            mj_kdl::pace_realtime(&env);
         }
-
-        mj_kdl::cleanup(&viewer);
     }
 
-    mj_kdl::cleanup(&robot);
-    mj_kdl::destroy_scene(model, data);
+    mj_kdl::cleanup(&env);
     return 0;
 }

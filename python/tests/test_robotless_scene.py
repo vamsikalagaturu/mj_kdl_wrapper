@@ -37,12 +37,12 @@ def test_robotless_scene_applies_timestep():
     spec.add_floor = True
     spec.add_skybox = True
     spec.objects = [_cube()]
-    scene = mjk.Scene.build(spec)  # no robots
+    env = mjk.Env.build(spec)  # no robots
     try:
-        assert scene.timestep() == 0.004
-        scene.step()
+        assert env.timestep() == 0.004
+        assert env.step()
     finally:
-        scene.close()
+        env.close()
 
 
 def test_mesh_scene_object_builds_and_moves():
@@ -56,27 +56,29 @@ def test_mesh_scene_object_builds_and_moves():
     spec.add_floor = True
     spec.add_skybox = True
     spec.objects = [obj]
-    scene = mjk.Scene.build(spec)
+    env = mjk.Env.build(spec)
     try:
         # Meshes compiled -> the drawer's grasp site exists; force pulls the
         # drawer through the cabinet rails, then out and onto the floor.
-        closed = scene.site_frame("cabinet_grasp1").p
-        scene.set_body_wrench("cabinet_drawer1", [40.0, 0.0, 0.0])
+        closed = env.site_frame("cabinet_grasp1").p
+        env.set_body_wrench("cabinet_drawer1", [40.0, 0.0, 0.0])
+        env.update()
         for _ in range(120):
-            scene.step()
-        guided = scene.site_frame("cabinet_grasp1").p
+            env.step()
+        guided = env.site_frame("cabinet_grasp1").p
         assert guided.x() > closed.x() + 0.05
         assert abs(guided.y()) < 0.03
         for _ in range(400):
-            scene.step()
-        scene.set_body_wrench("cabinet_drawer1", [0.0, 0.0, 0.0])
+            env.step()
+        env.set_body_wrench("cabinet_drawer1", [0.0, 0.0, 0.0])
+        env.update()
         for _ in range(400):
-            scene.step()
-        opened = scene.site_frame("cabinet_grasp1").p
+            env.step()
+        opened = env.site_frame("cabinet_grasp1").p
         assert opened.x() > closed.x() + 0.3
         assert opened.z() < closed.z() - 0.01
     finally:
-        scene.close()
+        env.close()
 
 
 def test_mesh_scene_object_applies_quat():
@@ -93,11 +95,11 @@ def test_mesh_scene_object_applies_quat():
     spec.add_floor = False
     spec.add_skybox = False
     spec.objects = [obj]
-    scene = mjk.Scene.build(spec)
+    env = mjk.Env.build(spec)
     try:
-        y = scene.body_frame("cabinet").M * Vector(0.0, 1.0, 0.0)
+        y = env.body_frame("cabinet").M * Vector(0.0, 1.0, 0.0)
         assert abs(y.x() + 0.456825992585671) < 1e-9
         assert abs(y.y() - 0.802872337479472) < 1e-9
         assert abs(y.z() - 0.383022221559489) < 1e-9
     finally:
-        scene.close()
+        env.close()

@@ -165,7 +165,7 @@ def build_waypoints(env: mjk.Env, robot: mjk.Robot) -> dict[str, list[float]]:
     base_T_world = world_T_base.Inverse()
 
     # Constant TCP->outlet offset, measured at the live home configuration.
-    robot.set_joint_pos(HOME, call_forward=False)
+    robot.set_joint_pos(HOME)
     world_T_outlet = env.site_frame("pour_outlet")
     world_T_tcp = env.site_frame("g_pinch")
     tcp_outlet = world_T_tcp.Inverse() * world_T_outlet.p
@@ -201,7 +201,7 @@ def build_waypoints(env: mjk.Env, robot: mjk.Robot) -> dict[str, list[float]]:
     # Tilting swings the outlet away from where the untilted pose put it; shift the pour pose
     # until the tilted outlet sits over the receiver.
     for _ in range(4):
-        robot.set_joint_pos(q_tilt, call_forward=False)
+        robot.set_joint_pos(q_tilt)
         outlet = env.site_frame("pour_outlet").p
         err = kdl.Vector(JUG_X, JUG_Y, TILT_OUTLET_Z) - outlet
         if err.Norm() < 5e-3:
@@ -219,14 +219,14 @@ def build_waypoints(env: mjk.Env, robot: mjk.Robot) -> dict[str, list[float]]:
     }
 
 
-def apply_pd_gravity(robot: mjk.Robot, target: list[float]) -> None:
-    robot.update()
+def apply_pd_gravity(env: mjk.Env, robot: mjk.Robot, target: list[float]) -> None:
+    env.update()
     gravity = robot.gravity_torques(-9.81)
     robot.jnt_trq_cmd = [
         KP[i] * (target[i] - robot.jnt_pos_msr[i]) - KD[i] * robot.jnt_vel_msr[i] + gravity[i]
         for i in range(robot.n_joints)
     ]
-    robot.update()
+    env.update()
 
 
 def max_abs_joint_err(robot: mjk.Robot, target: list[float]) -> float:
@@ -238,7 +238,7 @@ def lerp(start: list[float], target: list[float], alpha: float) -> list[float]:
 
 
 def place_balls_in_bottle(env: mjk.Env, robot: mjk.Robot) -> None:
-    robot.set_joint_pos(HOME, call_forward=True)
+    robot.set_joint_pos(HOME)
     center = env.site_frame("pour_center")
     spacing = 2.0 * BALL_RADIUS
     for i in range(NUM_BALLS):
@@ -267,13 +267,11 @@ def balls_in_receiver(env: mjk.Env) -> tuple[int, list[float]]:
     return count, [value / NUM_BALLS for value in centroid]
 
 
-def step_once(robot: mjk.Robot, viewer: mjk.SimulateViewer | None) -> bool:
-    if viewer is None:
-        return robot.step()
-    # step() never sleeps; without pacing the physics loop starves the render thread.
-    if not viewer.step():
+def step_once(env: mjk.Env) -> bool:
+    if not env.step():
         return False
-    viewer.pace()
+    # step() never sleeps; without pacing the physics loop starves the render thread.
+    env.pace()
     return True
 
 
@@ -281,34 +279,34 @@ def run_phase(
     env: mjk.Env,
     robot: mjk.Robot,
     phase: Phase,
-    viewer: mjk.SimulateViewer | None,
+    gui: bool,
     recorder: mjk.VideoRecorder | None,
     record_every: int,
     step_counter: list[int],
     state: dict,
 ) -> bool:
     print(f"State: {phase.name}")
-    robot.update()
+    env.update()
     start = robot.jnt_pos_msr[:]
     t0 = env.time()
     while True:
         elapsed = env.time() - t0
         alpha = clamp(elapsed / phase.duration, 0.0, 1.0) if phase.duration > 0.0 else 1.0
-        apply_pd_gravity(robot, lerp(start, phase.target, alpha))
         if env.has_actuator("g_fingers_actuator"):
             env.set_actuator_ctrl("g_fingers_actuator", phase.gripper)
+        apply_pd_gravity(env, robot, lerp(start, phase.target, alpha))
 
         done_time = elapsed >= phase.duration
         done_pose = phase.settle_tol < 0.0 or max_abs_joint_err(robot, phase.target) <= phase.settle_tol
         done_timeout = phase.timeout > 0.0 and elapsed >= phase.timeout
         if (done_time and done_pose) or done_timeout:
             return True
-        if viewer is not None and not viewer.is_running():
+        if gui and not env.viewer.is_running():
             return False
-        if not step_once(robot, viewer):
+        if not step_once(env):
             return False
-        if viewer is not None and env.time() < state["prev"] - 1e-6:  # UI reset pressed
-            env.reset()
+        # The UI's reset button has already reset env (on_reset included); restart the phases.
+        if gui and env.time() < state["prev"] - 1e-6:
             state["prev"] = env.time()
             raise ResetRequested()
         state["prev"] = env.time()
@@ -327,7 +325,7 @@ def main() -> int:
     env, robot = build_env()
     recorder = None
     try:
-        robot.ctrl_mode = mjk.CtrlMode.TORQUE
+        robot.set_control_mode(mjk.CtrlMode.TORQUE)
 
         def on_reset(ctx):
             place_balls_in_bottle(env, robot)  # also re-homes the arm
@@ -359,26 +357,23 @@ def main() -> int:
         step_counter = [0]
         state = {"prev": env.time()}
         if args.gui:
-            viewer = mjk.SimulateViewer.open(robot, "ex_table_pour.py")
-            try:
-                while viewer.is_running():
-                    try:
-                        for phase in phases:
-                            if not run_phase(
-                                env, robot, phase, viewer, recorder, record_every, step_counter, state
-                            ):
-                                raise StopIteration
-                        break
-                    except ResetRequested:
-                        continue
-                    except StopIteration:
-                        break
-            finally:
-                viewer.close()
+            env.open_viewer("ex_table_pour.py")
+            while env.viewer.is_running():
+                try:
+                    for phase in phases:
+                        if not run_phase(
+                            env, robot, phase, True, recorder, record_every, step_counter, state
+                        ):
+                            raise StopIteration
+                    break
+                except ResetRequested:
+                    continue
+                except StopIteration:
+                    break
         else:
             for phase in phases:
                 if not run_phase(
-                    env, robot, phase, None, recorder, record_every, step_counter, state
+                    env, robot, phase, False, recorder, record_every, step_counter, state
                 ):
                     break
         in_receiver, centroid = balls_in_receiver(env)

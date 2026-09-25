@@ -47,15 +47,14 @@ def main() -> int:
         state = {"t_start": 0.0}
 
         def on_reset(ctx):
-            robot.set_joint_pos(HOME_POSE, call_forward=False)
-            robot.jnt_pos_cmd = HOME_POSE[:]
+            robot.set_joint_pos(HOME_POSE)
             state["t_start"] = env.time()
 
         env.on_reset = on_reset
         env.reset()
 
         def control_step():
-            robot.update()
+            env.update()
             alpha = clamp((env.time() - state["t_start"]) / MOTION_DURATION, 0.0, 1.0)
             robot.jnt_pos_cmd = [
                 HOME_POSE[i] + alpha * (TARGET_POSE[i] - HOME_POSE[i])
@@ -63,25 +62,19 @@ def main() -> int:
             ]
 
         if args.gui:
-            viewer = mjk.SimulateViewer.open(robot, "ex_pos_ctrl.py")
-            prev = env.time()
-            try:
-                while viewer.is_running():
-                    if env.time() < prev - 1e-6:
-                        env.reset()
-                    prev = env.time()
-                    control_step()
-                    if not viewer.step():
-                        break
-                    viewer.pace()
-            finally:
-                viewer.close()
+            # The UI's reset button runs env's reset, on_reset included.
+            env.open_viewer("ex_pos_ctrl.py")
+            while env.viewer.is_running():
+                control_step()
+                if not env.step():
+                    break
+                env.pace()
         else:
             end = env.time() + MOTION_DURATION + 1.0
             while env.time() < end:
                 control_step()
-                robot.step()
-                robot.pace()
+                env.step()
+                env.pace()
             max_err = max(abs(TARGET_POSE[i] - robot.jnt_pos_msr[i]) for i in range(robot.n_joints))
             print(f"max joint error at end: {max_err:.4f} rad")
     finally:

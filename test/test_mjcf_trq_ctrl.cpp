@@ -24,9 +24,10 @@ static constexpr double kKd[7]       = { 10, 20, 10, 20, 10, 20, 10 };
 class MjcfTrqCtrlTest : public testing::Test
 {
   protected:
-    fs::path root_;
-    mjModel *model_ = nullptr;
-    mjData  *data_  = nullptr;
+    fs::path    root_;
+    mj_kdl::Env env_;
+    mjModel    *model_ = nullptr;
+    mjData     *data_  = nullptr;
 
     mj_kdl::Robot                                    s_;
     unsigned                                         n_ = 0;
@@ -65,12 +66,12 @@ class MjcfTrqCtrlTest : public testing::Test
     sc.add_skybox = true;
         sc.robots.push_back(rs);
 
-        ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc));
+        ASSERT_TRUE(mj_kdl::init_env(&env_, &sc));
+        model_ = env_.model;
+        data_  = env_.data;
         const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base", .tcp_site = "g_pinch" };
         ASSERT_TRUE(
-          mj_kdl::init_robot_from_mjcf(
-            &s_, model_, data_, "base_link", "bracelet_link", "", &tool
-          )
+          mj_kdl::init_robot_from_mjcf(&s_, &env_, "base_link", "bracelet_link", "", &tool)
         );
 
         n_   = s_.chain.getNrOfJoints();
@@ -80,15 +81,12 @@ class MjcfTrqCtrlTest : public testing::Test
         q_home_.resize(n_);
         for (unsigned i = 0; i < n_; ++i) q_home_(i) = kHomePose[i];
         mj_kdl::set_joint_pos(&s_, q_home_);
-        mj_forward(model_, data_);
     }
 
-    void TearDown() override
+    int dof(unsigned i) const
     {
-        if (model_) {
-            mj_kdl::cleanup(&s_);
-            mj_kdl::destroy_scene(model_, data_);
-        }
+        const int jid = mj_name2id(model_, mjOBJ_JOINT, s_.joint_names[i].c_str());
+        return model_->jnt_dofadr[jid];
     }
 };
 
@@ -104,7 +102,7 @@ TEST_F(MjcfTrqCtrlTest, GravityAccuracy)
 
     double max_err = 0.0;
     for (unsigned i = 0; i < n_; ++i)
-        max_err = std::max(max_err, std::abs(g(i) - data_->qfrc_bias[s_.kdl_to_mj_dof[i]]));
+        max_err = std::max(max_err, std::abs(g(i) - data_->qfrc_bias[dof(i)]));
     EXPECT_LE(max_err, 5e-2);
 }
 
@@ -117,14 +115,14 @@ TEST_F(MjcfTrqCtrlTest, ImpedanceDrift)
 
     KDL::JntArray q(n_), g(n_);
     for (int i = 0; i < 500; ++i) {
-        mj_kdl::update(&s_);
+        mj_kdl::update(&env_);
         for (unsigned j = 0; j < n_; ++j) q(j) = s_.jnt_pos_msr[j];
         dyn_->JntToGravity(q, g);
         for (unsigned j = 0; j < n_; ++j) {
             s_.jnt_trq_cmd[j] =
               kKp[j] * (kHomePose[j] - s_.jnt_pos_msr[j]) - kKd[j] * s_.jnt_vel_msr[j] + g(j);
         }
-        mj_kdl::step(&s_);
+        mj_kdl::step(&env_);
     }
 
     KDL::JntArray q_end(n_);
@@ -143,12 +141,12 @@ TEST_F(MjcfTrqCtrlTest, TrqMsrReadsQfrcActuator)
     // the values must match element-wise.
     s_.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
     for (unsigned i = 0; i < n_; ++i) s_.jnt_trq_cmd[i] = 0.0;
-    mj_kdl::update(&s_);
-    mj_kdl::step(&s_);
-    mj_kdl::update(&s_);
+    mj_kdl::update(&env_);
+    mj_kdl::step(&env_);
+    mj_kdl::update(&env_);
 
     for (unsigned i = 0; i < static_cast<unsigned>(s_.n_joints); ++i) {
-        double expected = s_.data->qfrc_actuator[s_.kdl_to_mj_dof[i]];
+        double expected = data_->qfrc_actuator[dof(i)];
         EXPECT_DOUBLE_EQ(s_.jnt_trq_msr[i], expected)
           << "jnt_trq_msr[" << i << "] does not match qfrc_actuator";
     }

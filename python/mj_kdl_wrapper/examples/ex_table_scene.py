@@ -99,27 +99,21 @@ def build_env(model_path: str, gripper_path: str, table_path: str) -> tuple[mjk.
     return env, robot
 
 
-def run_loop(env: mjk.Env, robot: mjk.Robot, step_fn, *, duration: float, gui: bool) -> None:
+def run_loop(env: mjk.Env, step_fn, *, duration: float, gui: bool) -> None:
     if gui:
-        viewer = mjk.SimulateViewer.open(robot, "ex_table_scene.py")
-        prev = env.time()
-        try:
-            while viewer.is_running():
-                if env.time() < prev - 1e-6:
-                    env.reset()
-                prev = env.time()
-                step_fn()
-                if not viewer.step():
-                    break
-                viewer.pace()
-        finally:
-            viewer.close()
+        # The UI's reset button runs env's reset, on_reset included.
+        env.open_viewer("ex_table_scene.py")
+        while env.viewer.is_running():
+            step_fn()
+            if not env.step():
+                break
+            env.pace()
         return
     end = env.time() + duration
     while env.time() < end:
         step_fn()
-        robot.step()
-        robot.pace()
+        env.step()
+        env.pace()
 
 
 def main() -> int:
@@ -133,8 +127,8 @@ def main() -> int:
         mjk.menagerie.asset_path("table.xml", env_var="MJ_KDL_TABLE"),
     )
     try:
-        robot.ctrl_mode = mjk.CtrlMode.TORQUE
-        env.on_reset = lambda ctx: robot.set_joint_pos(HOME_POSE, call_forward=False)
+        robot.set_control_mode(mjk.CtrlMode.TORQUE)
+        env.on_reset = lambda ctx: robot.set_joint_pos(HOME_POSE)
         env.reset()
 
         top = env.site_frame(mjk.scene_object_site_name(env.spec.objects[0], "table_top"))
@@ -142,15 +136,15 @@ def main() -> int:
         print(f"cameras: {' '.join(env.camera_names())}")
 
         def step():
-            robot.update()
+            env.update()
             robot.jnt_trq_cmd = robot.gravity_torques(-9.81)
-            robot.update()
             if env.has_actuator("g_fingers_actuator"):
                 env.set_actuator_ctrl(
                     "g_fingers_actuator", 255.0 if math.fmod(env.time(), 6.0) < 3.0 else 0.0
                 )
+            env.update()
 
-        run_loop(env, robot, step, duration=1.0, gui=args.gui)
+        run_loop(env, step, duration=1.0, gui=args.gui)
     finally:
         env.close()
     return 0

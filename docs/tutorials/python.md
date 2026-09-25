@@ -17,22 +17,20 @@ The Python API has the same layers as the C++ wrapper:
 | Layer | Type | Responsibility |
 |-------|------|----------------|
 | Scene description | `SceneSpec`, `RobotSpec`, `AttachmentSpec`, `SceneObject`, `CameraSpec` | Describe what should be compiled into MuJoCo |
-| Runtime owner | `Scene` or `Env` | Own the compiled MuJoCo model/data |
-| Robot control handle | `Robot` | KDL chain, joint maps, measured ports, command ports |
-| Visualization/recording | `SimulateViewer`, `VideoRecorder` | Interactive Simulate UI and offscreen MP4 recording |
+| Runtime owner | `Env` | Own the compiled MuJoCo model/data, the robots and the viewer |
+| Robot control handle | `Robot` | KDL chain, measured ports, command ports |
+| Visualization/recording | the `Env`'s viewer, `VideoRecorder` | Interactive Simulate UI and offscreen MP4 recording |
 | KDL interop | `PyKDL` | FK, IK, dynamics solvers over the wrapper-built chain |
-
-Use `Scene` for simple one-off simulations. Use `Env` when you need reset hooks
-or registered robots that stay synchronized across resets and scene rebuilds.
 
 Most applications follow this flow:
 
 1. Build a `SceneSpec`.
-2. Call `Env.build(spec)` or `Scene.build(spec)`.
-3. Create one or more `Robot` handles.
+2. Call `Env.build(spec)`.
+3. Create one or more `Robot` handles with `env.create_robot()`.
 4. Install `env.on_reset` if task state must be restored.
-5. In the loop: `update()`, compute commands, write command ports, then `step()`.
-6. Close viewer/recorder and environment when done.
+5. Optionally `env.open_viewer()`.
+6. In the loop: `env.step()`, `env.update()`, compute commands, write command ports.
+7. Close the recorder and the environment when done (`env.close()` closes the viewer).
 
 ## Complete Runnable Script
 
@@ -134,7 +132,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
 
 
 def run_controller(env: mjk.Env, robot: mjk.Robot) -> None:
-    robot.update()
+    env.update()
     robot.jnt_trq_cmd = robot.gravity_torques(env.spec.gravity_z)
     if env.has_actuator("g_fingers_actuator"):
         env.set_actuator_ctrl("g_fingers_actuator", 0.0)
@@ -151,33 +149,25 @@ def main() -> int:
         robot.ctrl_mode = mjk.CtrlMode.TORQUE
 
         def on_reset(ctx: mjk.ResetContext) -> None:
-            robot.set_joint_pos(HOME_POSE, call_forward=False)
+            robot.set_joint_pos(HOME_POSE)
             env.set_body_pose("cube", [0.35, 0.10, SURFACE_Z + CUBE_HALF])
 
         env.on_reset = on_reset
         env.reset()
 
-        robot.update()
         start = robot.fk_frame().p
         start_xyz = [start.x(), start.y(), start.z()]
 
-        if args.headless:
-            end_time = env.time() + args.duration
-            while env.time() < end_time:
-                run_controller(env, robot)
-                robot.step()
-                robot.pace()
-        else:
-            viewer = mjk.SimulateViewer.open(robot, "python tutorial")
-            viewer.use_camera("task")
-            try:
-                while viewer.is_running():
-                    run_controller(env, robot)
-                    if not viewer.step():
-                        break
-                    viewer.pace()
-            finally:
-                viewer.close()
+        if not args.headless:
+            env.open_viewer("python tutorial")
+            env.viewer.use_camera("task")
+        end_time = env.time() + args.duration
+        # Headless: run for the duration. With a window: until it is closed.
+        while not args.headless or env.time() < end_time:
+            run_controller(env, robot)
+            if not env.step():
+                break
+            env.pace()
 
         end = robot.fk_frame().p
         end_xyz = [end.x(), end.y(), end.z()]
@@ -231,6 +221,8 @@ finally:
 
 `Robot` is the handle for one controllable articulation. It stores KDL chain
 metadata, joint names/limits, measured ports, and command ports.
+`create_robot()` registers it with the `Env`, whose `update()` reads and
+commands it from then on.
 
 ```python
 robot = env.create_robot("base_link", "bracelet_link")
@@ -242,29 +234,28 @@ All joint vectors are in KDL chain order:
 
 - `jnt_pos_msr`, `jnt_vel_msr`, `jnt_trq_msr` are measured ports.
 - `jnt_pos_cmd` is used in `CtrlMode.POSITION`.
+- `jnt_vel_cmd` is used in `CtrlMode.VELOCITY`.
 - `jnt_trq_cmd` is used in `CtrlMode.TORQUE`.
 
 ## 3. Run Position Control
 
-In position mode, write `jnt_pos_cmd`. `update()` reads measured state and
-applies the command ports to MuJoCo.
+In position mode, write `jnt_pos_cmd`. `env.update()` reads measured state for
+every robot and applies their command ports to MuJoCo.
 
 ```python
 robot.ctrl_mode = mjk.CtrlMode.POSITION
-robot.update()
-robot.jnt_pos_cmd = list(robot.jnt_pos_msr)
 
 end_time = env.time() + 2.0
 while env.time() < end_time:
-    robot.update()
+    env.step()
+    env.update()
     robot.jnt_pos_cmd = list(robot.jnt_pos_msr)
-    robot.step()
-    robot.pace()
+    env.pace()
 ```
 
-`robot.step()` advances the owning scene by one MuJoCo timestep. For scenes
-without a robot control loop, `env.time()` and `env.timestep()` still expose
-the runtime clock.
+`env.step()` advances the `Env` by one MuJoCo timestep; afterwards joint state
+and frames describe the same instant. `env.time()` and `env.timestep()` expose
+the runtime clock, with or without robots.
 
 ## 4. Add KDL Gravity Compensation
 
@@ -274,10 +265,10 @@ The Python binding exposes a convenience gravity helper for the common case:
 robot.ctrl_mode = mjk.CtrlMode.TORQUE
 
 while env.time() < end_time:
-    robot.update()
+    env.step()
+    env.update()
     robot.jnt_trq_cmd = robot.gravity_torques(env.spec.gravity_z)
-    robot.step()
-    robot.pace()
+    env.pace()
 ```
 
 For other KDL solvers, use the standard `PyKDL` module and the wrapper-built
@@ -389,12 +380,11 @@ surface_z = world_t_table_top.p.z()
 Free objects must stay world-anchored because MuJoCo restricts free joints to
 top-level bodies.
 
-`spec.robots` can be empty. For object-only scenes, build `Scene` from objects
-and open the viewer on the scene itself:
+`spec.robots` can be empty. An object-only `Env` opens the viewer the same way:
 
 ```python
-scene = mjk.Scene.build(spec)
-viewer = mjk.SimulateViewer.open(scene, "object scene")
+env = mjk.Env.build(spec)
+env.open_viewer("object scene")
 ```
 
 ## 7. Add Cameras
@@ -423,16 +413,17 @@ Pass `""` to return to the free camera.
 
 ## 8. Write Reset Hooks
 
-`Env.reset()` resets MuJoCo, runs your hook, forwards dynamics, then syncs
-registered robot command ports so stale commands do not hit the first post-reset
-step.
+`Env.reset()` resets MuJoCo, runs your hook, forwards dynamics, then re-seeds
+every registered robot's ports and every scene slot from the reset state, so
+stale commands do not hit the first post-reset step. The Simulate UI's reset
+button does the same.
 
 ```python
 home = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 cube_start = [0.35, 0.10, 0.725]
 
 def on_reset(ctx: mjk.ResetContext) -> None:
-    robot.set_joint_pos(home, call_forward=False)
+    robot.set_joint_pos(home)
     env.set_body_pose("cube", cube_start)
     task_state["name"] = "HOME"
     task_state["step"] = 0
@@ -450,28 +441,23 @@ and task state. Avoid hiding reset logic in the control loop.
 
 ## 9. Use The Simulate UI
 
-`SimulateViewer.open(robot)` starts the custom Simulate UI. Object-only scenes
-use `SimulateViewer.open(scene)` instead. The viewer owns the window; your loop
-still owns controller logic.
+`env.open_viewer()` starts the custom Simulate UI on the `Env`, with or without
+robots. The viewer owns the window; your loop still owns controller logic, and
+`env.step()` returns `False` once the window is closed.
 
 ```python
-viewer = mjk.SimulateViewer.open(robot, "task")
-viewer.use_camera("task")
+env.open_viewer("task")
+env.viewer.use_camera("task")
 
-try:
-    while viewer.is_running():
-        robot.update()
-        robot.jnt_trq_cmd = robot.gravity_torques(env.spec.gravity_z)
-        if not viewer.step():
-            break
-        viewer.pace()
-finally:
-    viewer.close()
+while env.step():
+    env.update()
+    robot.jnt_trq_cmd = robot.gravity_torques(env.spec.gravity_z)
+    env.pace()
 ```
 
 The viewer exposes the same wrapper panels as C++: `Frames`, `Trace`, `Perturb`,
-`Recorder`, and `RTF`. `viewer.realtime_factor` controls pacing; `1.0` is
-real time and `0.0` runs as fast as possible.
+`Recorder`, and `RTF`. The real-time factor controls pacing; `1.0` is real time
+and `0.0` runs as fast as possible. `env.close()` closes the window.
 
 ### Draw A Live Trajectory Trace Overlay
 
@@ -482,20 +468,18 @@ and add the segments you want visible:
 trace = []
 orange = [1.0, 0.5, 0.1, 1.0]
 
-while viewer.is_running():
-    robot.update()
+while env.step():
+    env.update()
     frame = robot.fk_frame()
     trace.append([frame.p.x(), frame.p.y(), frame.p.z()])
     trace = trace[-1024:]
 
-    viewer.clear_trace()
+    env.viewer.clear_trace()
     for a, b in zip(trace, trace[1:]):
-        viewer.add_trace_segment(a, b, orange)
+        env.viewer.add_trace_segment(a, b, orange)
 
     robot.jnt_trq_cmd = robot.gravity_torques(env.spec.gravity_z)
-    if not viewer.step():
-        break
-    viewer.pace()
+    env.pace()
 ```
 
 `add_trace_segment()` silently drops segments once the user-scene geometry
@@ -517,10 +501,9 @@ recorder.use_camera("task")
 
 try:
     for _ in range(3000):
-        robot.update()
+        env.step()
+        env.update()
         robot.jnt_trq_cmd = robot.gravity_torques(env.spec.gravity_z)
-        robot.step()
-        robot.pace()
         recorder.record_frame()
 finally:
     recorder.close()
@@ -631,7 +614,6 @@ def interpolate(target, duration):
     return [q0 + alpha * (q1 - q0) for q0, q1 in zip(q_enter, target)]
 
 def apply_impedance(q_des):
-    robot.update()
     gravity = robot.gravity_torques(env.spec.gravity_z)
     cmd = []
     for q, dq, q_target, g in zip(robot.jnt_pos_msr, robot.jnt_vel_msr, q_des, gravity):
@@ -650,7 +632,7 @@ if env.has_actuator("g_fingers_actuator"):
 
 ```python
 def on_reset(ctx: mjk.ResetContext) -> None:
-    robot.set_joint_pos(q_home, call_forward=False)
+    robot.set_joint_pos(q_home)
     env.set_body_pose("cube", [0.35, 0.10, 0.725])
     task["index"] = 0
     task["entered_at"] = 0.0
@@ -691,12 +673,11 @@ right_robot = env.create_robot("base_link", "bracelet_link", prefix="r2_", tool=
 ```
 
 Each robot gets its own KDL chain and command ports while sharing the same
-MuJoCo scene.
+`Env`; one `env.update()` reads and commands both.
 
 ## 13. Modify A Running Scene
 
-`Scene.add_object()`, `Env.add_object()`, `remove_object()` rebuild the native
-model/data. Use them for task setup and coarse changes, not per-frame spawning.
+`Env.add_object()` and `Env.remove_object()` rebuild the native model/data. Use them for task setup and coarse changes, not per-frame spawning.
 
 ```python
 obstacle = mjk.SceneObject()
@@ -709,12 +690,12 @@ obstacle.mass = 0.5
 obstacle.friction = [0.8, 0.02, 0.001]
 
 env.add_object(obstacle)
-robot.update()
+env.update()
 env.remove_object("obstacle")
 ```
 
-Existing Python `Robot` handles are rebound automatically. A closed `Scene`,
-`Env`, or `Robot` raises `RuntimeError` instead of leaving dangling native
+Existing Python `Robot` handles and the viewer are rebound automatically. A
+closed `Env` or `Robot` raises `RuntimeError` instead of leaving dangling native
 pointers.
 
 ## 14. Grow Into The Examples

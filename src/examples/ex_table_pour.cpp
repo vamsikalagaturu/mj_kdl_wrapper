@@ -179,18 +179,18 @@ int main(int argc, char *argv[])
     });
     scene_cfg.robots.push_back(robot_spec);
 
-    mjModel *model = nullptr;
-    mjData  *data  = nullptr;
-    if (!mj_kdl::build_scene(&model, &data, &scene_cfg)) {
-        std::cerr << "build_scene() failed\n";
+    mj_kdl::Env env;
+    if (!mj_kdl::init_env(&env, &scene_cfg)) {
+        std::cerr << "init_env() failed\n";
         return 1;
     }
+    const mjModel *model = env.model;
+    const mjData  *data  = env.data;
 
     KDL::Frame        world_T_table_top;
     const std::string table_top_site = mj_kdl::scene_object_site_name(table, "table_top");
-    if (!mj_kdl::get_site_frame(model, data, table_top_site.c_str(), &world_T_table_top)) {
+    if (!mj_kdl::get_site_frame(&env, table_top_site.c_str(), &world_T_table_top)) {
         std::cerr << "table_top site not found\n";
-        mj_kdl::destroy_scene(model, data);
         return 1;
     }
 
@@ -199,20 +199,15 @@ int main(int argc, char *argv[])
     tool.tcp_site  = "g_pinch";
 
     mj_kdl::Robot robot;
-    if (!mj_kdl::init_robot_from_mjcf(
-          &robot, model, data, "base_link", "bracelet_link", "", &tool
-        )) {
+    if (!mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool)) {
         std::cerr << "init_robot_from_mjcf() failed\n";
-        mj_kdl::destroy_scene(model, data);
         return 1;
     }
 
-    const unsigned n           = robot.chain.getNrOfJoints();
-    const int      fingers_act = mj_name2id(model, mjOBJ_ACTUATOR, "g_fingers_actuator");
-    if (fingers_act < 0) {
+    const unsigned             n       = robot.chain.getNrOfJoints();
+    mj_kdl::SceneActuatorSlot *fingers = mj_kdl::bind_scene_actuator(&env.scene, "g_fingers_actuator");
+    if (!fingers) {
         std::cerr << "g_fingers_actuator not found\n";
-        mj_kdl::cleanup(&robot);
-        mj_kdl::destroy_scene(model, data);
         return 1;
     }
 
@@ -222,10 +217,10 @@ int main(int argc, char *argv[])
     KDL::ChainFkSolverPos_recursive fk(robot.chain);
     KDL::JntArray                   q_min(n), q_max(n);
     for (unsigned i = 0; i < n; ++i) {
-        int jid = model->dof_jntid[robot.kdl_to_mj_dof[i]];
-        if (model->jnt_limited[jid]) {
-            q_min(i) = model->jnt_range[2 * jid];
-            q_max(i) = model->jnt_range[2 * jid + 1];
+        const auto [lo, hi] = robot.joint_limits[i];
+        if (std::isfinite(lo) && std::isfinite(hi)) {
+            q_min(i) = lo;
+            q_max(i) = hi;
         } else {
             q_min(i) = -2 * M_PI;
             q_max(i) = 2 * M_PI;
@@ -253,10 +248,10 @@ int main(int argc, char *argv[])
     );
     const KDL::Frame base_T_world = world_T_base.Inverse();
 
-    mj_kdl::set_joint_pos(&robot, q_home, false);
+    mj_kdl::set_joint_pos(&robot, q_home);
     KDL::Frame world_T_outlet, world_T_tcp;
-    mj_kdl::get_site_frame(model, data, "pour_outlet", &world_T_outlet);
-    mj_kdl::get_site_frame(model, data, "g_pinch", &world_T_tcp);
+    mj_kdl::get_site_frame(&env, "pour_outlet", &world_T_outlet);
+    mj_kdl::get_site_frame(&env, "g_pinch", &world_T_tcp);
     const KDL::Vector tcp_outlet = world_T_tcp.Inverse() * world_T_outlet.p;
 
     const auto outlet_target_to_tcp_target =
@@ -300,16 +295,12 @@ int main(int argc, char *argv[])
         }
         return true;
     };
-    if (!solve_waypoints(waypoint_pos)) {
-        mj_kdl::cleanup(&robot);
-        mj_kdl::destroy_scene(model, data);
-        return 1;
-    }
+    if (!solve_waypoints(waypoint_pos)) return 1;
     q_tilt = q_pour;
     q_tilt(n - 1) += kPourTiltRad;
     for (int iter = 0; iter < 4; ++iter) {
-        mj_kdl::set_joint_pos(&robot, q_tilt, false);
-        mj_kdl::get_site_frame(model, data, "pour_outlet", &world_T_outlet);
+        mj_kdl::set_joint_pos(&robot, q_tilt);
+        mj_kdl::get_site_frame(&env, "pour_outlet", &world_T_outlet);
         const double dx = kJugX - world_T_outlet.p.x();
         const double dy = kJugY - world_T_outlet.p.y();
         const double dz = kTiltOutletZ - world_T_outlet.p.z();
@@ -318,11 +309,7 @@ int main(int argc, char *argv[])
         waypoint_pos[1][0] += dx;
         waypoint_pos[1][1] += dy;
         waypoint_pos[1][2] += dz;
-        if (!solve_waypoints(waypoint_pos)) {
-            mj_kdl::cleanup(&robot);
-            mj_kdl::destroy_scene(model, data);
-            return 1;
-        }
+        if (!solve_waypoints(waypoint_pos)) return 1;
         q_tilt = q_pour;
         q_tilt(n - 1) += kPourTiltRad;
     }
@@ -336,22 +323,15 @@ int main(int argc, char *argv[])
         if (jid >= 0) grain_joints.push_back(jid);
     }
 
-    robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
-
-    mj_kdl::Env env;
-    env.model = model;
-    env.data  = data;
-    mj_kdl::env_add_robot(&env, &robot);
+    if (!mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::TORQUE)) return 1;
 
     /* Scene-specific reset: place balls inside bottle and close gripper.
      * Env::on_reset runs after mj_resetData and before final mj_forward/robot sync. */
     env.on_reset = [&](mj_kdl::ResetContext *ctx) {
-        mjModel *m = ctx->model;
-        mjData  *d = ctx->data;
-        mj_kdl::set_joint_pos(&robot, q_home, false);
+        mj_kdl::set_joint_pos(&robot, q_home);
 
         KDL::Frame world_T_center;
-        mj_kdl::get_site_frame(m, d, "pour_center", &world_T_center);
+        mj_kdl::get_site_frame(&env, "pour_center", &world_T_center);
 
         const double spacing = 2.00 * kBallRadius;
         for (int i = 0; i < num_balls; ++i) {
@@ -364,9 +344,9 @@ int main(int argc, char *argv[])
             const double world[3] = { world_v.x(), world_v.y(), world_v.z() };
             char         body_name[32];
             std::snprintf(body_name, sizeof(body_name), "grain_%02d", i);
-            mj_kdl::set_body_pose(m, d, body_name, world);
+            mj_kdl::set_body_pose(&env, body_name, world);
         }
-        d->ctrl[fingers_act] = 0.8;
+        ctx->data->ctrl[fingers->ctrl_id] = 0.8;
     };
 
     double prev_sim_time = 0.0;
@@ -432,11 +412,9 @@ int main(int argc, char *argv[])
     int sim_step = 0;
     if (do_record) {
         if (!mj_kdl::init_video_recorder(
-              &recorder, model, record_path.c_str(), mj_kdl::VideoResolution::R1080p, kRecordFps
+              &recorder, env.model, record_path.c_str(), mj_kdl::VideoResolution::R1080p, kRecordFps
             )) {
             std::cerr << "init_video_recorder() failed -- is EGL available and ffmpeg installed?\n";
-            mj_kdl::cleanup(&robot);
-            mj_kdl::destroy_scene(model, data);
             return 1;
         }
         recorder.cam.azimuth   = 145.0;
@@ -448,11 +426,8 @@ int main(int argc, char *argv[])
         recorder_ok            = true;
     }
 
-    mj_kdl::Viewer viewer;
-    if (!headless && !mj_kdl::init_window_sim(&viewer, &robot)) {
-        std::cerr << "init_window_sim() failed\n";
-        mj_kdl::cleanup(&robot);
-        mj_kdl::destroy_scene(model, data);
+    if (!headless && !mj_kdl::open_viewer(&env)) {
+        std::cerr << "open_viewer() failed\n";
         return 1;
     }
 
@@ -473,13 +448,13 @@ int main(int argc, char *argv[])
                 }
                 prev_sim_time = data->time;
 
-                mj_kdl::update(&robot);
+                mj_kdl::update(&env);
                 const double alpha =
                   phase.duration > 0.0 ? clamp01((data->time - t_enter) / phase.duration) : 1.0;
                 lerp_q(q_enter, *phase.target, alpha, q_des);
                 impedance_ctrl(robot, q_des, n, dyn);
-                data->ctrl[fingers_act] = phase.gripper_cmd;
-                mj_kdl::update(&robot);
+                fingers->command = phase.gripper_cmd;
+                mj_kdl::update(&env);
 
                 const double t_rel     = data->time - t_enter;
                 const bool   done_time = t_rel >= phase.duration;
@@ -489,14 +464,14 @@ int main(int argc, char *argv[])
                 const bool done_timeout = phase.timeout > 0.0 && t_rel >= phase.timeout;
                 if ((done_time && done_pose) || done_timeout) break;
 
-                if (!mj_kdl::step(&robot)) {
+                if (!mj_kdl::step(&env)) {
                     aborted = true;
                     break;
                 }
-                mj_kdl::pace_realtime(&robot);
+                mj_kdl::pace_realtime(&env);
                 ++sim_step;
                 if (recorder_ok && sim_step % steps_per_frame == 0) {
-                    if (!mj_kdl::record_frame(&recorder, model, data)) {
+                    if (!mj_kdl::record_frame(&recorder, &env)) {
                         std::cerr << "record_frame() failed at step " << sim_step << "\n";
                         mj_kdl::cleanup(&recorder);
                         recorder_ok = false;
@@ -541,8 +516,6 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (!headless) mj_kdl::cleanup(&viewer);
-    mj_kdl::cleanup(&robot);
-    mj_kdl::destroy_scene(model, data);
+    mj_kdl::cleanup(&env);
     return ret;
 }

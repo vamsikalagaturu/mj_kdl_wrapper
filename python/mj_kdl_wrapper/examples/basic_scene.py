@@ -17,22 +17,22 @@ def main() -> int:
     robot_spec.path = model_path
     spec.robots = [robot_spec]
 
-    scene = mjk.Scene.build(spec)
+    env = mjk.Env.build(spec)
     try:
-        robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link")
+        robot = env.create_robot("base_link", "bracelet_link")
         robot.jnt_pos_cmd = [0.0] * robot.n_joints
 
         for _ in range(10):
-            robot.update()
-            robot.step()
-            robot.pace()
+            env.update()
+            env.step()
+            env.pace()
 
         print(f"joints: {robot.n_joints}")
         print(f"joint_names: {robot.joint_names}")
         print(f"q: {[round(x, 6) for x in robot.jnt_pos_msr]}")
-        print(f"cameras: {scene.camera_names()}")
+        print(f"cameras: {env.camera_names()}")
     finally:
-        scene.close()
+        env.close()
 
     return 0
 

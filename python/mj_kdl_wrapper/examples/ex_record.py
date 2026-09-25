@@ -28,7 +28,7 @@ RESOLUTIONS = {
 }
 
 
-def build_scene(model_path: str) -> tuple[mjk.Scene, mjk.Robot]:
+def build_scene(model_path: str) -> tuple[mjk.Env, mjk.Robot]:
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
@@ -36,9 +36,9 @@ def build_scene(model_path: str) -> tuple[mjk.Scene, mjk.Robot]:
     robot_spec = mjk.RobotSpec()
     robot_spec.path = model_path
     spec.robots = [robot_spec]
-    scene = mjk.Scene.build(spec)
-    robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link")
-    return scene, robot
+    env = mjk.Env.build(spec)
+    robot = env.create_robot("base_link", "bracelet_link")
+    return env, robot
 
 
 def main() -> int:
@@ -53,30 +53,30 @@ def main() -> int:
             print(f"Unknown argument '{arg}'; using 1080p", file=sys.stderr)
 
     model_path = mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
-    scene, robot = build_scene(model_path)
+    env, robot = build_scene(model_path)
     recorder = None
     try:
         # Hold the home pose with KDL gravity compensation in TORQUE mode.
-        robot.ctrl_mode = mjk.CtrlMode.TORQUE
-        robot.set_joint_pos(HOME_POSE, call_forward=True)
+        robot.set_control_mode(mjk.CtrlMode.TORQUE)
+        robot.set_joint_pos(HOME_POSE)
         # Prime gravity torques so the first step is compensated.
         robot.jnt_trq_cmd = list(robot.gravity_torques(GRAVITY_Z))
 
-        recorder = mjk.VideoRecorder.open_preset(scene, out_path, resolution, FPS)
+        recorder = mjk.VideoRecorder.open_preset(env, out_path, resolution, FPS)
         # Orbit camera slowly around the arm for a nicer recording.
         recorder.set_free_camera(distance=1.8, azimuth=0.0, elevation=-20.0, lookat=(0.0, 0.0, 0.5))
 
-        total_steps = int(DURATION / scene.timestep())
-        steps_per_frame = max(1, int(1.0 / (FPS * scene.timestep())))
+        total_steps = int(DURATION / env.timestep())
+        steps_per_frame = max(1, int(1.0 / (FPS * env.timestep())))
         step_per_deg = 360.0 / total_steps  # full orbit over DURATION
 
         print(f"Recording {DURATION} s to {out_path} ({total_steps} steps, {FPS} fps)...")
         for step in range(total_steps):
-            robot.update()
+            env.update()
             robot.jnt_trq_cmd = list(robot.gravity_torques(GRAVITY_Z))
-            robot.update()
-            robot.step()
-            robot.pace()
+            env.update()
+            env.step()
+            env.pace()
             if step % steps_per_frame == 0:
                 recorder.set_free_camera(
                     distance=1.8,
@@ -91,7 +91,7 @@ def main() -> int:
     finally:
         if recorder is not None:
             recorder.close()
-        scene.close()
+        env.close()
     return 0
 
 

@@ -39,16 +39,14 @@ TEST(SceneObjectTransform, PathBackedObjectAppliesQuat)
       .fixed     = true,
     });
 
-    mjModel *model = nullptr;
-    mjData  *data  = nullptr;
-    ASSERT_TRUE(mj_kdl::build_scene(&model, &data, &spec));
+    mj_kdl::Env env;
+    ASSERT_TRUE(mj_kdl::init_env(&env, &spec));
     KDL::Frame frame;
-    ASSERT_TRUE(mj_kdl::get_site_frame(model, data, "turned_table_top", &frame));
+    ASSERT_TRUE(mj_kdl::get_site_frame(&env, "turned_table_top", &frame));
     const KDL::Vector y = frame.M * KDL::Vector(0.0, 1.0, 0.0);
     EXPECT_NEAR(y.x(), -0.456825992585671, 1e-9);
     EXPECT_NEAR(y.y(), 0.802872337479472, 1e-9);
     EXPECT_NEAR(y.z(), 0.383022221559489, 1e-9);
-    mj_kdl::destroy_scene(model, data);
 }
 
 static mj_kdl::SceneObject make_box(
@@ -92,10 +90,8 @@ class TableSceneTest : public testing::Test
     mj_kdl::SceneSpec spec_;
     mj_kdl::SceneObject table_obj_;
     std::string       table_mount_site_; // compiled site name; lifetime backs RobotSpec.attach_to.name
-    mjModel          *model_ = nullptr;
-    mjData           *data_  = nullptr;
+    mj_kdl::Env       env_;
     mj_kdl::Robot     s_;
-    bool              s_cleaned_ = false;
 
     std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_;
     std::unique_ptr<KDL::ChainDynParam>              dyn_;
@@ -145,12 +141,12 @@ class TableSceneTest : public testing::Test
             .attachments = {},
         });
 
-        ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &spec_));
+        ASSERT_TRUE(mj_kdl::init_env(&env_, &spec_));
         KDL::Frame world_T_table_top;
-        ASSERT_TRUE(mj_kdl::get_site_frame(model_, data_, table_mount_site_.c_str(), &world_T_table_top));
+        ASSERT_TRUE(mj_kdl::get_site_frame(&env_, table_mount_site_.c_str(), &world_T_table_top));
         EXPECT_NEAR(world_T_table_top.p.z(), surface_z, 1e-9);
 
-        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link"));
+        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s_, &env_, "base_link", "bracelet_link"));
 
         n_ = static_cast<unsigned>(s_.n_joints);
 
@@ -160,13 +156,6 @@ class TableSceneTest : public testing::Test
         q_home_.resize(n_);
         for (unsigned i = 0; i < n_; ++i) q_home_(i) = kHomePose[i];
         mj_kdl::set_joint_pos(&s_, q_home_);
-        mj_forward(model_, data_);
-    }
-
-    void TearDown() override
-    {
-        if (!s_cleaned_) mj_kdl::cleanup(&s_);
-        if (model_) mj_kdl::destroy_scene(model_, data_);
     }
 };
 
@@ -181,11 +170,11 @@ TEST_F(TableSceneTest, GravityCompDrift)
     dyn_->JntToGravity(q_home_, g);
     for (unsigned j = 0; j < n_; ++j) s_.jnt_trq_cmd[j] = g(j);
     for (int i = 0; i < 500; ++i) {
-        mj_kdl::update(&s_);
+        mj_kdl::update(&env_);
         for (unsigned j = 0; j < n_; ++j) q(j) = s_.jnt_pos_msr[j];
         dyn_->JntToGravity(q, g);
         for (unsigned j = 0; j < n_; ++j) s_.jnt_trq_cmd[j] = g(j);
-        mj_kdl::step(&s_);
+        mj_kdl::step(&env_);
     }
 
     KDL::JntArray q_end(n_);
@@ -197,85 +186,53 @@ TEST_F(TableSceneTest, GravityCompDrift)
     ASSERT_LE(drift, 0.001) << "drift " << drift * 1000.0 << " mm exceeds 1 mm threshold";
 }
 
-TEST_F(TableSceneTest, AddRemoveObject)
-{
-    mj_kdl::cleanup(&s_);
-    s_cleaned_ = true;
-
-    const double        surface_z = 0.7;
-    mj_kdl::SceneObject extra =
-      make_box("yellow_cube", 0.0, 0.4, 0.03, 0.03, 0.03, 1.0f, 1.0f, 0.0f, surface_z);
-
-    ASSERT_TRUE(mj_kdl::scene_add_object(&model_, &data_, &spec_, extra))
-      << "scene_add_object() returned false";
-
-    ASSERT_TRUE(mj_kdl::scene_remove_object(&model_, &data_, &spec_, "yellow_cube"))
-      << "scene_remove_object() returned false";
-}
-
 TEST_F(TableSceneTest, EnvAddRemoveReinitsRobot)
 {
-    mj_kdl::Env env;
-    env.spec  = spec_;
-    env.model = model_;
-    env.data  = data_;
-    mj_kdl::env_add_robot(&env, &s_);
-    // env now owns the rebuild lifecycle; null out fixture pointers to prevent double-free
-    model_ = nullptr;
-    data_  = nullptr;
-
-    int nq_before = env.model->nq;
+    const int nq_before = env_.model->nq;
 
     // Objects are compiled ahead of the robot, so each rebuild moves every robot address.
     auto expect_maps_match_model = [&] {
         for (int i = 0; i < s_.n_joints; ++i) {
-            const int jid = mj_name2id(env.model, mjOBJ_JOINT, s_.joint_names[i].c_str());
+            const int jid = mj_name2id(env_.model, mjOBJ_JOINT, s_.joint_names[i].c_str());
             ASSERT_GE(jid, 0);
-            EXPECT_EQ(s_.kdl_to_mj_qpos[i], env.model->jnt_qposadr[jid]) << s_.joint_names[i];
-            EXPECT_EQ(s_.kdl_to_mj_dof[i], env.model->jnt_dofadr[jid]) << s_.joint_names[i];
-            env.data->qpos[env.model->jnt_qposadr[jid]] = 0.1 * (i + 1);
+            env_.data->qpos[env_.model->jnt_qposadr[jid]] = 0.1 * (i + 1);
         }
-        mj_kdl::update(&s_);
+        mj_kdl::update(&env_);
         for (int i = 0; i < s_.n_joints; ++i) EXPECT_DOUBLE_EQ(s_.jnt_pos_msr[i], 0.1 * (i + 1));
     };
 
-    mj_kdl::SceneState scene;
-    ASSERT_TRUE(mj_kdl::init_scene_state(&scene, env.model));
-    mj_kdl::SceneFreeBodySlot *red = mj_kdl::bind_scene_free_body(&scene, "red_cube");
+    mj_kdl::SceneFreeBodySlot *red = mj_kdl::bind_scene_free_body(&env_.scene, "red_cube");
     ASSERT_NE(red, nullptr);
 
     KDL::Frame yellow_frame;
-    EXPECT_FALSE(mj_kdl::get_body_frame(env.model, env.data, "yellow_cube", &yellow_frame));
+    EXPECT_FALSE(mj_kdl::get_body_frame(&env_, "yellow_cube", &yellow_frame));
 
     const double        surface_z = 0.7;
     mj_kdl::SceneObject extra =
       make_box("yellow_cube", 0.0, 0.4, 0.03, 0.03, 0.03, 1.0f, 1.0f, 0.0f, surface_z);
 
-    ASSERT_TRUE(mj_kdl::scene_add_object(&env, extra)) << "Env scene_add_object() failed";
-    EXPECT_GT(env.model->nq, nq_before) << "nq should grow after adding a free object";
+    ASSERT_TRUE(mj_kdl::scene_add_object(&env_, extra)) << "Env scene_add_object() failed";
+    EXPECT_GT(env_.model->nq, nq_before) << "nq should grow after adding a free object";
     EXPECT_EQ(s_.n_joints, 7) << "robot chain should still have 7 joints after rebuild";
-    EXPECT_EQ(s_.model, env.model) << "robot model pointer should be updated";
+    EXPECT_EQ(s_.model, env_.model) << "robot model pointer should be updated";
     expect_maps_match_model();
     // A name looked up on the freed model must not answer for the new one at the same address.
-    EXPECT_TRUE(mj_kdl::get_body_frame(env.model, env.data, "yellow_cube", &yellow_frame));
+    EXPECT_TRUE(mj_kdl::get_body_frame(&env_, "yellow_cube", &yellow_frame));
 
-    ASSERT_TRUE(mj_kdl::rebind_scene_state(&scene, env.model));
-    mj_kdl::SceneFreeBodySlot *yellow = mj_kdl::bind_scene_free_body(&scene, "yellow_cube");
+    mj_kdl::SceneFreeBodySlot *yellow = mj_kdl::bind_scene_free_body(&env_.scene, "yellow_cube");
     ASSERT_NE(yellow, nullptr);
 
-    ASSERT_TRUE(mj_kdl::scene_remove_object(&env, "yellow_cube")) << "Env scene_remove_object() failed";
-    EXPECT_EQ(env.model->nq, nq_before) << "nq should return to original after removal";
+    // The object is removed even though a slot bound to it goes unbound with it.
+    EXPECT_TRUE(mj_kdl::scene_remove_object(&env_, "yellow_cube"));
+    EXPECT_EQ(env_.model->nq, nq_before) << "nq should return to original after removal";
     EXPECT_EQ(s_.n_joints, 7) << "robot chain should still have 7 joints after removal";
     expect_maps_match_model();
 
-    EXPECT_FALSE(mj_kdl::rebind_scene_state(&scene, env.model)) << "yellow_cube is gone";
-    EXPECT_EQ(yellow->qpos_adr, -1);
-    const int red_bid = mj_name2id(env.model, mjOBJ_BODY, "red_cube");
-    EXPECT_EQ(red->qpos_adr, env.model->jnt_qposadr[env.model->body_jntadr[red_bid]]);
-    mj_kdl::read_scene_state(&scene, env.data);
-
-    mj_kdl::cleanup(&env);
-    s_cleaned_ = true;
+    EXPECT_EQ(yellow->qpos_adr, -1) << "yellow_cube is gone";
+    const int red_bid = mj_name2id(env_.model, mjOBJ_BODY, "red_cube");
+    EXPECT_EQ(red->qpos_adr, env_.model->jnt_qposadr[env_.model->body_jntadr[red_bid]]);
+    mj_kdl::update(&env_);
+    EXPECT_GT(red->seq, 0u);
 }
 
 int main(int argc, char *argv[])

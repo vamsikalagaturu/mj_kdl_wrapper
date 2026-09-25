@@ -52,23 +52,24 @@ static void set_alpha_no_linear_z(KDL::Jacobian &alpha)
     alpha.setColumn(4, KDL::Twist(KDL::Vector(0, 0, 0), KDL::Vector(0, 0, 1)));
 }
 
-static void print_contact_heights(mjModel *model, mjData *data)
+static void print_contact_heights(mj_kdl::Env &env)
 {
     for (const char *name : { "spherical_wrist_2_link", "bracelet_link" }) {
         KDL::Frame frame;
-        if (mj_kdl::get_body_frame(model, data, name, &frame)) {
+        if (mj_kdl::get_body_frame(&env, name, &frame)) {
             std::cout << name << "_z_above_table=" << std::fixed << std::setprecision(4)
                       << frame.p.z() - kTableZ << "\n";
         }
     }
     KDL::Frame tcp;
-    if (mj_kdl::get_site_frame(model, data, "g_pinch", &tcp)) {
+    if (mj_kdl::get_site_frame(&env, "g_pinch", &tcp)) {
         std::cout << "tcp_z_above_table=" << std::fixed << std::setprecision(4)
                   << tcp.p.z() - kTableZ << "\n";
     }
 }
 
 static bool control_step(
+  mj_kdl::Env                                 &env,
   mj_kdl::Robot                               &robot,
   KDL::ChainFkSolverPos_recursive             &fk_pos,
   KDL::ChainHdSolver_Vereshchagin &achd,
@@ -89,7 +90,7 @@ static bool control_step(
   bool                                         print_debug
 )
 {
-    mj_kdl::update(&robot);
+    mj_kdl::update(&env);
     fill_q_state(robot, q, qd);
 
     KDL::Frame current;
@@ -123,7 +124,7 @@ static bool control_step(
     if (rnea.CartToJnt(q, qd, qdd, f_ext_rnea_zero, tau_cmd) < 0) return false;
 
     for (unsigned i = 0; i < q.rows(); ++i) robot.jnt_trq_cmd[i] = clamp_abs(tau_cmd(i), kTauMax);
-    mj_kdl::update(&robot);
+    mj_kdl::update(&env);
 
     if (print_debug) {
         print_array("beta_no_lin_z", beta);
@@ -165,39 +166,31 @@ int main(int argc, char **argv)
       .fixed     = true,
     });
 
-    mjModel *model = nullptr;
-    mjData  *data  = nullptr;
-    if (!mj_kdl::build_scene(&model, &data, &scene)) return 1;
+    mj_kdl::Env env;
+    if (!mj_kdl::init_env(&env, &scene)) return 1;
 
     const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base", .tcp_site = "g_pinch" };
     mj_kdl::Robot robot;
-    if (!mj_kdl::init_robot_from_mjcf(&robot, model, data, "base_link", "bracelet_link", "", &tool)) {
-        mj_kdl::destroy_scene(model, data);
+    if (!mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool))
         return 1;
-    }
 
     const unsigned n  = robot.chain.getNrOfJoints();
     const unsigned ns = robot.chain.getNrOfSegments();
     KDL::JntArray q_start(n);
     for (unsigned i = 0; i < n; ++i) q_start(i) = kTablePose[i];
 
-    robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
-
-    mj_kdl::Env env;
-    env.spec  = scene;
-    env.model = model;
-    env.data  = data;
-    mj_kdl::env_add_robot(&env, &robot);
-    env.on_reset = [&](mj_kdl::ResetContext *) { mj_kdl::set_joint_pos(&robot, q_start, false); };
+    env.on_reset = [&](mj_kdl::ResetContext *) { mj_kdl::set_joint_pos(&robot, q_start); };
     mj_kdl::reset(&env);
 
-    // Let contacts settle with the table before starting the horizontal task.
-    for (int i = 0; i < 300; ++i) mj_kdl::step(&robot);
-    print_contact_heights(model, data);
+    // Let contacts settle with the table, the position servos holding the pose, before starting
+    // the horizontal task in torque mode.
+    for (int i = 0; i < 300; ++i) mj_kdl::step(&env);
+    print_contact_heights(env);
+    if (!mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::TORQUE)) return 1;
 
     KDL::ChainFkSolverPos_recursive fk_pos(robot.chain);
     KDL::Frame target;
-    mj_kdl::update(&robot);
+    mj_kdl::update(&env);
     KDL::JntArray q(n), qd(n);
     fill_q_state(robot, q, qd);
     fk_pos.JntToCart(q, target);
@@ -216,7 +209,7 @@ int main(int argc, char **argv)
 
     // one-shot comparison: nc=6 (lin Z constrained) vs nc=5 (lin Z free)
     {
-        mj_kdl::update(&robot);
+        mj_kdl::update(&env);
         fill_q_state(robot, q, qd);
         KDL::Frame cmp_current;
         fk_pos.JntToCart(q, cmp_current);
@@ -269,17 +262,17 @@ int main(int argc, char **argv)
     std::array<double, 5> err_prev{};
     bool first_pid = true;
     int step_count = 0;
-    double prev_sim_time = data->time;
+    double prev_sim_time = env.data->time;
 
     auto reset_scene = [&]() {
         mj_kdl::reset(&env);
-        mj_kdl::update(&robot);
+        mj_kdl::update(&env);
         fill_q_state(robot, q, qd);
         fk_pos.JntToCart(q, tracked);
         err_prev    = {};
         first_pid   = true;
         step_count  = 0;
-        prev_sim_time = data->time;
+        prev_sim_time = env.data->time;
     };
 
     auto step_control = [&]() {
@@ -290,7 +283,7 @@ int main(int argc, char **argv)
             tracked.p += (to_goal / dist) * std::min(dist, kVMaxLin * dt);
         const bool print_debug = headless && step_count == 0;
         bool ok = control_step(
-          robot, fk_pos, achd, rnea, tracked, q, qd, qdd, alpha, beta, f_ext_achd,
+          env, robot, fk_pos, achd, rnea, tracked, q, qd, qdd, alpha, beta, f_ext_achd,
           f_ext_rnea_zero, ff_tau, constraint_tau, tau_cmd, err_prev, first_pid,
           print_debug
         );
@@ -300,15 +293,14 @@ int main(int argc, char **argv)
 
     if (headless) {
         for (int i = 0; i < 2000; ++i) {
-            if (!step_control() || !mj_kdl::step(&robot)) break;
-            mj_kdl::pace_realtime(&robot);
+            if (!step_control() || !mj_kdl::step(&env)) break;
         }
-        mj_kdl::update(&robot);
+        mj_kdl::update(&env);
         fill_q_state(robot, q, qd);
         KDL::Frame current;
         fk_pos.JntToCart(q, current);
         KDL::Twist err = KDL::diff(current, target);
-        print_contact_heights(model, data);
+        print_contact_heights(env);
         print_array("final_achd_constraint_tau", constraint_tau);
         print_array("final_rnea_full_tau_cmd", tau_cmd);
         std::cout << "tcp_xy_err_mm=" << std::fixed << std::setprecision(3)
@@ -316,19 +308,16 @@ int main(int argc, char **argv)
                   << " tcp_z_error_unconstrained_mm=" << err.vel.z() * 1000.0
                   << " tcp_rot_err_rad=" << err.rot.Norm() << "\n";
     } else {
-        mj_kdl::Viewer viewer;
-        if (!mj_kdl::init_window_sim(&viewer, &robot)) return 1;
+        if (!mj_kdl::open_viewer(&env)) return 1;
         while (true) {
-            if (data->time < prev_sim_time - 1e-6)
+            if (env.data->time < prev_sim_time - 1e-6)
                 reset_scene();
-            prev_sim_time = data->time;
-            if (!step_control() || !mj_kdl::step(&robot)) break;
-            mj_kdl::pace_realtime(&robot);
+            prev_sim_time = env.data->time;
+            if (!step_control() || !mj_kdl::step(&env)) break;
+            mj_kdl::pace_realtime(&env);
         }
-        mj_kdl::cleanup(&viewer);
     }
 
-    mj_kdl::cleanup(&robot);
-    mj_kdl::destroy_scene(model, data);
+    mj_kdl::cleanup(&env);
     return 0;
 }

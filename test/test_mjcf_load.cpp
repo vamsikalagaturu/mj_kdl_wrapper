@@ -26,6 +26,7 @@ class MjcfLoadTest : public testing::Test
 {
   protected:
     fs::path                                         root_;
+    mj_kdl::Env                                      env_;
     mjModel                                         *model_ = nullptr;
     mjData                                          *data_  = nullptr;
     mj_kdl::Robot                                    s_;
@@ -50,11 +51,13 @@ class MjcfLoadTest : public testing::Test
         sc.add_skybox = false;
         sc.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf.c_str(), .attachments = {} });
 
-        ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc));
+        ASSERT_TRUE(mj_kdl::init_env(&env_, &sc));
+        model_ = env_.model;
+        data_  = env_.data;
         ASSERT_EQ(model_->nv, 7);
         ASSERT_GE(model_->nbody, 9);
 
-        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link"));
+        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s_, &env_, "base_link", "bracelet_link"));
         n_ = s_.chain.getNrOfJoints();
         ASSERT_EQ(n_, 7u);
 
@@ -69,18 +72,10 @@ class MjcfLoadTest : public testing::Test
             for (unsigned i = 0; i < n_; ++i) q(i) = kHomePose[i];
             mj_kdl::set_joint_pos(&s_, q);
         }
-        mj_forward(model_, data_);
+        mj_kdl::update(&env_);
 
         q_home_.resize(n_);
-        for (int i = 0; i < s_.n_joints; ++i) q_home_(i) = s_.data->qpos[s_.kdl_to_mj_qpos[i]];
-    }
-
-    void TearDown() override
-    {
-        if (model_) {
-            mj_kdl::cleanup(&s_);
-            mj_kdl::destroy_scene(model_, data_);
-        }
+        for (int i = 0; i < s_.n_joints; ++i) q_home_(i) = s_.jnt_pos_msr[i];
     }
 };
 
@@ -152,6 +147,7 @@ class MjcfGripperTest : public testing::Test
 {
   protected:
     fs::path                                         root_;
+    mj_kdl::Env                                      env_;
     mjModel                                         *model_ = nullptr;
     mjData                                          *data_  = nullptr;
     mj_kdl::Robot                                    s_;
@@ -189,13 +185,15 @@ class MjcfGripperTest : public testing::Test
     sc.add_skybox = true;
         sc.robots.push_back(rs);
 
-        ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc));
+        ASSERT_TRUE(mj_kdl::init_env(&env_, &sc));
+        model_ = env_.model;
+        data_  = env_.data;
         ASSERT_GE(model_->nq, 13);
         ASSERT_GE(model_->nu, 8);
 
         const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base", .tcp_site = "g_pinch" };
         ASSERT_TRUE(
-          mj_kdl::init_robot_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link", "", &tool)
+          mj_kdl::init_robot_from_mjcf(&s_, &env_, "base_link", "bracelet_link", "", &tool)
         );
         n_ = s_.chain.getNrOfJoints();
         ASSERT_EQ(n_, 7u);
@@ -204,14 +202,6 @@ class MjcfGripperTest : public testing::Test
 
         ASSERT_GE(mj_name2id(model_, mjOBJ_ACTUATOR, "g_fingers_actuator"), 0)
           << "g_fingers_actuator not found";
-    }
-
-    void TearDown() override
-    {
-        if (model_) {
-            mj_kdl::cleanup(&s_);
-            mj_kdl::destroy_scene(model_, data_);
-        }
     }
 };
 
@@ -259,15 +249,15 @@ TEST_F(MjcfGripperTest, JointPositionByName)
     data_->qpos[model_->jnt_qposadr[ldriver]] = 0.42;
 
     double measured = 0.0;
-    ASSERT_TRUE(mj_kdl::get_joint_position(model_, data_, "g_right_driver_joint", &measured));
+    ASSERT_TRUE(mj_kdl::get_joint_position(&env_, "g_right_driver_joint", &measured));
     EXPECT_NEAR(measured, 0.42, 1e-9);
 
     // An actuator name resolves to its transmission joint's qpos.
     measured = 0.0;
-    ASSERT_TRUE(mj_kdl::get_joint_position(model_, data_, "g_fingers_actuator", &measured));
+    ASSERT_TRUE(mj_kdl::get_joint_position(&env_, "g_fingers_actuator", &measured));
     EXPECT_NEAR(measured, 0.42, 1e-9);
 
-    EXPECT_FALSE(mj_kdl::get_joint_position(model_, data_, "no_such_joint", &measured));
+    EXPECT_FALSE(mj_kdl::get_joint_position(&env_, "no_such_joint", &measured));
 }
 
 TEST(MjcfPathTest, RelativeModelPathWithRelativeMeshdir)

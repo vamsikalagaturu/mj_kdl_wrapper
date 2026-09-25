@@ -68,10 +68,9 @@ int main(int argc, char *argv[])
     sc.robots.push_back(arm1_spec);
     sc.robots.push_back(arm2_spec);
 
-    mjModel *model = nullptr;
-    mjData  *data  = nullptr;
-    if (!mj_kdl::build_scene(&model, &data, &sc)) {
-        std::cerr << "build_scene() failed\n";
+    mj_kdl::Env env;
+    if (!mj_kdl::init_env(&env, &sc)) {
+        std::cerr << "init_env() failed\n";
         return 1;
     }
 
@@ -83,34 +82,31 @@ int main(int argc, char *argv[])
 
     mj_kdl::Robot arm1, arm2;
     if (
-      !mj_kdl::init_robot_from_mjcf(&arm1, model, data, "base_link", "bracelet_link", "", &tool1)
+      !mj_kdl::init_robot_from_mjcf(&arm1, &env, "base_link", "bracelet_link", "", &tool1)
       || !mj_kdl::init_robot_from_mjcf(
-        &arm2, model, data, "r2_base_link", "r2_bracelet_link", "", &tool2
+        &arm2, &env, "r2_base_link", "r2_bracelet_link", "", &tool2
       )
     ) {
         std::cerr << "init_robot_from_mjcf() failed\n";
-        mj_kdl::destroy_scene(model, data);
         return 1;
     }
 
-    const int n     = arm1.n_joints;
-    int       fing1 = mj_name2id(model, mjOBJ_ACTUATOR, "g_fingers_actuator");
-    int       fing2 = mj_name2id(model, mjOBJ_ACTUATOR, "r2_g_fingers_actuator");
+    const int                  n     = arm1.n_joints;
+    mj_kdl::SceneActuatorSlot *fing1 = mj_kdl::bind_scene_actuator(&env.scene, "g_fingers_actuator");
+    mj_kdl::SceneActuatorSlot *fing2 =
+      mj_kdl::bind_scene_actuator(&env.scene, "r2_g_fingers_actuator");
+    if (!fing1 || !fing2) return 1;
 
     KDL::ChainDynParam dyn1(arm1.chain, KDL::Vector(0.0, 0.0, -9.81));
     KDL::ChainDynParam dyn2(arm2.chain, KDL::Vector(0.0, 0.0, -9.81));
 
     KDL::JntArray q_home(n), q1(n), q2(n), g1(n), g2(n);
     for (int i = 0; i < n; ++i) q_home(i) = kHomePose[i];
-    arm1.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
-    arm2.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
-
-    mj_kdl::Env env;
-    env.spec  = sc;
-    env.model = model;
-    env.data  = data;
-    mj_kdl::env_add_robot(&env, &arm1);
-    mj_kdl::env_add_robot(&env, &arm2);
+    if (
+      !mj_kdl::set_control_mode(&arm1, mj_kdl::CtrlMode::TORQUE)
+      || !mj_kdl::set_control_mode(&arm2, mj_kdl::CtrlMode::TORQUE)
+    )
+        return 1;
 
     // Prime jnt_trq_cmd so the first physics step already gets gravity compensation.
     auto prime_grav = [&]() {
@@ -122,27 +118,22 @@ int main(int argc, char *argv[])
         }
     };
 
-    env.on_reset = [&](mj_kdl::ResetContext *) {
-        mj_kdl::set_joint_pos(&arm1, q_home, false);
-        mj_kdl::set_joint_pos(&arm2, q_home, false);
+    // reset() seeds the finger slots from ctrl, so the hook sets ctrl.
+    env.on_reset = [&](mj_kdl::ResetContext *ctx) {
+        mj_kdl::set_joint_pos(&arm1, q_home);
+        mj_kdl::set_joint_pos(&arm2, q_home);
+        ctx->data->ctrl[fing1->ctrl_id] = 0.8;
+        ctx->data->ctrl[fing2->ctrl_id] = 0.8;
     };
 
-    auto reset_to_home = [&]() {
-        mj_kdl::reset(&env);
-        prime_grav();
-        mj_kdl::update(&arm1);
-        mj_kdl::update(&arm2);
-        if (fing1 >= 0) data->ctrl[fing1] = 0.8;
-        if (fing2 >= 0) data->ctrl[fing2] = 0.8;
-    };
-
-    reset_to_home();
+    mj_kdl::reset(&env);
+    prime_grav();
+    mj_kdl::update(&env);
 
     // Per-step: update() reads sensors and flushes the previous jnt_trq_cmd;
     // then compute PD + KDL gravity for the next step.
     auto ctrl_step = [&]() {
-        mj_kdl::update(&arm1);
-        mj_kdl::update(&arm2);
+        mj_kdl::update(&env);
         for (int i = 0; i < n; ++i) q1(i) = arm1.jnt_pos_msr[i];
         for (int i = 0; i < n; ++i) q2(i) = arm2.jnt_pos_msr[i];
         dyn1.JntToGravity(q1, g1);
@@ -153,15 +144,14 @@ int main(int argc, char *argv[])
             arm2.jnt_trq_cmd[i] =
               kKp[i] * (kHomePose[i] - arm2.jnt_pos_msr[i]) - kKd[i] * arm2.jnt_vel_msr[i] + g2(i);
         }
-        if (fing1 >= 0) data->ctrl[fing1] = (std::fmod(data->time, 6.0) < 3.0) ? 0.8 : 0.0;
-        if (fing2 >= 0) data->ctrl[fing2] = (std::fmod(data->time, 6.0) < 3.0) ? 0.8 : 0.0;
+        fing1->command = (std::fmod(env.data->time, 6.0) < 3.0) ? 0.8 : 0.0;
+        fing2->command = fing1->command;
     };
 
     if (headless) {
         for (int step = 0; step < 600; ++step) {
             ctrl_step();
-            mj_kdl::step(&arm1);
-            mj_kdl::pace_realtime(&arm1);
+            mj_kdl::step(&env);
         }
 
         KDL::ChainFkSolverPos_recursive fk1(arm1.chain), fk2(arm2.chain);
@@ -176,29 +166,21 @@ int main(int argc, char *argv[])
         std::cout << "arm1 EE: [" << ee1.p.x() << ", " << ee1.p.y() << ", " << ee1.p.z() << "]\n";
         std::cout << "arm2 EE: [" << ee2.p.x() << ", " << ee2.p.y() << ", " << ee2.p.z() << "]\n";
     } else {
-        mj_kdl::Viewer viewer;
-        if (!mj_kdl::init_window_sim(&viewer, &arm1)) {
-            std::cerr << "init_window_sim() failed\n";
-            mj_kdl::cleanup(&arm1);
-            mj_kdl::cleanup(&arm2);
-            mj_kdl::destroy_scene(model, data);
+        if (!mj_kdl::open_viewer(&env)) {
+            std::cerr << "open_viewer() failed\n";
             return 1;
         }
-
-        double prev_sim_time = data->time;
+        // step() resets the robots when the UI resets; the gravity prime is ours to redo.
+        double prev_sim_time = env.data->time;
         while (true) {
-            if (data->time < prev_sim_time - 1e-6) reset_to_home();
-            prev_sim_time = data->time;
+            if (env.data->time < prev_sim_time - 1e-6) prime_grav();
+            prev_sim_time = env.data->time;
             ctrl_step();
-            if (!mj_kdl::step(&arm1)) break;
-            mj_kdl::pace_realtime(&arm1);
+            if (!mj_kdl::step(&env)) break;
+            mj_kdl::pace_realtime(&env);
         }
-
-        mj_kdl::cleanup(&viewer);
     }
 
-    mj_kdl::cleanup(&arm1);
-    mj_kdl::cleanup(&arm2);
-    mj_kdl::destroy_scene(model, data);
+    mj_kdl::cleanup(&env);
     return 0;
 }

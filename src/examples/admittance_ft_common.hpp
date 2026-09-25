@@ -115,24 +115,6 @@ inline void admittance_update(AdmState &s, const KDL::Vector &force, double dt)
     s.offset = vclamp(s.offset + s.vel * dt, kMaxOffset);
 }
 
-inline void set_body_wrench(mjModel *model, mjData *data, const char *body, const KDL::Vector &force)
-{
-    const int id = mj_name2id(model, mjOBJ_BODY, body);
-    if (id < 0) return;
-    data->xfrc_applied[6 * id + 0] = force.x();
-    data->xfrc_applied[6 * id + 1] = force.y();
-    data->xfrc_applied[6 * id + 2] = force.z();
-    data->xfrc_applied[6 * id + 3] = 0.0;
-    data->xfrc_applied[6 * id + 4] = 0.0;
-    data->xfrc_applied[6 * id + 5] = 0.0;
-}
-
-inline void close_gripper(mjModel *model, mjData *data)
-{
-    const int id = mj_name2id(model, mjOBJ_ACTUATOR, kGripperActuator);
-    if (id >= 0) data->ctrl[id] = 255.0;
-}
-
 inline KDL::Vector tare_force(const mj_kdl::Robot &robot)
 {
     const mj_kdl::ForceTorqueSensor *ft = mj_kdl::find_ft_sensor(&robot, "wrist_ft");
@@ -151,21 +133,19 @@ inline KDL::Vector measured_force(const mj_kdl::Robot &robot, const AdmState &s)
 
 struct SceneHandles
 {
-    mjModel *model = nullptr;
-    mjData *data = nullptr;
     mj_kdl::SceneSpec scene;
     mj_kdl::Env env;
     mj_kdl::Robot robot;
-    int tool_body_id = -1;
-
-    void cleanup()
-    {
-        mj_kdl::cleanup(&robot);
-        if (model && data) mj_kdl::destroy_scene(model, data);
-        model = nullptr;
-        data = nullptr;
-    }
+    mj_kdl::SceneActuatorSlot *gripper = nullptr;
+    mj_kdl::SceneWrenchSlot *push = nullptr; // the self-check's hand on the tool
 };
+
+inline void set_push(SceneHandles &h, const KDL::Vector &force)
+{
+    h.push->wrench = KDL::Wrench(force, KDL::Vector::Zero());
+}
+
+inline void close_gripper(SceneHandles &h) { h.gripper->command = 255.0; }
 
 inline bool build_scene(SceneHandles &h)
 {
@@ -204,7 +184,7 @@ inline bool build_scene(SceneHandles &h)
     h.scene.objects.push_back(table);
     h.scene.robots.push_back(robot_spec);
 
-    if (!mj_kdl::build_scene(&h.model, &h.data, &h.scene)) return false;
+    if (!mj_kdl::init_env(&h.env, &h.scene)) return false;
 
     mj_kdl::ForceTorqueSensorSpec ft_sensor;
     ft_sensor.name = "wrist_ft";
@@ -215,13 +195,10 @@ inline bool build_scene(SceneHandles &h)
     tool.tcp_site = "g_pinch";
     tool.ft_sensors.push_back(ft_sensor);
 
-    if (!mj_kdl::init_robot_from_mjcf(&h.robot, h.model, h.data, "base_link", "bracelet_link", "", &tool)) return false;
-    h.env.spec = h.scene;
-    h.env.model = h.model;
-    h.env.data = h.data;
-    mj_kdl::env_add_robot(&h.env, &h.robot);
-    h.tool_body_id = mj_name2id(h.model, mjOBJ_BODY, kToolBody);
-    return h.tool_body_id >= 0;
+    if (!mj_kdl::init_robot_from_mjcf(&h.robot, &h.env, "base_link", "bracelet_link", "", &tool)) return false;
+    h.gripper = mj_kdl::bind_scene_actuator(&h.env.scene, kGripperActuator);
+    h.push = mj_kdl::bind_scene_wrench(&h.env.scene, kToolBody);
+    return h.gripper && h.push;
 }
 
 class Controller
@@ -252,17 +229,17 @@ inline KDL::Frame admittance_step(
 
 inline void settle_and_tare(SceneHandles &h, Controller &ctrl, AdmState &state)
 {
-    mj_kdl::update(&h.robot);
+    mj_kdl::update(&h.env);
     KDL::ChainFkSolverPos_recursive fk(h.robot.chain);
     const KDL::Frame home = current_tcp(fk, h.robot);
     for (int i = 0; i < kSettleSteps; ++i) {
-        mj_kdl::update(&h.robot);
-        close_gripper(h.model, h.data);
+        mj_kdl::update(&h.env);
+        close_gripper(h);
         ctrl.track(home);
-        if (!mj_kdl::step(&h.robot)) break;
-        mj_kdl::pace_realtime(&h.robot);
+        if (!mj_kdl::step(&h.env)) break;
+        mj_kdl::pace_realtime(&h.env);
     }
-    mj_kdl::update(&h.robot);
+    mj_kdl::update(&h.env);
     state.bias = tare_force(h.robot);
 }
 
@@ -283,65 +260,64 @@ inline Metrics run_selfcheck(SceneHandles &h, Controller &ctrl, AdmState &state,
     KDL::ChainFkSolverPos_recursive fk(h.robot.chain);
     Metrics m;
 
-    const double t0 = h.data->time;
-    while (h.data->time - t0 < kTeachTime) {
-        const double t = h.data->time - t0;
-        mj_kdl::update(&h.robot);
-        close_gripper(h.model, h.data);
+    const double t0 = h.env.data->time;
+    while (h.env.data->time - t0 < kTeachTime) {
+        const double t = h.env.data->time - t0;
+        mj_kdl::update(&h.env);
+        close_gripper(h);
         KDL::Frame target = admittance_step(h.robot, ctrl, state, nominal, spiral_force(t), h.scene.timestep);
         KDL::Frame tcp = current_tcp(fk, h.robot);
         m.helix_react = std::max(m.helix_react, norm3(state.offset));
         m.helix_track_err = std::max(m.helix_track_err, norm3(tcp.p - target.p));
-        if (!mj_kdl::step(&h.robot)) break;
-        mj_kdl::pace_realtime(&h.robot);
+        if (!mj_kdl::step(&h.env)) break;
+        mj_kdl::pace_realtime(&h.env);
     }
 
-    const double th = h.data->time;
-    while (h.data->time - th < kHandoffTareTime) {
-        mj_kdl::update(&h.robot);
-        close_gripper(h.model, h.data);
+    const double th = h.env.data->time;
+    while (h.env.data->time - th < kHandoffTareTime) {
+        mj_kdl::update(&h.env);
+        close_gripper(h);
         KDL::Frame target = admittance_step(h.robot, ctrl, state, nominal, KDL::Vector::Zero(), h.scene.timestep);
         KDL::Frame tcp = current_tcp(fk, h.robot);
         m.helix_track_err = std::max(m.helix_track_err, norm3(tcp.p - target.p));
-        if (!mj_kdl::step(&h.robot)) break;
-        mj_kdl::pace_realtime(&h.robot);
+        if (!mj_kdl::step(&h.env)) break;
+        mj_kdl::pace_realtime(&h.env);
     }
 
-    mj_kdl::update(&h.robot);
+    mj_kdl::update(&h.env);
     state.bias = tare_force(h.robot);
     for (int i = 0; i < 100; ++i) {
-        mj_kdl::update(&h.robot);
-        close_gripper(h.model, h.data);
+        mj_kdl::update(&h.env);
+        close_gripper(h);
         KDL::Vector f = measured_force(h.robot, state);
         m.handoff_force = std::max(m.handoff_force, norm3(f));
         admittance_step(h.robot, ctrl, state, nominal, f, h.scene.timestep);
-        if (!mj_kdl::step(&h.robot)) break;
-        mj_kdl::pace_realtime(&h.robot);
+        if (!mj_kdl::step(&h.env)) break;
+        mj_kdl::pace_realtime(&h.env);
     }
 
-    const double ts = h.data->time;
-    while (h.data->time - ts < 0.5) {
-        mj_kdl::update(&h.robot);
-        close_gripper(h.model, h.data);
+    const double ts = h.env.data->time;
+    while (h.env.data->time - ts < 0.5) {
+        mj_kdl::update(&h.env);
+        close_gripper(h);
         KDL::Frame target = admittance_step(h.robot, ctrl, state, nominal, KDL::Vector::Zero(), h.scene.timestep);
         KDL::Frame tcp = current_tcp(fk, h.robot);
         m.helix_settle_err = std::max(m.helix_settle_err, norm3(tcp.p - target.p));
-        if (!mj_kdl::step(&h.robot)) break;
-        mj_kdl::pace_realtime(&h.robot);
+        if (!mj_kdl::step(&h.env)) break;
+        mj_kdl::pace_realtime(&h.env);
     }
 
     const KDL::Vector pre_push = state.offset;
-    const double tp = h.data->time;
+    const double tp = h.env.data->time;
     KDL::Vector settled = pre_push;
     bool have_recovery = false;
-    while (h.data->time - tp < 4.0) {
-        const double t = h.data->time - tp;
-        set_body_wrench(
-          h.model, h.data, kToolBody,
-          t < 1.0 ? KDL::Vector(kSelfcheckPush[0], kSelfcheckPush[1], kSelfcheckPush[2]) : KDL::Vector::Zero()
+    while (h.env.data->time - tp < 4.0) {
+        const double t = h.env.data->time - tp;
+        set_push(
+          h, t < 1.0 ? KDL::Vector(kSelfcheckPush[0], kSelfcheckPush[1], kSelfcheckPush[2]) : KDL::Vector::Zero()
         );
-        mj_kdl::update(&h.robot);
-        close_gripper(h.model, h.data);
+        mj_kdl::update(&h.env);
+        close_gripper(h);
         KDL::Frame target = admittance_step(h.robot, ctrl, state, nominal, measured_force(h.robot, state), h.scene.timestep);
         KDL::Frame tcp = current_tcp(fk, h.robot);
         if (!have_recovery && t >= 2.0) {
@@ -349,10 +325,10 @@ inline Metrics run_selfcheck(SceneHandles &h, Controller &ctrl, AdmState &state,
             have_recovery = true;
         }
         if (t >= 2.5) settled = state.offset;
-        if (!mj_kdl::step(&h.robot)) break;
-        mj_kdl::pace_realtime(&h.robot);
+        if (!mj_kdl::step(&h.env)) break;
+        mj_kdl::pace_realtime(&h.env);
     }
-    set_body_wrench(h.model, h.data, kToolBody, KDL::Vector::Zero());
+    set_push(h, KDL::Vector::Zero());
 
     const KDL::Vector response = settled - pre_push;
     m.push_response = norm3(response);
@@ -383,31 +359,30 @@ inline int finish_headless(const Metrics &m)
 
 inline void run_gui(SceneHandles &h, Controller &ctrl, AdmState &state, const KDL::Frame &nominal)
 {
-    mj_kdl::Viewer viewer{};
-    mj_kdl::set_free_camera(&viewer, 1.55, 145.0, -24.0, { 0.05, 0.0, kTableZ + 0.35 });
-    if (!mj_kdl::init_window_sim(&viewer, &h.robot, ctrl.name())) return;
+    mj_kdl::Viewer *viewer = &h.env.viewer;
+    mj_kdl::set_free_camera(viewer, 1.55, 145.0, -24.0, { 0.05, 0.0, kTableZ + 0.35 });
+    if (!mj_kdl::open_viewer(&h.env, ctrl.name())) return;
 
     KDL::ChainFkSolverPos_recursive fk(h.robot.chain);
-    double start = h.data->time;
-    double prev = h.data->time;
+    double start = h.env.data->time;
+    double prev = h.env.data->time;
     bool handoff_tared = false;
     bool have_prev = false;
     KDL::Vector target_prev, tcp_prev;
     int trace_step = 0;
 
-    while (mj_kdl::is_running(&viewer)) {
-        if (h.data->time < prev - 1e-6) {
-            mj_kdl::reset(&h.env);
-            ctrl.reset();
+    while (mj_kdl::is_running(viewer)) {
+        // step() has already reset the Env (and the controller, through on_reset).
+        if (h.env.data->time < prev - 1e-6) {
             state = AdmState{};
-            start = h.data->time;
+            start = h.env.data->time;
             handoff_tared = false;
             have_prev = false;
         }
-        prev = h.data->time;
-        const double t = h.data->time - start;
-        mj_kdl::update(&h.robot);
-        close_gripper(h.model, h.data);
+        prev = h.env.data->time;
+        const double t = h.env.data->time - start;
+        mj_kdl::update(&h.env);
+        close_gripper(h);
 
         KDL::Vector force = KDL::Vector::Zero();
         if (t < kTeachTime) {
@@ -422,26 +397,24 @@ inline void run_gui(SceneHandles &h, Controller &ctrl, AdmState &state, const KD
         KDL::Frame target = admittance_step(h.robot, ctrl, state, nominal, force, h.scene.timestep);
         KDL::Frame tcp = current_tcp(fk, h.robot);
         KDL::Frame world_base;
-        mj_kdl::get_body_frame(h.model, h.data, "base_link", &world_base);
+        mj_kdl::get_body_frame(&h.env, "base_link", &world_base);
         KDL::Vector target_xyz = world_base * target.p;
         KDL::Vector tcp_xyz = world_base * tcp.p;
         ++trace_step;
         if (have_prev && trace_step % 5 == 0) {
             const float yellow[4] = { 1.0f, 0.95f, 0.0f, 1.0f };
             const float green[4] = { 0.0f, 1.0f, 0.2f, 1.0f };
-            mj_kdl::add_trace_segment(&viewer, target_prev, target_xyz, yellow);
-            mj_kdl::add_trace_segment(&viewer, tcp_prev, tcp_xyz, green);
+            mj_kdl::add_trace_segment(viewer, target_prev, target_xyz, yellow);
+            mj_kdl::add_trace_segment(viewer, tcp_prev, tcp_xyz, green);
         }
         target_prev = target_xyz;
         tcp_prev = tcp_xyz;
         have_prev = true;
 
-        if (!mj_kdl::step(&viewer, h.model, h.data)) break;
+        if (!mj_kdl::step(&h.env)) break;
 
-        mj_kdl::pace_realtime(&viewer, h.model);
+        mj_kdl::pace_realtime(&h.env);
     }
-    set_body_wrench(h.model, h.data, kToolBody, KDL::Vector::Zero());
-    mj_kdl::cleanup(&viewer);
 }
 
 inline int run(int argc, char **argv, std::unique_ptr<Controller> (*make_controller)(SceneHandles &))
@@ -453,17 +426,15 @@ inline int run(int argc, char **argv, std::unique_ptr<Controller> (*make_control
     SceneHandles h;
     if (!build_scene(h)) {
         std::cerr << "failed to build admittance FT scene\n";
-        h.cleanup();
         return 1;
     }
     std::unique_ptr<Controller> ctrl = make_controller(h);
-    h.robot.ctrl_mode = ctrl->mode();
+    if (!mj_kdl::set_control_mode(&h.robot, ctrl->mode())) return 1;
 
     const KDL::JntArray q_home = home_q(h.robot.n_joints);
     h.env.on_reset = [&](mj_kdl::ResetContext *) {
-        mj_kdl::set_joint_pos(&h.robot, q_home, false);
+        mj_kdl::set_joint_pos(&h.robot, q_home);
         ctrl->reset();
-        set_body_wrench(h.model, h.data, kToolBody, KDL::Vector::Zero());
     };
     mj_kdl::reset(&h.env);
 
@@ -483,7 +454,7 @@ inline int run(int argc, char **argv, std::unique_ptr<Controller> (*make_control
                   << "final offset: [" << state.offset.x() << ", " << state.offset.y() << ", "
                   << state.offset.z() << "] m\n";
     }
-    h.cleanup();
+    mj_kdl::cleanup(&h.env);
     return rc;
 }
 

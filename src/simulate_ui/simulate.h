@@ -252,7 +252,7 @@ class Simulate {
   //   2: render thread asked to update its model
   //   1: showing "loading" label, about to load
   //   0: model loaded or no load requested.
-  int loadrequest = 0;
+  std::atomic_int loadrequest = 0; // Render() reads it without the lock
 
   // strings
   char load_error[kMaxFilenameLength]        = "";

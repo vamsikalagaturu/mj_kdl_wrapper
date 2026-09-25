@@ -190,30 +190,28 @@ int main(int argc, char *argv[])
     sc.robots.push_back(rs);
     sc.objects.push_back(cube);
 
-    mjModel *model = nullptr;
-    mjData  *data  = nullptr;
-    if (!mj_kdl::build_scene(&model, &data, &sc)) {
-        std::cerr << "build_scene() failed\n";
+    mj_kdl::Env env;
+    if (!mj_kdl::init_env(&env, &sc)) {
+        std::cerr << "init_env() failed\n";
         return 1;
     }
+    const mjModel *model = env.model;
 
     mj_kdl::ToolFrameSpec tool;
     tool.tool_body = "g_base";
     tool.tcp_site  = "g_pinch";
 
     mj_kdl::Robot robot;
-    if (!mj_kdl::init_robot_from_mjcf(
-          &robot, model, data, "base_link", "bracelet_link", "", &tool
-        )) {
+    if (!mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool)) {
         std::cerr << "init_robot_from_mjcf() failed\n";
-        mj_kdl::destroy_scene(model, data);
         return 1;
     }
 
-    unsigned n           = robot.chain.getNrOfJoints();
-    int      fingers_act = mj_name2id(model, mjOBJ_ACTUATOR, "g_fingers_actuator");
-    int      cube_jnt    = mj_name2id(model, mjOBJ_JOINT, "cube_joint");
-    int      key_id      = mj_name2id(model, mjOBJ_KEY, "home");
+    unsigned                   n       = robot.chain.getNrOfJoints();
+    mj_kdl::SceneActuatorSlot *fingers = mj_kdl::bind_scene_actuator(&env.scene, "g_fingers_actuator");
+    int                        cube_jnt = mj_name2id(model, mjOBJ_JOINT, "cube_joint");
+    int                        key_id   = mj_name2id(model, mjOBJ_KEY, "home");
+    if (!fingers) return 1;
 
     KDL::ChainDynParam dyn(robot.chain, KDL::Vector(0.0, 0.0, -9.81));
 
@@ -222,11 +220,11 @@ int main(int argc, char *argv[])
     KDL::JntArray                   q_min(n), q_max(n);
     std::vector<bool>               joint_limited(n, false);
     for (unsigned i = 0; i < n; ++i) {
-        int jid = model->dof_jntid[robot.kdl_to_mj_dof[i]];
-        if (model->jnt_limited[jid]) {
+        const auto [lo, hi] = robot.joint_limits[i];
+        if (std::isfinite(lo) && std::isfinite(hi)) {
             joint_limited[i] = true;
-            q_min(i)         = model->jnt_range[2 * jid];
-            q_max(i)         = model->jnt_range[2 * jid + 1];
+            q_min(i)         = lo;
+            q_max(i)         = hi;
         } else {
             q_min(i) = -2 * M_PI;
             q_max(i) = 2 * M_PI;
@@ -257,8 +255,6 @@ int main(int argc, char *argv[])
         KDL::Frame target(kGraspRot, KDL::Vector(kCubeX, kCubeY, wp.z));
         if (!solve_near_seed(ik_vel, fk, *wp.seed, target, joint_limited, q_min, q_max, *wp.out)) {
             std::cerr << "IK failed for z=" << wp.z << "\n";
-            mj_kdl::cleanup(&robot);
-            mj_kdl::destroy_scene(model, data);
             return 1;
         }
         KDL::Frame fk_out;
@@ -266,8 +262,6 @@ int main(int argc, char *argv[])
         double pos_err = (target.p - fk_out.p).Norm();
         if (pos_err > kIkTol) {
             std::cerr << "IK pose error " << pos_err << " exceeds tolerance for z=" << wp.z << "\n";
-            mj_kdl::cleanup(&robot);
-            mj_kdl::destroy_scene(model, data);
             return 1;
         }
     }
@@ -303,35 +297,24 @@ int main(int argc, char *argv[])
         d->qpos[qadr + 4] = d->qpos[qadr + 5] = d->qpos[qadr + 6] = 0.0;
     };
 
-    robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
-
-    mj_kdl::Env env;
-    env.spec  = sc;
-    env.model = model;
-    env.data  = data;
-    mj_kdl::env_add_robot(&env, &robot);
+    if (!mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::TORQUE)) return 1;
 
     mj_kdl::ResetOptions reset_opts;
     reset_opts.use_keyframe = key_id >= 0;
     reset_opts.keyframe     = key_id >= 0 ? key_id : 0;
 
     env.on_reset = [&](mj_kdl::ResetContext *ctx) {
-        if (key_id < 0) mj_kdl::set_joint_pos(&robot, q_home, false);
+        if (key_id < 0) mj_kdl::set_joint_pos(&robot, q_home);
         reset_cube(ctx->data);
-        if (fingers_act >= 0) ctx->data->ctrl[fingers_act] = 0.0;
+        ctx->data->ctrl[fingers->ctrl_id] = 0.0;
     };
 
     mj_kdl::reset(&env, &reset_opts);
 
     // GUI init (non-headless only)
-    mj_kdl::Viewer viewer;
-    if (!headless) {
-        if (!mj_kdl::init_window_sim(&viewer, &robot)) {
-            std::cerr << "init_window_sim() failed\n";
-            mj_kdl::cleanup(&robot);
-            mj_kdl::destroy_scene(model, data);
-            return 1;
-        }
+    if (!headless && !mj_kdl::open_viewer(&env)) {
+        std::cerr << "open_viewer() failed\n";
+        return 1;
     }
 
     StateMachine sm;
@@ -341,39 +324,39 @@ int main(int argc, char *argv[])
 
     auto begin_state = [&](PickState next) {
         sm.state   = next;
-        sm.t_enter = data->time;
+        sm.t_enter = env.data->time;
         snapshot_q(robot, n, sm.q_enter);
     };
 
     begin_state(PickState::HOME);
 
-    double prev_sim_time = data->time;
+    double prev_sim_time = env.data->time;
 
     while (sm.state != PickState::DONE) {
         switch (sm.state) {
         case PickState::HOME:
             std::cout << "State: HOME\n";
             while (sm.state == PickState::HOME) {
-                if (data->time < prev_sim_time - 1e-6) {
+                if (env.data->time < prev_sim_time - 1e-6) {
                     mj_kdl::reset(&env, &reset_opts);
                     begin_state(PickState::HOME);
-                    prev_sim_time = data->time;
+                    prev_sim_time = env.data->time;
                     continue;
                 }
-                prev_sim_time = data->time;
+                prev_sim_time = env.data->time;
 
                 const StateConfig &state = cfg(sm.state);
                 double             alpha = (state.duration > 0.0)
-                                             ? clamp01((data->time - sm.t_enter) / state.duration)
+                                             ? clamp01((env.data->time - sm.t_enter) / state.duration)
                                              : 1.0;
                 lerp_q(sm.q_enter, *state.q_target, alpha, q_des);
 
                 // HOME uses the default joint-impedance controller.
                 impedance_ctrl(robot, q_des, n, dyn);
-                mj_kdl::update(&robot);
-                if (fingers_act >= 0) data->ctrl[fingers_act] = state.gripper_cmd;
+                fingers->command = state.gripper_cmd;
+                mj_kdl::update(&env);
 
-                double t_rel        = data->time - sm.t_enter;
+                double t_rel        = env.data->time - sm.t_enter;
                 double pose_err     = max_abs_joint_err(robot, *state.q_target, n);
                 bool   done_time    = t_rel >= state.duration;
                 bool   done_pose    = (state.settle_tol < 0.0) || (pose_err <= state.settle_tol);
@@ -383,38 +366,37 @@ int main(int argc, char *argv[])
                     break;
                 }
 
-                if (!mj_kdl::step(&robot)) {
-
-                mj_kdl::pace_realtime(&robot);
+                if (!mj_kdl::step(&env)) {
                     sm.state = PickState::DONE;
                     break;
                 }
+                mj_kdl::pace_realtime(&env);
             }
             break;
 
         case PickState::PREGRASP:
             std::cout << "State: PREGRASP\n";
             while (sm.state == PickState::PREGRASP) {
-                if (data->time < prev_sim_time - 1e-6) {
+                if (env.data->time < prev_sim_time - 1e-6) {
                     mj_kdl::reset(&env, &reset_opts);
                     begin_state(PickState::HOME);
-                    prev_sim_time = data->time;
+                    prev_sim_time = env.data->time;
                     break;
                 }
-                prev_sim_time = data->time;
+                prev_sim_time = env.data->time;
 
                 const StateConfig &state = cfg(sm.state);
                 double             alpha = (state.duration > 0.0)
-                                             ? clamp01((data->time - sm.t_enter) / state.duration)
+                                             ? clamp01((env.data->time - sm.t_enter) / state.duration)
                                              : 1.0;
                 lerp_q(sm.q_enter, *state.q_target, alpha, q_des);
 
                 // PREGRASP could swap in a different approach controller later.
                 impedance_ctrl(robot, q_des, n, dyn);
-                mj_kdl::update(&robot);
-                if (fingers_act >= 0) data->ctrl[fingers_act] = state.gripper_cmd;
+                fingers->command = state.gripper_cmd;
+                mj_kdl::update(&env);
 
-                double t_rel        = data->time - sm.t_enter;
+                double t_rel        = env.data->time - sm.t_enter;
                 double pose_err     = max_abs_joint_err(robot, *state.q_target, n);
                 bool   done_time    = t_rel >= state.duration;
                 bool   done_pose    = (state.settle_tol < 0.0) || (pose_err <= state.settle_tol);
@@ -424,38 +406,37 @@ int main(int argc, char *argv[])
                     break;
                 }
 
-                if (!mj_kdl::step(&robot)) {
-
-                mj_kdl::pace_realtime(&robot);
+                if (!mj_kdl::step(&env)) {
                     sm.state = PickState::DONE;
                     break;
                 }
+                mj_kdl::pace_realtime(&env);
             }
             break;
 
         case PickState::GRASP:
             std::cout << "State: GRASP\n";
             while (sm.state == PickState::GRASP) {
-                if (data->time < prev_sim_time - 1e-6) {
+                if (env.data->time < prev_sim_time - 1e-6) {
                     mj_kdl::reset(&env, &reset_opts);
                     begin_state(PickState::HOME);
-                    prev_sim_time = data->time;
+                    prev_sim_time = env.data->time;
                     break;
                 }
-                prev_sim_time = data->time;
+                prev_sim_time = env.data->time;
 
                 const StateConfig &state = cfg(sm.state);
                 double             alpha = (state.duration > 0.0)
-                                             ? clamp01((data->time - sm.t_enter) / state.duration)
+                                             ? clamp01((env.data->time - sm.t_enter) / state.duration)
                                              : 1.0;
                 lerp_q(sm.q_enter, *state.q_target, alpha, q_des);
 
                 // GRASP keeps the same structure but can use contact-aware logic later.
                 impedance_ctrl(robot, q_des, n, dyn);
-                mj_kdl::update(&robot);
-                if (fingers_act >= 0) data->ctrl[fingers_act] = state.gripper_cmd;
+                fingers->command = state.gripper_cmd;
+                mj_kdl::update(&env);
 
-                double t_rel        = data->time - sm.t_enter;
+                double t_rel        = env.data->time - sm.t_enter;
                 double pose_err     = max_abs_joint_err(robot, *state.q_target, n);
                 bool   done_time    = t_rel >= state.duration;
                 bool   done_pose    = (state.settle_tol < 0.0) || (pose_err <= state.settle_tol);
@@ -465,38 +446,37 @@ int main(int argc, char *argv[])
                     break;
                 }
 
-                if (!mj_kdl::step(&robot)) {
-
-                mj_kdl::pace_realtime(&robot);
+                if (!mj_kdl::step(&env)) {
                     sm.state = PickState::DONE;
                     break;
                 }
+                mj_kdl::pace_realtime(&env);
             }
             break;
 
         case PickState::CLOSE:
             std::cout << "State: CLOSE\n";
             while (sm.state == PickState::CLOSE) {
-                if (data->time < prev_sim_time - 1e-6) {
+                if (env.data->time < prev_sim_time - 1e-6) {
                     mj_kdl::reset(&env, &reset_opts);
                     begin_state(PickState::HOME);
-                    prev_sim_time = data->time;
+                    prev_sim_time = env.data->time;
                     break;
                 }
-                prev_sim_time = data->time;
+                prev_sim_time = env.data->time;
 
                 const StateConfig &state = cfg(sm.state);
                 double             alpha = (state.duration > 0.0)
-                                             ? clamp01((data->time - sm.t_enter) / state.duration)
+                                             ? clamp01((env.data->time - sm.t_enter) / state.duration)
                                              : 1.0;
                 lerp_q(sm.q_enter, *state.q_target, alpha, q_des);
 
                 // CLOSE could switch to a grasp-force controller instead of pure impedance.
                 impedance_ctrl(robot, q_des, n, dyn);
-                mj_kdl::update(&robot);
-                if (fingers_act >= 0) data->ctrl[fingers_act] = state.gripper_cmd;
+                fingers->command = state.gripper_cmd;
+                mj_kdl::update(&env);
 
-                double t_rel        = data->time - sm.t_enter;
+                double t_rel        = env.data->time - sm.t_enter;
                 double pose_err     = max_abs_joint_err(robot, *state.q_target, n);
                 bool   done_time    = t_rel >= state.duration;
                 bool   done_pose    = (state.settle_tol < 0.0) || (pose_err <= state.settle_tol);
@@ -506,38 +486,37 @@ int main(int argc, char *argv[])
                     break;
                 }
 
-                if (!mj_kdl::step(&robot)) {
-
-                mj_kdl::pace_realtime(&robot);
+                if (!mj_kdl::step(&env)) {
                     sm.state = PickState::DONE;
                     break;
                 }
+                mj_kdl::pace_realtime(&env);
             }
             break;
 
         case PickState::LIFT:
             std::cout << "State: LIFT\n";
             while (sm.state == PickState::LIFT) {
-                if (data->time < prev_sim_time - 1e-6) {
+                if (env.data->time < prev_sim_time - 1e-6) {
                     mj_kdl::reset(&env, &reset_opts);
                     begin_state(PickState::HOME);
-                    prev_sim_time = data->time;
+                    prev_sim_time = env.data->time;
                     break;
                 }
-                prev_sim_time = data->time;
+                prev_sim_time = env.data->time;
 
                 const StateConfig &state = cfg(sm.state);
                 double             alpha = (state.duration > 0.0)
-                                             ? clamp01((data->time - sm.t_enter) / state.duration)
+                                             ? clamp01((env.data->time - sm.t_enter) / state.duration)
                                              : 1.0;
                 lerp_q(sm.q_enter, *state.q_target, alpha, q_des);
 
                 // LIFT could use a stiffer transport controller if needed.
                 impedance_ctrl(robot, q_des, n, dyn);
-                mj_kdl::update(&robot);
-                if (fingers_act >= 0) data->ctrl[fingers_act] = state.gripper_cmd;
+                fingers->command = state.gripper_cmd;
+                mj_kdl::update(&env);
 
-                double t_rel        = data->time - sm.t_enter;
+                double t_rel        = env.data->time - sm.t_enter;
                 double pose_err     = max_abs_joint_err(robot, *state.q_target, n);
                 bool   done_time    = t_rel >= state.duration;
                 bool   done_pose    = (state.settle_tol < 0.0) || (pose_err <= state.settle_tol);
@@ -547,38 +526,37 @@ int main(int argc, char *argv[])
                     break;
                 }
 
-                if (!mj_kdl::step(&robot)) {
-
-                mj_kdl::pace_realtime(&robot);
+                if (!mj_kdl::step(&env)) {
                     sm.state = PickState::DONE;
                     break;
                 }
+                mj_kdl::pace_realtime(&env);
             }
             break;
 
         case PickState::HOLD:
             std::cout << "State: HOLD\n";
             while (sm.state == PickState::HOLD) {
-                if (data->time < prev_sim_time - 1e-6) {
+                if (env.data->time < prev_sim_time - 1e-6) {
                     mj_kdl::reset(&env, &reset_opts);
                     begin_state(PickState::HOME);
-                    prev_sim_time = data->time;
+                    prev_sim_time = env.data->time;
                     break;
                 }
-                prev_sim_time = data->time;
+                prev_sim_time = env.data->time;
 
                 const StateConfig &state = cfg(sm.state);
                 double             alpha = (state.duration > 0.0)
-                                             ? clamp01((data->time - sm.t_enter) / state.duration)
+                                             ? clamp01((env.data->time - sm.t_enter) / state.duration)
                                              : 1.0;
                 lerp_q(sm.q_enter, *state.q_target, alpha, q_des);
 
                 // HOLD can later become a dedicated grasp-maintenance controller.
                 impedance_ctrl(robot, q_des, n, dyn);
-                mj_kdl::update(&robot);
-                if (fingers_act >= 0) data->ctrl[fingers_act] = state.gripper_cmd;
+                fingers->command = state.gripper_cmd;
+                mj_kdl::update(&env);
 
-                double t_rel        = data->time - sm.t_enter;
+                double t_rel        = env.data->time - sm.t_enter;
                 double pose_err     = max_abs_joint_err(robot, *state.q_target, n);
                 bool   done_time    = t_rel >= state.duration;
                 bool   done_pose    = (state.settle_tol < 0.0) || (pose_err <= state.settle_tol);
@@ -588,12 +566,11 @@ int main(int argc, char *argv[])
                     break;
                 }
 
-                if (!mj_kdl::step(&robot)) {
-
-                mj_kdl::pace_realtime(&robot);
+                if (!mj_kdl::step(&env)) {
                     sm.state = PickState::DONE;
                     break;
                 }
+                mj_kdl::pace_realtime(&env);
             }
             break;
 
@@ -604,14 +581,11 @@ int main(int argc, char *argv[])
 
     if (headless) {
         int    qadr   = model->jnt_qposadr[cube_jnt];
-        double cube_z = data->qpos[qadr + 2];
+        double cube_z = env.data->qpos[qadr + 2];
         std::cout << "cube Z after pick: " << std::fixed << std::setprecision(3) << cube_z
                   << " m\n";
-    } else {
-        mj_kdl::cleanup(&viewer);
     }
 
-    mj_kdl::cleanup(&robot);
-    mj_kdl::destroy_scene(model, data);
+    mj_kdl::cleanup(&env);
     return 0;
 }

@@ -77,8 +77,10 @@ void set_alpha(KDL::Jacobian &alpha, bool free_z)
 
 struct Controller
 {
-    Controller(mj_kdl::Robot &r, double gravity_z, Variant variant, bool free_z)
-      : robot(r),
+    Controller(mj_kdl::Env &e, mj_kdl::Robot &r, double gravity_z, Variant variant, bool free_z)
+      : env(e),
+        robot(r),
+        gripper(mj_kdl::bind_scene_actuator(&e.scene, kGripperActuator)),
         variant(variant),
         free_z(free_z),
         n(r.chain.getNrOfJoints()),
@@ -166,7 +168,9 @@ struct Controller
         return true;
     }
 
+    mj_kdl::Env &env;
     mj_kdl::Robot &robot;
+    mj_kdl::SceneActuatorSlot *gripper;
     Variant variant;
     bool free_z;
     bool use_free_z = false;
@@ -206,7 +210,7 @@ KDL::Frame tcp_frame(Controller &ctrl)
 
 void start_task(Task &task, Controller &ctrl, double now)
 {
-    mj_kdl::update(&ctrl.robot);
+    mj_kdl::update(&ctrl.env);
     task = Task{};
     task.phase_start = now;
     task.target = tcp_frame(ctrl);
@@ -217,9 +221,8 @@ void start_task(Task &task, Controller &ctrl, double now)
 bool tick(Task &task, Controller &ctrl, int table_geom, double table_top_z, bool verbose)
 {
     mj_kdl::Robot &robot = ctrl.robot;
-    mj_kdl::update(&robot);
-    const int grip = mj_name2id(robot.model, mjOBJ_ACTUATOR, kGripperActuator);
-    if (grip >= 0) robot.data->ctrl[grip] = 255.0;
+    mj_kdl::update(&ctrl.env);
+    ctrl.gripper->command = 255.0;
 
     const double now = robot.data->time;
     const double dt  = robot.model->opt.timestep;
@@ -259,12 +262,12 @@ bool tick(Task &task, Controller &ctrl, int table_geom, double table_top_z, bool
     }
 
     if (!ctrl.track(task.target)) return false;
-    mj_kdl::update(&robot);
+    mj_kdl::update(&ctrl.env);
 
     if (verbose && now - task.last_print >= 0.5) {
         task.last_print = now;
         KDL::Frame tcp;
-        mj_kdl::get_site_frame(robot.model, robot.data, "g_pinch", &tcp);
+        mj_kdl::get_site_frame(&ctrl.env, "g_pinch", &tcp);
         const double cmd = task.phase == Phase::Press ? g_press_force : 0.0;
         std::cout << std::fixed << std::setprecision(3)
                   << "t=" << now << " phase=" << phase_name(task.phase)
@@ -339,14 +342,13 @@ int main(int argc, char **argv)
     scene.objects.push_back(table);
     scene.robots.push_back(robot_spec);
 
-    mjModel *model = nullptr;
-    mjData  *data  = nullptr;
-    if (!mj_kdl::build_scene(&model, &data, &scene)) return 1;
+    mj_kdl::Env env;
+    if (!mj_kdl::init_env(&env, &scene)) return 1;
+    const mjData *data = env.data;
 
-    const int table_geom = mj_name2id(model, mjOBJ_GEOM, kTableTopGeom);
+    const int table_geom = mj_name2id(env.model, mjOBJ_GEOM, kTableTopGeom);
     if (table_geom < 0) {
         std::cerr << "geom '" << kTableTopGeom << "' not found in the compiled scene\n";
-        mj_kdl::destroy_scene(model, data);
         return 1;
     }
 
@@ -359,27 +361,21 @@ int main(int argc, char **argv)
     tool.ft_sensors.push_back(ft_sensor);
 
     mj_kdl::Robot robot;
-    if (!mj_kdl::init_robot_from_mjcf(&robot, model, data, "base_link", "bracelet_link", "", &tool)) {
-        mj_kdl::destroy_scene(model, data);
+    if (!mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool))
         return 1;
-    }
-    robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
+    if (!mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::TORQUE)) return 1;
 
     KDL::JntArray q_home(robot.n_joints);
     for (int i = 0; i < robot.n_joints; ++i) q_home(i) = kHomePose[i];
-    mj_kdl::Env env;
-    env.spec  = scene;
-    env.model = model;
-    env.data  = data;
-    mj_kdl::env_add_robot(&env, &robot);
-    env.on_reset = [&](mj_kdl::ResetContext *) { mj_kdl::set_joint_pos(&robot, q_home, false); };
+    env.on_reset = [&](mj_kdl::ResetContext *) { mj_kdl::set_joint_pos(&robot, q_home); };
     mj_kdl::reset(&env);
 
     KDL::Frame table_top_frame;
-    mj_kdl::get_site_frame(model, data, table_top.c_str(), &table_top_frame);
+    mj_kdl::get_site_frame(&env, table_top.c_str(), &table_top_frame);
     const double table_top_z = table_top_frame.p.z();
 
-    Controller ctrl(robot, scene.gravity_z, variant, free_z);
+    Controller ctrl(env, robot, scene.gravity_z, variant, free_z);
+    if (!ctrl.gripper) return 1;
     Task task;
     start_task(task, ctrl, data->time);
 
@@ -390,7 +386,7 @@ int main(int argc, char **argv)
     int status = 0;
     if (headless) {
         while (true) {
-            if (!tick(task, ctrl, table_geom, table_top_z, true) || !mj_kdl::step(&robot)) {
+            if (!tick(task, ctrl, table_geom, table_top_z, true) || !mj_kdl::step(&env)) {
                 status = 1;
                 break;
             }
@@ -408,39 +404,33 @@ int main(int argc, char **argv)
                       << " commanded_press_N=" << g_press_force << "\n";
         }
     } else {
-        mj_kdl::Viewer viewer{};
-        mj_kdl::set_free_camera(&viewer, 1.55, 145.0, -24.0, { 0.05, 0.0, kTableZ + 0.35 });
+        mj_kdl::Viewer *viewer = &env.viewer;
+        mj_kdl::set_free_camera(viewer, 1.55, 145.0, -24.0, { 0.05, 0.0, kTableZ + 0.35 });
         const std::string title = std::string("ex_achd_press --variant ")
                                   + (variant == Variant::Weighted ? "weighted" : "main")
                                   + (free_z ? " --free-z" : "");
-        if (!mj_kdl::init_window_sim(&viewer, &robot, title.c_str())) {
-            mj_kdl::cleanup(&robot);
-            mj_kdl::destroy_scene(model, data);
-            return 1;
-        }
+        if (!mj_kdl::open_viewer(&env, title.c_str())) return 1;
         const float green[4] = { 0.1f, 0.9f, 0.2f, 1.0f };
         double prev_time = data->time;
-        while (mj_kdl::is_running(&viewer)) {
+        while (mj_kdl::is_running(viewer)) {
             if (data->time < prev_time - 1e-6) {
                 mj_kdl::reset(&env);
                 start_task(task, ctrl, data->time);
             }
             prev_time = data->time;
-            if (!tick(task, ctrl, table_geom, table_top_z, true) || !mj_kdl::step(&robot)) break;
+            if (!tick(task, ctrl, table_geom, table_top_z, true) || !mj_kdl::step(&env)) break;
             if (task.phase == Phase::Press) {
                 KDL::Frame tcp;
-                if (mj_kdl::get_site_frame(model, data, "g_pinch", &tcp)) {
-                    mj_kdl::clear_trace(&viewer);
-                    mj_kdl::add_overlay_arrow(&viewer, tcp.p + KDL::Vector(0, 0, 0.25),
+                if (mj_kdl::get_site_frame(&env, "g_pinch", &tcp)) {
+                    mj_kdl::clear_trace(viewer);
+                    mj_kdl::add_overlay_arrow(viewer, tcp.p + KDL::Vector(0, 0, 0.25),
                                               KDL::Vector(0, 0, -1), 0.25, green);
                 }
             }
-            mj_kdl::pace_realtime(&robot);
+            mj_kdl::pace_realtime(&env);
         }
-        mj_kdl::cleanup(&viewer);
     }
 
-    mj_kdl::cleanup(&robot);
-    mj_kdl::destroy_scene(model, data);
+    mj_kdl::cleanup(&env);
     return status;
 }

@@ -24,7 +24,7 @@ cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON
 
 | Test | What it covers |
 |------|----------------|
-| `test_init` | `build_scene`, `init_robot_from_mjcf`, cleanup |
+| `test_init` | `init_env`, `init_robot_from_mjcf`, `reset`, two independent `Env`s |
 | `test_dual_arm` | multi-robot scene, independent KDL chains |
 | `test_table_scene` | MJCF table asset, `SceneObject`, runtime add/remove |
 | `test_mjcf_load` | arm-only model (nv=7) + arm+gripper model (nq>=13) |
@@ -33,7 +33,7 @@ cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON
 | `test_mjcf_trq_ctrl` | gravity accuracy with gripper mass, impedance drift |
 | `test_mjcf_pick` | full pick-and-place with gripper: cube lifted > 0.20 m |
 | `test_control_modes` | control modes as actuator groups: added actuators, switching, limits |
-| `test_scene_state` | `SceneState` slots, and what `step()` leaves current |
+| `test_scene_state` | `Env` scene slots, what `step()` leaves current, what `reset()` restores |
 | `urdf_solver_probe` | standalone Kinova URDF ACHD probe plus URDF-vs-MuJoCo RNEA torque comparison |
 
 ---
@@ -42,14 +42,17 @@ cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON
 
 **Scene:** single Kinova GEN3 arm from Menagerie MJCF.
 
-- DOF count is 7, joint names resolve correctly.
-- `set_joint_pos()` and `mj_forward()` complete without error.
-- 100 physics steps complete without error.
+- DOF count is 7; `init_robot_from_mjcf()` registers the robot with the `Env`.
+- 100 physics steps advance time.
 - **ResetRestoresDefaultPose** -- `reset()` returns joints to the model's default keyframe pose.
 - **ResetSyncsCmdPorts** -- `reset()` re-seeds `jnt_pos_cmd` / `jnt_trq_cmd` from measured state.
+- **ResetRestoresEveryPort** -- every port is re-seeded: msr from the state, pos cmd = pose,
+  vel/trq cmd 0, saturated 0.
 - **ResetInvokesOnResetCallback** -- `Env::on_reset` is called exactly once per `reset(Env*)` invocation.
 - **ResetWithoutOnResetCallbackIsNoOp** -- `reset(Env*)` with no hook set does not crash.
 - **EnvResetInvokesHookAndSyncsRobot** -- `reset(Env*)` invokes the environment hook and syncs registered robot ports/forces.
+- **CleanupRobotUnregistersIt** -- `cleanup(Robot*)` removes the robot from its `Env`.
+- **TwoEnvs.StepIndependently** -- two `Env`s in one process keep their own frames and time.
 
 ### test_dual_arm
 
@@ -63,7 +66,8 @@ cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON
 **Scene:** Kinova GEN3 arm on a table with box and sphere objects.
 
 - Gravity compensation drift < 1 mm after 500 steps.
-- Runtime `scene_add_object` / `scene_remove_object`: model rebuilds cleanly.
+- Runtime `scene_add_object` / `scene_remove_object` on the `Env`: robots and scene slots follow
+  the rebuilt model; a slot whose body is removed is unbound.
 
 ### test_mjcf_load
 
@@ -81,7 +85,8 @@ Two fixtures:
 `CtrlMode::POSITION`.  Linearly interpolates from home to a target pose over 5 s,
 settles 1 s.  Max joint error < 0.05 rad.
 
-- **ClampCtrlrange** -- position commands are clamped to the actuator `ctrlrange`; out-of-range setpoints are rejected.
+- **ClampCtrlrange** -- position commands are clamped to the actuator `ctrlrange` and flagged in `jnt_saturated`.
+
 ### test_mjcf_vel_ctrl
 
 Velocity-style control implemented by integrating a proportional velocity command
@@ -113,7 +118,13 @@ converges from home to the target pose within the configured joint tolerance.
 - **StepMatchesMjStepBitwise** -- 200 `step()` calls give the same `qpos`/`qvel` as `mj_step`.
 - **StepHonoursAQposWrittenBetweenSteps** -- a direct `qpos` write before `step()` is integrated
   as `mj_step` would, and the frame follows it.
-- Slot binding, read/apply matching `update()`, wrench clearing.
+- **AFrameFollowsAQposWrittenDirectly** -- `get_body_frame()` sees a direct `qpos` write with no
+  step in between.
+- **UpdateReadsThenAppliesRobotsAndSlots** -- `update(Env*)` reads robot ports, then writes robot
+  torque commands and slot wrenches.
+- **ResetRestoresEverySlot** -- `reset()` zeroes wrench slots, sets actuator slot commands to the
+  reset `ctrl`, and re-reads joint and free-body slots.
+- Slot binding and wrench clearing.
 - **DISABLED_ViewerKeepsUserWrenchesWhileAnotherThreadReads** -- opens a Simulate window, so it
   runs only with `--gtest_also_run_disabled_tests`: a user wrench survives 1000 steps while the
   render thread runs and a second thread reads frames.
@@ -130,6 +141,6 @@ Each mode is an actuator group switched with `opt.disableactuator`.
 - **GripperModesTest** (GEN3 + 2F-85): the gripper gets no torque actuator and stays in group 0;
   it closes and opens while the arm runs in TORQUE.
 - **MotorWheelModesTest** (`fixtures/motor_wheel.xml`): only the listed wheel gets a
-  `<velocity>` actuator, the pivot is left alone; VELOCITY tracks 5 rad/s through `SceneState`,
+  `<velocity>` actuator, the pivot is left alone; VELOCITY tracks 5 rad/s through `env.scene`,
   then TORQUE takes over without a jump; a motor-driven robot starts in TORQUE and
   `joint_force_limits()` follows the active mode.

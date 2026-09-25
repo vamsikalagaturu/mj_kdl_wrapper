@@ -14,29 +14,28 @@ The wrapper has four layers. Keep them separate and the API stays simple:
 | Layer | Type | Responsibility |
 |-------|------|----------------|
 | Scene description | `SceneSpec`, `RobotSpec`, `AttachmentSpec`, `SceneObject`, `CameraSpec` | Describe what should be compiled into MuJoCo |
-| Runtime environment | `Env` | Own `mjModel`/`mjData`, registered robots, and reset hooks |
-| Robot control handle | `Robot` | KDL chain, joint maps, measured ports, command ports |
-| Visualization/recording | `Viewer`, `VideoRecorder` | Interactive Simulate UI and offscreen MP4 recording |
+| Runtime environment | `Env` | Own `mjModel`/`mjData`, registered robots, scene slots, the viewer, and reset hooks |
+| Robot control handle | `Robot` | KDL chain, measured ports, command ports |
+| Visualization/recording | `Env::viewer`, `VideoRecorder` | Interactive Simulate UI and offscreen MP4 recording |
 | Python package | `mj_kdl_wrapper` | Python wrappers for the same scene, robot, reset, viewer, and recorder concepts |
 
 The important ownership rule:
 
-- `Env` owns `mjModel` and `mjData`.
-- `Robot` borrows `mjModel` and `mjData`.
-- `Viewer` borrows the same model/data through the step calls.
-- `VideoRecorder` owns only its EGL/rendering/ffmpeg resources; it also borrows
-  model/data when recording frames.
+- `Env` owns `mjModel`, `mjData`, its scene slots (`env.scene`) and its viewer (`env.viewer`).
+- `Robot` is registered with one `Env` and borrows its model/data; `Env` never deletes it.
+- `VideoRecorder` owns only its EGL/rendering/ffmpeg resources; it renders an `Env`
+  when recording frames.
 
 Most examples follow this flow:
 
 1. Build a `SceneSpec`.
 2. Call `init_env()`.
-3. Initialize one or more `Robot` handles from `env.model` and `env.data`.
-4. Register robots with `env_add_robot()`.
-5. Install `env.on_reset` if the task has object/controller state.
-6. Start `init_window_sim()` or a headless loop.
-7. In the loop: `step()`, `update()`, compute commands, write command ports.
-8. Cleanup in reverse order: viewer/recorder, robots, env.
+3. Initialize one or more `Robot` handles with `init_robot_from_mjcf(&robot, &env, ...)`,
+   which also registers them with the `Env`.
+4. Install `env.on_reset` if the task has object/controller state.
+5. Call `open_viewer(&env)`, or run headless (the loop is the same).
+6. In the loop: `step(&env)`, `update(&env)`, compute commands, write command ports.
+7. Cleanup: `cleanup(&env)` closes the viewer and frees the model/data.
 
 ## 2. Start With One Robot Scene
 
@@ -63,17 +62,12 @@ if (!mj_kdl::init_env(&env, &scene)) {
 }
 ```
 
-`Env` owns `env.model` and `env.data`. Call `mj_kdl::cleanup(&env)` when done.
+`Env` owns `env.model` and `env.data`. Call `mj_kdl::cleanup(&env)` when done (the
+`Env` destructor does it too). An `Env` is neither copied nor moved: robots and slots
+point into it.
 
-You can also build raw pointers directly:
-
-```cpp
-mjModel *model = nullptr;
-mjData  *data  = nullptr;
-mj_kdl::build_scene(&model, &data, &scene);
-```
-
-Prefer `Env` for applications that need reset hooks or registered robots.
+`build_scene()` still returns a raw model/data pair for tools that only compile or save
+a scene, but robots, stepping, frames and the viewer all work on an `Env`.
 
 ### What `SceneSpec` Compiles
 
@@ -110,71 +104,59 @@ Use `RobotSpec::pos` and `RobotSpec::quat` to place the robot root in the world.
 
 ### Cleanup Order
 
-Use a consistent cleanup order:
+One call tears everything down:
 
 ```cpp
-mj_kdl::cleanup(&viewer);   // stops render thread / closes window
-mj_kdl::cleanup(&robot);    // clears borrowed pointers and KDL/port state
-mj_kdl::cleanup(&env);      // frees mjData and mjModel
+mj_kdl::cleanup(&env);      // closes the viewer, forgets the robots, frees mjData and mjModel
 ```
 
-If you created raw `mjModel*` and `mjData*` with `build_scene()`, free them with:
+`cleanup(&robot)` unregisters a single robot while the `Env` keeps running; a `Robot`
+destroyed before its `Env` does this itself.
 
-```cpp
-mj_kdl::destroy_scene(model, data);
-```
-
-Do not call both `cleanup(&env)` and `destroy_scene(env.model, env.data)` for the
-same model/data. `Env` owns those pointers once `init_env()` succeeds.
+If you created raw `mjModel*` and `mjData*` with `build_scene()`, free them with
+`mj_kdl::destroy_scene(model, data)`. Never do that for `env.model`/`env.data`;
+`Env` owns those pointers once `init_env()` succeeds.
 
 ## 3. Initialize A KDL Robot
 
-`Robot` is the runtime handle for one controllable articulation. It stores the
-borrowed `mjModel`/`mjData` pointers, KDL chain, joint-name maps, measured ports,
-and command ports.
+`Robot` is the runtime handle for one controllable articulation. It holds the
+KDL chain, joint names and limits, measured ports, and command ports; its MuJoCo
+index maps are private.
 
 ```cpp
 mj_kdl::Robot robot;
-if (!mj_kdl::init_robot_from_mjcf(
-        &robot,
-        env.model,
-        env.data,
-        "base_link",
-        "bracelet_link")) {
+if (!mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link")) {
     throw std::runtime_error("failed to init robot");
 }
-
-mj_kdl::env_add_robot(&env, &robot);
 ```
 
-Registering with `env_add_robot()` lets `reset(&env)` sync the robot command
-ports after MuJoCo data is reset.
+`init_robot_from_mjcf()` registers the robot with the `Env`, which from then on reads,
+commands and resets it. Its command ports start out holding the current pose.
 
 ## 4. Run A Position Control Loop
 
-For position mode, write `jnt_pos_cmd`; `update()` copies it to MuJoCo actuator
+For position mode, write `jnt_pos_cmd`; `update(&env)` copies it to MuJoCo actuator
 controls.
 
 ```cpp
 robot.ctrl_mode = mj_kdl::CtrlMode::POSITION;
 
-mj_kdl::Viewer viewer;
-mj_kdl::init_window_sim(&viewer, &robot, "position control");
+mj_kdl::open_viewer(&env, "position control");
 
-while (mj_kdl::step(&robot)) {
-    mj_kdl::update(&robot);
-    mj_kdl::pace_realtime(&robot);   // step() never sleeps; pace the loop yourself
+while (mj_kdl::step(&env)) {
+    mj_kdl::update(&env);
+    mj_kdl::pace_realtime(&env);   // step() never sleeps; pace the loop yourself
 
     for (int i = 0; i < robot.n_joints; ++i) {
         robot.jnt_pos_cmd[i] = robot.jnt_pos_msr[i];
     }
 }
-
-mj_kdl::cleanup(&viewer);
 ```
 
-`init_window_sim()` starts MuJoCo Simulate in a render thread. Your loop still
-owns stepping, updating control, and task logic.
+`open_viewer()` starts MuJoCo Simulate in a render thread. Your loop still
+owns stepping, updating control, and task logic. `update(&env)` reads and commands
+every registered robot and scene slot; commands written after it are applied by the
+next `update()`.
 
 ## 5. Add KDL Gravity Compensation
 
@@ -186,9 +168,9 @@ KDL::ChainDynParam dyn(robot.chain, KDL::Vector(0.0, 0.0, scene.gravity_z));
 KDL::JntArray q(robot.n_joints);
 KDL::JntArray g(robot.n_joints);
 
-while (mj_kdl::step(&robot)) {
-    mj_kdl::update(&robot);
-    mj_kdl::pace_realtime(&robot);   // step() never sleeps; pace the loop yourself
+while (mj_kdl::step(&env)) {
+    mj_kdl::update(&env);
+    mj_kdl::pace_realtime(&env);   // step() never sleeps; pace the loop yourself
 
     for (int i = 0; i < robot.n_joints; ++i) {
         q(i) = robot.jnt_pos_msr[i];
@@ -254,8 +236,7 @@ mj_kdl::ToolFrameSpec tool{
     .tcp_site  = "g_pinch",
 };
 
-mj_kdl::init_robot_from_mjcf(
-    &robot, env.model, env.data, "base_link", "bracelet_link", "", &tool);
+mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool);
 ```
 
 `tool_body` lumps the tool subtree inertia into the KDL chain. `tcp_site` adds a
@@ -345,7 +326,7 @@ scene.objects.push_back(mj_kdl::SceneObject{
 matching MuJoCo's contact-dimensionality integers. Default is `Tangential`.
 
 `scene.robots` can be empty. Object-only scenes still compile and can be opened
-in the Simulate UI with `init_window_sim(&viewer, model, data, "object scene")`.
+in the Simulate UI with `open_viewer(&env, "object scene")`.
 
 After `build_scene`, an MJCF-backed `SceneObject` exposes its root body in
 the compiled scene under `obj.name` (i.e. the asset's internal root body name
@@ -358,8 +339,12 @@ site authored inside the asset, for places that need a string at runtime:
 ```cpp
 const std::string site = mj_kdl::scene_object_site_name(table, "table_top");
 KDL::Frame world_T_table_top;
-mj_kdl::get_site_frame(env.model, env.data, site.c_str(), &world_T_table_top);
+mj_kdl::get_site_frame(&env, site.c_str(), &world_T_table_top);
 ```
+
+Frame getters recompute the kinematics only when the state changed since they were
+last computed, so reading many frames per step costs one forward pass, and a direct
+`qpos` write is picked up without any extra call.
 
 Combined, this lets a robot sit on the tabletop without hand-threading
 heights:
@@ -420,7 +405,7 @@ for (const auto &name : mj_kdl::get_camera_names(env.model)) {
 Use one in the viewer or recorder:
 
 ```cpp
-mj_kdl::use_camera(&viewer, env.model, "front");
+mj_kdl::use_camera(&env.viewer, env.model, "front");
 mj_kdl::use_camera(&recorder, env.model, "front");
 ```
 
@@ -428,16 +413,16 @@ The Simulate UI also has its own live camera selector in the Rendering panel.
 
 ## 9. Write Production Reset Hooks
 
-`reset(&env)` resets MuJoCo, runs your hook, forwards dynamics, then syncs all
-registered robots so stale commands do not hit the first post-reset step.
+`reset(&env)` resets MuJoCo, runs your hook, forwards dynamics, then re-seeds every
+registered robot and scene slot so stale commands do not hit the first post-reset step.
 
 ```cpp
 KDL::JntArray q_home(robot.n_joints);
 double cube_start[3] = { 0.35, 0.05, 0.73 };
 
 env.on_reset = [&](mj_kdl::ResetContext *ctx) {
-    mj_kdl::set_joint_pos(&robot, q_home, false);
-    mj_kdl::set_body_pose(ctx->model, ctx->data, "cube", cube_start);
+    mj_kdl::set_joint_pos(&robot, q_home);
+    mj_kdl::set_body_pose(ctx->env, "cube", cube_start);
     task_state = TaskState::HOME;
     episode_step = 0;
 };
@@ -461,14 +446,18 @@ hook. Do not hide reset work in the control loop.
 2. Create a `ResetContext`.
 3. Call `env.on_reset`, if provided.
 4. Call `mj_forward()`.
-5. Sync every registered `Robot`:
-   - `jnt_pos_cmd` becomes the measured joint position,
-   - `jnt_trq_cmd` is cleared,
-   - stale applied forces are cleared.
+5. Re-seed everything the `Env` holds from the reset state:
+   - every registered `Robot`'s ports: measured values read, `jnt_pos_cmd` = measured
+     position, velocity/torque commands zero, `jnt_saturated` cleared, `ctrl_mode` =
+     the mode its actuators are in; its F/T readings; its actuators set to hold the pose,
+   - every scene slot: joint/free-body readings re-read, wrench commands zero,
+     actuator commands = the reset `ctrl`.
 
 That order is deliberate. User hooks restore task state after the low-level
-MuJoCo reset, and robot ports are synchronized after the hook so the first
-post-reset update does not apply stale commands.
+MuJoCo reset, and ports are seeded after the hook so the first post-reset update
+does not apply stale commands. Each part's runtime state lives in one struct that
+reset assigns afresh, so a field added later is reset too; a part without a reset
+does not compile. The Simulate UI's reset button runs the same path.
 
 Use `ResetContext` when your hook needs direct MuJoCo access:
 
@@ -476,7 +465,7 @@ Use `ResetContext` when your hook needs direct MuJoCo access:
 env.on_reset = [&](mj_kdl::ResetContext *ctx) {
     const double q_identity[4] = { 1.0, 0.0, 0.0, 0.0 };
     const double cube_pos[3]   = { 0.35, 0.05, 0.73 };
-    mj_kdl::set_body_pose(ctx->model, ctx->data, "cube", cube_pos, q_identity);
+    mj_kdl::set_body_pose(ctx->env, "cube", cube_pos, q_identity);
 
     controller_integral.assign(robot.n_joints, 0.0);
     task_state = TaskState::HOME;
@@ -491,15 +480,17 @@ MuJoCo before `reset()` returns.
 The full viewer path is:
 
 ```cpp
-mj_kdl::Viewer viewer;
-mj_kdl::init_window_sim(&viewer, &robot, "task");
+mj_kdl::open_viewer(&env, "task");
 
-while (mj_kdl::step(&robot)) {
-    mj_kdl::update(&robot);
-    mj_kdl::pace_realtime(&robot);   // step() never sleeps; pace the loop yourself
+while (mj_kdl::step(&env)) {
+    mj_kdl::update(&env);
+    mj_kdl::pace_realtime(&env);   // step() never sleeps; pace the loop yourself
     // control...
 }
 ```
+
+With the viewer open, `step()` also honours its pause, perturbation and recording.
+Setting `robot.paused` on every registered robot pauses physics in both modes.
 
 Useful wrapper-specific controls:
 
@@ -552,7 +543,7 @@ is writable.
 
 ### Draw A Live Trajectory Trace Overlay
 
-`init_window_sim()` owns a user scene that the render thread merges into every
+The viewer owns a user scene that the render thread merges into every
 frame. Two helpers let you draw your own line geometry into it -- the built-in
 use is a live polyline of recent end-effector positions, which makes it obvious
 at a glance whether the EE is tracking a commanded path:
@@ -563,33 +554,32 @@ at a glance whether the EE is tracking a commanded path:
 std::deque<KDL::Vector> trace;          // ring buffer of recent EE points
 constexpr size_t kTraceMax = 4096;      // bounded by the user-scene geom budget
 
-while (mj_kdl::step(&robot)) {
-    mj_kdl::update(&robot);
-    mj_kdl::pace_realtime(&robot);   // step() never sleeps; pace the loop yourself
+while (mj_kdl::step(&env)) {
+    mj_kdl::update(&env);
+    mj_kdl::pace_realtime(&env);   // step() never sleeps; pace the loop yourself
     // ... run your controller; advance the EE ...
 
     // FK gives the EE in the chain-root frame; the overlay renders in world
     // frame, so lift it through the (fixed) base body pose -- cache this once.
     static KDL::Frame world_T_base;
-    static bool have_base =
-        mj_kdl::get_body_frame(robot.model, robot.data, "base_link", &world_T_base);
+    static bool have_base = mj_kdl::get_body_frame(&env, "base_link", &world_T_base);
 
     KDL::Frame ee_base;
     fk_solver.JntToCart(q, ee_base);
     trace.push_back(world_T_base * ee_base.p);
     if (trace.size() > kTraceMax) trace.pop_front();
 
-    mj_kdl::clear_trace(&viewer);                 // reset the overlay each frame
+    mj_kdl::clear_trace(&env.viewer);             // reset the overlay each frame
     static constexpr float kOrange[4] = {1.0f, 0.5f, 0.1f, 1.0f};
     for (size_t i = 1; i < trace.size(); ++i)
-        mj_kdl::add_trace_segment(&viewer, trace[i - 1], trace[i], kOrange);
+        mj_kdl::add_trace_segment(&env.viewer, trace[i - 1], trace[i], kOrange);
 }
 ```
 
 Key points:
 
-- Both helpers are **no-ops when `viewer` is not backed by an `init_window_sim()`
-  window** (e.g. headless runs), so the same loop compiles and runs unchanged
+- Both helpers are **no-ops while the viewer is closed** (e.g. headless runs),
+  so the same loop compiles and runs unchanged
   with no display -- guard the bookkeeping with `if (!headless)` to skip the
   allocation entirely.
 - `add_trace_segment()` is thread-safe and silently drops segments once the
@@ -627,9 +617,9 @@ mj_kdl::init_video_recorder(
     &recorder, env.model, "episode.mp4", mj_kdl::VideoResolution::R1080p, 60);
 
 for (int i = 0; i < 3000; ++i) {
-    mj_step(env.model, env.data);
+    mj_kdl::step(&env);
     if (i % 4 == 0) {
-        mj_kdl::record_frame(&recorder, env.model, env.data);
+        mj_kdl::record_frame(&recorder, &env);
     }
 }
 
@@ -738,8 +728,7 @@ KDL::Frame world_T_table_top;
 const std::string table_top_site =
     mj_kdl::scene_object_site_name(table, "table_top");
 
-if (!mj_kdl::get_site_frame(
-        env.model, env.data, table_top_site.c_str(), &world_T_table_top)) {
+if (!mj_kdl::get_site_frame(&env, table_top_site.c_str(), &world_T_table_top)) {
     throw std::runtime_error("table_top site not found");
 }
 
@@ -770,9 +759,7 @@ mj_kdl::ToolFrameSpec tool{
     .tcp_site  = "g_pinch",
 };
 
-mj_kdl::init_robot_from_mjcf(
-    &robot, env.model, env.data, "base_link", "bracelet_link", "", &tool);
-mj_kdl::env_add_robot(&env, &robot);
+mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool);
 
 robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
 ```
@@ -924,14 +911,13 @@ for (int i = 0; i < robot.n_joints; ++i) {
 }
 ```
 
-The gripper actuator is model-specific. For the Robotiq Menagerie model, examples
-write the gripper command directly to its actuator control after `update()`:
+The gripper actuator is model-specific. Bind it once as a scene slot; `update(&env)`
+writes its command to `ctrl`, clamped to its `ctrlrange`:
 
 ```cpp
-int gripper_act = mj_name2id(env.model, mjOBJ_ACTUATOR, "g_fingers_actuator");
-if (gripper_act >= 0) {
-    env.data->ctrl[gripper_act] = cfg.gripper_cmd;
-}
+mj_kdl::SceneActuatorSlot *gripper = mj_kdl::bind_scene_actuator(&env.scene, "g_fingers_actuator");
+// in the loop:
+gripper->command = cfg.gripper_cmd;
 ```
 
 ### 12.7 Reset The Pick-Place Task
@@ -942,8 +928,8 @@ Reset must restore both the robot and task objects:
 const double cube_start[3] = { 0.35, 0.10, surface_z + kCubeHalf };
 
 env.on_reset = [&](mj_kdl::ResetContext *ctx) {
-    mj_kdl::set_joint_pos(&robot, q_home, false);
-    mj_kdl::set_body_pose(ctx->model, ctx->data, "cube", cube_start);
+    mj_kdl::set_joint_pos(&robot, q_home);
+    mj_kdl::set_body_pose(ctx->env, "cube", cube_start);
 
     current_state = TaskState::HOME;
     state_index = 0;
@@ -952,22 +938,21 @@ env.on_reset = [&](mj_kdl::ResetContext *ctx) {
 };
 ```
 
-Because `reset(&env)` syncs registered robot command ports after this hook, the
-first control step after reset starts from the reset pose without stale torque or
-position commands.
+Because `reset(&env)` re-seeds registered robots and scene slots after this hook, the
+first control step after reset starts from the reset pose without stale torque,
+position or gripper commands.
 
 ### 12.8 Run With Viewer And Recorder
 
 Start the Simulate UI:
 
 ```cpp
-mj_kdl::Viewer viewer;
-mj_kdl::init_window_sim(&viewer, &robot, "table pick-place");
-mj_kdl::use_camera(&viewer, env.model, "task");
+mj_kdl::open_viewer(&env, "table pick-place");
+mj_kdl::use_camera(&env.viewer, env.model, "task");
 
-while (mj_kdl::step(&robot)) {
-    mj_kdl::update(&robot);
-    mj_kdl::pace_realtime(&robot);   // step() never sleeps; pace the loop yourself
+while (mj_kdl::step(&env)) {
+    mj_kdl::update(&env);
+    mj_kdl::pace_realtime(&env);   // step() never sleeps; pace the loop yourself
     run_state_machine();
     apply_impedance_command();
 }
@@ -1017,14 +1002,12 @@ Then initialize two robot handles:
 ```cpp
 mj_kdl::Robot left;
 mj_kdl::Robot right;
-mj_kdl::init_robot_from_mjcf(&left, env.model, env.data, "base_link", "bracelet_link", "", &tool);
-mj_kdl::init_robot_from_mjcf(&right, env.model, env.data, "base_link", "bracelet_link", "r2_", &tool);
-mj_kdl::env_add_robot(&env, &left);
-mj_kdl::env_add_robot(&env, &right);
+mj_kdl::init_robot_from_mjcf(&left, &env, "base_link", "bracelet_link", "", &tool);
+mj_kdl::init_robot_from_mjcf(&right, &env, "base_link", "bracelet_link", "r2_", &tool);
 ```
 
 Each robot gets its own KDL chain and command ports, while both share the same
-MuJoCo model/data.
+`Env`; one `update(&env)` reads and commands both.
 
 ## 14. Grow Into Task Examples
 
@@ -1044,8 +1027,6 @@ Read `../examples.md` for behavior summaries and expected outputs.
 For occasional changes, use the scene add/remove helpers. They rebuild the model,
 so this is for task setup and coarse changes, not per-frame object spawning.
 
-Raw model/data form:
-
 ```cpp
 mj_kdl::SceneObject obstacle{
     .name  = "obstacle",
@@ -1056,19 +1037,12 @@ mj_kdl::SceneObject obstacle{
     .fixed = true,                                // fixed obstacles tolerate mass = 0
 };
 
-mj_kdl::scene_add_object(&model, &data, &scene, obstacle);
-// model/data pointers were replaced; reinitialize Robot handles.
-```
-
-`Env` form:
-
-```cpp
 mj_kdl::scene_add_object(&env, obstacle);
-// env.model/env.data and registered Robot model/data pointers are updated.
+// env.model/env.data are replaced; registered robots, scene slots and the viewer follow.
 ```
 
-After a rebuild, any cached MuJoCo IDs may be invalid. Recompute body IDs, joint
-IDs, site names, and KDL solvers that depend on the old model.
+A scene slot whose name is gone from the rebuilt model is unbound and skipped.
+Any MuJoCo IDs you cached yourself may be invalid; recompute them.
 
 ## 16. Debugging Checklist
 
@@ -1076,8 +1050,8 @@ Use this checklist when a scene behaves incorrectly:
 
 | Symptom | Check |
 |---------|-------|
-| Robot does not move in position mode | Model has actuators and `kdl_to_mj_ctrl[i] >= 0` |
-| First step after reset jumps | Robot is registered with `env_add_robot()` and reset uses `reset(&env)` |
+| Robot does not move in position mode | Model has an actuator on each joint, and `update(&env)` runs every cycle |
+| First step after reset jumps | Reset goes through `reset(&env)`, not a raw `mj_resetData()` |
 | KDL gravity is wrong with a tool | `ToolFrameSpec::tool_body` points at the tool subtree root |
 | TCP frame is wrong | `ToolFrameSpec::tcp_site` names an authored MuJoCo site |
 | Object asset site not found | Use `scene_object_site_name(object, "site")` to account for prefixes |

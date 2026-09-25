@@ -24,10 +24,9 @@
 
 static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
 
-// Read state, compute KDL gravity torques, store in jnt_trq_cmd.
+// Compute KDL gravity torques from the measured state, store in jnt_trq_cmd.
 static void apply_grav_comp(mj_kdl::Robot *s, KDL::ChainDynParam &dyn)
 {
-    mj_kdl::update(s);
     KDL::JntArray q(s->n_joints), g(s->n_joints);
     for (int i = 0; i < s->n_joints; ++i) q(i) = s->jnt_pos_msr[i];
     dyn.JntToGravity(q, g);
@@ -38,8 +37,7 @@ namespace fs = std::filesystem;
 class DualArmTest : public testing::Test
 {
   protected:
-    mjModel                                         *model = nullptr;
-    mjData                                          *data  = nullptr;
+    mj_kdl::Env                                      env;
     mj_kdl::Robot                                    arm1, arm2;
     std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk1;
     std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk2;
@@ -73,15 +71,13 @@ class DualArmTest : public testing::Test
             mj_kdl::RobotSpec{ .path = mjcf.c_str(), .prefix = "r2_", .pos = { 0.5, 0.0, 0.0 }, .quat = { 0.0, 0.0, 1.0, 0.0 }, .attachments = {} }, // yaw 180 deg
         };
 
-        ASSERT_TRUE(mj_kdl::build_scene(&model, &data, &scene)) << "build_scene() returned false";
+        ASSERT_TRUE(mj_kdl::init_env(&env, &scene)) << "init_env() returned false";
 
-        ASSERT_TRUE(
-          mj_kdl::init_robot_from_mjcf(&arm1, model, data, "base_link", "bracelet_link", "")
-        ) << "arm1 init_robot_from_mjcf() returned false";
+        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&arm1, &env, "base_link", "bracelet_link", ""))
+          << "arm1 init_robot_from_mjcf() returned false";
 
-        ASSERT_TRUE(
-          mj_kdl::init_robot_from_mjcf(&arm2, model, data, "base_link", "bracelet_link", "r2_")
-        ) << "arm2 init_robot_from_mjcf() returned false";
+        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&arm2, &env, "base_link", "bracelet_link", "r2_"))
+          << "arm2 init_robot_from_mjcf() returned false";
 
         n    = arm1.n_joints;
         fk1  = std::make_unique<KDL::ChainFkSolverPos_recursive>(arm1.chain);
@@ -93,11 +89,10 @@ class DualArmTest : public testing::Test
         for (int j = 0; j < n; ++j) q_home(j) = kHomePose[j];
     }
 
-    void TearDown() override
+    int dof(const mj_kdl::Robot &r, const char *pfx, int j) const
     {
-        mj_kdl::cleanup(&arm1);
-        mj_kdl::cleanup(&arm2);
-        if (model) mj_kdl::destroy_scene(model, data);
+        const std::string name = pfx + r.joint_names[j];
+        return env.model->jnt_dofadr[mj_name2id(env.model, mjOBJ_JOINT, name.c_str())];
     }
 };
 
@@ -105,7 +100,7 @@ TEST_F(DualArmTest, GravityInformational)
 {
     mj_kdl::set_joint_pos(&arm1, q_home);
     mj_kdl::set_joint_pos(&arm2, q_home);
-    mj_forward(model, data);
+    mj_forward(env.model, env.data);
 
     KDL::JntArray g1(n), g2(n);
     dyn1->JntToGravity(q_home, g1);
@@ -113,8 +108,8 @@ TEST_F(DualArmTest, GravityInformational)
 
     double err1 = 0.0, err2 = 0.0;
     for (int j = 0; j < n; ++j) {
-        err1 = std::max(err1, std::abs(g1(j) - data->qfrc_bias[arm1.kdl_to_mj_dof[j]]));
-        err2 = std::max(err2, std::abs(g2(j) - data->qfrc_bias[arm2.kdl_to_mj_dof[j]]));
+        err1 = std::max(err1, std::abs(g1(j) - env.data->qfrc_bias[dof(arm1, "", j)]));
+        err2 = std::max(err2, std::abs(g2(j) - env.data->qfrc_bias[dof(arm2, "r2_", j)]));
     }
     (void)err1; (void)err2;
 }
@@ -124,7 +119,6 @@ TEST_F(DualArmTest, DualArmDrift)
     // Sync both arms to home pose and record initial EE frames.
     mj_kdl::set_joint_pos(&arm1, q_home);
     mj_kdl::set_joint_pos(&arm2, q_home);
-    mj_forward(model, data);
     arm1.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
     arm2.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
 
@@ -143,12 +137,12 @@ TEST_F(DualArmTest, DualArmDrift)
         for (int j = 0; j < n; ++j) arm2.jnt_trq_cmd[j] = g2(j);
     }
 
-    /* Run 500-step closed-loop gravity compensation. Both arms share the same
-     * model/data; step() on arm1 advances the entire world. */
+    // 500-step closed-loop gravity compensation; one step() advances both arms.
     for (int i = 0; i < 500; ++i) {
+        mj_kdl::update(&env);
         apply_grav_comp(&arm1, *dyn1);
         apply_grav_comp(&arm2, *dyn2);
-        mj_kdl::step(&arm1);
+        mj_kdl::step(&env);
     }
 
     KDL::JntArray q1_end(n), q2_end(n);

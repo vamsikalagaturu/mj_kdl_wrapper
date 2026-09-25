@@ -33,6 +33,7 @@ class MjcfVelCtrlTest : public testing::Test
 {
   protected:
     fs::path      root_;
+    mj_kdl::Env   env_;
     mjModel      *model_ = nullptr;
     mjData       *data_  = nullptr;
     mj_kdl::Robot s_;
@@ -52,8 +53,10 @@ class MjcfVelCtrlTest : public testing::Test
     sc.add_skybox = true;
         sc.robots.push_back(mj_kdl::RobotSpec{ .path = arm_mjcf.c_str(), .attachments = {} });
 
-        ASSERT_TRUE(mj_kdl::build_scene(&model_, &data_, &sc));
-        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s_, model_, data_, "base_link", "bracelet_link"));
+        ASSERT_TRUE(mj_kdl::init_env(&env_, &sc));
+        model_ = env_.model;
+        data_  = env_.data;
+        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s_, &env_, "base_link", "bracelet_link"));
 
         n_ = static_cast<unsigned>(s_.n_joints);
 
@@ -64,15 +67,7 @@ class MjcfVelCtrlTest : public testing::Test
         // POSITION mode: initialise pos_cmd to home so the servo starts settled.
         s_.ctrl_mode = mj_kdl::CtrlMode::POSITION;
         for (unsigned i = 0; i < n_; ++i) { s_.jnt_pos_cmd[i] = kHomePose[i]; }
-        mj_kdl::update(&s_);
-    }
-
-    void TearDown() override
-    {
-        if (model_) {
-            mj_kdl::cleanup(&s_);
-            mj_kdl::destroy_scene(model_, data_);
-        }
+        mj_kdl::update(&env_);
     }
 };
 
@@ -82,7 +77,7 @@ TEST_F(MjcfVelCtrlTest, Convergence)
     bool         arrived = false;
 
     while (data_->time < kTimeout && !arrived) {
-        mj_kdl::update(&s_); // reads sensors, applies prev pos_cmd to servo
+        mj_kdl::update(&env_); // reads sensors, applies prev pos_cmd to servo
 
         double max_err = 0.0;
         for (unsigned i = 0; i < n_; ++i) {
@@ -98,7 +93,7 @@ TEST_F(MjcfVelCtrlTest, Convergence)
             for (unsigned i = 0; i < n_; ++i) s_.jnt_pos_cmd[i] = s_.jnt_pos_msr[i];
         }
 
-        mj_kdl::step(&s_);
+        mj_kdl::step(&env_);
     }
 
     double max_err = 0.0;

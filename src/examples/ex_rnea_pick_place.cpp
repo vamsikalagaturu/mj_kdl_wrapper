@@ -180,34 +180,30 @@ int main(int argc, char *argv[])
     scene.objects.push_back(table);
     scene.objects.push_back(make_cube(kTableZ));
 
-    mjModel *model = nullptr;
-    mjData  *data  = nullptr;
-    if (!mj_kdl::build_scene(&model, &data, &scene)) {
-        std::cerr << "build_scene() failed\n";
+    mj_kdl::Env env;
+    if (!mj_kdl::init_env(&env, &scene)) {
+        std::cerr << "init_env() failed\n";
         return 1;
     }
+    const mjModel *model = env.model;
+    mjData        *data  = env.data;
 
     mj_kdl::ToolFrameSpec tool;
     tool.tool_body = "g_base";
     tool.tcp_site  = "g_pinch";
 
     mj_kdl::Robot robot;
-    if (!mj_kdl::init_robot_from_mjcf(
-          &robot, model, data, "base_link", "bracelet_link", "", &tool
-        )) {
+    if (!mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool)) {
         std::cerr << "init_robot_from_mjcf() failed\n";
-        mj_kdl::destroy_scene(model, data);
         return 1;
     }
 
-    const unsigned n           = robot.chain.getNrOfJoints();
-    const unsigned ns          = robot.chain.getNrOfSegments();
-    const int      fingers_act = mj_name2id(model, mjOBJ_ACTUATOR, "g_fingers_actuator");
-    const int      cube_jnt    = mj_name2id(model, mjOBJ_JOINT, "cube_joint");
-    if (fingers_act < 0 || cube_jnt < 0) {
+    const unsigned             n        = robot.chain.getNrOfJoints();
+    const unsigned             ns       = robot.chain.getNrOfSegments();
+    mj_kdl::SceneActuatorSlot *fingers  = mj_kdl::bind_scene_actuator(&env.scene, "g_fingers_actuator");
+    const int                  cube_jnt = mj_name2id(model, mjOBJ_JOINT, "cube_joint");
+    if (!fingers || cube_jnt < 0) {
         std::cerr << "required actuator or cube joint not found\n";
-        mj_kdl::cleanup(&robot);
-        mj_kdl::destroy_scene(model, data);
         return 1;
     }
 
@@ -218,11 +214,11 @@ int main(int argc, char *argv[])
     KDL::JntArray                   q_min(n), q_max(n);
     std::vector<bool>               joint_limited(n, false);
     for (unsigned i = 0; i < n; ++i) {
-        int jid = model->dof_jntid[robot.kdl_to_mj_dof[i]];
-        if (model->jnt_limited[jid]) {
+        const auto [lo, hi] = robot.joint_limits[i];
+        if (std::isfinite(lo) && std::isfinite(hi)) {
             joint_limited[i] = true;
-            q_min(i)         = model->jnt_range[2 * jid];
-            q_max(i)         = model->jnt_range[2 * jid + 1];
+            q_min(i)         = lo;
+            q_max(i)         = hi;
         } else {
             q_min(i) = -2 * M_PI;
             q_max(i) = 2 * M_PI;
@@ -267,8 +263,6 @@ int main(int argc, char *argv[])
             )) {
             std::cerr << "IK failed for waypoint at world [" << wp.world_x << ", " << wp.world_y
                       << ", " << wp.world_z << "]\n";
-            mj_kdl::cleanup(&robot);
-            mj_kdl::destroy_scene(model, data);
             return 1;
         }
         KDL::Frame fk_out;
@@ -277,8 +271,6 @@ int main(int argc, char *argv[])
         if (pos_err > kIkTol) {
             std::cerr << "IK pose error " << pos_err << " exceeds tolerance at world ["
                       << wp.world_x << ", " << wp.world_y << ", " << wp.world_z << "]\n";
-            mj_kdl::cleanup(&robot);
-            mj_kdl::destroy_scene(model, data);
             return 1;
         }
     }
@@ -296,7 +288,7 @@ int main(int argc, char *argv[])
         { "HOLD",        &q_place_above, headless ? 1.0 : 1e9, headless ? 1.0 : 1e9, -1.0,  0.0  },
     };
 
-    robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
+    if (!mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::TORQUE)) return 1;
     int qadr = model->jnt_qposadr[cube_jnt];
 
     auto reset_cube = [&]() {
@@ -307,16 +299,10 @@ int main(int argc, char *argv[])
         data->qpos[qadr + 4] = data->qpos[qadr + 5] = data->qpos[qadr + 6] = 0.0;
     };
 
-    mj_kdl::Env env;
-    env.spec  = scene;
-    env.model = model;
-    env.data  = data;
-    mj_kdl::env_add_robot(&env, &robot);
-
     env.on_reset = [&](mj_kdl::ResetContext *) {
-        mj_kdl::set_joint_pos(&robot, q_home, false);
+        mj_kdl::set_joint_pos(&robot, q_home);
         reset_cube();
-        data->ctrl[fingers_act] = 0.0;
+        data->ctrl[fingers->ctrl_id] = 0.0;
     };
 
     KDL::JntArray q_enter(n), q_des(n);
@@ -332,11 +318,8 @@ int main(int argc, char *argv[])
 
     reset_scene();
 
-    mj_kdl::Viewer viewer;
-    if (!headless && !mj_kdl::init_window_sim(&viewer, &robot)) {
-        std::cerr << "init_window_sim() failed\n";
-        mj_kdl::cleanup(&robot);
-        mj_kdl::destroy_scene(model, data);
+    if (!headless && !mj_kdl::open_viewer(&env)) {
+        std::cerr << "open_viewer() failed\n";
         return 1;
     }
 
@@ -359,8 +342,8 @@ int main(int argc, char *argv[])
                   phase.duration > 0.0 ? clamp01((data->time - t_enter) / phase.duration) : 1.0;
                 lerp_q(q_enter, *phase.target, alpha, q_des);
                 rnea_ctrl(robot, q_des, n, rnea, q_buf, qdot_buf, qddot_des, torques, f_ext);
-                mj_kdl::update(&robot);
-                data->ctrl[fingers_act] = phase.gripper_cmd;
+                fingers->command = phase.gripper_cmd;
+                mj_kdl::update(&env);
 
                 double t_rel        = data->time - t_enter;
                 bool   done_time    = t_rel >= phase.duration;
@@ -369,12 +352,11 @@ int main(int argc, char *argv[])
                 bool   done_timeout = phase.timeout > 0.0 && t_rel >= phase.timeout;
                 if ((done_time && done_pose) || done_timeout) break;
 
-                if (!mj_kdl::step(&robot)) {
-
-                mj_kdl::pace_realtime(&robot);
+                if (!mj_kdl::step(&env)) {
                     aborted = true;
                     break;
                 }
+                mj_kdl::pace_realtime(&env);
             }
         }
     } while (restart);
@@ -391,8 +373,6 @@ int main(int argc, char *argv[])
                   << "] xy_error=" << place_err_xy << "\n";
         if (headless && place_err_xy > 0.08) ret = 1;
     }
-    if (!headless) mj_kdl::cleanup(&viewer);
-    mj_kdl::cleanup(&robot);
-    mj_kdl::destroy_scene(model, data);
+    mj_kdl::cleanup(&env);
     return ret;
 }

@@ -40,7 +40,7 @@ def test_ft_sensor_returns_pykdl_wrench():
     spec.add_skybox = True
     spec.robots = [robot_spec]
 
-    scene = mjk.Scene.build(spec)
+    env = mjk.Env.build(spec)
     try:
         ft_spec = mjk.ForceTorqueSensorSpec()
         ft_spec.name = "wrist_ft"
@@ -51,11 +51,11 @@ def test_ft_sensor_returns_pykdl_wrench():
         tool.tcp_site = "g_pinch"
         tool.ft_sensors = [ft_spec]
 
-        robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link", tool=tool)
-        robot.update()
+        robot = env.create_robot("base_link", "bracelet_link", tool=tool)
+        env.update()
 
         assert robot.ft_sensor_names == ["wrist_ft"]
         assert isinstance(robot.ft_sensor("wrist_ft"), kdl.Wrench)
         assert isinstance(robot.ft_sensor_frame("wrist_ft"), kdl.Frame)
     finally:
-        scene.close()
+        env.close()

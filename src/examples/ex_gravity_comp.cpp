@@ -40,16 +40,14 @@ int main(int argc, char *argv[])
     r.path = mjcf.c_str();
     sc.robots.push_back(r);
 
-    mjModel      *model = nullptr;
-    mjData       *data  = nullptr;
+    mj_kdl::Env   env;
     mj_kdl::Robot robot;
-    if (!mj_kdl::build_scene(&model, &data, &sc)) {
-        std::cerr << "build_scene() failed\n";
+    if (!mj_kdl::init_env(&env, &sc)) {
+        std::cerr << "init_env() failed\n";
         return 1;
     }
-    if (!mj_kdl::init_robot_from_mjcf(&robot, model, data, "base_link", "bracelet_link")) {
+    if (!mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link")) {
         std::cerr << "init_robot_from_mjcf() failed\n";
-        mj_kdl::destroy_scene(model, data);
         return 1;
     }
 
@@ -60,23 +58,15 @@ int main(int argc, char *argv[])
     KDL::JntArray q_home(n);
     for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
 
-    robot.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
+    if (!mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::TORQUE)) return 1;
 
-    mj_kdl::Env env;
-    env.spec  = sc;
-    env.model = model;
-    env.data  = data;
-    mj_kdl::env_add_robot(&env, &robot);
-
-    env.on_reset = [&](mj_kdl::ResetContext *) {
-        mj_kdl::set_joint_pos(&robot, q_home, false);
-    };
+    env.on_reset = [&](mj_kdl::ResetContext *) { mj_kdl::set_joint_pos(&robot, q_home); };
 
     mj_kdl::reset(&env);
 
     KDL::JntArray q(n), g(n);
     auto          ctrl_step = [&]() {
-        mj_kdl::update(&robot);
+        mj_kdl::update(&env);
         for (unsigned i = 0; i < n; ++i) q(i) = robot.jnt_pos_msr[i];
         dyn.JntToGravity(q, g);
         for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = g(i);
@@ -88,8 +78,7 @@ int main(int argc, char *argv[])
 
         for (int step = 0; step < 500; ++step) {
             ctrl_step();
-            mj_kdl::step(&robot);
-            mj_kdl::pace_realtime(&robot);
+            mj_kdl::step(&env);
         }
 
         KDL::JntArray q_end(n);
@@ -100,27 +89,17 @@ int main(int argc, char *argv[])
         std::cout << "EE drift after 500 steps: " << std::fixed << std::setprecision(3)
                   << drift * 1000.0 << " mm\n";
     } else {
-        mj_kdl::Viewer viewer;
-        if (!mj_kdl::init_window_sim(&viewer, &robot)) {
-            std::cerr << "init_window_sim() failed\n";
-            mj_kdl::cleanup(&robot);
-            mj_kdl::destroy_scene(model, data);
+        if (!mj_kdl::open_viewer(&env)) {
+            std::cerr << "open_viewer() failed\n";
             return 1;
         }
-
-        double prev_sim_time = data->time;
         while (true) {
-            if (data->time < prev_sim_time - 1e-6) mj_kdl::reset(&env);
-            prev_sim_time = data->time;
             ctrl_step();
-            if (!mj_kdl::step(&robot)) break;
-            mj_kdl::pace_realtime(&robot);
+            if (!mj_kdl::step(&env)) break;
+            mj_kdl::pace_realtime(&env);
         }
-
-        mj_kdl::cleanup(&viewer);
     }
 
-    mj_kdl::cleanup(&robot);
-    mj_kdl::destroy_scene(model, data);
+    mj_kdl::cleanup(&env);
     return 0;
 }

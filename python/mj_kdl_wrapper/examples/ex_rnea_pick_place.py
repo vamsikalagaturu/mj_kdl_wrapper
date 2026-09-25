@@ -9,6 +9,7 @@ cube, and opens the gripper so the simulate-UI reset replays the task.
 from __future__ import annotations
 
 import argparse
+import math
 
 import PyKDL as kdl
 import mj_kdl_wrapper as mjk
@@ -17,7 +18,11 @@ HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 KP = [100.0, 200.0, 100.0, 200.0, 100.0, 200.0, 100.0]
 KD = [20.0, 28.0, 20.0, 28.0, 20.0, 28.0, 20.0]
 SURFACE_Z = 0.70
-CUBE_START = [0.40, 0.0, SURFACE_Z + 0.02]
+CUBE_HS = 0.02
+PICK = [0.40, 0.00]
+PLACE = [0.40, 0.24]
+CUBE_START = [PICK[0], PICK[1], SURFACE_Z + CUBE_HS]
+IK_TOL = 2e-3
 
 
 class ResetRequested(Exception):
@@ -72,48 +77,58 @@ def as_list(q: kdl.JntArray) -> list[float]:
     return [q[i] for i in range(q.rows())]
 
 
-def solve_position_ik(chain: kdl.Chain, seed_values: list[float], target: kdl.Vector) -> list[float]:
+def solve_pose_ik(chain, limits, seed_values: list[float], target: kdl.Frame) -> list[float]:
     fk = kdl.ChainFkSolverPos_recursive(chain)
     ik = kdl.ChainIkSolverVel_wdls(chain)
     ik.setLambda(0.05)
     q = jnt(seed_values)
     dq = kdl.JntArray(q.rows())
-    for _ in range(700):
+    for _ in range(300):
         current = kdl.Frame()
         fk.JntToCart(q, current)
-        dx = kdl.diff(current, kdl.Frame(current.M, target))
-        dx.rot = kdl.Vector.Zero()
-        if dx.vel.Norm() < 0.003:
+        dx = kdl.diff(current, target)
+        if dx.vel.Norm() <= IK_TOL and dx.rot.Norm() <= 2e-2:
             return as_list(q)
         if dx.vel.Norm() > 0.05:
             dx.vel = dx.vel * (0.05 / dx.vel.Norm())
+        if dx.rot.Norm() > 0.20:
+            dx.rot = dx.rot * (0.20 / dx.rot.Norm())
         if ik.CartToJnt(q, dx, dq) < 0:
             raise RuntimeError("PyKDL IK velocity step failed")
         for i in range(q.rows()):
-            q[i] += dq[i]
+            lo, hi = limits[i]
+            q[i] = min(hi, max(lo, q[i] + dq[i]))
     raise RuntimeError("PyKDL IK did not converge")
 
 
-def waypoints(chain: kdl.Chain) -> dict[str, list[float]]:
+def waypoints(robot) -> dict[str, list[float]]:
+    chain = robot.kdl_chain()
+    limits = [
+        (lo, hi) if math.isfinite(lo) and math.isfinite(hi) else (-2 * math.pi, 2 * math.pi)
+        for lo, hi in robot.joint_limits
+    ]
+    grasp_rot = robot.tip_to_tcp.M
     seed = HOME[:]
 
-    def solve(pos):
+    # World targets, in the arm base frame (the arm stands on the table top).
+    def solve(xy, z):
         nonlocal seed
-        seed = solve_position_ik(chain, seed, kdl.Vector(*pos))
+        target = kdl.Frame(grasp_rot, kdl.Vector(xy[0], xy[1], z))
+        seed = solve_pose_ik(chain, limits, seed, target)
         return seed[:]
 
+    z_grasp = CUBE_HS
     return {
         "home": HOME[:],
-        "pick_above": solve([0.40, 0.0, 0.24]),
-        "pick": solve([0.40, 0.0, 0.04]),
-        "lift": solve([0.40, 0.0, 0.34]),
-        "place_above": solve([0.40, 0.24, 0.24]),
-        "place": solve([0.40, 0.24, 0.04]),
+        "pick_above": solve(PICK, z_grasp + 0.20),
+        "pick": solve(PICK, z_grasp),
+        "lift": solve(PICK, z_grasp + 0.30),
+        "place_above": solve(PLACE, z_grasp + 0.20),
+        "place": solve(PLACE, z_grasp),
     }
 
 
 def rnea_controller(robot, solver, chain, target: list[float]) -> None:
-    robot.update()
     q = jnt(robot.jnt_pos_msr)
     qdot = jnt(robot.jnt_vel_msr)
     qddot = kdl.JntArray(robot.n_joints)
@@ -124,36 +139,41 @@ def rnea_controller(robot, solver, chain, target: list[float]) -> None:
     if solver.CartToJnt(q, qdot, qddot, wrenches, tau) < 0:
         raise RuntimeError("PyKDL RNEA failed")
     robot.jnt_trq_cmd = as_list(tau)
-    robot.update()
 
 
-def step_once(env, robot, viewer, state) -> bool:
-    ok = viewer.step() if viewer is not None else robot.step()
-    if not ok:
+# The UI's reset button has already reset env (on_reset included); restart the phases.
+def step_once(env, gui, state) -> bool:
+    if not env.step():
         return False
-    if viewer is not None and env.time() < state["prev"] - 1e-6:
-        env.reset()
+    if gui and env.time() < state["prev"] - 1e-6:
         state["prev"] = env.time()
         raise ResetRequested()
     state["prev"] = env.time()
     return True
 
 
-def run_phase(env, robot, solver, chain, phase, viewer, state) -> bool:
+def run_phase(env, robot, solver, chain, phase, gui, state) -> bool:
     print(f"State: {phase['name']}")
     start = robot.jnt_pos_msr[:]
     t0 = env.time()
-    while env.time() - t0 < phase["duration"]:
-        a = max(0.0, min(1.0, (env.time() - t0) / phase["duration"]))
+    while True:
+        t_rel = env.time() - t0
+        a = max(0.0, min(1.0, t_rel / phase["duration"]))
         target = [x + a * (y - x) for x, y in zip(start, phase["target"])]
         rnea_controller(robot, solver, chain, target)
         if env.has_actuator("g_fingers_actuator"):
             env.set_actuator_ctrl("g_fingers_actuator", phase["gripper"])
-        if viewer is not None and not viewer.is_running():
+        env.update()
+
+        # Ramp for the duration, then settle to the tolerance, never past the timeout.
+        err = max(abs(q - t) for q, t in zip(robot.jnt_pos_msr, phase["target"]))
+        settled = phase["tol"] < 0.0 or err <= phase["tol"]
+        if (t_rel >= phase["duration"] and settled) or t_rel >= phase["timeout"]:
+            return True
+        if gui and not env.viewer.is_running():
             return False
-        if not step_once(env, robot, viewer, state):
+        if not step_once(env, gui, state):
             return False
-    return True
 
 
 def main() -> int:
@@ -165,10 +185,10 @@ def main() -> int:
     try:
         chain = robot.kdl_chain()
         solver = kdl.ChainIdSolver_RNE(chain, kdl.Vector(0.0, 0.0, -9.81))
-        robot.ctrl_mode = mjk.CtrlMode.TORQUE
+        robot.set_control_mode(mjk.CtrlMode.TORQUE)
 
         def on_reset(ctx):
-            robot.set_joint_pos(HOME, call_forward=False)
+            robot.set_joint_pos(HOME)
             env.set_body_pose("cube", CUBE_START)
             if env.has_actuator("g_fingers_actuator"):
                 env.set_actuator_ctrl("g_fingers_actuator", 0.0)
@@ -176,44 +196,57 @@ def main() -> int:
         env.on_reset = on_reset
         env.reset()
 
-        q = waypoints(chain)
+        q = waypoints(robot)
+
+        # name, target, ramp duration [s], timeout [s], settle tolerance [rad] (-1 none), gripper
+        def phase(name, target, duration, timeout, tol, gripper):
+            return {
+                "name": name,
+                "target": q[target],
+                "duration": duration,
+                "timeout": timeout,
+                "tol": tol,
+                "gripper": gripper,
+            }
+
         phases = [
-            {"name": "HOME", "target": q["home"], "duration": 0.8, "gripper": 0.0},
-            {"name": "PICK_ABOVE", "target": q["pick_above"], "duration": 2.0, "gripper": 0.0},
-            {"name": "PICK", "target": q["pick"], "duration": 2.0, "gripper": 0.0},
-            {"name": "CLOSE", "target": q["pick"], "duration": 1.0, "gripper": 255.0},
-            {"name": "LIFT", "target": q["lift"], "duration": 1.5, "gripper": 255.0},
-            {"name": "PLACE_ABOVE", "target": q["place_above"], "duration": 1.5, "gripper": 255.0},
-            {"name": "PLACE", "target": q["place"], "duration": 2.0, "gripper": 255.0},
-            {"name": "OPEN", "target": q["place"], "duration": 0.8, "gripper": 0.0},
-            {"name": "RETREAT", "target": q["place_above"], "duration": 1.2, "gripper": 0.0},
+            phase("HOME", "home", 1.0, 2.5, 0.08, 0.0),
+            phase("PICK_ABOVE", "pick_above", 5.0, 7.0, 0.08, 0.0),
+            phase("PICK", "pick", 5.0, 8.0, 0.03, 0.0),
+            phase("CLOSE", "pick", 1.5, 2.5, -1.0, 0.8),
+            phase("LIFT", "lift", 3.0, 5.0, 0.08, 0.8),
+            phase("PLACE_ABOVE", "place_above", 3.0, 5.0, 0.08, 0.8),
+            phase("PLACE", "place", 5.0, 8.0, 0.03, 0.8),
+            phase("OPEN", "place", 1.0, 2.0, -1.0, 0.0),
+            phase("RETREAT", "place_above", 2.0, 4.0, 0.08, 0.0),
         ]
         state = {"prev": env.time()}
         if args.gui:
-            viewer = mjk.SimulateViewer.open(robot, "ex_rnea_pick_place.py")
-            try:
-                while viewer.is_running():
-                    try:
-                        for phase in phases:
-                            if not run_phase(env, robot, solver, chain, phase, viewer, state):
-                                raise StopIteration
-                        break
-                    except ResetRequested:
-                        continue
-                    except StopIteration:
-                        break
-            finally:
-                viewer.close()
+            env.open_viewer("ex_rnea_pick_place.py")
+            while env.viewer.is_running():
+                try:
+                    for phase in phases:
+                        if not run_phase(env, robot, solver, chain, phase, True, state):
+                            raise StopIteration
+                    break
+                except ResetRequested:
+                    continue
+                except StopIteration:
+                    break
         else:
             for phase in phases:
-                if not run_phase(env, robot, solver, chain, phase, None, state):
+                if not run_phase(env, robot, solver, chain, phase, False, state):
                     break
         cube_frame = env.body_frame("cube")
         cube_pos = [cube_frame.p.x(), cube_frame.p.y(), cube_frame.p.z()]
-        print(f"cube final position: {[round(x, 3) for x in cube_pos]}")
+        place_err_xy = math.hypot(cube_pos[0] - PLACE[0], cube_pos[1] - PLACE[1])
+        print(
+            f"cube final position: {[round(x, 3) for x in cube_pos]} "
+            f"target={PLACE + [SURFACE_Z + CUBE_HS]} xy_error={place_err_xy:.3f}"
+        )
     finally:
         env.close()
-    return 0
+    return 1 if not args.gui and place_err_xy > 0.08 else 0
 
 
 if __name__ == "__main__":

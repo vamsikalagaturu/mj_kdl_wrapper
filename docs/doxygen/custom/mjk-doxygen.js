@@ -93,23 +93,21 @@
     ResetOptions: "classmj__kdl__wrapper_1_1__mj__kdl__wrapper_1_1ResetOptions.html",
     Robot: "classmj__kdl__wrapper_1_1__mj__kdl__wrapper_1_1Robot.html",
     RobotSpec: "classmj__kdl__wrapper_1_1__mj__kdl__wrapper_1_1RobotSpec.html",
-    Scene: "classmj__kdl__wrapper_1_1__mj__kdl__wrapper_1_1Scene.html",
     SceneObject: "classmj__kdl__wrapper_1_1__mj__kdl__wrapper_1_1SceneObject.html",
     SceneSpec: "classmj__kdl__wrapper_1_1__mj__kdl__wrapper_1_1SceneSpec.html",
     Shape: "classmj__kdl__wrapper_1_1__mj__kdl__wrapper_1_1Shape.html",
-    SimulateViewer: "classmj__kdl__wrapper_1_1__mj__kdl__wrapper_1_1SimulateViewer.html",
     ToolFrameSpec: "classmj__kdl__wrapper_1_1__mj__kdl__wrapper_1_1ToolFrameSpec.html",
     VideoRecorder: "classmj__kdl__wrapper_1_1__mj__kdl__wrapper_1_1VideoRecorder.html",
     VideoResolution: "classmj__kdl__wrapper_1_1__mj__kdl__wrapper_1_1VideoResolution.html",
+    Viewer: "classmj__kdl__wrapper_1_1__mj__kdl__wrapper_1_1Viewer.html",
   };
   var commonPythonVariables = {
     env: "Env",
     recorder: "VideoRecorder",
     robot: "Robot",
     robot_spec: "RobotSpec",
-    scene: "Scene",
     spec: "SceneSpec",
-    viewer: "SimulateViewer",
+    viewer: "Viewer",
   };
   var pythonMethodNames = {
     add_object: true,
@@ -118,7 +116,6 @@
     build: true,
     close: true,
     fk_frame: true,
-    from_scene: true,
     from_spec: true,
     kdl_chain: true,
     remove_object: true,
@@ -346,7 +343,7 @@
     var apiPattern =
       /\b(mjk|mj_kdl_wrapper)\.([A-Z][A-Za-z0-9_]*)(?:\.([A-Za-z_][A-Za-z0-9_]*))?\b|\b(mjk|mj_kdl_wrapper)\.([a-z_][A-Za-z0-9_]*)\b/g;
     var methodPattern =
-      /\b([A-Za-z_][A-Za-z0-9_]*)\.(add_object|add_robot|body_frame|build|close|fk_frame|from_scene|from_spec|kdl_chain|remove_object|reset|save_xml|site_frame|start|step|stop|update)\b/g;
+      /\b([A-Za-z_][A-Za-z0-9_]*)\.(add_object|add_robot|body_frame|build|close|fk_frame|from_spec|kdl_chain|remove_object|reset|save_xml|site_frame|start|step|stop|update)\b/g;
 
     document.querySelectorAll(".fragment").forEach(function (fragment) {
       var variables = inferPythonVariables(fragment);

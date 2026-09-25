@@ -37,29 +37,29 @@ def _skip_without_model() -> None:
     _model_path()
 
 
-def test_build_scene_and_robot_step():
+def test_build_env_and_step_robot():
     _skip_without_model()
 
-    scene = mjk.Scene.build(_scene_spec())
+    env = mjk.Env.build(_scene_spec())
     try:
-        robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link")
-        robot.update()
+        robot = env.create_robot("base_link", "bracelet_link")
+        env.update()
         assert robot.n_joints == 7
         assert len(robot.joint_names) == 7
         assert len(robot.jnt_pos_msr) == 7
         robot.jnt_pos_cmd = [0.0] * robot.n_joints
-        assert robot.step()
+        assert env.step()
     finally:
-        scene.close()
+        env.close()
 
 
 def test_pykdl_chain_frame_and_joint_array_interop():
     _skip_without_model()
     kdl = pytest.importorskip("PyKDL")
 
-    scene = mjk.Scene.build(_scene_spec())
+    env = mjk.Env.build(_scene_spec())
     try:
-        robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link")
+        robot = env.create_robot("base_link", "bracelet_link")
         chain = robot.kdl_chain()
         assert isinstance(chain, kdl.Chain)
         assert chain.getNrOfJoints() == robot.n_joints
@@ -69,83 +69,41 @@ def test_pykdl_chain_frame_and_joint_array_interop():
         assert isinstance(frame, kdl.Frame)
         robot.set_joint_pos(q)
     finally:
-        scene.close()
+        env.close()
 
 
-def test_scene_add_object_keeps_existing_robot_handle_valid():
-    _skip_without_model()
-
-    scene = mjk.Scene.build(_scene_spec())
-    try:
-        robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link")
-        scene.add_object(_cube())
-        robot.update()
-        assert robot.n_joints == 7
-        assert robot.jnt_pos_msr != pytest.approx([0.4, 0.0, 0.8, 1.0, 0.0, 0.0, 0.0])
-        assert robot.step()
-    finally:
-        scene.close()
-
-
-def test_scene_remove_object_keeps_existing_robot_handle_valid():
-    _skip_without_model()
-
-    spec = _scene_spec()
-    spec.objects = [_cube()]
-    scene = mjk.Scene.build(spec)
-    try:
-        robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link")
-        scene.remove_object("cube")
-        robot.update()
-        assert robot.n_joints == 7
-        assert len(robot.jnt_pos_msr) == 7
-        assert robot.step()
-    finally:
-        scene.close()
-
-
-def test_env_add_remove_object_rebuilds_robot_joint_maps():
+def test_add_remove_object_keeps_robot_handle_valid():
     _skip_without_model()
 
     env = mjk.Env.build(_scene_spec())
     try:
         robot = env.create_robot("base_link", "bracelet_link")
         env.add_object(_cube())
-        robot.update()
+        env.update()
         assert robot.n_joints == 7
         assert robot.jnt_pos_msr != pytest.approx([0.4, 0.0, 0.8, 1.0, 0.0, 0.0, 0.0])
-        assert robot.step()
+        assert env.step()
         env.remove_object("cube")
-        robot.update()
+        env.update()
         assert robot.n_joints == 7
         assert len(robot.jnt_pos_msr) == 7
-        assert robot.step()
+        assert env.step()
     finally:
         env.close()
 
 
-def test_scene_and_env_close_invalidate_robot_handles():
+def test_env_close_invalidates_robot_handles():
     _skip_without_model()
 
-    scene = mjk.Scene.build(_scene_spec())
-    scene_robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link")
-    scene.close()
-    with pytest.raises(RuntimeError, match="robot is closed"):
-        scene_robot.update()
-    with pytest.raises(RuntimeError, match="robot is closed"):
-        scene_robot.step()
-    with pytest.raises(RuntimeError, match="robot is closed"):
-        _ = scene_robot.jnt_pos_msr
-
     env = mjk.Env.build(_scene_spec())
-    env_robot = env.create_robot("base_link", "bracelet_link")
+    robot = env.create_robot("base_link", "bracelet_link")
     env.close()
+    with pytest.raises(RuntimeError, match="env is closed"):
+        env.update()
+    with pytest.raises(RuntimeError, match="env is closed"):
+        env.step()
     with pytest.raises(RuntimeError, match="robot is closed"):
-        env_robot.update()
-    with pytest.raises(RuntimeError, match="robot is closed"):
-        env_robot.step()
-    with pytest.raises(RuntimeError, match="robot is closed"):
-        _ = env_robot.jnt_pos_msr
+        _ = robot.jnt_pos_msr
 
 
 def test_control_modes_switch_and_opt_out():
@@ -156,14 +114,14 @@ def test_control_modes_switch_and_opt_out():
     try:
         robot = env.create_robot("base_link", "bracelet_link")
         assert robot.ctrl_mode == mjk.CtrlMode.POSITION
-        robot.update()
+        env.update()
         robot.set_control_mode(mjk.CtrlMode.TORQUE)
         assert robot.ctrl_mode == mjk.CtrlMode.TORQUE
         assert robot.jnt_trq_cmd == [0.0] * robot.n_joints
         assert len(robot.jnt_vel_cmd) == robot.n_joints
         assert robot.jnt_saturated == [False] * robot.n_joints
         robot.jnt_trq_cmd = [1000.0] * robot.n_joints
-        robot.update()
+        env.update()
         assert robot.jnt_saturated == [True] * robot.n_joints
         with pytest.raises(RuntimeError, match="control mode"):
             robot.set_control_mode(mjk.CtrlMode.VELOCITY)
@@ -188,13 +146,39 @@ def test_set_body_pose_accepts_python_xyzw_quaternion():
 
     spec = _scene_spec()
     spec.objects = [_cube()]
-    scene = mjk.Scene.build(spec)
+    env = mjk.Env.build(spec)
     try:
         quat_xyzw = [0.7071067811865476, 0.0, 0.0, 0.7071067811865476]
-        scene.set_body_pose("cube", [0.1, 0.2, 0.3], quat_xyzw)
-        frame = scene.body_frame("cube")
+        env.set_body_pose("cube", [0.1, 0.2, 0.3], quat_xyzw)
+        frame = env.body_frame("cube")
         assert isinstance(frame, kdl.Frame)
         x, y, z, w = frame.M.GetQuaternion()
         assert [x, y, z, w] == pytest.approx(quat_xyzw)
+        assert list(frame.p) == pytest.approx([0.1, 0.2, 0.3])
     finally:
-        scene.close()
+        env.close()
+
+
+def test_reset_restores_commands_and_slots():
+    _skip_without_model()
+
+    spec = _scene_spec()
+    spec.objects = [_cube()]
+    env = mjk.Env.build(spec)
+    try:
+        robot = env.create_robot("base_link", "bracelet_link")
+        robot.jnt_pos_cmd = [0.3] * robot.n_joints
+        env.set_body_wrench("cube", [0.0, 0.0, 50.0])
+        for _ in range(50):
+            env.update()
+            env.step()
+        env.reset()
+        assert robot.jnt_pos_cmd == pytest.approx(robot.jnt_pos_msr)
+        env.update()
+        z0 = env.body_frame("cube").p.z()
+        for _ in range(50):
+            env.update()
+            env.step()
+        assert env.body_frame("cube").p.z() < z0, "the reset cleared the lifting wrench"
+    finally:
+        env.close()

@@ -176,14 +176,14 @@ def build_waypoints(env: mjk.Env, robot: mjk.Robot) -> dict[str, list[float]]:
     }
 
 
-def apply_pd_gravity(robot: mjk.Robot, target: list[float]) -> None:
-    robot.update()
+def apply_pd_gravity(env: mjk.Env, robot: mjk.Robot, target: list[float]) -> None:
+    env.update()
     gravity = robot.gravity_torques(-9.81)
     robot.jnt_trq_cmd = [
         KP[i] * (target[i] - robot.jnt_pos_msr[i]) - KD[i] * robot.jnt_vel_msr[i] + gravity[i]
         for i in range(robot.n_joints)
     ]
-    robot.update()
+    env.update()
 
 
 def max_abs_joint_err(robot: mjk.Robot, target: list[float]) -> float:
@@ -194,46 +194,37 @@ def lerp(start: list[float], target: list[float], alpha: float) -> list[float]:
     return [a + alpha * (b - a) for a, b in zip(start, target)]
 
 
-def step_once(
-    env: mjk.Env, robot: mjk.Robot, viewer: mjk.SimulateViewer | None, state: dict
-) -> bool:
-    ok = viewer.step() if viewer is not None else robot.step()
-    if not ok:
+# The UI's reset button has already reset env (on_reset included); restart the phases.
+def step_once(env: mjk.Env, gui: bool, state: dict) -> bool:
+    if not env.step():
         return False
-    if viewer is not None and env.time() < state["prev"] - 1e-6:
-        env.reset()
+    if gui and env.time() < state["prev"] - 1e-6:
         state["prev"] = env.time()
         raise ResetRequested()
     state["prev"] = env.time()
     return True
 
 
-def run_phase(
-    env: mjk.Env,
-    robot: mjk.Robot,
-    phase: Phase,
-    viewer: mjk.SimulateViewer | None,
-    state: dict,
-) -> bool:
+def run_phase(env: mjk.Env, robot: mjk.Robot, phase: Phase, gui: bool, state: dict) -> bool:
     print(f"State: {phase.name}")
-    robot.update()
+    env.update()
     start = robot.jnt_pos_msr[:]
     t0 = env.time()
     while True:
         elapsed = env.time() - t0
         alpha = clamp(elapsed / phase.duration, 0.0, 1.0) if phase.duration > 0.0 else 1.0
-        apply_pd_gravity(robot, lerp(start, phase.target, alpha))
         if env.has_actuator("g_fingers_actuator"):
             env.set_actuator_ctrl("g_fingers_actuator", phase.gripper)
+        apply_pd_gravity(env, robot, lerp(start, phase.target, alpha))
 
         done_time = elapsed >= phase.duration
         done_pose = phase.settle_tol < 0.0 or max_abs_joint_err(robot, phase.target) <= phase.settle_tol
         done_timeout = phase.timeout > 0.0 and elapsed >= phase.timeout
         if (done_time and done_pose) or done_timeout:
             return True
-        if viewer is not None and not viewer.is_running():
+        if gui and not env.viewer.is_running():
             return False
-        if not step_once(env, robot, viewer, state):
+        if not step_once(env, gui, state):
             return False
 
 
@@ -245,10 +236,10 @@ def main() -> int:
 
     env, robot = build_env()
     try:
-        robot.ctrl_mode = mjk.CtrlMode.TORQUE
+        robot.set_control_mode(mjk.CtrlMode.TORQUE)
 
         def on_reset(ctx):
-            robot.set_joint_pos(HOME, call_forward=False)
+            robot.set_joint_pos(HOME)
             env.set_body_pose("cube", CUBE_START)
             if env.has_actuator("g_fingers_actuator"):
                 env.set_actuator_ctrl("g_fingers_actuator", 0.0)
@@ -271,23 +262,20 @@ def main() -> int:
         ]
         state = {"prev": env.time()}
         if args.gui:
-            viewer = mjk.SimulateViewer.open(robot, "ex_table_pick_place.py")
-            try:
-                while viewer.is_running():
-                    try:
-                        for phase in phases:
-                            if not run_phase(env, robot, phase, viewer, state):
-                                raise StopIteration
-                        break
-                    except ResetRequested:
-                        continue
-                    except StopIteration:
-                        break
-            finally:
-                viewer.close()
+            env.open_viewer("ex_table_pick_place.py")
+            while env.viewer.is_running():
+                try:
+                    for phase in phases:
+                        if not run_phase(env, robot, phase, True, state):
+                            raise StopIteration
+                    break
+                except ResetRequested:
+                    continue
+                except StopIteration:
+                    break
         else:
             for phase in phases:
-                if not run_phase(env, robot, phase, None, state):
+                if not run_phase(env, robot, phase, False, state):
                     break
         cube = env.body_frame("cube")
         cube_pos = [cube.p.x(), cube.p.y(), cube.p.z()]

@@ -11,7 +11,7 @@ from pathlib import Path
 import mj_kdl_wrapper as mjk
 
 
-def build_scene(model_path: str) -> mjk.Scene:
+def build_scene(model_path: str) -> mjk.Env:
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
@@ -19,20 +19,20 @@ def build_scene(model_path: str) -> mjk.Scene:
     robot_spec = mjk.RobotSpec()
     robot_spec.path = model_path
     spec.robots = [robot_spec]
-    return mjk.Scene.build(spec)
+    return mjk.Env.build(spec)
 
 
 def main() -> int:
     model_path = mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
 
-    scene = build_scene(model_path)
+    env = build_scene(model_path)
     try:
         tmp = tempfile.NamedTemporaryFile(suffix=".mjb", delete=False)
         tmp.close()
         mjb_path = Path(tmp.name)
-        scene.save_binary(str(mjb_path))
+        env.save_binary(str(mjb_path))
     finally:
-        scene.close()
+        env.close()
 
     try:
         viewer_code = """

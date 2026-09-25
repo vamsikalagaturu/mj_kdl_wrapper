@@ -36,19 +36,17 @@ public:
             clamp_to_limits();
         }
         for (int i = 0; i < h.robot.n_joints; ++i) h.robot.jnt_pos_cmd[i] = q_des(i);
-        mj_kdl::set_joint_pos(&h.robot, q_des, true);
-        mj_kdl::update(&h.robot);
+        mj_kdl::set_joint_pos(&h.robot, q_des);
+        mj_kdl::update(&h.env);
     }
 
 private:
+    // joint_limits are +-inf for an unlimited joint, so the clamp leaves it alone.
     void clamp_to_limits()
     {
         for (int i = 0; i < h.robot.n_joints; ++i) {
-            const int dof = h.robot.kdl_to_mj_dof[i];
-            const int jnt = h.model->dof_jntid[dof];
-            if (h.model->jnt_limited[jnt]) {
-                q_des(i) = admittance_ft::clamp(q_des(i), h.model->jnt_range[2 * jnt], h.model->jnt_range[2 * jnt + 1]);
-            }
+            const auto [lo, hi] = h.robot.joint_limits[i];
+            q_des(i)            = admittance_ft::clamp(q_des(i), lo, hi);
         }
     }
 
