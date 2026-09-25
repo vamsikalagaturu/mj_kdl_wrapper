@@ -5,6 +5,7 @@
 - [C++ API Guide](@ref page_api_cpp)
 - [Python Bindings API Guide](@ref page_api_python)
 - [Examples](@ref page_examples)
+- [Conventions: units, frames, quaternions, what persists](@ref page_conventions)
 - [Torque Control and Tool Inertia](@ref page_howto_torque_control)
 - [Importing a URDF Robot](@ref page_howto_urdf)
 - [Loop Pacing and the Real-Time Factor](@ref page_howto_pacing)
@@ -28,8 +29,22 @@ The `Env` now owns everything the loop touches: the model/data, the robots, the 
 | `set_joint_pos(&r, q, call_forward)`, `mark_kinematics_*()` | `set_joint_pos(&r, q)`; frames notice state changes themselves |
 | `init_window()`, `render()`, `cleanup(&viewer)` | removed; `cleanup(&env)` closes the viewer |
 
-`reset(&env)` now re-seeds every robot's ports and F/T readings and every scene slot, and the
-Simulate UI's reset button does the same. A `Robot`'s MuJoCo index maps are private.
+`reset(&env)` now re-seeds every robot's ports and F/T readings and every scene slot, then runs
+`on_reset`, and the Simulate UI's reset button does the same. A `Robot`'s MuJoCo index maps are
+private.
+
+Also changed in 0.4:
+
+| Change | What to do |
+|--------|------------|
+| Calls that can fail return `mj_kdl::Status` instead of `bool` | `if (!s)` still works; print `s.error` |
+| Spec string fields (`path`, `prefix`, `mjcf_path`, `tool_body`, ...) are `std::string` | drop `.c_str()`; empty means not set |
+| `set_body_pose()` takes `[x, y, z, w]` (was `[w, x, y, z]`) | reorder the quaternion |
+| Control modes are MuJoCo actuator groups (`RobotSpec::modes`, `set_control_mode()`) | nothing is written to `qfrc_applied` any more |
+| Unset required numbers (`timestep`, primitive `size`/`mass`/`friction`/`rgba`, camera `pos`/`fovy`) fail the build | set them |
+| Earlier docs used `tool_body = "g_base"` for the 2F-85, which leaves the mount's mass out of KDL | use `"g_base_mount"` |
+| Python: joint ports read as read-only numpy arrays | assign whole vectors; `port[i] = x` raises |
+| Python: `Env.save_xml()` -> `save_model_xml()`, `Robot.tip_to_tcp` -> `tip_T_tcp` | rename; there are no aliases |
 
 ## Migrating from 0.3.1 {#sec_migrate_pacing}
 

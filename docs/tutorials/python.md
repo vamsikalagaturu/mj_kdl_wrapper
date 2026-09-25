@@ -141,7 +141,7 @@ def run_controller(env: mjk.Env, robot: mjk.Robot) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--headless", action="store_true", help="run without opening the Simulate UI")
-    parser.add_argument("--duration", type=float, default=2.0, help="headless run duration in seconds")
+    parser.add_argument("--duration", type=float, default=2.0, help="run duration in seconds")
     args = parser.parse_args()
 
     env, robot = build_env()
@@ -162,8 +162,8 @@ def main() -> int:
             env.open_viewer("python tutorial")
             env.viewer.use_camera("task")
         end_time = env.time() + args.duration
-        # Headless: run for the duration. With a window: until it is closed.
-        while not args.headless or env.time() < end_time:
+        # Ends after the duration either way; closing the window ends it early.
+        while env.time() < end_time:
             run_controller(env, robot)
             if not env.step():
                 break
@@ -208,14 +208,15 @@ env = mjk.Env.build(spec)
 ```
 
 `Env` owns native MuJoCo resources. Call `env.close()` when you want deterministic
-cleanup. For simple scripts, a `try/finally` block keeps that explicit:
+cleanup, or use the `Env` as a context manager:
 
 ```python
-try:
+with mjk.Env.build(spec) as env:
     ...
-finally:
-    env.close()
 ```
+
+A call that fails raises `RuntimeError` with the reason, e.g. an unset `timestep` or an
+unknown body name.
 
 ## 2. Initialize A Robot
 
@@ -236,6 +237,10 @@ All joint vectors are in KDL chain order:
 - `jnt_pos_cmd` is used in `CtrlMode.POSITION`.
 - `jnt_vel_cmd` is used in `CtrlMode.VELOCITY`.
 - `jnt_trq_cmd` is used in `CtrlMode.TORQUE`.
+
+Each read returns a read-only numpy copy. Write a port by assigning the whole vector
+(`robot.jnt_pos_cmd = q`); `robot.jnt_pos_cmd[0] = x` raises `ValueError` instead of being
+silently lost. Take `.copy()` to edit a port's values before assigning them back.
 
 ## 3. Run Position Control
 
@@ -331,7 +336,8 @@ assert robot.has_tcp_frame
 ```
 
 `tool_body` identifies the attached subtree whose inertia should be included in
-the KDL chain. `tcp_site` becomes the terminal frame for FK and task-space code.
+the KDL chain; for the 2F-85 it is the root body `g_base_mount`, whose mass `g_base` would
+leave out. `tcp_site` becomes the terminal frame for FK and task-space code.
 If the scene includes an attached FT sensor asset, add a `ForceTorqueSensorSpec`
 to `tool.ft_sensors`; `robot.ft_sensor(name)` returns a `PyKDL.Wrench`.
 
@@ -413,10 +419,11 @@ Pass `""` to return to the free camera.
 
 ## 8. Write Reset Hooks
 
-`Env.reset()` resets MuJoCo, runs your hook, forwards dynamics, then re-seeds
-every registered robot's ports and every scene slot from the reset state, so
-stale commands do not hit the first post-reset step. The Simulate UI's reset
-button does the same.
+`Env.reset()` resets MuJoCo, re-seeds every registered robot's ports and every scene slot
+from the reset state (so stale commands do not hit the first post-reset step), runs your
+hook, then reads the measurements back. A command the hook primes is kept; a POSITION robot
+the hook moves needs its `jnt_pos_cmd` set there too. The Simulate UI's reset button does
+the same.
 
 ```python
 home = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
@@ -442,14 +449,14 @@ and task state. Avoid hiding reset logic in the control loop.
 ## 9. Use The Simulate UI
 
 `env.open_viewer()` starts the custom Simulate UI on the `Env`, with or without
-robots. The viewer owns the window; your loop still owns controller logic, and
-`env.step()` returns `False` once the window is closed.
+robots. The viewer owns the window; your loop still owns controller logic and its end
+condition, and `env.step()` returns `False` once the window is closed.
 
 ```python
 env.open_viewer("task")
 env.viewer.use_camera("task")
 
-while env.step():
+while env.time() < 10.0 and env.step():
     env.update()
     robot.jnt_trq_cmd = robot.gravity_torques(env.spec.gravity_z)
     env.pace()
@@ -468,7 +475,7 @@ and add the segments you want visible:
 trace = []
 orange = [1.0, 0.5, 0.1, 1.0]
 
-while env.step():
+while env.time() < 10.0 and env.step():
     env.update()
     frame = robot.fk_frame()
     trace.append([frame.p.x(), frame.p.y(), frame.p.z()])
@@ -594,11 +601,13 @@ when the solver requires them.
 Keep state data separate from controller math:
 
 ```python
+GRIPPER_CLOSED = 0.82  # the bundled 2F-85's ctrl is its driver angle [rad]
+
 plan = [
     {"name": "HOME", "target": q_home, "duration": 1.0, "timeout": 2.5, "gripper": 0.0},
     {"name": "PICK", "target": q_pick, "duration": 1.5, "timeout": 3.5, "gripper": 0.0},
-    {"name": "CLOSE", "target": q_pick, "duration": 0.8, "timeout": 1.5, "gripper": 255.0},
-    {"name": "LIFT", "target": q_lift, "duration": 2.0, "timeout": 4.0, "gripper": 255.0},
+    {"name": "CLOSE", "target": q_pick, "duration": 0.8, "timeout": 1.5, "gripper": GRIPPER_CLOSED},
+    {"name": "LIFT", "target": q_lift, "duration": 2.0, "timeout": 4.0, "gripper": GRIPPER_CLOSED},
 ]
 ```
 
@@ -621,7 +630,7 @@ def apply_impedance(q_des):
     robot.jnt_trq_cmd = cmd
 ```
 
-The Robotiq Menagerie gripper actuator is controlled directly by name:
+The bundled Robotiq gripper's actuator is controlled directly by name:
 
 ```python
 if env.has_actuator("g_fingers_actuator"):
@@ -668,12 +677,18 @@ right.attachments = [gripper]
 spec.robots = [left, right]
 env = mjk.Env.build(spec)
 
+right_tool = mjk.ToolFrameSpec()
+right_tool.tool_body = "r2_g_base_mount"
+right_tool.tcp_site = "r2_g_pinch"
+
 left_robot = env.create_robot("base_link", "bracelet_link", tool=tool)
-right_robot = env.create_robot("base_link", "bracelet_link", prefix="r2_", tool=tool)
+right_robot = env.create_robot("r2_base_link", "r2_bracelet_link", tool=right_tool)
 ```
 
 Each robot gets its own KDL chain and command ports while sharing the same
-`Env`; one `env.update()` reads and commands both.
+`Env`; one `env.update()` reads and commands both. `prefix` is prepended to every name the
+call resolves (bodies, tool body, TCP site, F/T sensors); passing already-prefixed names with
+no prefix, as `ex_dual_arm.py` does, is the same.
 
 ## 13. Modify A Running Scene
 
@@ -700,15 +715,18 @@ pointers.
 
 ## 14. Grow Into The Examples
 
-The included Python examples mirror the C++ examples:
+Most Python examples mirror the C++ ones:
 
 - `ex_gravity_comp`: single-arm gravity compensation.
 - `ex_table_scene`: table asset, primitive objects, cameras, reset hook.
 - `ex_pick`: IK waypoints, gripper command, state machine.
 - `ex_table_pick_place`: tabletop pick/place using table asset sites.
 - `ex_table_pour`: gripper-held bottle asset and receiver.
+- `ex_rnea_pick_place`, `ex_achd_pick_place`, `ex_achd_table_slide`: RNEA and ACHD torque control.
+- `ex_admittance_ft`: F/T admittance around an RNEA task-space inner loop.
 - `ex_dual_arm`: two prefixed robots in one scene.
 - `ex_record`: headless MP4 recording.
+- `ex_cabinet`, `basic_scene`, `custom_ui_scene`, `viewer_scene`: Python only.
 
-Read the corresponding files in `../../python/examples/` when you want complete,
-runnable versions of the patterns above.
+They live in `python/mj_kdl_wrapper/examples/` (or run `mj-kdl-fetch-examples` to copy them
+out), run headless by default, accept `--gui`, and end by themselves either way.

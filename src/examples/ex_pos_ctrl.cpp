@@ -4,7 +4,7 @@
  *
  * The setpoint trajectory is a straight-line interpolation in joint space over
  * kMotionDuration seconds.  After the motion completes the final position is
- * held indefinitely.
+ * held for 1 s.
  *
  * Requires MuJoCo Menagerie in cache.
  *

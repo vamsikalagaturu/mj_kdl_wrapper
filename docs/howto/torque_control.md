@@ -55,6 +55,18 @@ ctrl and is clamped to its ctrlrange, so a real drive's torque limit applies.
 The viewer's Physics panel shows the group checkboxes and follows programmatic
 switches each frame; it lists groups 0-5 only (MuJoCo's `mjNGROUP`).
 
+### Limits and measurements
+
+- `jnt_saturated[i]` is set by `update()` when joint `i`'s command was clamped to its
+  actuator's `ctrlrange`, in any mode.
+- `joint_force_limits(&robot)` returns each joint's torque limit in the active mode:
+  `max(|lo|, |hi|)` of the actuator's `forcerange` times `|gear|` (in TORQUE the smaller of
+  that and its `ctrlrange` times `|gear|`), or the `fallback` argument where unlimited. Clamp
+  or scale against these, not a fixed number: GEN3's large joints allow 105 Nm, its small
+  ones 52 Nm.
+- `jnt_trq_msr` is `qfrc_actuator` on the robot's joints. Only the active mode's actuators
+  produce force, so it is the drive torque in every mode.
+
 ---
 
 ## Why KDL for Torque Computations?
@@ -261,8 +273,8 @@ for (unsigned i = 0; i < n; ++i) ff_tau(i) = -kd_null * qd(i);
 achd.CartToJnt(q, qd, qdd, alpha, beta, f_ext_achd, ff_tau, constraint_tau);
 rnea.CartToJnt(q, qd, qdd, f_ext_rnea_zero, tau_cmd);  // qdd is from ACHD
 
-for (unsigned i = 0; i < n; ++i)
-    robot.jnt_trq_cmd[i] = clamp(tau_cmd(i), -tau_max, tau_max);
+// update() clamps each torque to its joint's limit and flags it in jnt_saturated.
+for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = tau_cmd(i);
 mj_kdl::update(&env);
 ```
 
@@ -332,4 +344,7 @@ subtract `G(q)` from the RNEA torque; the rest of the pipeline is unchanged.
 - `src/examples/ex_table_pick_place.cpp` -- tabletop pick and place (gravity-comp)
 - `src/examples/ex_rnea_pick_place.cpp` -- tabletop pick and place (full RNEA)
 - `src/examples/ex_achd_table_slide.cpp` -- ACHD-based Cartesian sliding task
+- `src/examples/ex_achd_pick_place.cpp` -- ACHD -> RNEA pick and place
+- `src/examples/ex_achd_press.cpp` -- ACHD press against the table with a commanded wrench
+- `src/examples/ex_admittance_ft.cpp` -- F/T admittance around an RNEA task-space inner loop
 - `src/examples/ex_dual_arm.cpp` -- two arms, each with gripper

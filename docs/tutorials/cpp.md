@@ -7,7 +7,7 @@ record video, and then extend the scene to more robots and more complex task ass
 The snippets assume the package is built with MuJoCo Menagerie available, because
 the examples use the Kinova GEN3 arm and Robotiq 2F-85 gripper.
 
-## How To Read This Tutorial
+## 1. How To Read This Tutorial
 
 The wrapper has four layers. Keep them separate and the API stays simple:
 
@@ -41,8 +41,9 @@ Most examples follow this flow:
 
 Scenes are declared with `SceneSpec`. `timestep`, `add_floor`, and
 `add_skybox` have no defaults - they are choices the wrapper refuses to
-guess on your behalf. `build_scene` rejects `timestep <= 0` at runtime.
-`gravity_z` defaults to Earth gravity (-9.81 m/s^2).
+guess on your behalf. `build_scene` fails unless `timestep` is set and > 0.
+`gravity_z` defaults to Earth gravity (-9.81 m/s^2). Calls that can fail return
+`mj_kdl::Status`: `false` on failure, with the reason in `error`.
 
 ```cpp
 #include "example_paths.hpp"
@@ -57,8 +58,8 @@ scene.robots.push_back(mj_kdl::RobotSpec{
 });
 
 mj_kdl::Env env;
-if (!mj_kdl::init_env(&env, &scene)) {
-    throw std::runtime_error("failed to build scene");
+if (mj_kdl::Status s = mj_kdl::init_env(&env, &scene); !s) {
+    throw std::runtime_error("failed to build scene: " + s.error);
 }
 ```
 
@@ -125,8 +126,9 @@ index maps are private.
 
 ```cpp
 mj_kdl::Robot robot;
-if (!mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link")) {
-    throw std::runtime_error("failed to init robot");
+if (mj_kdl::Status s = mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link");
+    !s) {
+    throw std::runtime_error("failed to init robot: " + s.error);
 }
 ```
 
@@ -143,7 +145,8 @@ robot.ctrl_mode = mj_kdl::CtrlMode::POSITION;
 
 mj_kdl::open_viewer(&env, "position control");
 
-while (mj_kdl::step(&env)) {
+// step() is false only when the window closes, so the loop needs its own end.
+while (env.data->time < 10.0 && mj_kdl::step(&env)) {
     mj_kdl::update(&env);
     mj_kdl::pace_realtime(&env);   // step() never sleeps; pace the loop yourself
 
@@ -168,7 +171,7 @@ KDL::ChainDynParam dyn(robot.chain, KDL::Vector(0.0, 0.0, scene.gravity_z));
 KDL::JntArray q(robot.n_joints);
 KDL::JntArray g(robot.n_joints);
 
-while (mj_kdl::step(&env)) {
+while (env.data->time < 10.0 && mj_kdl::step(&env)) {
     mj_kdl::update(&env);
     mj_kdl::pace_realtime(&env);   // step() never sleeps; pace the loop yourself
 
@@ -239,8 +242,10 @@ mj_kdl::ToolFrameSpec tool{
 mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool);
 ```
 
-`tool_body` lumps the tool subtree inertia into the KDL chain. `tcp_site` adds a
-terminal frame from a MuJoCo site.
+`tool_body` lumps the tool subtree inertia into the KDL chain, at the pose the model is in
+when the robot is initialized. Name the tool's root body: the 2F-85's is `g_base_mount`, whose
+mass MuJoCo infers from its mesh; starting at `g_base` leaves it out and makes KDL gravity 5-8%
+low. `tcp_site` adds a terminal frame from a MuJoCo site.
 
 ### Attachment Chains
 
@@ -268,8 +273,8 @@ scene.robots.push_back(mj_kdl::RobotSpec{
 });
 ```
 
-Both assets ship with the package; `ex_table_pour` runs this exact chain to hold
-a mug in the gripper.
+Both assets ship with the package; `ex_table_pour` runs this chain (with prefix `pour_`)
+to hold the mug in the gripper.
 
 For contact stability, add contact exclusions only when two attached bodies are
 known to overlap structurally:
@@ -413,8 +418,9 @@ The Simulate UI also has its own live camera selector in the Rendering panel.
 
 ## 9. Write Production Reset Hooks
 
-`reset(&env)` resets MuJoCo, runs your hook, forwards dynamics, then re-seeds every
-registered robot and scene slot so stale commands do not hit the first post-reset step.
+`reset(&env)` resets MuJoCo, re-seeds every registered robot and scene slot so stale
+commands do not hit the first post-reset step, runs your hook, then reads the measurements
+back.
 
 ```cpp
 KDL::JntArray q_home(robot.n_joints);
@@ -442,28 +448,28 @@ hook. Do not hide reset work in the control loop.
 
 `reset(&env)` performs the reset in this order:
 
-1. Reset MuJoCo data to keyframe/default state.
-2. Create a `ResetContext`.
-3. Call `env.on_reset`, if provided.
-4. Call `mj_forward()`.
-5. Re-seed everything the `Env` holds from the reset state:
+1. Reset MuJoCo data to keyframe/default state and call `mj_forward()`.
+2. Re-seed everything the `Env` holds from the reset state:
    - every registered `Robot`'s ports: measured values read, `jnt_pos_cmd` = measured
-     position, velocity/torque commands zero, `jnt_saturated` cleared, `ctrl_mode` =
-     the mode its actuators are in; its F/T readings; its actuators set to hold the pose,
+     position, velocity/torque commands zero, `jnt_saturated` cleared, a requested
+     `ctrl_mode` kept; its F/T readings,
    - every scene slot: joint/free-body readings re-read, wrench commands zero,
      actuator commands = the reset `ctrl`.
+3. Call `env.on_reset`, if provided, with a `ResetContext`.
+4. Read the measurements (ports, F/T, slot readings) from the result.
 
-That order is deliberate. User hooks restore task state after the low-level
-MuJoCo reset, and ports are seeded after the hook so the first post-reset update
-does not apply stale commands. Each part's runtime state lives in one struct that
-reset assigns afresh, so a field added later is reset too; a part without a reset
-does not compile. The Simulate UI's reset button runs the same path.
+That order is deliberate. The hook runs after the re-seed, so a command it primes (a gravity
+torque, say) is not overwritten, and a pose it sets is what the ports read. Commands are not
+re-seeded after the hook: a hook that moves a POSITION robot sets its `jnt_pos_cmd` too, or
+the first update drives it back. Each part's runtime state lives in one struct that reset
+assigns afresh, so a field added later is reset too; a part without a reset does not compile.
+The Simulate UI's reset button runs the same path.
 
 Use `ResetContext` when your hook needs direct MuJoCo access:
 
 ```cpp
 env.on_reset = [&](mj_kdl::ResetContext *ctx) {
-    const double q_identity[4] = { 1.0, 0.0, 0.0, 0.0 };
+    const double q_identity[4] = { 0.0, 0.0, 0.0, 1.0 };   // [x, y, z, w]
     const double cube_pos[3]   = { 0.35, 0.05, 0.73 };
     mj_kdl::set_body_pose(ctx->env, "cube", cube_pos, q_identity);
 
@@ -482,7 +488,7 @@ The full viewer path is:
 ```cpp
 mj_kdl::open_viewer(&env, "task");
 
-while (mj_kdl::step(&env)) {
+while (env.data->time < 10.0 && mj_kdl::step(&env)) {
     mj_kdl::update(&env);
     mj_kdl::pace_realtime(&env);   // step() never sleeps; pace the loop yourself
     // control...
@@ -554,7 +560,7 @@ at a glance whether the EE is tracking a commanded path:
 std::deque<KDL::Vector> trace;          // ring buffer of recent EE points
 constexpr size_t kTraceMax = 4096;      // bounded by the user-scene geom budget
 
-while (mj_kdl::step(&env)) {
+while (env.data->time < 10.0 && mj_kdl::step(&env)) {
     mj_kdl::update(&env);
     mj_kdl::pace_realtime(&env);   // step() never sleeps; pace the loop yourself
     // ... run your controller; advance the EE ...
@@ -844,17 +850,19 @@ struct StateConfig {
     double gripper_cmd;
 };
 
+constexpr double kClosed = 0.82; // the bundled 2F-85's ctrl is its driver angle [rad]
+
 std::vector<StateConfig> plan = {
-    { TaskState::HOME,        q_home,        1.0, 2.5, 0.08, 0.0   },
-    { TaskState::PICK_ABOVE,  q_pick_above,  2.0, 4.0, 0.08, 0.0   },
-    { TaskState::PICK,        q_pick,        1.5, 3.5, 0.06, 0.0   },
-    { TaskState::CLOSE,       q_pick,        0.8, 1.5, 0.00, 255.0 },
-    { TaskState::LIFT,        q_lift,        2.0, 4.0, 0.08, 255.0 },
-    { TaskState::PLACE_ABOVE, q_place_above, 2.0, 4.0, 0.08, 255.0 },
-    { TaskState::PLACE,       q_place,       1.5, 3.0, 0.06, 255.0 },
-    { TaskState::OPEN,        q_place,       0.8, 1.5, 0.00, 0.0   },
-    { TaskState::RETREAT,     q_retreat,     1.5, 3.0, 0.08, 0.0   },
-    { TaskState::HOLD,        q_retreat,     1.0, 1.0, 0.00, 0.0   },
+    { TaskState::HOME,        q_home,        1.0, 2.5, 0.08, 0.0     },
+    { TaskState::PICK_ABOVE,  q_pick_above,  2.0, 4.0, 0.08, 0.0     },
+    { TaskState::PICK,        q_pick,        1.5, 3.5, 0.06, 0.0     },
+    { TaskState::CLOSE,       q_pick,        0.8, 1.5, 0.00, kClosed },
+    { TaskState::LIFT,        q_lift,        2.0, 4.0, 0.08, kClosed },
+    { TaskState::PLACE_ABOVE, q_place_above, 2.0, 4.0, 0.08, kClosed },
+    { TaskState::PLACE,       q_place,       1.5, 3.0, 0.06, kClosed },
+    { TaskState::OPEN,        q_place,       0.8, 1.5, 0.00, 0.0     },
+    { TaskState::RETREAT,     q_retreat,     1.5, 3.0, 0.08, 0.0     },
+    { TaskState::HOLD,        q_retreat,     1.0, 1.0, 0.00, 0.0     },
 };
 ```
 
@@ -938,9 +946,10 @@ env.on_reset = [&](mj_kdl::ResetContext *ctx) {
 };
 ```
 
-Because `reset(&env)` re-seeds registered robots and scene slots after this hook, the
-first control step after reset starts from the reset pose without stale torque,
-position or gripper commands.
+Because `reset(&env)` re-seeds registered robots and scene slots before this hook and reads
+the result back after it, the first control step after reset starts from the hook's pose
+without stale torque or gripper commands. This controller is in TORQUE; a POSITION robot
+moved in the hook would also need its `jnt_pos_cmd` set there.
 
 ### 12.8 Run With Viewer And Recorder
 
@@ -950,7 +959,8 @@ Start the Simulate UI:
 mj_kdl::open_viewer(&env, "table pick-place");
 mj_kdl::use_camera(&env.viewer, env.model, "task");
 
-while (mj_kdl::step(&env)) {
+bool task_done = false;   // run_state_machine() sets it when HOLD ends
+while (!task_done && mj_kdl::step(&env)) {
     mj_kdl::update(&env);
     mj_kdl::pace_realtime(&env);   // step() never sleeps; pace the loop yourself
     run_state_machine();
@@ -1000,14 +1010,18 @@ scene.robots = {
 Then initialize two robot handles:
 
 ```cpp
+const mj_kdl::ToolFrameSpec right_tool{ .tool_body = "r2_g_base_mount", .tcp_site = "r2_g_pinch" };
+
 mj_kdl::Robot left;
 mj_kdl::Robot right;
 mj_kdl::init_robot_from_mjcf(&left, &env, "base_link", "bracelet_link", "", &tool);
-mj_kdl::init_robot_from_mjcf(&right, &env, "base_link", "bracelet_link", "r2_", &tool);
+mj_kdl::init_robot_from_mjcf(&right, &env, "r2_base_link", "r2_bracelet_link", "", &right_tool);
 ```
 
-Each robot gets its own KDL chain and command ports, while both share the same
-`Env`; one `update(&env)` reads and commands both.
+The `prefix` argument is prepended to every name the call resolves (bodies, tool body, TCP
+site, F/T sensors); passing already-prefixed names with no prefix, as `ex_dual_arm` does, is
+the same. Each robot gets its own KDL chain and
+command ports, while both share the same `Env`; one `update(&env)` reads and commands both.
 
 ## 14. Grow Into Task Examples
 
@@ -1017,6 +1031,9 @@ The included examples show how these pieces combine:
 - `ex_pick`: IK waypoints, state machine, torque impedance.
 - `ex_table_pick_place`: tabletop pick/place using table asset sites.
 - `ex_table_pour`: gripper-held bottle asset, free particles, receiver asset.
+- `ex_rnea_pick_place`, `ex_achd_pick_place`, `ex_achd_table_slide`, `ex_achd_press`:
+  computed torque through RNEA and ACHD.
+- `ex_admittance_ft`: F/T admittance around an RNEA task-space inner loop.
 - `ex_dual_arm`: two prefixed robots in one scene.
 - `ex_record`: headless MP4 recording.
 
@@ -1033,11 +1050,12 @@ mj_kdl::SceneObject obstacle{
     .shape = mj_kdl::Shape::CYLINDER,
     .size  = { 0.04, 0.12, 0.0 },                 // {radius, half_length, 0}
     .pos   = { 0.3, -0.2, 0.82 },
-    .rgba  = { 0.6f, 0.6f, 0.6f, 1.0f },
-    .fixed = true,                                // fixed obstacles tolerate mass = 0
+    .rgba     = { 0.6f, 0.6f, 0.6f, 1.0f },
+    .fixed    = true,                             // a fixed primitive may leave mass unset
+    .friction = { 0.8, 0.02, 0.001 },             // required for primitives
 };
 
-mj_kdl::scene_add_object(&env, obstacle);
+if (mj_kdl::Status s = mj_kdl::scene_add_object(&env, obstacle); !s) std::cerr << s.error;
 // env.model/env.data are replaced; registered robots, scene slots and the viewer follow.
 ```
 
@@ -1051,8 +1069,10 @@ Use this checklist when a scene behaves incorrectly:
 | Symptom | Check |
 |---------|-------|
 | Robot does not move in position mode | Model has an actuator on each joint, and `update(&env)` runs every cycle |
-| First step after reset jumps | Reset goes through `reset(&env)`, not a raw `mj_resetData()` |
-| KDL gravity is wrong with a tool | `ToolFrameSpec::tool_body` points at the tool subtree root |
+| A call fails | Print the returned `Status::error`; it names the cause |
+| First step after reset jumps | Reset goes through `reset(&env)`, not a raw `mj_resetData()`; a hook that moves a POSITION robot sets its `jnt_pos_cmd` too |
+| KDL gravity is wrong with a tool | `ToolFrameSpec::tool_body` points at the tool subtree root (2F-85: `g_base_mount`, not `g_base`) |
+| Torque commands saturate | `jnt_saturated`; compare against `joint_force_limits(&robot)` |
 | TCP frame is wrong | `ToolFrameSpec::tcp_site` names an authored MuJoCo site |
 | Object asset site not found | Use `scene_object_site_name(object, "site")` to account for prefixes |
 | Recorder fails | `BUILD_RECORDER=ON`, EGL available, ffmpeg installed, output path writable |

@@ -89,12 +89,21 @@ class DualArmTest : public testing::Test
         for (int j = 0; j < n; ++j) q_home(j) = kHomePose[j];
     }
 
-    int dof(const mj_kdl::Robot &r, const char *pfx, int j) const
+    int dof(const mj_kdl::Robot &r, int j) const
     {
-        const std::string name = pfx + r.joint_names[j];
-        return env.model->jnt_dofadr[mj_name2id(env.model, mjOBJ_JOINT, name.c_str())];
+        return env.model->jnt_dofadr[mj_name2id(env.model, mjOBJ_JOINT, r.joint_names[j].c_str())];
     }
 };
+
+TEST_F(DualArmTest, PrefixNamesTheWholeChain)
+{
+    mj_kdl::Robot named;
+    ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&named, &env, "r2_base_link", "r2_bracelet_link"));
+    EXPECT_EQ(arm2.joint_names, named.joint_names);
+    EXPECT_EQ(arm2.joint_names.front(), "r2_joint_1");
+    EXPECT_EQ(arm2.chain.getNrOfSegments(), named.chain.getNrOfSegments());
+    mj_kdl::cleanup(&named);
+}
 
 TEST_F(DualArmTest, GravityInformational)
 {
@@ -108,8 +117,8 @@ TEST_F(DualArmTest, GravityInformational)
 
     double err1 = 0.0, err2 = 0.0;
     for (int j = 0; j < n; ++j) {
-        err1 = std::max(err1, std::abs(g1(j) - env.data->qfrc_bias[dof(arm1, "", j)]));
-        err2 = std::max(err2, std::abs(g2(j) - env.data->qfrc_bias[dof(arm2, "r2_", j)]));
+        err1 = std::max(err1, std::abs(g1(j) - env.data->qfrc_bias[dof(arm1, j)]));
+        err2 = std::max(err2, std::abs(g2(j) - env.data->qfrc_bias[dof(arm2, j)]));
     }
     (void)err1; (void)err2;
 }

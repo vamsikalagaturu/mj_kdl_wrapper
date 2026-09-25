@@ -8,7 +8,7 @@ A C++ library bridging **MuJoCo 3.14** physics simulation with **KDL** (Kinemati
 
 ## Build
 
-Requires: MuJoCo 3.14.0, downloaded into the user cache `~/.cache/mj_kdl_wrapper/mujoco-3.14.0` by default (`MJ_KDL_FETCH_MUJOCO=ON`; override with `-DMJ_KDL_MUJOCO_DIR=...` to use an existing install, no system paths are searched), apt packages `libglfw3-dev libgl-dev`, and the secorolab Orocos KDL fork. CMake fetches and builds the KDL fork by default; system `liborocos-kdl` is not used. Older MuJoCo releases are not supported; CMake validates the expected `mjVERSION_HEADER` from `cmake/Versions.cmake`.
+Requires: MuJoCo 3.14.0, downloaded into the user cache `~/.cache/mj_kdl_wrapper/mujoco-3.14.0` by default (`MJ_KDL_FETCH_MUJOCO=ON`; override with `-DMJ_KDL_MUJOCO_DIR=...` to use an existing install, no system paths are searched), apt packages `libeigen3-dev libglfw3-dev libgl-dev libegl-dev ffmpeg` (EGL and ffmpeg only for the recorder), and the secorolab Orocos KDL fork. CMake fetches and builds the KDL fork at the commit pinned in `cmake/Versions.cmake` (`MJ_KDL_OROCOS_KDL_GIT_SHA`); system `liborocos-kdl` is not used. The MuJoCo tarball (sha256) and the Menagerie commit are pinned there too; `scripts/check_versions.py` checks every copy of the pins. Older MuJoCo releases are not supported; CMake validates the expected `mjVERSION_HEADER` from `cmake/Versions.cmake`.
 
 **Always build with all flags and verify tests pass before considering any task complete:**
 
@@ -47,7 +47,7 @@ pytest -q python/tests
 ```
 
 - `python/mj_kdl_wrapper/` -- the bindings package (`menagerie.py`, `fetch_examples.py`, type stubs).
-- `python/mj_kdl_wrapper/examples/ex_*.py` -- Python counterparts of the C++ `src/examples/ex_*.cpp`. They run headless by default and accept `--gui`.
+- `python/mj_kdl_wrapper/examples/ex_*.py` -- Python counterparts of most C++ `src/examples/ex_*.cpp`. They run headless by default and accept `--gui`; `custom_ui_scene.py` and `viewer_scene.py` always open a window. Every example ends by itself: `--gui` runs the headless sequence with the viewer open.
 
 **Packaging (examples + assets ship in the wheel):** the examples live inside the package, so `tool.scikit-build.wheel.packages` maps only `mj_kdl_wrapper` -> `python/mj_kdl_wrapper`. The repo-root `assets/` is installed into the wheel by CMake (`install(DIRECTORY assets/ DESTINATION mj_kdl_wrapper/assets)`), never mapped: a wheel mapping to a directory outside the package makes the editable install add every parent it needs to reach it, and for `assets/` that reached the workspace `src/`, putting every sibling repository on `sys.path`. Two console scripts populate a user's working directory:
 
@@ -66,22 +66,28 @@ clang-format --style=file -i src/mj_kdl_wrapper.cpp
 clang-tidy -p build src/mj_kdl_wrapper.cpp
 ```
 
-Column limit is 100. Indentation is 2 spaces. See `.clang-format` and `.clang-tidy` for full configuration.
+Column limit is 100. Indentation is 4 spaces (continuations 2). See `.clang-format` and `.clang-tidy` for full configuration.
 
 ## Architecture
 
 **Single header, single implementation:**
 - `include/mj_kdl_wrapper/mj_kdl_wrapper.hpp` -- all public types and function declarations
-- `src/mj_kdl_wrapper.cpp` -- all implementation (~1400 lines)
+- `src/mj_kdl_wrapper.cpp` -- all implementation (~3200 lines)
+- `src/simulate_ui/` -- the MuJoCo Simulate UI fork behind `open_viewer()`
 
 **Key types (all in the `mj_kdl` namespace):**
 
-- `RobotSpec` -- MJCF path, position, orientation, prefix, optional `AttachmentSpec` chain
+- `Status` -- returned by every call that can fail on its input; `if (!s)` then `s.error` says why
+- `RobotSpec` -- MJCF path, position, orientation (`quat`, `[x, y, z, w]`), prefix, control modes (`CtrlModeSpec`), optional `AttachmentSpec` chain; string fields are `std::string`, empty = not set
 - `AttachmentSpec` -- attachment MJCF, attach body, position/orientation, prefix, contact exclusions
 - `SceneSpec` -- aggregates robots, objects (`SceneObject`, including MJCF-backed assets), timestep, gravity
 - `Env` -- owns `mjModel*`/`mjData*`, the registered `Robot`s, the scene slots (`env.scene`), the viewer (`env.viewer`) and the reset hook; not copied or moved
 - `Robot` -- derives from `RobotPorts` (measured/commanded joint ports, `CtrlMode`); holds the KDL chain, joint names/limits, F/T sensors; its MuJoCo index maps are private (`_impl`)
+- `SceneState` (`env.scene`) -- joints, free bodies, wrenches and actuators outside any `Robot`, bound with `bind_scene_*()`
 - `Viewer` -- the Simulate UI of an `Env`, opened by `open_viewer()`
+- `VideoRecorder` -- headless EGL rendering, to an MP4 through ffmpeg (`record_frame()`) or to a buffer (`render_rgb()`)
+
+Conventions (units, frames, xyzw quaternions, what persists): `docs/conventions.md`.
 
 **Typical usage flow:**
 
@@ -107,7 +113,8 @@ init_robot_from_mjcf(&robot, &env, ...)   -- KDL chain; registers the robot
 **Scene patching:** `build_scene()` merges MJCF files using `mjSpec` (MuJoCo's programmatic spec API), then injects floor, skybox, objects, sites and cameras. Runtime add/remove (`scene_add_object` / `scene_remove_object`) rebuilds the `Env`'s model and re-resolves its robots, scene slots and viewer.
 
 **Bundled dependencies:**
-- user cache `~/.cache/mj_kdl_wrapper/menagerie/` -- MuJoCo Menagerie fetched by `mj-kdl-fetch-menagerie` or CMake
+- user cache `~/.cache/mj_kdl_wrapper/menagerie/` -- MuJoCo Menagerie at the pinned commit, fetched by `mj-kdl-fetch-menagerie` or CMake
+- `assets/` -- bundled models (Gen3 with armature, 2F-85 whose ctrl is the driver angle 0..0.82 rad, table, cabinet, mug, cube, door latch, F/T sensor); a 2F-85 tool frame starts at `g_base_mount`, the body that carries the mount's mass
 
 ## Branching and releases
 
@@ -115,7 +122,7 @@ Development happens on `dev` (or feature branches off it). **`main` is protected
 
 To land work: branch off `dev`, open a PR into `dev`; squash is fine there. To cut a release, follow the ordered checklist in [AGENTS.md](AGENTS.md) -- the release PR is merged with a merge commit, which is what lets `dev` fast-forward to `main` afterwards instead of diverging from it.
 
-**Versioning.** The version lives in two manual places that must stay in sync and read the same numeric string: `cmake/Versions.cmake` (`MJ_KDL_VERSION`) and `pyproject.toml` (`version`). `dev` always carries the *next* version, never the last released tag's number -- e.g. after releasing `0.1.0`, bump both files on `dev` to `0.1.1`. When cutting that release the files already read `0.1.1`, so just merge `dev` -> `main` and tag `v0.1.1`; then bump `dev` to the following version. The C++ build exposes the version via the `MJ_KDL_WRAPPER_VERSION` compile define (CMakeLists.txt), surfaced in Python as `mj_kdl_wrapper.__version__`.
+**Versioning.** The version lives in three manual places that must stay in sync and read the same numeric string: `cmake/Versions.cmake` (`MJ_KDL_VERSION`), `pyproject.toml` (`version`) and `package.xml` (`<version>`); `scripts/check_versions.py` checks them. `dev` always carries the *next* version, never the last released tag's number -- e.g. after releasing `0.1.0`, bump both files on `dev` to `0.1.1`. When cutting that release the files already read `0.1.1`, so just merge `dev` -> `main` and tag `v0.1.1`; then bump `dev` to the following version. The C++ build exposes the version via the `MJ_KDL_WRAPPER_VERSION` compile define (CMakeLists.txt), surfaced in Python as `mj_kdl_wrapper.__version__`.
 
 **Docs/GitHub Pages deploy only on releases.** `docs.yml` builds docs on every push/PR (CI check) but only uploads the Pages artifact and deploys when `github.event_name == 'release'`. The `github-pages` environment allows deployments from the `main` branch and from `v*` tags. Publishing a release is what refreshes <https://mj-kdl-wrapper.vamsi.sh/>.
 

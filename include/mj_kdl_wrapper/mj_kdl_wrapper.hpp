@@ -556,7 +556,8 @@ struct SceneWrenchCommand
 };
 
 /** @ingroup grp_scene
- *  A body a controller pushes: the wrench is applied as xfrc_applied at the body origin. */
+ *  A body a controller pushes: the wrench is applied as xfrc_applied, at the body's centre
+ *  of mass. */
 struct SceneWrenchSlot : SceneWrenchCommand
 {
     std::string name;
@@ -626,7 +627,7 @@ struct Env
  * loaded with mj_loadXML. Typical use: build a combined scene once, save it, reload it later.
  * @param model  Model to save.
  * @param path   Output path for the MJCF XML file.
- * @return true on success.
+ * @return an empty Status on success, else the error.
  */
 Status save_model_xml(const mjModel *model, const char *path);
 
@@ -638,6 +639,8 @@ Status save_model_xml(const mjModel *model, const char *path);
  * for FK/IK.  The joint count and MuJoCo joint/actuator maps still cover only
  * the controllable joints from base_body to tip_body.
  * Pass tool = nullptr (the default) for an arm with no attached tool.
+ * prefix is prepended to every name the call resolves: base_body, tip_body, the tool body,
+ * TCP site and F/T sensor names, e.g. ("base_link", "bracelet_link", "r2_") is the second arm.
  * Registers r with env, which reads, commands and resets it from then on.
  */
 Status init_robot_from_mjcf(
@@ -660,8 +663,8 @@ Status init_robot_from_mjcf(
  * carries its tool as explicit segments.
  *
  * joint_names lists the MuJoCo joint names in KDL chain order, one per chain joint;
- * they drive the same qpos/dof/ctrl index maps init_robot_from_mjcf() builds, and
- * prefix is applied to each as there.  tool is used only to resolve FT sensors;
+ * they drive the same qpos/dof/ctrl index maps init_robot_from_mjcf() builds.  prefix is
+ * prepended to each joint name and F/T sensor name.  tool is used only to resolve FT sensors;
  * tool->tool_body and tool->tcp_site are ignored. Registers r with env.
  */
 Status init_robot_from_chain(
@@ -699,7 +702,7 @@ std::vector<double> joint_force_limits(const Robot *r, double fallback = 1e6);
  * subsequent a->attach_to may reference any body added by prior calls.
  * @param[in,out] robot_spec  Accumulated robot spec to attach into.
  * @param[in]     a           Attachment; a->mjcf_path must be set.
- * @return true on success.
+ * @return an empty Status on success, else the error.
  */
 Status attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a);
 
@@ -717,7 +720,7 @@ Status attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a);
  * @param[out] out_data   Newly allocated MuJoCo data; caller frees via destroy_scene().
  * @param[in]  spec       Scene description: robots (with attachment chains), table,
  *                        objects, timestep, gravity, floor, skybox.
- * @return true on success.
+ * @return an empty Status on success, else the error.
  */
 Status build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *spec);
 
@@ -748,7 +751,7 @@ ResetInfo reset(Env *env, const ResetOptions *options = nullptr);
  * @ingroup grp_viewer
  * Open the simulate UI (panels, physics controls) on env, rendered on a background thread;
  * step() then drives physics, pause, perturbation and recording. Linux (X11 / Wayland) only.
- * @return false when there is no display or the window cannot be created.
+ * @return an error when there is no display or the window cannot be created.
  */
 Status open_viewer(Env *env, const char *title = "MuJoCo");
 
@@ -826,7 +829,7 @@ void cleanup(Env *env);
  * @param width     Frame width in pixels (default 1280).
  * @param height    Frame height in pixels (default 720).
  * @param fps       Playback frame rate (default 60).
- * @return true on success; false if EGL init or ffmpeg launch fails.
+ * @return an error if EGL init or ffmpeg launch fails.
  */
 Status init_video_recorder(
   VideoRecorder *vr,
@@ -847,7 +850,7 @@ Status init_video_recorder(
  * @param out_path   Output MP4 path.
  * @param resolution VideoResolution preset (e.g. VideoResolution::R1080p).
  * @param fps        Playback frame rate (default 60).
- * @return true on success.
+ * @return an empty Status on success, else the error.
  */
 Status init_video_recorder(
   VideoRecorder  *vr,
@@ -877,7 +880,7 @@ bool record_frame(VideoRecorder *vr, Env *env);
  * @param model   MuJoCo model for the rendering context.
  * @param width   Frame width in pixels.
  * @param height  Frame height in pixels.
- * @return true on success; false if EGL init fails.
+ * @return an error if EGL init fails.
  */
 Status init_offscreen(VideoRecorder *vr, mjModel *model, int width, int height);
 
@@ -984,14 +987,14 @@ void update(Env *env);
 /**
  * @ingroup grp_robot
  * Switch the robot to mode: seed the new actuators so nothing jumps, enable their group,
- * disable the robot's other mode groups. @return false if the robot has no actuator for mode.
+ * disable the robot's other mode groups. @return an error if the robot has no actuator for mode.
  */
 Status set_control_mode(Robot *r, CtrlMode mode);
 
 /**
  * @ingroup grp_robot
  * The same switch for a robot driven outside a Robot chain (e.g. through env.scene):
- * robot is its index in SceneSpec::robots. @return false if it has no actuators for mode.
+ * robot is its index in SceneSpec::robots. @return an error if it has no actuators for mode.
  */
 Status set_control_mode(Env *env, int robot, CtrlMode mode);
 
@@ -1054,14 +1057,14 @@ void set_body_pose(
  * @ingroup grp_scene
  * Append obj to env->spec.objects and rebuild. Robots, scene slots and the viewer follow the
  * new model; a slot whose name is gone is unbound and skipped.
- * @return true on success; env unchanged on failure.
+ * @return an error on failure, with env unchanged.
  */
 Status scene_add_object(Env *env, const SceneObject &obj);
 
 /**
  * @ingroup grp_scene
  * Remove the named object from env->spec.objects and rebuild, as scene_add_object() does.
- * @return true on success; false if name not found or rebuild fails.
+ * @return an error if name is not found or the rebuild fails.
  */
 Status scene_remove_object(Env *env, const std::string &name);
 
@@ -1176,7 +1179,7 @@ void add_floor_to_spec(mjSpec *spec, double floor_z = 0.0);
  * Add free-floating or fixed rigid bodies to the world body of spec.
  * @param spec     MuJoCo spec to modify.
  * @param objects  List of objects to add.
- * @return false (logged) on the first object that cannot be added, e.g. a field left unset.
+ * @return an error (logged) for the first object that cannot be added, e.g. a field left unset.
  */
 Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects);
 
@@ -1187,7 +1190,7 @@ Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects
  * @param[in]  spec       MuJoCo spec to compile; owned by the wrapper from here on.
  * @param[out] out_model  Newly allocated model on success; null on failure.
  * @param[out] out_data   Newly allocated data on success; null on failure.
- * @return true on success.
+ * @return an empty Status on success, else the error.
  */
 Status compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data);
 

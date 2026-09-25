@@ -1456,7 +1456,8 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         py::arg("tip_body"),
         py::arg("prefix") = "",
         py::arg("tool")   = py::none(),
-        "Create a robot and register it with this environment."
+        "Create a robot and register it with this environment. prefix is prepended to every "
+        "name it resolves: bodies, tool body, TCP site, F/T sensors."
       )
       .def(
         "create_robot_from_chain",
@@ -1520,7 +1521,8 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
             return self.reset(cpp_options ? &*cpp_options : nullptr);
         },
         py::arg("options") = py::none(),
-        "Reset MuJoCo state, then on_reset, then every robot and scene slot."
+        "Reset MuJoCo state, re-seed every robot and scene slot, then call on_reset; what it "
+        "moves is read back."
       )
       .def(
         "add_object",
@@ -1553,8 +1555,8 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
             }
             self.reset_callback = cb;
         },
-        "Callable invoked by reset() after MuJoCo data is reset and before robots "
-        "are synchronized. Receives a ResetContext. Set to None to clear."
+        "Callable invoked by reset() after every robot and slot is re-seeded; what it moves is "
+        "read back. Receives a ResetContext. Set to None to clear."
       )
       .def("time", &PyEnv::time, "Current MuJoCo simulation time.")
       .def("timestep", &PyEnv::timestep, "Configured simulation timestep.")

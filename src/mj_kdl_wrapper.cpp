@@ -1642,7 +1642,7 @@ bool use_camera(VideoRecorder *vr, const mjModel *model, const char *name)
 
 // Robot API
 
-static Status resolve_ft_sensors(Robot *r, const ToolFrameSpec *tool)
+static Status resolve_ft_sensors(Robot *r, const ToolFrameSpec *tool, const std::string &pfx)
 {
     r->ft_sensors.clear();
     if (!tool) return {};
@@ -1652,9 +1652,9 @@ static Status resolve_ft_sensors(Robot *r, const ToolFrameSpec *tool)
 
         const std::string &name = spec.name;
         const std::string  force_name =
-          spec.force_sensor.empty() ? name + "_force" : spec.force_sensor;
+          pfx + (spec.force_sensor.empty() ? name + "_force" : spec.force_sensor);
         const std::string torque_name =
-          spec.torque_sensor.empty() ? name + "_torque" : spec.torque_sensor;
+          pfx + (spec.torque_sensor.empty() ? name + "_torque" : spec.torque_sensor);
 
         const int force_id = mj_name2id(r->model, mjOBJ_SENSOR, force_name.c_str());
         if (force_id < 0) {
@@ -1682,11 +1682,12 @@ static Status resolve_ft_sensors(Robot *r, const ToolFrameSpec *tool)
         sensor.force_adr     = r->model->sensor_adr[force_id];
         sensor.torque_adr    = r->model->sensor_adr[torque_id];
         if (!spec.frame_site.empty()) {
-            sensor.frame_site    = spec.frame_site;
-            sensor.frame_site_id = mj_name2id(r->model, mjOBJ_SITE, spec.frame_site.c_str());
+            sensor.frame_site    = pfx + spec.frame_site;
+            sensor.frame_site_id = mj_name2id(r->model, mjOBJ_SITE, sensor.frame_site.c_str());
             if (sensor.frame_site_id < 0) {
                 MJ_FAIL(
-                  "frame_site '" << spec.frame_site << "' not found for FT sensor '" << name << "'"
+                  "frame_site '" << sensor.frame_site << "' not found for FT sensor '" << name
+                                 << "'"
                 );
             }
         }
@@ -1738,13 +1739,18 @@ Status init_robot_from_mjcf(
 )
 {
     if (!r || !env || !env->model) MJ_FAIL("init_robot_from_mjcf: null robot or empty env");
-    const bool has_tool_body = tool && !tool->tool_body.empty();
-    const bool has_tcp_site  = tool && !tool->tcp_site.empty();
+    if (!base_body || !tip_body) MJ_FAIL("init_robot_from_mjcf: null base or tip body");
+    const std::string pfx           = prefix ? prefix : "";
+    const std::string base          = pfx + base_body;
+    const std::string tip           = pfx + tip_body;
+    const bool        has_tool_body = tool && !tool->tool_body.empty();
+    const bool        has_tcp_site  = tool && !tool->tcp_site.empty();
+    const std::string tool_body     = has_tool_body ? pfx + tool->tool_body : "";
+    const std::string tcp_site      = has_tcp_site ? pfx + tool->tcp_site : "";
     LOG_INFO(
-      "init_robot_from_mjcf: '" << base_body << "' -> '" << tip_body << "' prefix='"
-                                << (prefix ? prefix : "") << "'"
-                                << (has_tool_body ? " tool='" + tool->tool_body + "'" : "")
-                                << (has_tcp_site ? " tcp='" + tool->tcp_site + "'" : "")
+      "init_robot_from_mjcf: '" << base << "' -> '" << tip << "'"
+                                << (has_tool_body ? " tool='" + tool_body + "'" : "")
+                                << (has_tcp_site ? " tcp='" + tcp_site + "'" : "")
     );
     const auto lock  = lock_env(env);
     mjModel   *model = env->model;
@@ -1755,23 +1761,21 @@ Status init_robot_from_mjcf(
     r->has_tcp_frame = false;
     r->tcp_site.clear();
     r->ft_sensors.clear();
-    if (Status s = build_kdl_from_model(r, model, base_body, tip_body); !s) return s;
-    if (Status s = build_index_map(r, prefix ? prefix : ""); !s) return s;
-    if (Status s = resolve_ft_sensors(r, tool); !s) return s;
+    if (Status s = build_kdl_from_model(r, model, base.c_str(), tip.c_str()); !s) return s;
+    // The chain's joint names come from the model, so they already carry the prefix.
+    if (Status s = build_index_map(r); !s) return s;
+    if (Status s = resolve_ft_sensors(r, tool, pfx); !s) return s;
 
     KDL::Frame tip_T_tcp = KDL::Frame::Identity();
     bool       has_tcp   = false;
     if (has_tcp_site) {
-        if (!get_site_frame_in_body(env, tip_body, tool->tcp_site.c_str(), &tip_T_tcp)) {
-            MJ_FAIL(
-              "tcp_site '" << tool->tcp_site << "' or tip body '" << tip_body
-                           << "' not found in model"
-            );
+        if (!get_site_frame_in_body(env, tip.c_str(), tcp_site.c_str(), &tip_T_tcp)) {
+            MJ_FAIL("tcp_site '" << tcp_site << "' or tip body '" << tip << "' not found in model");
         }
         has_tcp          = true;
         r->tip_T_tcp     = tip_T_tcp;
         r->has_tcp_frame = true;
-        r->tcp_site      = tool->tcp_site;
+        r->tcp_site      = tcp_site;
     } else if (tool && !Equal(tool->tcp_frame, KDL::Frame::Identity(), kIdentityTol)) {
         tip_T_tcp        = tool->tcp_frame;
         has_tcp          = true;
@@ -1780,31 +1784,31 @@ Status init_robot_from_mjcf(
     }
 
     if (has_tool_body) {
-        int tool_bid = mj_name2id(model, mjOBJ_BODY, tool->tool_body.c_str());
-        if (tool_bid < 0) MJ_FAIL("tool_body '" << tool->tool_body << "' not found in model");
-        int tip_bid = mj_name2id(model, mjOBJ_BODY, tip_body);
+        int tool_bid = mj_name2id(model, mjOBJ_BODY, tool_body.c_str());
+        if (tool_bid < 0) MJ_FAIL("tool_body '" << tool_body << "' not found in model");
+        int tip_bid = mj_name2id(model, mjOBJ_BODY, tip.c_str());
         ensure_kinematics(env);
         std::vector<int>      subtree      = collect_subtree(model, tool_bid);
         KDL::RigidBodyInertia tool_inertia = compute_tool_inertia(model, data, tip_bid, subtree);
         LOG_INFO(
-          "appending lumped tool inertia: " << subtree.size() << " bodies under '"
-                                            << tool->tool_body << "'"
+          "appending lumped tool inertia: " << subtree.size() << " bodies under '" << tool_body
+                                            << "'"
         );
         r->chain.addSegment(KDL::Segment(
-          tool->tool_body, KDL::Joint(KDL::Joint::None), KDL::Frame::Identity(), tool_inertia
+          tool_body, KDL::Joint(KDL::Joint::None), KDL::Frame::Identity(), tool_inertia
         ));
         // Fixed joints do not count: n_joints remains the same after addSegment.
     }
 
     if (has_tcp) {
-        const std::string seg_name = has_tcp_site ? tool->tcp_site : "tcp";
+        const std::string seg_name = has_tcp_site ? tcp_site : "tcp";
         r->chain.addSegment(KDL::Segment(seg_name, KDL::Joint(KDL::Joint::None), tip_T_tcp));
     }
 
     LOG_INFO(
-      "chain ready: " << r->n_joints << " joints [" << base_body << " -> " << tip_body << "]"
-                      << (has_tool_body ? " + tool '" + tool->tool_body + "'" : "")
-                      << (has_tcp ? (has_tcp_site ? " tcp site '" + tool->tcp_site + "'"
+      "chain ready: " << r->n_joints << " joints [" << base << " -> " << tip << "]"
+                      << (has_tool_body ? " + tool '" + tool_body + "'" : "")
+                      << (has_tcp ? (has_tcp_site ? " tcp site '" + tcp_site + "'"
                                                   : std::string(" tcp frame (manual)"))
                                   : "")
     );
@@ -1857,7 +1861,7 @@ Status init_robot_from_chain(
     }
 
     if (Status s = build_index_map(r, pfx); !s) return s;
-    if (Status s = resolve_ft_sensors(r, tool); !s) return s;
+    if (Status s = resolve_ft_sensors(r, tool, pfx); !s) return s;
 
     LOG_INFO(
       "chain adopted: " << r->n_joints << " joints, " << r->chain.getNrOfSegments() << " segments"

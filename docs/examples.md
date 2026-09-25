@@ -14,11 +14,15 @@ cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMJ_KDL_FETCH_MENAGERIE=ON
 cmake --build build --parallel $(nproc)
 ```
 
-Every C++ example accepts `--headless` to skip the GLFW window and run a fixed
-number of physics steps, printing a brief result to stdout. Every
-`src/examples/ex_*.cpp` file also has a same-name Python counterpart in
-`python/examples/`; Python examples run headless by default and accept `--gui`
-where a Simulate UI view is useful.
+Every example ends by itself. A C++ example (`src/examples/`) opens the Simulate UI unless
+given `--headless`; a Python one (`python/mj_kdl_wrapper/examples/`) runs headless unless given
+`--gui`. Either way it runs the same sequence or duration, prints its result, and exits;
+closing the window ends it early. The headless runs self-check and are registered with CTest
+(`ex_*_headless`). Exceptions: `ex_record` only records, and the Python `custom_ui_scene.py`
+and `viewer_scene.py` always open a window (for a fixed 1 s and 10 s of simulated time).
+
+Most examples exist in both languages. C++ only: `ex_achd_press`. Python only: `ex_cabinet`,
+`basic_scene`, `custom_ui_scene`, `viewer_scene`.
 
 The Python counterparts use the public Python wrapper and upstream `PyKDL`
 bindings for FK, IK, RNEA, and ACHD instead of re-binding KDL classes locally.
@@ -37,9 +41,13 @@ bindings for FK, IK, RNEA, and ACHD instead of re-binding KDL classes locally.
 | `ex_rnea_pick_place` | table + blue cube | Cartesian target interpolation with IK + RNEA inverse dynamics |
 | `ex_achd_table_slide` | table contact | ACHD partial constraint comparison with wrist/table support |
 | `ex_achd_pick_place` | table + blue cube | ACHD Cartesian pick/place with 6D TCP regulation and half-arm support wrench |
+| `ex_achd_press` (C++) | table | ACHD press with a commanded wrench, measured against the table's contact force |
 | `ex_admittance_ft` | table + wrist FT + gripper | Admittance control driven by a named force-torque sensor, RNEA task-space computed-torque inner loop |
 | `ex_dual_arm` | two arms + grippers | multi-robot scene with independent KDL chains |
 | `ex_record` | arm only | headless MP4 recording |
+| `basic_scene` (Python) | arm only | minimal build, step and read |
+| `custom_ui_scene` (Python) | arm only | the wrapper's Simulate UI for 1 s |
+| `viewer_scene` (Python) | arm only | the scene in MuJoCo's own Python viewer for 10 s |
 
 ---
 
@@ -48,9 +56,9 @@ bindings for FK, IK, RNEA, and ACHD instead of re-binding KDL classes locally.
 **Scene:** Kinova GEN3 arm (arm only, no gripper).
 
 **What it does:**
-- Holds the arm at the home pose using KDL gravity compensation.
-- In GUI mode: detects sim resets (time going backward) and re-seeds the state.
-- In headless mode: runs 500 steps, measures EE drift, and prints it.
+- Holds the arm at the home pose using KDL gravity compensation for 500 steps.
+- `env.on_reset` re-homes the arm, so the UI's reset button restarts it.
+- Headless, it measures the EE drift and prints it.
 
 **Control law:** `CtrlMode::TORQUE` — KDL gravity compensation.
 
@@ -69,7 +77,7 @@ tau[i] = JntToGravity(q)[i]
 **What it does:**
 - Moves the arm from the home pose to a target pose using a linearly
   interpolated position setpoint over `kMotionDuration = 2.0 s`.
-- After the trajectory finishes, holds the final position indefinitely.
+- Holds the final position for 1 s, then exits.
 
 **Control law:** `CtrlMode::POSITION` — MuJoCo's built-in position actuator.
 
@@ -87,11 +95,12 @@ the actuator handles the PD tracking internally.
 
 ## ex_impedance
 
-**Scene:** Kinova GEN3 arm + Robotiq 2F-85 gripper attached at `bracelet_link`.
+**Scene:** Kinova GEN3 arm + Robotiq 2F-85 gripper attached at the arm's `pinch_site`.
 
 **What it does:**
-- Holds the arm at the home pose using a joint-space impedance controller.
-- Gripper cycles fully closed and open every 3 s (`fmod(t, 6) < 3 ? 0.8 : 0`).
+- Holds the arm at the home pose using a joint-space impedance controller for 200 steps.
+- Gripper cycles fully closed and open every 3 s (`fmod(t, 6) < 3 ? 0.82 : 0`; the gripper's
+  ctrl is its driver angle, 0.82 rad closed).
 - KDL chain is built with `tool_body = "g_base_mount"` so gripper inertia is lumped
   into the last segment — gravity compensation is correct for the full arm+gripper mass.
 
@@ -122,8 +131,11 @@ with five free objects: 3 boxes (red, green, blue) and 2 spheres (orange, purple
 
 ```
 tau[i] = JntToGravity(q)[i]          // gravity from scene's gravity_z
-gripper_ctrl = fmod(t, 6) < 3 ? 0.8 : 0.0
+gripper_ctrl = fmod(t, 6) < 3 ? 0.82 : 0.0
 ```
+
+Pure gravity compensation cannot hold the arm against the fingers' reaction while they move, so
+the headless drift is tens of mm; with the gripper still it is about 0.1 mm.
 
 **Headless output:** `EE drift after 500 steps: X.XXX mm`
 
@@ -159,7 +171,7 @@ State table (durations in seconds):
 | GRASP    | 5.0      | 8.0     | 0.03 rad   | open    |
 | CLOSE    | 1.5      | 2.5     | (none)     | closed  |
 | LIFT     | 3.0      | 5.0     | 0.08 rad   | closed  |
-| HOLD     | 10.0 (GUI) / 1.0 (headless) | same | (none)     | closed  |
+| HOLD     | 1.0      | 1.0     | (none)     | closed  |
 
 **Headless output:** `cube Z after pick: X.XXX m`
 
@@ -207,7 +219,8 @@ the pick examples.
 tau[i] = g[i] + Kp[i] * (q_des[i] - q[i]) - Kd[i] * dq[i]
 ```
 
-**Headless output:** `balls in transparent receiver: N/36`
+**Headless output:** `balls in transparent receiver: N/36` and the grain centroid; it fails
+below 4 balls. The GUI run uses more balls and a longer pour hold.
 
 ---
 
@@ -233,7 +246,12 @@ Run headless:
 ```bash
 ./build/src/examples/ex_achd_table_slide --headless
 ./build/src/examples/ex_achd_pick_place --headless
+./build/src/examples/ex_achd_press --headless [--variant weighted|main] [--free-z] [--force N]
 ```
+
+- `ex_achd_press` (C++ only) descends until the table pushes back, then presses with a
+  commanded wrench and compares it with the measured table reaction. `--variant weighted` passes
+  the wrench through (`w_f_ext = 1`); `main` lets the constraint compensate it.
 
 ---
 
@@ -291,8 +309,8 @@ python examples/ex_admittance_ft.py --gui
 **What it does:**
 - Places both robots in one `SceneSpec` with different positions and prefixes.
 - Initialises two independent `Robot` handles and KDL chains from the same
-  compiled `mjModel` by passing matching `base_link`/`bracelet_link` names
-  with the correct prefix (`""` vs `"r2_"`).
+  compiled `mjModel` by passing each arm's full body names (`base_link` vs
+  `r2_base_link`) and tool names (`g_base_mount` vs `r2_g_base_mount`).
 - Both arms hold home pose with PD + KDL gravity; grippers cycle open/closed.
 - `jnt_trq_cmd` is primed before the loop so the very first physics step
   already gets correct gravity compensation.
@@ -304,7 +322,7 @@ tau1[i] = Kp[i]*(home[i]-q1[i]) - Kd[i]*dq1[i] + g1[i]
 tau2[i] = Kp[i]*(home[i]-q2[i]) - Kd[i]*dq2[i] + g2[i]
 ```
 
-Each arm calls `update()` and `JntToGravity` separately every step.
+One `update(&env)` reads and commands both arms; each arm has its own `ChainDynParam`.
 
 **Headless output:** EE Cartesian positions for both arms after 600 steps.
 
@@ -331,9 +349,9 @@ tau[i] = JntToGravity(q)[i]
 **Usage:**
 
 ```bash
-./build/ex_record [output.mp4] [360p|480p|720p|1080p|2k|4k]
+./build/src/examples/ex_record [output.mp4] [360p|480p|720p|1080p|2k|4k]
 # e.g.
-./build/ex_record fly.mp4 720p
+./build/src/examples/ex_record fly.mp4 720p
 ```
 
 Resolution presets map to 16:9 dimensions (`R1080p` = 1920x1080, etc.).
