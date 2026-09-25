@@ -363,6 +363,13 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
       const PyToolFrameSpec *tool
     );
 
+    std::shared_ptr<PyRobot> create_robot_from_chain(
+      const KDL::Chain               &chain,
+      const std::vector<std::string> &joint_names,
+      const std::string              &prefix,
+      const PyToolFrameSpec          *tool
+    );
+
     mj_kdl::ResetInfo reset(const mj_kdl::ResetOptions *options)
     {
         ensure_open();
@@ -521,7 +528,7 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         return mj_name2id(env.model, mjOBJ_ACTUATOR, name.c_str()) >= 0;
     }
 
-    void save_xml(const std::string &path) const
+    void save_model_xml(const std::string &path) const
     {
         ensure_open();
         if (mj_kdl::Status s = mj_kdl::save_model_xml(env.model, path.c_str()); !s)
@@ -679,6 +686,25 @@ std::shared_ptr<PyRobot> PyEnv::create_robot(
     return out;
 }
 
+std::shared_ptr<PyRobot> PyEnv::create_robot_from_chain(
+  const KDL::Chain               &chain,
+  const std::vector<std::string> &joint_names,
+  const std::string              &prefix,
+  const PyToolFrameSpec          *tool
+)
+{
+    ensure_open();
+    auto out       = std::make_shared<PyRobot>();
+    out->env_owner = shared_from_this();
+    mj_kdl::ToolFrameSpec cpp_tool;
+    if (tool) cpp_tool = to_cpp(*tool);
+    const mj_kdl::Status s = mj_kdl::init_robot_from_chain(
+      &out->robot, &env, chain, joint_names, prefix.c_str(), tool ? &cpp_tool : nullptr
+    );
+    if (!s) throw std::runtime_error(s.error);
+    return out;
+}
+
 // The simulate UI of an Env; every call is a no-op (or false) while it is closed.
 struct PyViewer
 {
@@ -687,6 +713,13 @@ struct PyViewer
     mj_kdl::Viewer *viewer() const { return &owner->env.viewer; }
 
     bool is_running() const { return mj_kdl::is_running(viewer()); }
+
+    bool key_pressed(int glfw_key) const { return mj_kdl::key_pressed(viewer(), glfw_key); }
+
+    void capture_key(int glfw_key, bool capture)
+    {
+        mj_kdl::capture_key(viewer(), glfw_key, capture);
+    }
 
     void clear_trace() { mj_kdl::clear_trace(viewer()); }
 
@@ -725,6 +758,8 @@ struct PyVideoRecorder
     mj_kdl::VideoRecorder  recorder;
     std::shared_ptr<PyEnv> owner; // keeps the Env alive for the recorder's lifetime
     bool                   active = false;
+    int                    width  = 0; // 0 for a preset recorder
+    int                    height = 0;
 
     ~PyVideoRecorder() { close(); }
 
@@ -750,6 +785,46 @@ struct PyVideoRecorder
             : mj_kdl::init_video_recorder(&out->recorder, m, out_path.c_str(), width, height, fps);
         if (!s) throw std::runtime_error(s.error);
         out->active = true;
+        if (!use_preset) {
+            out->width  = width;
+            out->height = height;
+        }
+        return out;
+    }
+
+    static std::shared_ptr<PyVideoRecorder>
+      make_offscreen(const std::shared_ptr<PyEnv> &env, int width, int height)
+    {
+        if (!env) throw std::runtime_error("env is null");
+        env->ensure_open();
+        auto out   = std::shared_ptr<PyVideoRecorder>(new PyVideoRecorder());
+        out->owner = env;
+        if (mj_kdl::Status s =
+              mj_kdl::init_offscreen(&out->recorder, env->env.model, width, height);
+            !s)
+            throw std::runtime_error(s.error);
+        out->active = true;
+        out->width  = width;
+        out->height = height;
+        return out;
+    }
+
+    py::array_t<std::uint8_t> render_rgb()
+    {
+        if (!active || !owner->env.model) throw std::runtime_error("recorder is closed");
+        if (width <= 0) {
+            throw std::runtime_error(
+              "render_rgb needs the frame size: open the recorder with width and height"
+            );
+        }
+        py::array_t<std::uint8_t> out({ height, width, 3 });
+        std::uint8_t             *pixels = out.mutable_data();
+        bool                      ok     = false;
+        {
+            py::gil_scoped_release nogil;
+            ok = mj_kdl::render_rgb(&recorder, &owner->env, pixels);
+        }
+        if (!ok) throw std::runtime_error("render_rgb failed");
         return out;
     }
 
@@ -1208,8 +1283,17 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         },
         "Name of the TCP site, or empty if none."
       )
+      .def(
+        "joint_force_limits",
+        [](const PyRobot &self, double fallback) {
+            self.ensure_active();
+            return read_only_array<double>(mj_kdl::joint_force_limits(&self.robot, fallback));
+        },
+        py::arg("fallback") = 1e6,
+        "Per-joint force/torque limit of the active mode's actuators; fallback where unlimited."
+      )
       .def_property_readonly(
-        "tip_to_tcp",
+        "tip_T_tcp",
         [](const PyRobot &self) {
             self.ensure_active();
             return kdl_frame_to_py(self.robot.tip_T_tcp);
@@ -1221,6 +1305,19 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       m, "Viewer", "The simulate UI of an Env, opened by Env.open_viewer(); inert while closed."
     )
       .def("is_running", &PyViewer::is_running, "True while the viewer window is open.")
+      .def(
+        "key_pressed",
+        &PyViewer::key_pressed,
+        py::arg("key"),
+        "True while the GLFW key code is held; False headless."
+      )
+      .def(
+        "capture_key",
+        &PyViewer::capture_key,
+        py::arg("key"),
+        py::arg("capture") = true,
+        "Claim a GLFW key so the UI does not act on it; capture=False gives it back."
+      )
       .def("clear_trace", &PyViewer::clear_trace, "Clear viewer trace geometry.")
       .def(
         "add_trace_segment",
@@ -1298,6 +1395,21 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         py::arg("fps")        = 60,
         "Open an offscreen recorder for an Env with a resolution preset."
       )
+      .def_static(
+        "open_offscreen",
+        &PyVideoRecorder::make_offscreen,
+        py::arg("env"),
+        py::arg("width"),
+        py::arg("height"),
+        "Open an offscreen renderer (no video file) for render_rgb()."
+      )
+      .def(
+        "render_rgb",
+        &PyVideoRecorder::render_rgb,
+        "Render the Env's current state as a (height, width, 3) uint8 array, top row first."
+      )
+      .def("__enter__", [](const std::shared_ptr<PyVideoRecorder> &self) { return self; })
+      .def("__exit__", [](PyVideoRecorder &self, const py::args &) { self.close(); })
       .def(
         "record_frame",
         &PyVideoRecorder::record_frame,
@@ -1333,6 +1445,8 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "Build an environment from a SceneSpec."
       )
       .def("close", &PyEnv::close, "Close the viewer and free the model; robots become closed.")
+      .def("__enter__", [](const std::shared_ptr<PyEnv> &self) { return self; })
+      .def("__exit__", [](PyEnv &self, const py::args &) { self.close(); })
       .def(
         "create_robot",
         [](
@@ -1351,6 +1465,29 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         py::arg("prefix") = "",
         py::arg("tool")   = py::none(),
         "Create a robot and register it with this environment."
+      )
+      .def(
+        "create_robot_from_chain",
+        [](
+          const std::shared_ptr<PyEnv>   &self,
+          const py::object               &chain,
+          const std::vector<std::string> &joint_names,
+          const std::string              &prefix,
+          const py::object               &tool
+        ) {
+            const auto cpp_chain = chain.cast<KDL::Chain>();
+            if (tool.is_none())
+                return self->create_robot_from_chain(cpp_chain, joint_names, prefix, nullptr);
+            auto cpp_tool = tool.cast<PyToolFrameSpec>();
+            return self->create_robot_from_chain(cpp_chain, joint_names, prefix, &cpp_tool);
+        },
+        py::arg("chain"),
+        py::arg("joint_names"),
+        py::arg("prefix") = "",
+        py::arg("tool")   = py::none(),
+        "Register a robot driven by a given PyKDL.Chain; joint_names are the MuJoCo joints in "
+        "chain order. The chain is used as is (no tool inertia lumped); tool only names FT "
+        "sensors."
       )
       .def(
         "step",
@@ -1486,8 +1623,8 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "Whether the compiled model has the named actuator."
       )
       .def(
-        "save_xml",
-        &PyEnv::save_xml,
+        "save_model_xml",
+        &PyEnv::save_model_xml,
         py::arg("path"),
         "Save the compiled model to an MJCF XML file."
       )

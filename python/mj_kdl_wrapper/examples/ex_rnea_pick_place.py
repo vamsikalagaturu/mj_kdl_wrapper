@@ -107,7 +107,7 @@ def waypoints(robot) -> dict[str, list[float]]:
         (lo, hi) if math.isfinite(lo) and math.isfinite(hi) else (-2 * math.pi, 2 * math.pi)
         for lo, hi in robot.joint_limits
     ]
-    grasp_rot = robot.tip_to_tcp.M
+    grasp_rot = robot.tip_T_tcp.M
     seed = HOME[:]
 
     # World targets, in the arm base frame (the arm stands on the table top).

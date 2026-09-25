@@ -83,7 +83,7 @@ it has robots; `time()` and `timestep()` report where it is.
 for _ in range(10):
     env.step()
 print(env.time(), env.timestep())
-env.save_xml("combined_scene.xml")
+env.save_model_xml("combined_scene.xml")
 env.save_binary("combined_scene.mjb")
 ```
 
@@ -377,7 +377,7 @@ reset instead of loading a keyframe.
 ```python
 env.set_actuator_ctrl("finger", 0.25)
 frame = env.body_frame("red_cube")
-env.save_xml("episode_start.xml")
+env.save_model_xml("episode_start.xml")
 ```
 
 ## Runtime Add And Remove Objects

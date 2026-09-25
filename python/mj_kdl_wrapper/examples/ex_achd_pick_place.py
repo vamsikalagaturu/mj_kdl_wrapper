@@ -236,7 +236,7 @@ def run_phase(ctx, phase: dict, gui, state) -> bool:
 
 def build_phases(robot, chain) -> list[dict]:
     # The grasp orientation is the tool frame's own: the pinch axis points at the table.
-    grasp_rot = robot.tip_to_tcp.M
+    grasp_rot = robot.tip_T_tcp.M
     z_grasp = CUBE_HS
     z_above = z_grasp + 0.20
     z_lift = z_grasp + 0.30

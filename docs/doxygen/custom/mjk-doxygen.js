@@ -120,7 +120,7 @@
     kdl_chain: true,
     remove_object: true,
     reset: true,
-    save_xml: true,
+    save_model_xml: true,
     site_frame: true,
     start: true,
     step: true,
@@ -343,7 +343,7 @@
     var apiPattern =
       /\b(mjk|mj_kdl_wrapper)\.([A-Z][A-Za-z0-9_]*)(?:\.([A-Za-z_][A-Za-z0-9_]*))?\b|\b(mjk|mj_kdl_wrapper)\.([a-z_][A-Za-z0-9_]*)\b/g;
     var methodPattern =
-      /\b([A-Za-z_][A-Za-z0-9_]*)\.(add_object|add_robot|body_frame|build|close|fk_frame|from_spec|kdl_chain|remove_object|reset|save_xml|site_frame|start|step|stop|update)\b/g;
+      /\b([A-Za-z_][A-Za-z0-9_]*)\.(add_object|add_robot|body_frame|build|close|fk_frame|from_spec|kdl_chain|remove_object|reset|save_model_xml|site_frame|start|step|stop|update)\b/g;
 
     document.querySelectorAll(".fragment").forEach(function (fragment) {
       var variables = inferPythonVariables(fragment);

@@ -207,3 +207,50 @@ def test_site_spec_quat_takes_four_values():
     site = mjk.SiteSpec()
     with pytest.raises(TypeError):
         site.quat = [0.0, 0.0, 0.0, 1.0, 0.0]
+
+
+def test_env_is_a_context_manager_and_saves_its_model(tmp_path):
+    _skip_without_model()
+
+    with mjk.Env.build(_scene_spec()) as env:
+        robot = env.create_robot("base_link", "bracelet_link")
+        env.save_model_xml(str(tmp_path / "scene.xml"))
+    assert (tmp_path / "scene.xml").stat().st_size > 0
+    with pytest.raises(RuntimeError, match="closed"):
+        _ = robot.jnt_pos_msr
+
+
+def test_robot_from_a_given_chain_matches_the_derived_one():
+    _skip_without_model()
+
+    with mjk.Env.build(_scene_spec()) as env:
+        derived = env.create_robot("base_link", "bracelet_link")
+        env.reset()
+        given = env.create_robot_from_chain(derived.kdl_chain(), derived.joint_names)
+        assert given.n_joints == derived.n_joints
+        assert given.fk_frame().p == derived.fk_frame().p
+
+
+def test_joint_force_limits_follow_the_active_mode():
+    _skip_without_model()
+
+    with mjk.Env.build(_scene_spec()) as env:
+        robot = env.create_robot("base_link", "bracelet_link")
+        robot.set_control_mode(mjk.CtrlMode.TORQUE)
+        limits = robot.joint_force_limits()
+        assert limits.shape == (robot.n_joints,)
+        assert (limits > 0).all() and (limits < 1e6).all()
+
+
+def test_offscreen_render_returns_an_image():
+    _skip_without_model()
+
+    with mjk.Env.build(_scene_spec()) as env:
+        try:
+            rec = mjk.VideoRecorder.open_offscreen(env, 64, 48)
+        except RuntimeError as exc:
+            pytest.skip(f"no offscreen rendering: {exc}")
+        with rec:
+            rgb = rec.render_rgb()
+        assert rgb.shape == (48, 64, 3) and rgb.dtype.name == "uint8"
+        assert rgb.any()
