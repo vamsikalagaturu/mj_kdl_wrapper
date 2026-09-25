@@ -326,8 +326,8 @@ Use `get_body_frame()` and `get_site_frame()` to read world poses as
 `KDL::Frame`. They recompute the kinematics only when the state has changed
 since they were last computed, so many reads per step cost one forward pass and a
 direct `qpos` write is picked up with no extra call.
-`set_body_pose()` teleports a free body and zeroes its velocity. The quaternion,
-when supplied in C++, uses MuJoCo order `[w, x, y, z]`.
+`set_body_pose()` teleports a free body and zeroes its velocity. The quaternion is
+`[x, y, z, w]`, like every quaternion in the API.
 
 ```cpp
 KDL::Frame tcp;

@@ -385,7 +385,7 @@ struct RobotPorts
     CtrlMode             ctrl_mode = CtrlMode::POSITION;
     std::vector<double>  jnt_pos_msr;   // [rad]   measured joint positions (update())
     std::vector<double>  jnt_vel_msr;   // [rad/s] measured joint velocities (update())
-    std::vector<double>  jnt_trq_msr;   // [Nm]    actuator output torques (update())
+    std::vector<double>  jnt_trq_msr;   // [Nm]    active mode's qfrc_actuator (update())
     std::vector<double>  jnt_pos_cmd;   // [rad]   position setpoints (POSITION)
     std::vector<double>  jnt_vel_cmd;   // [rad/s] velocity setpoints (VELOCITY)
     std::vector<double>  jnt_trq_cmd;   // [Nm]    torque commands (TORQUE)
@@ -1041,7 +1041,7 @@ void set_joint_pos(Robot *r, const KDL::JntArray &q);
  * Teleport a free-floating body to a world-frame position and optionally a
  * world-frame orientation, then zero its velocity.
  * body_name must identify a body that owns a mjJNT_FREE joint.
- * quat is MuJoCo convention [w, x, y, z]; pass nullptr to keep identity orientation.
+ * quat is [x, y, z, w] like every quaternion in this API; nullptr sets identity.
  */
 void set_body_pose(
   Env          *env,

@@ -1951,10 +1951,10 @@ void set_body_pose(Env *env, const char *body_name, const double pos[3], const d
     data->qpos[qadr]     = pos[0];
     data->qpos[qadr + 1] = pos[1];
     data->qpos[qadr + 2] = pos[2];
-    data->qpos[qadr + 3] = quat ? quat[0] : 1.0;
-    data->qpos[qadr + 4] = quat ? quat[1] : 0.0;
-    data->qpos[qadr + 5] = quat ? quat[2] : 0.0;
-    data->qpos[qadr + 6] = quat ? quat[3] : 0.0;
+    data->qpos[qadr + 3] = quat ? quat[3] : 1.0; // xyzw in, MuJoCo's qpos is wxyz
+    data->qpos[qadr + 4] = quat ? quat[0] : 0.0;
+    data->qpos[qadr + 5] = quat ? quat[1] : 0.0;
+    data->qpos[qadr + 6] = quat ? quat[2] : 0.0;
     for (int k = 0; k < 6; ++k) data->qvel[dadr + k] = 0.0;
 }
 

@@ -466,7 +466,6 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         return kdl_frame_to_py(frame);
     }
 
-    // quat is Python's xyzw; MuJoCo takes wxyz.
     void set_body_pose(
       const std::string           &name,
       const std::array<double, 3> &pos,
@@ -474,13 +473,9 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
     )
     {
         ensure_open();
-        if (!quat_xyzw) {
-            mj_kdl::set_body_pose(&env, name.c_str(), pos.data());
-            return;
-        }
-        const auto                 &q    = *quat_xyzw;
-        const std::array<double, 4> wxyz = { q[3], q[0], q[1], q[2] };
-        mj_kdl::set_body_pose(&env, name.c_str(), pos.data(), wxyz.data());
+        mj_kdl::set_body_pose(
+          &env, name.c_str(), pos.data(), quat_xyzw ? quat_xyzw->data() : nullptr
+        );
     }
 
     void set_actuator_ctrl(const std::string &name, double value)
