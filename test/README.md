@@ -72,6 +72,8 @@ Two fixtures:
   joints, EE within workspace at home.
 - **MjcfGripperTest** (arm + 2F-85): `nq>=13`, `nu>=8`, KDL chain 7 joints,
   EE workspace, gripper driver range `[~0, ~0.8]` rad.
+- **MjcfPathTest** (`fixtures/meshdir/`): a relative model path to an MJCF with a relative
+  `meshdir` builds.
 
 ### test_mjcf_pos_ctrl
 

@@ -270,6 +270,25 @@ TEST_F(MjcfGripperTest, JointPositionByName)
     EXPECT_FALSE(mj_kdl::get_joint_position(model_, data_, "no_such_joint", &measured));
 }
 
+TEST(MjcfPathTest, RelativeModelPathWithRelativeMeshdir)
+{
+    const fs::path    model    = fs::path(MJ_KDL_TEST_FIXTURES) / "meshdir/mjcf/mesh_link.xml";
+    const std::string relative = fs::relative(model).string();
+    ASSERT_FALSE(fs::path(relative).is_absolute());
+
+    mj_kdl::SceneSpec spec;
+    spec.timestep   = 0.002;
+    spec.add_floor  = false;
+    spec.add_skybox = false;
+    spec.robots.push_back(mj_kdl::RobotSpec{ .path = relative.c_str() });
+
+    mjModel *m = nullptr;
+    mjData  *d = nullptr;
+    ASSERT_TRUE(mj_kdl::build_scene(&m, &d, &spec)) << relative;
+    EXPECT_EQ(m->nmesh, 1);
+    mj_kdl::destroy_scene(m, d);
+}
+
 int main(int argc, char *argv[])
 {
     testing::InitGoogleTest(&argc, argv);

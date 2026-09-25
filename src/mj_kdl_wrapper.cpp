@@ -271,7 +271,8 @@ static MjSpecPtr make_spec_ptr(mjSpec *s) { return { s, &mj_deleteSpec }; }
  * survive mjs_attach: resolve them now, or a scene saved with mj_saveXML cannot be reloaded. */
 static void absolutize_asset_files(mjSpec *spec)
 {
-    const std::filesystem::path base = mjs_getString(spec->modelfiledir);
+    // Relative when the model path was, and a relative file does not resolve from the scene.
+    const std::filesystem::path base = std::filesystem::absolute(mjs_getString(spec->modelfiledir));
     const auto resolve = [&base](mjString *file, const mjString *dir) {
         const std::filesystem::path f = mjs_getString(file);
         if (f.empty() || f.is_absolute()) return;

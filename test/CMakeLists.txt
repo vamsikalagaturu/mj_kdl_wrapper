@@ -33,8 +33,10 @@ foreach(test_name ${ALL_TESTS})
   # RUN_SERIAL avoids conflicts over shared temp files and MuJoCo global XML state.
   gtest_discover_tests(${test_name} DISCOVERY_TIMEOUT 60 PROPERTIES RUN_SERIAL TRUE)
 endforeach()
-target_compile_definitions(test_control_modes PRIVATE
-  MJ_KDL_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+foreach(test_name test_control_modes test_mjcf_load)
+  target_compile_definitions(${test_name} PRIVATE
+    MJ_KDL_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+endforeach()
 
 # The examples self-check under --headless and exit non-zero on failure. ex_record is left out:
 # it only writes a video.
