@@ -37,7 +37,7 @@ int main(int argc, char *argv[])
     sc.add_floor  = true;
     sc.add_skybox = true;
     mj_kdl::RobotSpec r;
-    r.path = mjcf.c_str();
+    r.path = mjcf;
     sc.robots.push_back(r);
 
     mj_kdl::Env   env;

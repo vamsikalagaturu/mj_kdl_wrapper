@@ -31,20 +31,20 @@ class MjcfFtSensorTest : public testing::Test
         if (!fs::exists(grp_mjcf_)) GTEST_SKIP() << grp_mjcf_ << " not found";
 
         mj_kdl::AttachmentSpec ft{
-            .mjcf_path          = ft_mjcf_.c_str(),
+            .mjcf_path          = ft_mjcf_,
             .attach_to          = { mj_kdl::AttachKind::Site, "pinch_site" },
             .prefix             = "",
             .contact_exclusions = {},
         };
         mj_kdl::AttachmentSpec gripper{
-            .mjcf_path          = grp_mjcf_.c_str(),
+            .mjcf_path          = grp_mjcf_,
             .attach_to          = { mj_kdl::AttachKind::Site, "wrist_ft_site" },
             .prefix             = "g_",
             .contact_exclusions = {},
         };
 
         mj_kdl::RobotSpec rs;
-        rs.path = arm_mjcf_.c_str();
+        rs.path = arm_mjcf_;
         rs.attachments.push_back(ft);
         rs.attachments.push_back(gripper);
 

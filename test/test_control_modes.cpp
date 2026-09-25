@@ -86,7 +86,7 @@ class ArmModesTest : public testing::TestWithParam<ArmCase>
         spec_.timestep   = 0.002;
         spec_.add_floor  = true;
         spec_.add_skybox = false;
-        spec_.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf_.c_str() });
+        spec_.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf_ });
         ASSERT_TRUE(mj_kdl::init_env(&env_, &spec_));
         model_ = env_.model;
         data_  = env_.data;
@@ -230,7 +230,7 @@ TEST_P(ArmModesTest, QfrcAppliedIsLeftToTheUser)
 TEST_P(ArmModesTest, TwoArmsRunDifferentModes)
 {
     const ArmCase &c = GetParam();
-    spec_.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf_.c_str(), .prefix = "r2_", .pos = { 1.0, 0, 0 } });
+    spec_.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf_, .prefix = "r2_", .pos = { 1.0, 0, 0 } });
     mj_kdl::Env two;
     ASSERT_TRUE(mj_kdl::init_env(&two, &spec_));
 
@@ -260,9 +260,9 @@ TEST(GripperModesTest, GripperStaysInPositionWhileTheArmSwitches)
     if (!fs::exists(arm_mjcf)) GTEST_SKIP() << "kinova_gen3/gen3.xml not found";
     if (!fs::exists(grp_mjcf)) GTEST_SKIP() << "robotiq_2f85/2f85.xml not found";
 
-    mj_kdl::RobotSpec rs{ .path = arm_mjcf.c_str() };
+    mj_kdl::RobotSpec rs{ .path = arm_mjcf };
     rs.attachments.push_back(mj_kdl::AttachmentSpec{
-      .mjcf_path          = grp_mjcf.c_str(),
+      .mjcf_path          = grp_mjcf,
       .attach_to          = { mj_kdl::AttachKind::Site, "pinch_site" },
       .prefix             = "g_",
       .contact_exclusions = {},
@@ -329,7 +329,7 @@ class MotorWheelModesTest : public testing::Test
         spec_.add_floor  = false;
         spec_.add_skybox = false;
         spec_.robots.push_back(mj_kdl::RobotSpec{
-          .path  = fixture_.c_str(),
+          .path  = fixture_,
           .modes = { { .mode = mj_kdl::CtrlMode::VELOCITY, .joints = { "wheel" }, .kv = 2.0 } },
         });
         ASSERT_TRUE(mj_kdl::init_env(&env_, &spec_));

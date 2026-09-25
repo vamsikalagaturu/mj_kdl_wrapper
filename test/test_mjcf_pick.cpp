@@ -134,13 +134,13 @@ class MjcfPickTest : public testing::Test
         }
 
         mj_kdl::AttachmentSpec gs{
-            .mjcf_path          = grp_mjcf.c_str(),
+            .mjcf_path          = grp_mjcf,
             .attach_to          = { mj_kdl::AttachKind::Site, "pinch_site" },
             .prefix             = "g_",
             .contact_exclusions = {},
         };
         mj_kdl::RobotSpec rs;
-        rs.path = arm_mjcf.c_str();
+        rs.path = arm_mjcf;
         rs.attachments.push_back(gs);
 
         mj_kdl::SceneObject cube{

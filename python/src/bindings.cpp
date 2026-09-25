@@ -131,16 +131,16 @@ AttachTarget to_cpp(const PyAttachTarget &src)
 {
     AttachTarget out;
     out.kind = src.kind;
-    out.name = (src.kind == AttachKind::World || src.name.empty()) ? nullptr : src.name.c_str();
+    if (src.kind != AttachKind::World) out.name = src.name;
     return out;
 }
 
 mj_kdl::AttachmentSpec to_cpp(const PyAttachmentSpec &src)
 {
     mj_kdl::AttachmentSpec out;
-    out.mjcf_path = src.mjcf_path.empty() ? nullptr : src.mjcf_path.c_str();
+    out.mjcf_path = src.mjcf_path;
     out.attach_to = to_cpp(src.attach_to);
-    out.prefix    = src.prefix.c_str();
+    out.prefix    = src.prefix;
     std::copy(src.pos.begin(), src.pos.end(), out.pos);
     std::copy(src.quat.begin(), src.quat.end(), out.quat);
     out.contact_exclusions = src.contact_exclusions;
@@ -150,8 +150,8 @@ mj_kdl::AttachmentSpec to_cpp(const PyAttachmentSpec &src)
 RobotSpec to_cpp(const PyRobotSpec &src)
 {
     RobotSpec out;
-    out.path      = src.path.empty() ? nullptr : src.path.c_str();
-    out.prefix    = src.prefix.c_str();
+    out.path      = src.path;
+    out.prefix    = src.prefix;
     out.attach_to = to_cpp(src.attach_to);
     std::copy(src.pos.begin(), src.pos.end(), out.pos);
     std::copy(src.quat.begin(), src.quat.end(), out.quat);
@@ -306,15 +306,15 @@ py::object kdl_chain_to_py(const KDL::Chain &chain)
 mj_kdl::ToolFrameSpec to_cpp(const PyToolFrameSpec &src)
 {
     mj_kdl::ToolFrameSpec out;
-    out.tool_body = src.tool_body.empty() ? nullptr : src.tool_body.c_str();
-    out.tcp_site  = src.tcp_site.empty() ? nullptr : src.tcp_site.c_str();
+    out.tool_body = src.tool_body;
+    out.tcp_site  = src.tcp_site;
     out.ft_sensors.reserve(src.ft_sensors.size());
     for (const auto &item : src.ft_sensors) {
         out.ft_sensors.push_back(mj_kdl::ForceTorqueSensorSpec{
-          .name          = item.name.empty() ? nullptr : item.name.c_str(),
-          .force_sensor  = item.force_sensor.empty() ? nullptr : item.force_sensor.c_str(),
-          .torque_sensor = item.torque_sensor.empty() ? nullptr : item.torque_sensor.c_str(),
-          .frame_site    = item.frame_site.empty() ? nullptr : item.frame_site.c_str(),
+          .name          = item.name,
+          .force_sensor  = item.force_sensor,
+          .torque_sensor = item.torque_sensor,
+          .frame_site    = item.frame_site,
         });
     }
     return out;
@@ -401,14 +401,12 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
             throw std::runtime_error(s.error);
     }
 
-    // env.spec points into spec's strings (and the added object's), so it is re-derived after.
     void add_object(const PySceneObject &object)
     {
         ensure_open();
         if (mj_kdl::Status s = mj_kdl::scene_add_object(&env, to_cpp(object)); !s)
             throw std::runtime_error(s.error);
         spec.objects.push_back(object);
-        env.spec = to_cpp(spec);
     }
 
     void remove_object(const std::string &name)
@@ -421,7 +419,6 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         if (mj_kdl::Status s = mj_kdl::scene_remove_object(&env, name); !s)
             throw std::runtime_error(s.error);
         spec.objects.erase(it);
-        env.spec = to_cpp(spec);
     }
 
     void set_control_mode(int robot, CtrlMode mode)

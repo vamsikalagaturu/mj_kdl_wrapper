@@ -145,12 +145,12 @@ int main(int argc, char **argv)
     const std::string table_mjcf = mj_kdl_examples::asset("table.xml");
 
     mj_kdl::AttachmentSpec gripper;
-    gripper.mjcf_path = grp_mjcf.c_str();
+    gripper.mjcf_path = grp_mjcf;
     gripper.attach_to = { mj_kdl::AttachKind::Site, "pinch_site" };
     gripper.prefix    = "g_";
 
     mj_kdl::RobotSpec robot_spec;
-    robot_spec.path   = arm_mjcf.c_str();
+    robot_spec.path   = arm_mjcf;
     robot_spec.pos[2] = kTableZ;
     robot_spec.attachments.push_back(gripper);
 

@@ -49,7 +49,7 @@ class MjcfLoadTest : public testing::Test
     sc.add_skybox = true;
         sc.add_floor  = false;
         sc.add_skybox = false;
-        sc.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf.c_str(), .attachments = {} });
+        sc.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf, .attachments = {} });
 
         ASSERT_TRUE(mj_kdl::init_env(&env_, &sc));
         model_ = env_.model;
@@ -170,13 +170,13 @@ class MjcfGripperTest : public testing::Test
         }
 
         mj_kdl::AttachmentSpec gs{
-            .mjcf_path          = grp_mjcf.c_str(),
+            .mjcf_path          = grp_mjcf,
             .attach_to          = { mj_kdl::AttachKind::Site, "pinch_site" },
             .prefix             = "g_",
             .contact_exclusions = {},
         };
         mj_kdl::RobotSpec rs;
-        rs.path = arm_mjcf.c_str();
+        rs.path = arm_mjcf;
         rs.attachments.push_back(gs);
 
         mj_kdl::SceneSpec sc;
@@ -273,7 +273,7 @@ class JointEdgeCaseTest : public testing::Test
         spec.timestep   = 0.002;
         spec.add_floor  = false;
         spec.add_skybox = false;
-        spec.robots.push_back(mj_kdl::RobotSpec{ .path = fixture_.c_str(), .modes = {} });
+        spec.robots.push_back(mj_kdl::RobotSpec{ .path = fixture_, .modes = {} });
         ASSERT_TRUE(mj_kdl::init_env(&env_, &spec));
     }
 };
@@ -319,7 +319,7 @@ TEST(MjcfPathTest, RelativeModelPathWithRelativeMeshdir)
     spec.timestep   = 0.002;
     spec.add_floor  = false;
     spec.add_skybox = false;
-    spec.robots.push_back(mj_kdl::RobotSpec{ .path = relative.c_str() });
+    spec.robots.push_back(mj_kdl::RobotSpec{ .path = relative });
 
     mjModel *m = nullptr;
     mjData  *d = nullptr;

@@ -269,7 +269,7 @@ std::string mount = mj_kdl::scene_object_site_name(table, "table_top");
 
 sc.robots.push_back(mj_kdl::RobotSpec{
     .path      = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
-    .attach_to = { mj_kdl::AttachKind::Site, mount.c_str() },
+    .attach_to = { mj_kdl::AttachKind::Site, mount },
 });
 
 sc.objects.push_back(mj_kdl::SceneObject{

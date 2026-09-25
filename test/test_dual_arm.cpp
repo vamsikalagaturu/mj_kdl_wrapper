@@ -67,8 +67,8 @@ class DualArmTest : public testing::Test
         scene.add_floor = true;
 
         scene.robots = {
-            mj_kdl::RobotSpec{ .path = mjcf.c_str(), .pos = { -0.5, 0.0, 0.0 }, .attachments = {} },
-            mj_kdl::RobotSpec{ .path = mjcf.c_str(), .prefix = "r2_", .pos = { 0.5, 0.0, 0.0 }, .quat = { 0.0, 0.0, 1.0, 0.0 }, .attachments = {} }, // yaw 180 deg
+            mj_kdl::RobotSpec{ .path = mjcf, .pos = { -0.5, 0.0, 0.0 }, .attachments = {} },
+            mj_kdl::RobotSpec{ .path = mjcf, .prefix = "r2_", .pos = { 0.5, 0.0, 0.0 }, .quat = { 0.0, 0.0, 1.0, 0.0 }, .attachments = {} }, // yaw 180 deg
         };
 
         ASSERT_TRUE(mj_kdl::init_env(&env, &scene)) << "init_env() returned false";

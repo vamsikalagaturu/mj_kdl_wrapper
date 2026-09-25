@@ -111,7 +111,7 @@ enum class AttachKind { World, Body, Site, Frame };
 struct AttachTarget
 {
     AttachKind  kind = AttachKind::World;
-    const char *name = nullptr; // ignored when kind == World
+    std::string name; // ignored when kind == World
 };
 
 /**
@@ -124,9 +124,9 @@ struct AttachTarget
  */
 struct AttachmentSpec
 {
-    const char  *mjcf_path = nullptr;      // MJCF file for this attachment
+    std::string  mjcf_path;                // MJCF file for this attachment
     AttachTarget attach_to;                // parent in root or prior attachment (default: world)
-    const char  *prefix  = "";             // element name prefix (avoids name conflicts)
+    std::string  prefix;                   // element name prefix (avoids name conflicts)
     double       pos[3]  = { 0, 0, 0 };    // position offset [m]
     double       quat[4] = { 0, 0, 0, 1 }; // orientation offset [x, y, z, w]
 
@@ -183,8 +183,8 @@ struct CtrlModeSpec
  */
 struct RobotSpec
 {
-    const char                 *path   = nullptr;         // root MJCF path
-    const char                 *prefix = "";              // element name prefix
+    std::string                 path;                     // root MJCF path
+    std::string                 prefix;                   // element name prefix
     AttachTarget                attach_to;                // placement parent (default: world)
     double                      pos[3]  = { 0, 0, 0 };    // offset in parent frame [m]
     double                      quat[4] = { 0, 0, 0, 1 }; // orientation offset [x, y, z, w]
@@ -326,10 +326,10 @@ struct SceneSpec
  */
 struct ForceTorqueSensorSpec
 {
-    const char *name          = nullptr; // logical wrapper name
-    const char *force_sensor  = nullptr; // MuJoCo <force> sensor name
-    const char *torque_sensor = nullptr; // MuJoCo <torque> sensor name
-    const char *frame_site    = nullptr; // optional site that defines the sensor frame
+    std::string name;          // logical wrapper name
+    std::string force_sensor;  // MuJoCo <force> sensor name
+    std::string torque_sensor; // MuJoCo <torque> sensor name
+    std::string frame_site;    // optional site that defines the sensor frame
 };
 
 /**
@@ -369,8 +369,8 @@ struct ForceTorqueSensor : ForceTorqueReading
  */
 struct ToolFrameSpec
 {
-    const char *tool_body = nullptr;
-    const char *tcp_site  = nullptr;                // MuJoCo site name (takes priority)
+    std::string tool_body;
+    std::string tcp_site;                           // MuJoCo site name (takes priority)
     KDL::Frame  tcp_frame = KDL::Frame::Identity(); // manual TCP in tip frame (fallback)
     std::vector<ForceTorqueSensorSpec> ft_sensors;
 };
@@ -698,7 +698,7 @@ std::vector<double> joint_force_limits(const Robot *r, double fallback = 1e6);
  * exclusions via mjs_addExclude.  Can be called repeatedly to build a chain: each
  * subsequent a->attach_to may reference any body added by prior calls.
  * @param[in,out] robot_spec  Accumulated robot spec to attach into.
- * @param[in]     a           Attachment; a->mjcf_path must not be null.
+ * @param[in]     a           Attachment; a->mjcf_path must be set.
  * @return true on success.
  */
 Status attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a);

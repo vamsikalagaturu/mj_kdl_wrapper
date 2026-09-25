@@ -41,7 +41,7 @@ class SceneStateTest : public testing::Test
         spec_.timestep   = 0.002;
         spec_.add_floor  = true;
         spec_.add_skybox = true;
-        spec_.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf.c_str(), .attachments = {} });
+        spec_.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf, .attachments = {} });
         spec_.objects.push_back(mj_kdl::SceneObject{
           .name = "cube", .mjcf_path = cube, .pos = { 0.6, 0.0, 1.0 }, .fixed = false });
         spec_.objects.push_back(mj_kdl::SceneObject{ .name     = "block",

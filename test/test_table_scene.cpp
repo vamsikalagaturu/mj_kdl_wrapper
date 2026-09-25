@@ -136,8 +136,8 @@ class TableSceneTest : public testing::Test
         spec_.add_skybox = true;
 
         spec_.robots.push_back(mj_kdl::RobotSpec{
-            .path      = mjcf_.c_str(),
-            .attach_to = { mj_kdl::AttachKind::Site, table_mount_site_.c_str() },
+            .path      = mjcf_,
+            .attach_to = { mj_kdl::AttachKind::Site, table_mount_site_ },
             .attachments = {},
         });
 

@@ -321,18 +321,18 @@ int main(int argc, char **argv)
     table.fixed     = true;
 
     mj_kdl::AttachmentSpec ft_spec;
-    ft_spec.mjcf_path = ft.c_str();
+    ft_spec.mjcf_path = ft;
     ft_spec.attach_to = { mj_kdl::AttachKind::Site, "pinch_site" };
 
     mj_kdl::AttachmentSpec gripper_spec;
-    gripper_spec.mjcf_path = gripper.c_str();
+    gripper_spec.mjcf_path = gripper;
     gripper_spec.attach_to = { mj_kdl::AttachKind::Site, "wrist_ft_site" };
     gripper_spec.prefix    = "g_";
 
     const std::string table_top = mj_kdl::scene_object_site_name(table, "table_top");
     mj_kdl::RobotSpec robot_spec;
-    robot_spec.path      = arm.c_str();
-    robot_spec.attach_to = { mj_kdl::AttachKind::Site, table_top.c_str() };
+    robot_spec.path      = arm;
+    robot_spec.attach_to = { mj_kdl::AttachKind::Site, table_top };
     robot_spec.attachments.push_back(ft_spec);
     robot_spec.attachments.push_back(gripper_spec);
 

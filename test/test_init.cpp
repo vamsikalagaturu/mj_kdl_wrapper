@@ -60,7 +60,7 @@ class InitTest : public testing::Test
         sc_.timestep   = 0.002;
         sc_.add_floor  = true;
         sc_.add_skybox = true;
-        sc_.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf.c_str(), .attachments = {} });
+        sc_.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf, .attachments = {} });
 
         ASSERT_TRUE(mj_kdl::init_env(&env_, &sc_)) << "init_env() returned false";
         ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s, &env_, "base_link", "bracelet_link"))
@@ -232,7 +232,7 @@ TEST(TwoEnvs, StepIndependently)
     sc.timestep   = 0.002;
     sc.add_floor  = false;
     sc.add_skybox = false;
-    sc.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf.c_str() });
+    sc.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf });
 
     mj_kdl::Env   a, b;
     mj_kdl::Robot ra, rb;
@@ -259,6 +259,47 @@ TEST(TwoEnvs, StepIndependently)
     KDL::Frame fb_again;
     ASSERT_TRUE(mj_kdl::get_body_frame(&b, "bracelet_link", &fb_again));
     EXPECT_TRUE(KDL::Equal(fb, fb_again, 1e-12));
+}
+
+TEST(EnvSpec, OwnsItsStringsAcrossARebuild)
+{
+    if (!fs::exists(mj_kdl_examples::find_menagerie_model("kinova_gen3/gen3.xml")))
+        GTEST_SKIP() << "kinova_gen3 not found";
+
+    mj_kdl::Env   env;
+    mj_kdl::Robot robot;
+    {
+        const std::string path   = mj_kdl_examples::find_menagerie_model("kinova_gen3/gen3.xml");
+        const std::string prefix = "arm_";
+        mj_kdl::SceneSpec sc;
+        sc.timestep   = 0.002;
+        sc.add_floor  = true;
+        sc.add_skybox = false;
+        sc.robots.push_back(mj_kdl::RobotSpec{ .path = path, .prefix = prefix });
+        ASSERT_TRUE(mj_kdl::init_env(&env, &sc));
+    }
+    ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&robot, &env, "arm_base_link", "arm_bracelet_link"));
+
+    mj_kdl::SceneObject cube;
+    cube.name  = "cube";
+    cube.shape = mj_kdl::Shape::BOX;
+    cube.mass  = 0.1;
+    for (int k = 0; k < 3; ++k) cube.size[k] = 0.02;
+    for (int k = 0; k < 4; ++k) cube.rgba[k] = 1.0f;
+    for (int k = 0; k < 3; ++k) cube.friction[k] = 0.5;
+    cube.has_rgba = true;
+    cube.pos[0]   = 0.5;
+    cube.pos[2]   = 0.02;
+
+    const mj_kdl::Status added = mj_kdl::scene_add_object(&env, cube);
+    ASSERT_TRUE(added) << added.error;
+    EXPECT_EQ(env.spec.robots[0].prefix, "arm_");
+
+    for (int k = 0; k < 10; ++k) ASSERT_TRUE(mj_kdl::step(&env));
+    mj_kdl::update(&env);
+    EXPECT_GT(env.data->time, 0.0);
+    EXPECT_EQ(robot.n_joints, 7);
+    mj_kdl::cleanup(&env);
 }
 
 TEST(SceneFloor, PlacedAtFloorZ)

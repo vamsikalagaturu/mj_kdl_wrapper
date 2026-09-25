@@ -59,6 +59,8 @@ cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON
   and runs nothing (skips without EGL or ffmpeg).
 - **Recorder.FreeCameraLeavesAFixedCamera** -- `set_free_camera(VideoRecorder*)` switches a fixed
   camera back to a free one.
+- **EnvSpec.OwnsItsStringsAcrossARebuild** -- `scene_add_object()` rebuilds after the caller's
+  path and prefix strings are gone.
 - **AFailureSaysWhy** -- a failed call returns a `Status` whose `error` names the cause (unknown
   body, object with unset fields, unknown object on remove).
 - **SceneSpecRequired.AnUnsetFieldFailsTheBuild** -- unset mass, friction, camera `fovy` or

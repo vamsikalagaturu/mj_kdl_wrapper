@@ -354,7 +354,7 @@ const std::string mount = mj_kdl::scene_object_site_name(table, "table_top");
 
 scene.robots.push_back(mj_kdl::RobotSpec{
     .path      = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
-    .attach_to = { mj_kdl::AttachKind::Site, mount.c_str() },
+    .attach_to = { mj_kdl::AttachKind::Site, mount },
 });
 ```
 
@@ -703,7 +703,7 @@ const std::string mount =
 
 scene.robots.push_back(mj_kdl::RobotSpec{
     .path        = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
-    .attach_to   = { mj_kdl::AttachKind::Site, mount.c_str() },
+    .attach_to   = { mj_kdl::AttachKind::Site, mount },
     .attachments = { gripper },
 });
 scene.cameras.push_back(mj_kdl::CameraSpec{

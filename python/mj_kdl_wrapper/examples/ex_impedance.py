@@ -88,7 +88,7 @@ def main() -> int:
             apply_pd_gravity(env, robot, HOME_POSE)
 
         run_loop(env, step, duration=3.0, gui=args.gui)
-        print(f"final q: {[round(x, 4) for x in robot.jnt_pos_msr]}")
+        print(f"final q: {robot.jnt_pos_msr.round(4).tolist()}")
     finally:
         env.close()
     return 0

@@ -101,12 +101,12 @@ int main(int argc, char *argv[])
     const double surface_z = 0.7;
 
     mj_kdl::AttachmentSpec gs;
-    gs.mjcf_path = grp_mjcf.c_str();
+    gs.mjcf_path = grp_mjcf;
     gs.attach_to = { mj_kdl::AttachKind::Site, "pinch_site" };
     gs.prefix    = "g_";
 
     mj_kdl::RobotSpec r;
-    r.path   = mjcf.c_str();
+    r.path   = mjcf;
     r.pos[2] = surface_z;
     r.attachments.push_back(gs);
     sc.robots.push_back(r);

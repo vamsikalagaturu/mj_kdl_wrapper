@@ -29,7 +29,7 @@ def main() -> int:
 
         print(f"joints: {robot.n_joints}")
         print(f"joint_names: {robot.joint_names}")
-        print(f"q: {[round(x, 6) for x in robot.jnt_pos_msr]}")
+        print(f"q: {robot.jnt_pos_msr.round(6).tolist()}")
         print(f"cameras: {env.camera_names()}")
     finally:
         env.close()

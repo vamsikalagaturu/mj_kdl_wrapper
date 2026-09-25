@@ -47,18 +47,18 @@ int main(int argc, char *argv[])
     const std::string grp_mjcf = mj_kdl_examples::asset("robotiq_2f85/2f85.xml");
 
     mj_kdl::AttachmentSpec gs;
-    gs.mjcf_path = grp_mjcf.c_str();
+    gs.mjcf_path = grp_mjcf;
     gs.attach_to = { mj_kdl::AttachKind::Site, "pinch_site" };
     gs.prefix    = "g_";
 
     mj_kdl::RobotSpec arm1_spec;
-    arm1_spec.path   = arm_mjcf.c_str();
+    arm1_spec.path   = arm_mjcf;
     arm1_spec.prefix = "";
     arm1_spec.pos[0] = -1.0;
     arm1_spec.attachments.push_back(gs);
 
     mj_kdl::RobotSpec arm2_spec;
-    arm2_spec.path   = arm_mjcf.c_str();
+    arm2_spec.path   = arm_mjcf;
     arm2_spec.prefix = "r2_";
     arm2_spec.pos[0] = 1.0;
     arm2_spec.attachments.push_back(gs);

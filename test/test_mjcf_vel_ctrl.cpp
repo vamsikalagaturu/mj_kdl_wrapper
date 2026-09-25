@@ -51,7 +51,7 @@ class MjcfVelCtrlTest : public testing::Test
     sc.timestep   = 0.002;
     sc.add_floor  = true;
     sc.add_skybox = true;
-        sc.robots.push_back(mj_kdl::RobotSpec{ .path = arm_mjcf.c_str(), .attachments = {} });
+        sc.robots.push_back(mj_kdl::RobotSpec{ .path = arm_mjcf, .attachments = {} });
 
         ASSERT_TRUE(mj_kdl::init_env(&env_, &sc));
         model_ = env_.model;

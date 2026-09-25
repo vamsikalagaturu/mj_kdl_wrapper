@@ -404,18 +404,18 @@ static Status resolve_parent(mjSpec *spec, const AttachTarget &t, mjsElement **o
         if (mjsBody *wb = world_body(spec)) *out = wb->element;
         break;
     case AttachKind::Body:
-        if (!t.name) MJ_FAIL("AttachTarget kind=Body has null name");
-        if (mjsBody *b = mjs_findBody(spec, t.name)) *out = b->element;
+        if (t.name.empty()) MJ_FAIL("AttachTarget kind=Body has no name");
+        if (mjsBody *b = mjs_findBody(spec, t.name.c_str())) *out = b->element;
         if (!*out) MJ_FAIL("attach parent body '" << t.name << "' not found");
         break;
     case AttachKind::Site:
-        if (!t.name) MJ_FAIL("AttachTarget kind=Site has null name");
-        *out = mjs_findElement(spec, mjOBJ_SITE, t.name);
+        if (t.name.empty()) MJ_FAIL("AttachTarget kind=Site has no name");
+        *out = mjs_findElement(spec, mjOBJ_SITE, t.name.c_str());
         if (!*out) MJ_FAIL("attach parent site '" << t.name << "' not found");
         break;
     case AttachKind::Frame:
-        if (!t.name) MJ_FAIL("AttachTarget kind=Frame has null name");
-        if (mjsFrame *f = mjs_findFrame(spec, t.name)) *out = f->element;
+        if (t.name.empty()) MJ_FAIL("AttachTarget kind=Frame has no name");
+        if (mjsFrame *f = mjs_findFrame(spec, t.name.c_str())) *out = f->element;
         if (!*out) MJ_FAIL("attach parent frame '" << t.name << "' not found");
         break;
     }
@@ -444,7 +444,7 @@ static Status attach_child(
   const double        pos[3],
   const double        quat[4],
   mjsBody            *child_root,
-  const char         *prefix,
+  const std::string  &prefix,
   mjsBody           **attached_out = nullptr
 )
 {
@@ -480,15 +480,14 @@ static Status attach_child(
         kdl_rot_to_mj_quat(composed.M, child_root->quat);
     }
 
-    const char *pfx = prefix ? prefix : "";
     // The child's unnamed top-level default class is written back nameless by mj_saveXML, which
     // mj_loadXML then rejects; give it the child model's name.
     mjSpec     *child     = mjs_getSpec(child_root->element);
     mjsDefault *child_def = child ? mjs_getSpecDefault(child) : nullptr;
     if (child_def && child->modelname) {
-        mjs_setName(child_def->element, (std::string(pfx) + mjs_getString(child->modelname)).c_str());
+        mjs_setName(child_def->element, (prefix + mjs_getString(child->modelname)).c_str());
     }
-    mjsElement *attached = mjs_attach(attach_parent, child_root->element, pfx, "");
+    mjsElement *attached = mjs_attach(attach_parent, child_root->element, prefix.c_str(), "");
     if (!attached) MJ_FAIL("mjs_attach failed: " << mjs_getError(spec));
     if (attached_out) *attached_out = mjs_asBody(attached);
     return {};
@@ -602,9 +601,8 @@ Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects
 
             std::string prefix   = obj.name.empty() ? "" : obj.name + "_";
             mjsBody    *attached = nullptr;
-            if (Status s = attach_child(
-                  spec, obj.attach_to, obj.pos, obj.quat, root, prefix.c_str(), &attached
-                );
+            if (Status s =
+                  attach_child(spec, obj.attach_to, obj.pos, obj.quat, root, prefix, &attached);
                 !s)
                 return s;
             // Rename the asset's root body to obj.name so callers can write
@@ -1216,15 +1214,16 @@ void cleanup(Env *env)
 
 Status attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
 {
-    if (!robot_spec || !a || !a->mjcf_path) MJ_FAIL("attach_to_spec: null spec or mjcf_path");
+    if (!robot_spec || !a || a->mjcf_path.empty())
+        MJ_FAIL("attach_to_spec: null spec or empty mjcf_path");
     ensure_plugins_loaded();
     LOG_INFO(
-      "attach_to_spec: parent='" << (a->attach_to.name ? a->attach_to.name : "(world)")
-                                 << "' prefix='" << (a->prefix ? a->prefix : "") << "'"
+      "attach_to_spec: parent='" << (a->attach_to.name.empty() ? "(world)" : a->attach_to.name)
+                                 << "' prefix='" << a->prefix << "'"
     );
 
     char      err[kMjErrBuf] = {};
-    MjSpecPtr att            = make_spec_ptr(mj_parseXML(a->mjcf_path, nullptr, err, sizeof(err)));
+    MjSpecPtr att = make_spec_ptr(mj_parseXML(a->mjcf_path.c_str(), nullptr, err, sizeof(err)));
     if (!att) MJ_FAIL("mj_parseXML failed for attachment '" << a->mjcf_path << "': " << err);
     absolutize_asset_files(att.get());
 
@@ -1386,9 +1385,9 @@ Status build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     char err[kMjErrBuf] = {};
     for (int ai = 0; ai < (int)sc->robots.size(); ++ai) {
         const RobotSpec &rs = sc->robots[ai];
-        if (!rs.path) MJ_FAIL("robots[" << ai << "].path is null");
+        if (rs.path.empty()) MJ_FAIL("robots[" << ai << "].path is empty");
 
-        MjSpecPtr arm = make_spec_ptr(mj_parseXML(rs.path, nullptr, err, sizeof(err)));
+        MjSpecPtr arm = make_spec_ptr(mj_parseXML(rs.path.c_str(), nullptr, err, sizeof(err)));
         if (!arm) MJ_FAIL("mj_parseXML failed for '" << rs.path << "': " << err);
         absolutize_asset_files(arm.get());
         // Before the attachments are merged in, so only the robot's own joints take modes.
@@ -1649,14 +1648,13 @@ static Status resolve_ft_sensors(Robot *r, const ToolFrameSpec *tool)
     if (!tool) return {};
 
     for (const ForceTorqueSensorSpec &spec : tool->ft_sensors) {
-        if (!spec.name || spec.name[0] == '\0') MJ_FAIL("ForceTorqueSensorSpec.name is required");
+        if (spec.name.empty()) MJ_FAIL("ForceTorqueSensorSpec.name is required");
 
-        const std::string name = spec.name;
-        const std::string force_name =
-          (spec.force_sensor && spec.force_sensor[0] != '\0') ? spec.force_sensor : name + "_force";
-        const std::string torque_name = (spec.torque_sensor && spec.torque_sensor[0] != '\0')
-                                          ? spec.torque_sensor
-                                          : name + "_torque";
+        const std::string &name = spec.name;
+        const std::string  force_name =
+          spec.force_sensor.empty() ? name + "_force" : spec.force_sensor;
+        const std::string torque_name =
+          spec.torque_sensor.empty() ? name + "_torque" : spec.torque_sensor;
 
         const int force_id = mj_name2id(r->model, mjOBJ_SENSOR, force_name.c_str());
         if (force_id < 0) {
@@ -1683,9 +1681,9 @@ static Status resolve_ft_sensors(Robot *r, const ToolFrameSpec *tool)
         sensor.torque_sensor = torque_name;
         sensor.force_adr     = r->model->sensor_adr[force_id];
         sensor.torque_adr    = r->model->sensor_adr[torque_id];
-        if (spec.frame_site && spec.frame_site[0] != '\0') {
+        if (!spec.frame_site.empty()) {
             sensor.frame_site    = spec.frame_site;
-            sensor.frame_site_id = mj_name2id(r->model, mjOBJ_SITE, spec.frame_site);
+            sensor.frame_site_id = mj_name2id(r->model, mjOBJ_SITE, spec.frame_site.c_str());
             if (sensor.frame_site_id < 0) {
                 MJ_FAIL(
                   "frame_site '" << spec.frame_site << "' not found for FT sensor '" << name << "'"
@@ -1740,11 +1738,13 @@ Status init_robot_from_mjcf(
 )
 {
     if (!r || !env || !env->model) MJ_FAIL("init_robot_from_mjcf: null robot or empty env");
+    const bool has_tool_body = tool && !tool->tool_body.empty();
+    const bool has_tcp_site  = tool && !tool->tcp_site.empty();
     LOG_INFO(
-      "init_robot_from_mjcf: '"
-      << base_body << "' -> '" << tip_body << "' prefix='" << (prefix ? prefix : "") << "'"
-      << (tool && tool->tool_body ? std::string(" tool='") + tool->tool_body + "'" : "")
-      << (tool && tool->tcp_site ? std::string(" tcp='") + tool->tcp_site + "'" : "")
+      "init_robot_from_mjcf: '" << base_body << "' -> '" << tip_body << "' prefix='"
+                                << (prefix ? prefix : "") << "'"
+                                << (has_tool_body ? " tool='" + tool->tool_body + "'" : "")
+                                << (has_tcp_site ? " tcp='" + tool->tcp_site + "'" : "")
     );
     const auto lock  = lock_env(env);
     mjModel   *model = env->model;
@@ -1761,8 +1761,8 @@ Status init_robot_from_mjcf(
 
     KDL::Frame tip_T_tcp = KDL::Frame::Identity();
     bool       has_tcp   = false;
-    if (tool && tool->tcp_site) {
-        if (!get_site_frame_in_body(env, tip_body, tool->tcp_site, &tip_T_tcp)) {
+    if (has_tcp_site) {
+        if (!get_site_frame_in_body(env, tip_body, tool->tcp_site.c_str(), &tip_T_tcp)) {
             MJ_FAIL(
               "tcp_site '" << tool->tcp_site << "' or tip body '" << tip_body
                            << "' not found in model"
@@ -1779,8 +1779,8 @@ Status init_robot_from_mjcf(
         r->has_tcp_frame = true;
     }
 
-    if (tool && tool->tool_body) {
-        int tool_bid = mj_name2id(model, mjOBJ_BODY, tool->tool_body);
+    if (has_tool_body) {
+        int tool_bid = mj_name2id(model, mjOBJ_BODY, tool->tool_body.c_str());
         if (tool_bid < 0) MJ_FAIL("tool_body '" << tool->tool_body << "' not found in model");
         int tip_bid = mj_name2id(model, mjOBJ_BODY, tip_body);
         ensure_kinematics(env);
@@ -1797,17 +1797,15 @@ Status init_robot_from_mjcf(
     }
 
     if (has_tcp) {
-        const std::string seg_name = (tool && tool->tcp_site) ? tool->tcp_site : "tcp";
+        const std::string seg_name = has_tcp_site ? tool->tcp_site : "tcp";
         r->chain.addSegment(KDL::Segment(seg_name, KDL::Joint(KDL::Joint::None), tip_T_tcp));
     }
 
     LOG_INFO(
       "chain ready: " << r->n_joints << " joints [" << base_body << " -> " << tip_body << "]"
-                      << (tool && tool->tool_body ? std::string(" + tool '") + tool->tool_body + "'"
-                                                  : "")
-                      << (has_tcp ? (tool && tool->tcp_site
-                                       ? std::string(" tcp site '") + tool->tcp_site + "'"
-                                       : " tcp frame (manual)")
+                      << (has_tool_body ? " + tool '" + tool->tool_body + "'" : "")
+                      << (has_tcp ? (has_tcp_site ? " tcp site '" + tool->tcp_site + "'"
+                                                  : std::string(" tcp frame (manual)"))
                                   : "")
     );
     register_robot(r, env);

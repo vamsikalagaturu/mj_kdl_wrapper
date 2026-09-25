@@ -71,12 +71,12 @@ int main(int argc, char *argv[])
     const std::string grp_mjcf = mj_kdl_examples::asset("robotiq_2f85/2f85.xml");
 
     mj_kdl::AttachmentSpec gs;
-    gs.mjcf_path = grp_mjcf.c_str();
+    gs.mjcf_path = grp_mjcf;
     gs.attach_to = { mj_kdl::AttachKind::Site, "pinch_site" };
     gs.prefix    = "g_";
 
     mj_kdl::RobotSpec rs;
-    rs.path = arm_mjcf.c_str();
+    rs.path = arm_mjcf;
     rs.attachments.push_back(gs);
 
     mj_kdl::SceneObject cube{
