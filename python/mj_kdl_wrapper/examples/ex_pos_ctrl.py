@@ -64,19 +64,14 @@ def main() -> int:
         if args.gui:
             # The UI's reset button runs env's reset, on_reset included.
             env.open_viewer("ex_pos_ctrl.py")
-            while env.viewer.is_running():
-                control_step()
-                if not env.step():
-                    break
-                env.pace()
-        else:
-            end = env.time() + MOTION_DURATION + 1.0
-            while env.time() < end:
-                control_step()
-                env.step()
-                env.pace()
-            max_err = max(abs(TARGET_POSE[i] - robot.jnt_pos_msr[i]) for i in range(robot.n_joints))
-            print(f"max joint error at end: {max_err:.4f} rad")
+        end = env.time() + MOTION_DURATION + 1.0
+        while env.time() < end:
+            control_step()
+            if not env.step():
+                break
+            env.pace()
+        max_err = max(abs(TARGET_POSE[i] - robot.jnt_pos_msr[i]) for i in range(robot.n_joints))
+        print(f"max joint error at end: {max_err:.4f} rad")
     finally:
         env.close()
 

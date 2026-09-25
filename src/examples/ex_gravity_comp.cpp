@@ -10,9 +10,10 @@
  * Usage:
  *   ex_gravity_comp_mjcf [--headless]
  *
- * With --headless runs 500 steps and prints the final EE drift. */
+ * Runs 500 steps and exits; --headless skips the viewer and prints the final EE drift. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "common.hpp"
 #include "example_paths.hpp"
 
 #include <kdl/chaindynparam.hpp>
@@ -22,13 +23,12 @@
 #include <iostream>
 #include <string>
 
-static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
+using mj_kdl_examples::kHomePose;
+static constexpr int    kSteps       = 500;
 
 int main(int argc, char *argv[])
 {
-    bool headless = false;
-    for (int i = 1; i < argc; ++i)
-        if (std::string(argv[i]) == "--headless") headless = true;
+    const bool headless = mj_kdl_examples::parse_args(argc, argv).headless;
 
     const std::string mjcf = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
 
@@ -76,7 +76,7 @@ int main(int argc, char *argv[])
         KDL::Frame ee_start;
         fk.JntToCart(q_home, ee_start);
 
-        for (int step = 0; step < 500; ++step) {
+        for (int step = 0; step < kSteps; ++step) {
             ctrl_step();
             mj_kdl::step(&env);
         }
@@ -86,14 +86,14 @@ int main(int argc, char *argv[])
         KDL::Frame ee_end;
         fk.JntToCart(q_end, ee_end);
         double drift = (ee_start.p - ee_end.p).Norm();
-        std::cout << "EE drift after 500 steps: " << std::fixed << std::setprecision(3)
+        std::cout << "EE drift after " << kSteps << " steps: " << std::fixed << std::setprecision(3)
                   << drift * 1000.0 << " mm\n";
     } else {
         if (!mj_kdl::open_viewer(&env)) {
             std::cerr << "open_viewer() failed\n";
             return 1;
         }
-        while (true) {
+        for (int step = 0; step < kSteps; ++step) {
             ctrl_step();
             if (!mj_kdl::step(&env)) break;
             mj_kdl::pace_realtime(&env);

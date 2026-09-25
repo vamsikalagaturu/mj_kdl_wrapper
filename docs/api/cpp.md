@@ -112,7 +112,7 @@ When a tool or gripper is attached, pass a `ToolFrameSpec` so KDL dynamics
 include the full tool inertia and FK uses the TCP site:
 
 ```cpp
-const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base", .tcp_site = "g_pinch" };
+const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base_mount", .tcp_site = "g_pinch" };
 mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool);
 
 KDL::ChainDynParam dyn(robot.chain, KDL::Vector(0, 0, -9.81));
@@ -147,7 +147,7 @@ pair into a `KDL::Wrench`.
 ```cpp
 mj_kdl::ForceTorqueSensorSpec ft{ .name = "wrist_ft", .frame_site = "wrist_ft_site" };
 mj_kdl::ToolFrameSpec tool{
-    .tool_body  = "g_base",
+    .tool_body  = "g_base_mount",
     .tcp_site   = "g_pinch",
     .ft_sensors = { ft },
 };

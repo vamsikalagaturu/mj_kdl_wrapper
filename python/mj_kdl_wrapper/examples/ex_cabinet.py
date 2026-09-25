@@ -2,8 +2,9 @@
 """Load the 3-drawer cabinet asset into a robot-less scene.
 
 The cabinet is a mesh SceneObject (no robot). Headless prints each drawer's
-grasp-site pose; --gui opens it in the wrapper's simulate UI. The drawers are
-passive slide joints -- drag one open in the viewer and it stays put.
+grasp-site pose; --gui opens it in the wrapper's simulate UI for GUI_TIME
+simulated seconds. The drawers are passive slide joints -- drag one open in
+the viewer and it stays put.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import argparse
 import mj_kdl_wrapper as mjk
 
 GRASPS = ["cabinet_grasp1", "cabinet_grasp2", "cabinet_grasp3"]
+GUI_TIME = 10.0  # [s] simulated
 
 
 def cabinet_path() -> str:
@@ -42,7 +44,8 @@ def run_headless(env: mjk.Env) -> None:
 
 def run_gui(env: mjk.Env) -> None:
     env.open_viewer("ex_cabinet.py")
-    while env.viewer.is_running():
+    end = env.time() + GUI_TIME
+    while env.time() < end:
         if not env.step():
             break
         env.pace()

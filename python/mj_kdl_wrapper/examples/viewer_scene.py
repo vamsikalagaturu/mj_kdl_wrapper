@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""View a mj_kdl_wrapper-built scene with the official MuJoCo Python viewer."""
+"""View a mj_kdl_wrapper-built scene with the official MuJoCo Python viewer for VIEW_TIME
+simulated seconds."""
 
 from __future__ import annotations
 
@@ -9,6 +10,8 @@ import tempfile
 from pathlib import Path
 
 import mj_kdl_wrapper as mjk
+
+VIEW_TIME = 10.0  # [s] simulated
 
 
 def build_scene(model_path: str) -> mjk.Env:
@@ -37,6 +40,7 @@ def main() -> int:
     try:
         viewer_code = """
 import sys
+import time
 import mujoco
 import mujoco.viewer
 
@@ -51,11 +55,24 @@ if actual != expected:
 
 model = mujoco.MjModel.from_binary_path(sys.argv[1])
 data = mujoco.MjData(model)
-mujoco.viewer.launch(model, data)
+view_time = float(sys.argv[3])
+with mujoco.viewer.launch_passive(model, data) as viewer:
+    start = time.monotonic()
+    while viewer.is_running() and data.time < view_time:
+        mujoco.mj_step(model, data)
+        viewer.sync()
+        time.sleep(max(0.0, data.time - (time.monotonic() - start)))
 """
         try:
             subprocess.run(
-                [sys.executable, "-c", viewer_code, str(mjb_path), mjk.mujoco_version()],
+                [
+                    sys.executable,
+                    "-c",
+                    viewer_code,
+                    str(mjb_path),
+                    mjk.mujoco_version(),
+                    str(VIEW_TIME),
+                ],
                 check=True,
             )
         except subprocess.CalledProcessError as exc:

@@ -47,7 +47,7 @@ def test_ft_sensor_returns_pykdl_wrench():
         ft_spec.frame_site = "wrist_ft_site"
 
         tool = mjk.ToolFrameSpec()
-        tool.tool_body = "g_base"
+        tool.tool_body = "g_base_mount"
         tool.tcp_site = "g_pinch"
         tool.ft_sensors = [ft_spec]
 

@@ -1,6 +1,7 @@
 // Press on the table with a commanded wrench, measured against the table's contact force.
 // --variant weighted passes it through (w_f_ext = 1), main lets the constraint compensate it.
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "common.hpp"
 #include "example_paths.hpp"
 
 #include <kdl/chainfksolverpos_recursive.hpp>
@@ -18,19 +19,18 @@
 namespace
 {
 
-constexpr double kHomePose[7]  = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
+using mj_kdl_examples::kHomePose;
 constexpr double kTableZ       = 0.70;
 double g_press_force = 10.0;  // [N] commanded, straight down at the tool; --force
 constexpr double kDescendVel   = 0.08;  // [m/s]
 constexpr double kContactForce = 1.0;   // [N] table normal force that ends the descent
 constexpr double kHoldTime     = 1.0;   // [s] settle before descending, and before pressing
-constexpr double kPressTime    = 4.0;   // [s] headless press duration
+constexpr double kPressTime    = 4.0;   // [s] press duration
 constexpr double kKpLin        = 200.0;
 constexpr double kKdLin        = 30.0;
 constexpr double kKpRot        = 175.0;
 constexpr double kKdRot        = 28.0;
 constexpr double kBetaMax      = 120.0;
-constexpr double kTauMax       = 59.0;
 constexpr const char *kGripperActuator = "g_fingers_actuator";
 constexpr const char *kTableTopGeom    = "table_top";
 
@@ -164,7 +164,8 @@ struct Controller
         if (rc < 0) return false;
         if (use_free_z) achd5.getContraintForceMagnitude(nu5); else achd6.getContraintForceMagnitude(nu6);
         if (rnea.CartToJnt(q, qd, qdd, f_ext_zero, tau) < 0) return false;
-        for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = clamp_abs(tau(i), kTauMax);
+        // update() clamps each torque to its joint's limit and reports it in jnt_saturated.
+        for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = tau(i);
         return true;
     }
 
@@ -222,7 +223,7 @@ bool tick(Task &task, Controller &ctrl, int table_geom, double table_top_z, bool
 {
     mj_kdl::Robot &robot = ctrl.robot;
     mj_kdl::update(&ctrl.env);
-    ctrl.gripper->command = 255.0;
+    ctrl.gripper->command = mj_kdl_examples::kGripperClosed;
 
     const double now = robot.data->time;
     const double dt  = robot.model->opt.timestep;
@@ -356,7 +357,7 @@ int main(int argc, char **argv)
     ft_sensor.name       = "wrist_ft";
     ft_sensor.frame_site = "wrist_ft_site";
     mj_kdl::ToolFrameSpec tool;
-    tool.tool_body = "g_base";
+    tool.tool_body = "g_base_mount";
     tool.tcp_site  = "g_pinch";
     tool.ft_sensors.push_back(ft_sensor);
 
@@ -367,7 +368,11 @@ int main(int argc, char **argv)
 
     KDL::JntArray q_home(robot.n_joints);
     for (int i = 0; i < robot.n_joints; ++i) q_home(i) = kHomePose[i];
-    env.on_reset = [&](mj_kdl::ResetContext *) { mj_kdl::set_joint_pos(&robot, q_home); };
+    bool restarted = false;
+    env.on_reset   = [&](mj_kdl::ResetContext *) {
+        mj_kdl::set_joint_pos(&robot, q_home);
+        restarted = true;
+    };
     mj_kdl::reset(&env);
 
     KDL::Frame table_top_frame;
@@ -383,25 +388,23 @@ int main(int argc, char **argv)
               << " press_constraints=" << (free_z ? 5 : 6) << (free_z ? " (linear z free)" : "")
               << " press=" << g_press_force << " N down\n";
 
-    int status = 0;
+    int  status   = 0;
+    auto finished = [&]() {
+        if (task.phase == Phase::Press && data->time - task.phase_start >= kPressTime) return true;
+        if (data->time > 60.0) {
+            std::cerr << "no table contact within 60 s\n";
+            status = 1;
+            return true;
+        }
+        return false;
+    };
     if (headless) {
         while (true) {
             if (!tick(task, ctrl, table_geom, table_top_z, true) || !mj_kdl::step(&env)) {
                 status = 1;
                 break;
             }
-            if (task.phase == Phase::Press && data->time - task.phase_start >= kPressTime) break;
-            if (data->time > 60.0) {
-                std::cerr << "no table contact within 60 s\n";
-                status = 1;
-                break;
-            }
-        }
-        if (task.reaction_count > 0) {
-            std::cout << std::fixed << std::setprecision(3)
-                      << "mean_table_reaction_N=" << task.reaction_sum / task.reaction_count
-                      << " min=" << task.reaction_min << " max=" << task.reaction_max
-                      << " commanded_press_N=" << g_press_force << "\n";
+            if (finished()) break;
         }
     } else {
         mj_kdl::Viewer *viewer = &env.viewer;
@@ -411,13 +414,12 @@ int main(int argc, char **argv)
                                   + (free_z ? " --free-z" : "");
         if (!mj_kdl::open_viewer(&env, title.c_str())) return 1;
         const float green[4] = { 0.1f, 0.9f, 0.2f, 1.0f };
-        double prev_time = data->time;
+        restarted            = false;
         while (mj_kdl::is_running(viewer)) {
-            if (data->time < prev_time - 1e-6) {
-                mj_kdl::reset(&env);
+            if (restarted) {
+                restarted = false;
                 start_task(task, ctrl, data->time);
             }
-            prev_time = data->time;
             if (!tick(task, ctrl, table_geom, table_top_z, true) || !mj_kdl::step(&env)) break;
             if (task.phase == Phase::Press) {
                 KDL::Frame tcp;
@@ -427,8 +429,15 @@ int main(int argc, char **argv)
                                               KDL::Vector(0, 0, -1), 0.25, green);
                 }
             }
+            if (finished()) break;
             mj_kdl::pace_realtime(&env);
         }
+    }
+    if (task.reaction_count > 0) {
+        std::cout << std::fixed << std::setprecision(3)
+                  << "mean_table_reaction_N=" << task.reaction_sum / task.reaction_count
+                  << " min=" << task.reaction_min << " max=" << task.reaction_max
+                  << " commanded_press_N=" << g_press_force << "\n";
     }
 
     mj_kdl::cleanup(&env);

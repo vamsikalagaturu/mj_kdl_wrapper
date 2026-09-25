@@ -23,6 +23,7 @@ CUBE_HALF_SIZE = 0.02
 CUBE_Z = CUBE_HALF_SIZE
 KP = [100.0, 200.0, 100.0, 200.0, 100.0, 200.0, 100.0]
 KD = [10.0, 20.0, 10.0, 20.0, 10.0, 20.0, 10.0]
+GRIPPER_CLOSED = 0.82  # [rad] driver joint; the bundled 2F-85's ctrlrange is 0..0.82
 
 
 class ResetRequested(Exception):
@@ -78,7 +79,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
 
     env = mjk.Env.build(spec)
     tool = mjk.ToolFrameSpec()
-    tool.tool_body = "g_base"
+    tool.tool_body = "g_base_mount"
     tool.tcp_site = "g_pinch"
     robot = env.create_robot("base_link", "bracelet_link", tool=tool)
     return env, robot
@@ -174,14 +175,13 @@ def lerp(start: list[float], target: list[float], alpha: float) -> list[float]:
     return [a + alpha * (b - a) for a, b in zip(start, target)]
 
 
-# The UI's reset button has already reset env (on_reset included); restart the phases.
-def step_once(env: mjk.Env, gui: bool, state: dict) -> bool:
+# on_reset flags a UI reset (env is already reset); restart the phases.
+def step_once(env: mjk.Env, state: dict) -> bool:
     if not env.step():
         return False
-    if gui and env.time() < state["prev"] - 1e-6:
-        state["prev"] = env.time()
+    if state["reset"]:
+        state["reset"] = False
         raise ResetRequested()
-    state["prev"] = env.time()
     return True
 
 
@@ -204,7 +204,7 @@ def run_phase(env: mjk.Env, robot: mjk.Robot, phase: Phase, gui: bool, state: di
             return True
         if gui and not env.viewer.is_running():
             return False
-        if not step_once(env, gui, state):
+        if not step_once(env, state):
             return False
 
 
@@ -217,26 +217,28 @@ def main() -> int:
     env, robot = build_env()
     try:
         robot.set_control_mode(mjk.CtrlMode.TORQUE)
+        state = {"reset": False}
 
         def on_reset(ctx):
             robot.set_joint_pos(HOME)
             env.set_body_pose("cube", [CUBE_X, CUBE_Y, CUBE_Z])
             if env.has_actuator("g_fingers_actuator"):
                 env.set_actuator_ctrl("g_fingers_actuator", 0.0)
+            state["reset"] = True
 
         env.on_reset = on_reset
         env.reset()
+        state["reset"] = False
 
         waypoints = build_waypoints(env, robot)
         phases = [
             Phase("HOME", waypoints["home"], 1.0, 2.5, 0.08, 0.0),
             Phase("PREGRASP", waypoints["pregrasp"], 5.0, 7.0, 0.08, 0.0),
             Phase("GRASP", waypoints["grasp"], 5.0, 8.0, 0.03, 0.0),
-            Phase("CLOSE", waypoints["grasp"], 1.5, 2.5, -1.0, 255.0),
-            Phase("LIFT", waypoints["lift"], 3.0, 5.0, 0.08, 255.0),
-            Phase("HOLD", waypoints["lift"], 1.0 if not args.gui else 10.0, 0.0, -1.0, 255.0),
+            Phase("CLOSE", waypoints["grasp"], 1.5, 2.5, -1.0, GRIPPER_CLOSED),
+            Phase("LIFT", waypoints["lift"], 3.0, 5.0, 0.08, GRIPPER_CLOSED),
+            Phase("HOLD", waypoints["lift"], 1.0, 0.0, -1.0, GRIPPER_CLOSED),
         ]
-        state = {"prev": env.time()}
         if args.gui:
             env.open_viewer("ex_pick.py")
             while env.viewer.is_running():

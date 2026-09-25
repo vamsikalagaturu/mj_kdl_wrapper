@@ -5,92 +5,35 @@
  * Usage:
  *   ex_table_pick_place [--headless]
  *
- * With --headless runs the full sequence and prints final cube position. */
+ * Runs the full sequence once, prints the final cube position and exits; --headless skips
+ * the viewer. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "common.hpp"
 #include "example_paths.hpp"
 
 #include <kdl/chaindynparam.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
-#include <kdl/chainiksolverpos_nr_jl.hpp>
-#include <kdl/chainiksolvervel_pinv.hpp>
 #include <kdl/chainiksolvervel_wdls.hpp>
 
-#include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <iostream>
 #include <string>
 #include <vector>
 
-static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
+using mj_kdl_examples::kGripperClosed;
+
+using mj_kdl_examples::kHomePose;
 static constexpr double kCubeHS      = 0.02;
 static constexpr double kPickX       = 0.40;
 static constexpr double kPickY       = 0.00;
 static constexpr double kPlaceX      = 0.40;
 static constexpr double kPlaceY      = 0.24;
 static constexpr double kTableZ      = 0.70;
-static constexpr double kIkTol       = 2e-3;
 
 static constexpr double kKp[7] = { 100, 200, 100, 200, 100, 200, 100 };
 static constexpr double kKd[7] = { 10, 20, 10, 20, 10, 20, 10 };
-
-static double   clamp01(double v) { return std::max(0.0, std::min(1.0, v)); }
-
-static void lerp_q(const KDL::JntArray &a, const KDL::JntArray &b, double t, KDL::JntArray &out)
-{
-    for (unsigned i = 0; i < a.rows(); ++i) out(i) = a(i) + t * (b(i) - a(i));
-}
-
-static bool solve_near_seed(
-  KDL::ChainIkSolverVel_wdls      &ik_vel,
-  KDL::ChainFkSolverPos_recursive &fk,
-  const KDL::JntArray             &seed,
-  const KDL::Frame                &target,
-  const std::vector<bool>         &joint_limited,
-  const KDL::JntArray             &q_min,
-  const KDL::JntArray             &q_max,
-  KDL::JntArray                   &out
-)
-{
-    out = seed;
-    KDL::JntArray dq(out.rows());
-    for (int iter = 0; iter < 300; ++iter) {
-        KDL::Frame fk_out;
-        fk.JntToCart(out, fk_out);
-        KDL::Twist dx = KDL::diff(fk_out, target);
-        if (dx.vel.Norm() <= kIkTol && dx.rot.Norm() <= 2e-2) return true;
-
-        double vel_norm = dx.vel.Norm();
-        if (vel_norm > 0.05) dx.vel = dx.vel * (0.05 / vel_norm);
-        double rot_norm = dx.rot.Norm();
-        if (rot_norm > 0.20) dx.rot = dx.rot * (0.20 / rot_norm);
-
-        if (ik_vel.CartToJnt(out, dx, dq) < 0) return false;
-        for (unsigned i = 0; i < out.rows(); ++i) {
-            out(i) += dq(i);
-            if (joint_limited[i]) out(i) = std::max(q_min(i), std::min(q_max(i), out(i)));
-        }
-    }
-
-    KDL::Frame fk_out;
-    fk.JntToCart(out, fk_out);
-    KDL::Twist dx = KDL::diff(fk_out, target);
-    return dx.vel.Norm() <= kIkTol && dx.rot.Norm() <= 2e-2;
-}
-
-static void snapshot_q(const mj_kdl::Robot &robot, unsigned n, KDL::JntArray &q)
-{
-    for (unsigned i = 0; i < n; ++i) q(i) = robot.jnt_pos_msr[i];
-}
-
-static double max_abs_joint_err(const mj_kdl::Robot &robot, const KDL::JntArray &q, unsigned n)
-{
-    double max_err = 0.0;
-    for (unsigned i = 0; i < n; ++i)
-        max_err = std::max(max_err, std::abs(q(i) - robot.jnt_pos_msr[i]));
-    return max_err;
-}
 
 static void impedance_ctrl(
   mj_kdl::Robot       &robot,
@@ -123,21 +66,9 @@ static mj_kdl::SceneObject make_cube(double surface_z)
     };
 }
 
-struct Phase
-{
-    const char          *name;
-    const KDL::JntArray *target;
-    double               duration;
-    double               timeout;
-    double               settle_tol;
-    double               gripper_cmd;
-};
-
 int main(int argc, char *argv[])
 {
-    bool headless = false;
-    for (int i = 1; i < argc; ++i)
-        if (std::string(argv[i]) == "--headless") headless = true;
+    const bool headless = mj_kdl_examples::parse_args(argc, argv).headless;
 
     const std::string arm_mjcf = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
     const std::string grp_mjcf = mj_kdl_examples::asset("robotiq_2f85/2f85.xml");
@@ -183,7 +114,7 @@ int main(int argc, char *argv[])
     }
 
     mj_kdl::ToolFrameSpec tool;
-    tool.tool_body = "g_base";
+    tool.tool_body = "g_base_mount";
     tool.tcp_site  = "g_pinch";
 
     mj_kdl::Robot robot;
@@ -204,20 +135,7 @@ int main(int argc, char *argv[])
     for (unsigned i = 0; i < n; ++i) q_home(i) = kHomePose[i];
 
     KDL::ChainFkSolverPos_recursive fk(robot.chain);
-    KDL::JntArray                   q_min(n), q_max(n);
-    std::vector<bool>               joint_limited(n, false);
-    for (unsigned i = 0; i < n; ++i) {
-        const auto [lo, hi] = robot.joint_limits[i];
-        if (std::isfinite(lo) && std::isfinite(hi)) {
-            joint_limited[i] = true;
-            q_min(i)         = lo;
-            q_max(i)         = hi;
-        } else {
-            q_min(i) = -2 * M_PI;
-            q_max(i) = 2 * M_PI;
-        }
-    }
-    KDL::ChainIkSolverVel_wdls ik_vel(robot.chain, 1e-5, 150);
+    KDL::ChainIkSolverVel_wdls      ik_vel(robot.chain, 1e-5, 150);
     ik_vel.setLambda(0.05);
     KDL::ChainDynParam  dyn(robot.chain, KDL::Vector(0.0, 0.0, scene.gravity_z));
     const KDL::Rotation kGraspRot = robot.tip_T_tcp.M;
@@ -246,114 +164,63 @@ int main(int argc, char *argv[])
     KDL::Frame base_T_world = world_T_base.Inverse();
     for (const auto &wp : waypoints) {
         KDL::Frame world_target(kGraspRot, KDL::Vector(wp.world_x, wp.world_y, wp.world_z));
-        KDL::Frame base_target = base_T_world * world_target;
-        if (!solve_near_seed(
-              ik_vel, fk, *wp.seed, base_target, joint_limited, q_min, q_max, *wp.out
+        if (!mj_kdl_examples::solve_near_seed(
+              ik_vel, fk, robot, *wp.seed, base_T_world * world_target, *wp.out
             )) {
             std::cerr << "IK failed for waypoint at world [" << wp.world_x << ", " << wp.world_y
                       << ", " << wp.world_z << "]\n";
             return 1;
         }
-        KDL::Frame fk_out;
-        fk.JntToCart(*wp.out, fk_out);
-        double pos_err = (base_target.p - fk_out.p).Norm();
-        if (pos_err > kIkTol) {
-            std::cerr << "IK pose error " << pos_err << " exceeds tolerance at world ["
-                      << wp.world_x << ", " << wp.world_y << ", " << wp.world_z << "]\n";
-            return 1;
-        }
     }
-    const std::vector<Phase> phases = {
-        { .name = "HOME",        .target = &q_home,        .duration = 1.0,                 .timeout = 2.5,                 .settle_tol =  0.08, .gripper_cmd =   0.0 },
-        { .name = "PICK_ABOVE",  .target = &q_pick_above,  .duration = 5.0,                 .timeout = 7.0,                 .settle_tol =  0.08, .gripper_cmd =   0.0 },
-        { .name = "PICK",        .target = &q_pick,        .duration = 5.0,                 .timeout = 8.0,                 .settle_tol =  0.03, .gripper_cmd =   0.0 },
-        { .name = "CLOSE",       .target = &q_pick,        .duration = 1.5,                 .timeout = 2.5,                 .settle_tol = -1.0,  .gripper_cmd = 0.8 },
-        { .name = "LIFT",        .target = &q_lift,        .duration = 3.0,                 .timeout = 5.0,                 .settle_tol =  0.08, .gripper_cmd = 0.8 },
-        { .name = "PLACE_ABOVE", .target = &q_place_above, .duration = 3.0,                 .timeout = 5.0,                 .settle_tol =  0.08, .gripper_cmd = 0.8 },
-        { .name = "PLACE",       .target = &q_place,       .duration = 5.0,                 .timeout = 8.0,                 .settle_tol =  0.03, .gripper_cmd = 0.8 },
-        { .name = "OPEN",        .target = &q_place,       .duration = 1.0,                 .timeout = 2.0,                 .settle_tol = -1.0,  .gripper_cmd =   0.0 },
-        { .name = "RETREAT",     .target = &q_place_above, .duration = 2.0,                 .timeout = 4.0,                 .settle_tol =  0.08, .gripper_cmd =   0.0 },
-        { .name = "HOLD",        .target = &q_place_above, .duration = headless ? 1.0 : 1e9, .timeout = headless ? 1.0 : 1e9, .settle_tol = -1.0,  .gripper_cmd =   0.0 },
+    // clang-format off
+    const std::vector<mj_kdl_examples::Phase> phases = {
+        { "HOME",        &q_home,        1.0, 2.5,  0.08, 0.0            },
+        { "PICK_ABOVE",  &q_pick_above,  5.0, 7.0,  0.08, 0.0            },
+        { "PICK",        &q_pick,        5.0, 8.0,  0.03, 0.0            },
+        { "CLOSE",       &q_pick,        1.5, 2.5, -1.0,  kGripperClosed },
+        { "LIFT",        &q_lift,        3.0, 5.0,  0.08, kGripperClosed },
+        { "PLACE_ABOVE", &q_place_above, 3.0, 5.0,  0.08, kGripperClosed },
+        { "PLACE",       &q_place,       5.0, 8.0,  0.03, kGripperClosed },
+        { "OPEN",        &q_place,       1.0, 2.0, -1.0,  0.0            },
+        { "RETREAT",     &q_place_above, 2.0, 4.0,  0.08, 0.0            },
+        { "HOLD",        &q_place_above, 1.0, 1.0, -1.0,  0.0            },
     };
+    // clang-format on
 
     if (!mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::TORQUE)) return 1;
     int qadr = model->jnt_qposadr[cube_jnt];
 
-    auto reset_cube = [&]() {
+    bool restart = false;
+    env.on_reset = [&](mj_kdl::ResetContext *) {
+        mj_kdl::set_joint_pos(&robot, q_home);
         data->qpos[qadr]     = kPickX;
         data->qpos[qadr + 1] = kPickY;
         data->qpos[qadr + 2] = kTableZ + kCubeHS;
         data->qpos[qadr + 3] = 1.0;
         data->qpos[qadr + 4] = data->qpos[qadr + 5] = data->qpos[qadr + 6] = 0.0;
-    };
 
-    env.on_reset = [&](mj_kdl::ResetContext *) {
-        mj_kdl::set_joint_pos(&robot, q_home);
-        reset_cube();
         data->ctrl[fingers->ctrl_id] = 0.0;
+        restart                      = true;
     };
-
-    KDL::JntArray q_enter(n), q_des(n);
-    bool          closed        = false;
-    double        prev_sim_time = data->time;
-    bool          aborted       = false;
-    bool          restart       = false;
-
-    auto reset_scene = [&]() {
-        mj_kdl::reset(&env);
-        closed                  = false;
-        prev_sim_time           = data->time;
-        restart                 = true;
-    };
-
-    reset_scene();
+    mj_kdl::reset(&env);
 
     if (!headless && !mj_kdl::open_viewer(&env)) {
         std::cerr << "open_viewer() failed\n";
         return 1;
     }
 
-    do {
-        restart = false;
-        for (const Phase &phase : phases) {
-            if (aborted || restart) break;
-            std::cout << "State: " << phase.name << "\n";
-            double t_enter = data->time;
-            snapshot_q(robot, n, q_enter);
-
-            while (true) {
-                if (data->time < prev_sim_time - 1e-6) {
-                    reset_scene();
-                    break;
-                }
-                prev_sim_time = data->time;
-
-                double alpha =
-                  phase.duration > 0.0 ? clamp01((data->time - t_enter) / phase.duration) : 1.0;
-                lerp_q(q_enter, *phase.target, alpha, q_des);
-                impedance_ctrl(robot, q_des, n, dyn);
-                fingers->command = phase.gripper_cmd;
-                mj_kdl::update(&env);
-                closed = phase.gripper_cmd > 0.0;
-
-                double t_rel        = data->time - t_enter;
-                bool   done_time    = t_rel >= phase.duration;
-                bool   done_pose    = phase.settle_tol < 0.0
-                                      || max_abs_joint_err(robot, *phase.target, n) <= phase.settle_tol;
-                bool   done_timeout = phase.timeout > 0.0 && t_rel >= phase.timeout;
-                if ((done_time && done_pose) || done_timeout) break;
-
-                if (!mj_kdl::step(&env)) {
-                    aborted = true;
-                    break;
-                }
-                mj_kdl::pace_realtime(&env);
-            }
-        }
-    } while (restart);
+    const bool completed = mj_kdl_examples::run_phases(
+      env,
+      robot,
+      fingers,
+      phases,
+      restart,
+      [&](const KDL::JntArray &q_des) { impedance_ctrl(robot, q_des, n, dyn); }
+    );
 
     int ret = 0;
-    if (!aborted) {
+    if (completed) {
+        const bool closed   = phases.back().gripper_cmd > 0.0;
         double cube_x       = data->qpos[qadr];
         double cube_y       = data->qpos[qadr + 1];
         double cube_z       = data->qpos[qadr + 2];

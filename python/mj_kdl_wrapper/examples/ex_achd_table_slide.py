@@ -19,7 +19,8 @@ TABLE_Z = 0.447
 MOVE_X = 0.20
 KPLIN, KDLIN = 200.0, 30.0
 KPROT, KDROT = 175.0, 28.0
-BETA_MAX, TAU_MAX = 120.0, 59.0
+BETA_MAX = 120.0
+GRIPPER_CLOSED = 0.82  # [rad] driver joint; the bundled 2F-85's ctrlrange is 0..0.82
 
 
 def build_env() -> tuple[mjk.Env, mjk.Robot]:
@@ -44,7 +45,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     spec.robots = [robot_spec]
     env = mjk.Env.build(spec)
     tool = mjk.ToolFrameSpec()
-    tool.tool_body = "g_base"
+    tool.tool_body = "g_base_mount"
     tool.tcp_site = "g_pinch"
     robot = env.create_robot("base_link", "bracelet_link", tool=tool)
     return env, robot
@@ -104,7 +105,7 @@ def achd_step(env, robot, chain, fk, achd, rnea, target, err_prev, first_pid):
     rnea_wrenches = [kdl.Wrench.Zero() for _ in range(chain.getNrOfSegments())]
     if rnea.CartToJnt(q, qd, qdd, rnea_wrenches, tau) < 0:
         raise RuntimeError("PyKDL RNEA failed")
-    robot.jnt_trq_cmd = [clamp_abs(tau[i], TAU_MAX) for i in range(n)]
+    robot.jnt_trq_cmd = [tau[i] for i in range(n)]
     env.update()
 
 
@@ -140,24 +141,18 @@ def main() -> int:
 
         def step():
             if env.has_actuator("g_fingers_actuator"):
-                env.set_actuator_ctrl("g_fingers_actuator", 255.0)
+                env.set_actuator_ctrl("g_fingers_actuator", GRIPPER_CLOSED)
             achd_step(env, robot, chain, fk, achd, rnea, target, err_prev, first_pid)
 
         if args.gui:
             # The UI's reset button runs env's reset, on_reset included.
             env.open_viewer("ex_achd_table_slide.py")
-            while env.viewer.is_running():
-                step()
-                if not env.step():
-                    break
-                env.pace()
-        else:
-            end = env.time() + 2.0
-            while env.time() < end:
-                step()
-                if not env.step():
-                    break
-                env.pace()
+        end = env.time() + 2.0
+        while env.time() < end:
+            step()
+            if not env.step():
+                break
+            env.pace()
         print(f"tcp target x shift: {MOVE_X:.3f} m")
         final_frame = robot.fk_frame()
         final_pos = [final_frame.p.x(), final_frame.p.y(), final_frame.p.z()]

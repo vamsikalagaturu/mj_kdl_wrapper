@@ -60,7 +60,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     spec.robots = [robot_spec]
     env = mjk.Env.build(spec)
     tool = mjk.ToolFrameSpec()
-    tool.tool_body = "g_base"
+    tool.tool_body = "g_base_mount"
     tool.tcp_site = "g_pinch"
     robot = env.create_robot("base_link", "bracelet_link", tool=tool)
     return env, robot
@@ -141,14 +141,13 @@ def rnea_controller(robot, solver, chain, target: list[float]) -> None:
     robot.jnt_trq_cmd = as_list(tau)
 
 
-# The UI's reset button has already reset env (on_reset included); restart the phases.
-def step_once(env, gui, state) -> bool:
+# on_reset flags a UI reset (env is already reset); restart the phases.
+def step_once(env, state) -> bool:
     if not env.step():
         return False
-    if gui and env.time() < state["prev"] - 1e-6:
-        state["prev"] = env.time()
+    if state["reset"]:
+        state["reset"] = False
         raise ResetRequested()
-    state["prev"] = env.time()
     return True
 
 
@@ -172,7 +171,7 @@ def run_phase(env, robot, solver, chain, phase, gui, state) -> bool:
             return True
         if gui and not env.viewer.is_running():
             return False
-        if not step_once(env, gui, state):
+        if not step_once(env, state):
             return False
 
 
@@ -186,15 +185,18 @@ def main() -> int:
         chain = robot.kdl_chain()
         solver = kdl.ChainIdSolver_RNE(chain, kdl.Vector(0.0, 0.0, -9.81))
         robot.set_control_mode(mjk.CtrlMode.TORQUE)
+        state = {"reset": False}
 
         def on_reset(ctx):
             robot.set_joint_pos(HOME)
             env.set_body_pose("cube", CUBE_START)
             if env.has_actuator("g_fingers_actuator"):
                 env.set_actuator_ctrl("g_fingers_actuator", 0.0)
+            state["reset"] = True
 
         env.on_reset = on_reset
         env.reset()
+        state["reset"] = False
 
         q = waypoints(robot)
 
@@ -220,7 +222,6 @@ def main() -> int:
             phase("OPEN", "place", 1.0, 2.0, -1.0, 0.0),
             phase("RETREAT", "place_above", 2.0, 4.0, 0.08, 0.0),
         ]
-        state = {"prev": env.time()}
         if args.gui:
             env.open_viewer("ex_rnea_pick_place.py")
             while env.viewer.is_running():

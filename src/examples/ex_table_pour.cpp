@@ -5,10 +5,11 @@
  * Usage:
  *   ex_table_pour [--headless] [--record output.mp4]
  *
- * With --headless runs the full pour sequence and prints how many balls ended
- * in the receiver. */
+ * Runs the full pour sequence once, prints how many balls ended in the receiver and exits;
+ * --headless skips the viewer. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "common.hpp"
 #include "example_paths.hpp"
 
 #include <kdl/chaindynparam.hpp>
@@ -25,7 +26,9 @@
 #include <string>
 #include <vector>
 
-static constexpr double kHomePose[7]      = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
+using mj_kdl_examples::kGripperClosed;
+
+using mj_kdl_examples::kHomePose;
 static constexpr double kTableZ           = 0.70;
 static constexpr double kRobotBackX       = -0.26;
 static constexpr double kJugX             = 0.30;
@@ -44,26 +47,6 @@ static constexpr double kTiltOutletZ      = kTableZ + 0.18;
 
 static constexpr double kKp[7] = { 120, 220, 120, 220, 110, 190, 90 };
 static constexpr double kKd[7] = { 12, 22, 12, 22, 11, 18, 9 };
-
-static double   clamp01(double v) { return std::max(0.0, std::min(1.0, v)); }
-
-static void lerp_q(const KDL::JntArray &a, const KDL::JntArray &b, double t, KDL::JntArray &out)
-{
-    for (unsigned i = 0; i < a.rows(); ++i) out(i) = a(i) + t * (b(i) - a(i));
-}
-
-static void snapshot_q(const mj_kdl::Robot &robot, unsigned n, KDL::JntArray &q)
-{
-    for (unsigned i = 0; i < n; ++i) q(i) = robot.jnt_pos_msr[i];
-}
-
-static double max_abs_joint_err(const mj_kdl::Robot &robot, const KDL::JntArray &q, unsigned n)
-{
-    double max_err = 0.0;
-    for (unsigned i = 0; i < n; ++i)
-        max_err = std::max(max_err, std::abs(q(i) - robot.jnt_pos_msr[i]));
-    return max_err;
-}
 
 static void impedance_ctrl(
   mj_kdl::Robot       &robot,
@@ -107,31 +90,11 @@ static bool inside_jug(const mjData *data, const mjModel *model, int joint_id)
            && p[2] < kTableZ + kJugHeight + 0.04;
 }
 
-struct Phase
-{
-    const char          *name;
-    const KDL::JntArray *target;
-    double               duration;
-    double               timeout;
-    double               settle_tol;
-    double               gripper_cmd;
-};
-
 int main(int argc, char *argv[])
 {
-    bool        headless    = false;
-    bool        do_record   = false;
-    std::string record_path = "table_pour.mp4";
-    for (int i = 1; i < argc; ++i) {
-        const std::string arg = argv[i];
-        if (arg == "--headless") {
-            headless = true;
-        } else if (arg == "--record") {
-            do_record = true;
-            headless  = true;
-            if (i + 1 < argc && argv[i + 1][0] != '-') record_path = argv[++i];
-        }
-    }
+    const mj_kdl_examples::Args args = mj_kdl_examples::parse_args(argc, argv, "table_pour.mp4");
+    const bool                  headless = args.headless;
+
     const int num_balls = headless ? kNumBallsHeadless : kNumBallsGui;
 
     const std::string arm_mjcf    = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
@@ -195,7 +158,7 @@ int main(int argc, char *argv[])
     }
 
     mj_kdl::ToolFrameSpec tool;
-    tool.tool_body = "g_base";
+    tool.tool_body = "g_base_mount";
     tool.tcp_site  = "g_pinch";
 
     mj_kdl::Robot robot;
@@ -327,6 +290,7 @@ int main(int argc, char *argv[])
 
     /* Scene-specific reset: place balls inside bottle and close gripper.
      * Env::on_reset runs after mj_resetData and before final mj_forward/robot sync. */
+    bool restart = false;
     env.on_reset = [&](mj_kdl::ResetContext *ctx) {
         mj_kdl::set_joint_pos(&robot, q_home);
 
@@ -346,62 +310,53 @@ int main(int argc, char *argv[])
             std::snprintf(body_name, sizeof(body_name), "grain_%02d", i);
             mj_kdl::set_body_pose(&env, body_name, world);
         }
-        ctx->data->ctrl[fingers->ctrl_id] = 0.8;
+        ctx->data->ctrl[fingers->ctrl_id] = kGripperClosed;
+        restart                           = true;
     };
 
-    double prev_sim_time = 0.0;
-    bool   restart       = false;
-    bool   aborted       = false;
-
-    auto reset_scene = [&]() {
-        mj_kdl::reset(&env);
-        prev_sim_time = data->time;
-        restart       = true;
-    };
-
-    const std::vector<Phase> phases = {
+    const std::vector<mj_kdl_examples::Phase> phases = {
         { .name        = "HOME",
           .target      = &q_home,
           .duration    = 1.0,
           .timeout     = 2.5,
           .settle_tol  = 0.08,
-          .gripper_cmd = 0.8 },
+          .gripper_cmd = kGripperClosed },
         { .name        = "PRE_POUR",
           .target      = &q_pre_pour,
           .duration    = 4.0,
           .timeout     = 6.5,
           .settle_tol  = 0.08,
-          .gripper_cmd = 0.8 },
+          .gripper_cmd = kGripperClosed },
         { .name        = "POUR",
           .target      = &q_pour,
           .duration    = 3.5,
           .timeout     = 5.5,
           .settle_tol  = 0.07,
-          .gripper_cmd = 0.8 },
+          .gripper_cmd = kGripperClosed },
         { .name        = "TILT",
           .target      = &q_tilt,
           .duration    = 7.0,
           .timeout     = 10.0,
           .settle_tol  = 0.07,
-          .gripper_cmd = 0.8 },
+          .gripper_cmd = kGripperClosed },
         { .name        = "POUR_HOLD",
           .target      = &q_tilt,
           .duration    = headless ? 9.0 : 10.0,
           .timeout     = headless ? 10.0 : 11.0,
           .settle_tol  = -1.0,
-          .gripper_cmd = 0.8 },
+          .gripper_cmd = kGripperClosed },
         { .name        = "RETREAT",
           .target      = &q_retreat,
           .duration    = 2.0,
           .timeout     = 4.0,
           .settle_tol  = 0.08,
-          .gripper_cmd = 0.8 },
+          .gripper_cmd = kGripperClosed },
         { .name        = "HOLD",
           .target      = &q_retreat,
-          .duration    = headless ? 1.0 : 1e9,
-          .timeout     = headless ? 1.0 : 1e9,
+          .duration    = 1.0,
+          .timeout     = 1.0,
           .settle_tol  = -1.0,
-          .gripper_cmd = 0.8 },
+          .gripper_cmd = kGripperClosed },
     };
 
     mj_kdl::VideoRecorder recorder;
@@ -410,9 +365,13 @@ int main(int argc, char *argv[])
     const int             steps_per_frame =
       std::max(1, static_cast<int>(1.0 / (kRecordFps * model->opt.timestep)));
     int sim_step = 0;
-    if (do_record) {
+    if (args.record) {
         if (!mj_kdl::init_video_recorder(
-              &recorder, env.model, record_path.c_str(), mj_kdl::VideoResolution::R1080p, kRecordFps
+              &recorder,
+              env.model,
+              args.record_path.c_str(),
+              mj_kdl::VideoResolution::R1080p,
+              kRecordFps
             )) {
             std::cerr << "init_video_recorder() failed -- is EGL available and ffmpeg installed?\n";
             return 1;
@@ -431,64 +390,34 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    reset_scene();
+    mj_kdl::reset(&env);
 
-    KDL::JntArray q_enter(n), q_des(n);
-    do {
-        restart = false;
-        for (const Phase &phase : phases) {
-            if (restart) break;
-            std::cout << "State: " << phase.name << "\n";
-            const double t_enter = data->time;
-            snapshot_q(robot, n, q_enter);
-            while (true) {
-                if (data->time < prev_sim_time - 1e-6) {
-                    reset_scene();
-                    break;
-                }
-                prev_sim_time = data->time;
-
-                mj_kdl::update(&env);
-                const double alpha =
-                  phase.duration > 0.0 ? clamp01((data->time - t_enter) / phase.duration) : 1.0;
-                lerp_q(q_enter, *phase.target, alpha, q_des);
-                impedance_ctrl(robot, q_des, n, dyn);
-                fingers->command = phase.gripper_cmd;
-                mj_kdl::update(&env);
-
-                const double t_rel     = data->time - t_enter;
-                const bool   done_time = t_rel >= phase.duration;
-                const bool   done_pose =
-                  phase.settle_tol < 0.0
-                  || max_abs_joint_err(robot, *phase.target, n) <= phase.settle_tol;
-                const bool done_timeout = phase.timeout > 0.0 && t_rel >= phase.timeout;
-                if ((done_time && done_pose) || done_timeout) break;
-
-                if (!mj_kdl::step(&env)) {
-                    aborted = true;
-                    break;
-                }
-                mj_kdl::pace_realtime(&env);
-                ++sim_step;
-                if (recorder_ok && sim_step % steps_per_frame == 0) {
-                    if (!mj_kdl::record_frame(&recorder, &env)) {
-                        std::cerr << "record_frame() failed at step " << sim_step << "\n";
-                        mj_kdl::cleanup(&recorder);
-                        recorder_ok = false;
-                    }
-                }
-            }
-            if (aborted) break;
-        }
-    } while (restart);
+    const bool completed = mj_kdl_examples::run_phases(
+      env,
+      robot,
+      fingers,
+      phases,
+      restart,
+      [&](const KDL::JntArray &q_des) { impedance_ctrl(robot, q_des, n, dyn); },
+      [&] {
+          ++sim_step;
+          if (recorder_ok && sim_step % steps_per_frame == 0) {
+              if (!mj_kdl::record_frame(&recorder, &env)) {
+                  std::cerr << "record_frame() failed at step " << sim_step << "\n";
+                  mj_kdl::cleanup(&recorder);
+                  recorder_ok = false;
+              }
+          }
+      }
+    );
 
     if (recorder_ok) {
         mj_kdl::cleanup(&recorder);
-        std::cout << "Saved recording: " << record_path << "\n";
+        std::cout << "Saved recording: " << args.record_path << "\n";
     }
 
     int ret = 0;
-    if (!aborted) {
+    if (completed) {
         int    in_jug = 0;
         double avg[3] = {};
         for (int jid : grain_joints)

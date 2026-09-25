@@ -62,7 +62,7 @@ TEST_F(MjcfFtSensorTest, ReadsNamedWrench)
 {
     mj_kdl::ForceTorqueSensorSpec ft{ .name = "wrist_ft", .frame_site = "wrist_ft_site" };
     mj_kdl::ToolFrameSpec         tool{
-                .tool_body  = "g_base",
+                .tool_body  = "g_base_mount",
                 .tcp_site   = "g_pinch",
                 .ft_sensors = { ft },
     };
@@ -92,7 +92,7 @@ TEST_F(MjcfFtSensorTest, ReadsNamedWrench)
 TEST_F(MjcfFtSensorTest, ResetReReadsTheWrench)
 {
     mj_kdl::ForceTorqueSensorSpec ft{ .name = "wrist_ft", .frame_site = "wrist_ft_site" };
-    mj_kdl::ToolFrameSpec         tool{ .tool_body = "g_base", .ft_sensors = { ft } };
+    mj_kdl::ToolFrameSpec         tool{ .tool_body = "g_base_mount", .ft_sensors = { ft } };
 
     mj_kdl::Robot robot;
     ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&robot, &env_, "base_link", "bracelet_link", "", &tool)
@@ -116,7 +116,7 @@ TEST_F(MjcfFtSensorTest, RejectsMissingTorqueSensor)
         .torque_sensor = "missing_torque",
     };
     mj_kdl::ToolFrameSpec tool{
-        .tool_body  = "g_base",
+        .tool_body  = "g_base_mount",
         .tcp_site   = "g_pinch",
         .ft_sensors = { ft },
     };

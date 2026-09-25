@@ -25,7 +25,7 @@ CUBE_START = [PICK_X, PICK_Y, SURFACE_Z + CUBE_HS]
 KP_LIN, KI_LIN, KD_LIN = 200.0, 100.0, 40.0
 KP_ROT, KI_ROT, KD_ROT = 120.0, 50.0, 80.0
 BETA_LIN_MAX, BETA_ROT_MAX = 120.0, 80.0
-INTEGRAL_MAX, TAU_MAX = 0.5, 59.0
+INTEGRAL_MAX = 0.5
 
 # Rides the 7th joint's redundancy: keeps the arm from folding near the table.
 SUPPORT_LINK = "half_arm_2_link"
@@ -74,7 +74,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
 
     env = mjk.Env.build(spec)
     tool = mjk.ToolFrameSpec()
-    tool.tool_body = "g_base"
+    tool.tool_body = "g_base_mount"
     tool.tcp_site = "g_pinch"
     robot = env.create_robot("base_link", "bracelet_link", tool=tool)
     return env, robot
@@ -170,18 +170,17 @@ def achd_step(ctx, target: kdl.Frame, target_twist: kdl.Twist, f_ext: list, stat
     tau = kdl.JntArray(n)
     if ctx["rnea"].CartToJnt(q, qd, qdd, ctx["f_ext_zero"], tau) < 0:
         raise RuntimeError("PyKDL RNEA failed")
-    robot.jnt_trq_cmd = [clamp_abs(tau[i], TAU_MAX) for i in range(n)]
+    robot.jnt_trq_cmd = [tau[i] for i in range(n)]
     ctx["env"].update()
 
 
-# The UI's reset button has already reset env (on_reset included); restart the phases.
-def step_once(env, gui, state) -> bool:
+# on_reset flags a UI reset (env is already reset); restart the phases.
+def step_once(env, state) -> bool:
     if not env.step():
         return False
-    if gui and env.time() < state["prev"] - 1e-6:
-        state["prev"] = env.time()
+    if state["reset"]:
+        state["reset"] = False
         raise ResetRequested()
-    state["prev"] = env.time()
     return True
 
 
@@ -231,7 +230,7 @@ def run_phase(ctx, phase: dict, gui, state) -> bool:
             return True
         if gui and not env.viewer.is_running():
             return False
-        if not step_once(env, gui, state):
+        if not step_once(env, state):
             return False
 
 
@@ -299,19 +298,21 @@ def main() -> int:
         }
 
         robot.set_control_mode(mjk.CtrlMode.TORQUE)
+        state = {"reset": False, "support": {"valid": False, "z_ref": 0.0, "prev_z": 0.0}}
 
         def on_reset(ctx_unused):
             robot.set_joint_pos(HOME)
             env.set_body_pose("cube", CUBE_START)
             if env.has_actuator("g_fingers_actuator"):
                 env.set_actuator_ctrl("g_fingers_actuator", 0.0)
+            state["reset"] = True
 
         env.on_reset = on_reset
         env.reset()
+        state["reset"] = False
         env.update()
         phases = build_phases(robot, chain)
 
-        state = {"prev": env.time(), "support": {"valid": False, "z_ref": 0.0, "prev_z": 0.0}}
         if args.gui:
             env.open_viewer("ex_achd_pick_place.py")
             while env.viewer.is_running():

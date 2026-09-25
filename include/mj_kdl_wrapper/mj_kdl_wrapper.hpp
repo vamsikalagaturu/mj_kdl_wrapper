@@ -365,7 +365,7 @@ struct ForceTorqueSensor : ForceTorqueReading
  * becomes the KDL terminal frame for FK/IK (takes priority when set).  When
  * the model has no suitable site, tcp_frame provides an equivalent manual
  * transform expressed in the tip body's local frame.
- * For the prefixed Robotiq 2F-85 this is typically {"g_base", "g_pinch"}.
+ * For the prefixed Robotiq 2F-85 this is {"g_base_mount", "g_pinch"}: the mount carries mass too.
  */
 struct ToolFrameSpec
 {

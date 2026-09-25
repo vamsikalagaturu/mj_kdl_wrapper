@@ -165,7 +165,7 @@ class MjcfPickTest : public testing::Test
         ASSERT_TRUE(mj_kdl::init_env(&env_, &sc));
         model_ = env_.model;
         data_  = env_.data;
-        const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base", .tcp_site = "g_pinch" };
+        const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base_mount", .tcp_site = "g_pinch" };
         ASSERT_TRUE(
           mj_kdl::init_robot_from_mjcf(&s_, &env_, "base_link", "bracelet_link", "", &tool)
         );
@@ -290,7 +290,7 @@ TEST_F(MjcfPickTest, KDLChain)
     EXPECT_EQ(n_, 7u);
 
     mj_kdl::Robot wrist;
-    const mj_kdl::ToolFrameSpec wrist_tool{ .tool_body = "g_base" };
+    const mj_kdl::ToolFrameSpec wrist_tool{ .tool_body = "g_base_mount" };
     ASSERT_TRUE(
       mj_kdl::init_robot_from_mjcf(&wrist, &env_, "base_link", "bracelet_link", "", &wrist_tool)
     );

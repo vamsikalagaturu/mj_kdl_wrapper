@@ -74,20 +74,15 @@ def main() -> int:
         if args.gui:
             # The UI's reset button runs env's reset, on_reset included.
             env.open_viewer("ex_vel_ctrl.py")
-            while env.viewer.is_running():
-                control_step()
-                if not env.step():
-                    break
-                env.pace()
-        else:
-            end = env.time() + 5.0
-            while env.time() < end and not state["arrived"]:
-                control_step()
-                env.step()
-                env.pace()
-            max_err = max(abs(TARGET_POSE[i] - robot.jnt_pos_msr[i]) for i in range(robot.n_joints))
-            status = "converged" if state["arrived"] else "timeout"
-            print(f"max joint error: {max_err:.4f} rad  ({status})")
+        end = env.time() + 5.0
+        while env.time() < end and not state["arrived"]:
+            control_step()
+            if not env.step():
+                break
+            env.pace()
+        max_err = max(abs(TARGET_POSE[i] - robot.jnt_pos_msr[i]) for i in range(robot.n_joints))
+        status = "converged" if state["arrived"] else "timeout"
+        print(f"max joint error: {max_err:.4f} rad  ({status})")
     finally:
         env.close()
 

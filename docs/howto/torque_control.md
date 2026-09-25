@@ -229,8 +229,8 @@ at the last joint. On GEN3 with random states:
 | `ff_tau + constraint_tau` | 4.8 Nm |
 
 Sent as the command, `ff_tau + constraint_tau` still tracks because the Cartesian
-PD in `beta` absorbs the error, but less well (`ex_admittance_ft_achd` helix
-tracking 1.7 mm against 0.7 mm through RNEA), on a real robot as in MuJoCo.
+PD in `beta` absorbs the error, but less well (helix tracking 1.7 mm against
+0.7 mm through RNEA in an FT admittance test), on a real robot as in MuJoCo.
 
 With six constraints on a seven-joint arm, the elbow's null space is left
 unconstrained and falls under gravity unless `ff_tau` damps it (the examples use

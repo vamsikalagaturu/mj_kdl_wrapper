@@ -8,15 +8,17 @@
  *   qddot     = ACHD(q, qdot, alpha, beta)   [constrained joint accelerations]
  *   tau       = RNEA(q, qdot, qddot)         [full inverse dynamics for MuJoCo]
  *
- * mj_kdl_wrapper's TORQUE mode fully nulls the MuJoCo position actuators
- * (ctrl = qpos + kv/kp * qvel), so qfrc_applied is the sole torque source.
+ * mj_kdl_wrapper's TORQUE mode disables the position actuators and drives the
+ * added <joint>_torque motors, so tau is the only joint actuation.
  *
  * Usage:
  *   ex_achd_pick_place [--headless] [--record output.mp4]
  *
- * With --headless runs the full sequence and prints final cube position. */
+ * Runs the full sequence once, prints the final cube position and exits; --headless skips
+ * the viewer. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "common.hpp"
 #include "example_paths.hpp"
 
 #include <kdl/chainhdsolver_vereshchagin.hpp>
@@ -31,7 +33,10 @@
 #include <string>
 #include <vector>
 
-static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
+using mj_kdl_examples::clamp01;
+using mj_kdl_examples::kGripperClosed;
+
+using mj_kdl_examples::kHomePose;
 static constexpr double kCubeHS      = 0.02;
 static constexpr double kSceneBaseZ = 0.70;
 static constexpr double kPickX      = 0.40;
@@ -50,7 +55,6 @@ static constexpr double kKiRot   = 50.0;
 static constexpr double kKdRot   = 80.0;
 static constexpr double kBetaMaxLin = 120.0;
 static constexpr double kBetaMaxRot = 80.0;
-static constexpr double kTauMax  = 59.0;
 static constexpr double kIntegralMax = 0.5;
 static constexpr int    kRecordFps = 30;
 static constexpr const char *kSupportLink = "half_arm_2_link";
@@ -59,7 +63,6 @@ static constexpr double kSupportKd   = 80.0;
 static constexpr double kSupportFMax = 45.0;
 static constexpr double kSupportLift = 0.06;
 
-static double   clamp01(double v) { return std::max(0.0, std::min(1.0, v)); }
 static double   clamp_abs(double v, double limit) { return std::max(-limit, std::min(limit, v)); }
 static double   smoothstep(double t)
 {
@@ -211,7 +214,8 @@ static void achd_cartesian_ctrl(
         std::fill(robot.jnt_trq_cmd.begin(), robot.jnt_trq_cmd.end(), 0.0);
         return;
     }
-    for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = clamp_abs(tau_cmd(i), kTauMax);
+    // update() clamps each torque to its joint's limit and reports it in jnt_saturated.
+    for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = tau_cmd(i);
 }
 
 static mj_kdl::SceneObject make_cube(double surface_z)
@@ -242,22 +246,12 @@ struct Phase
 
 int main(int argc, char *argv[])
 {
-    bool        headless    = false;
-    bool        do_record   = false;
-    bool        print_ee_angular_vel = false;
-    std::string record_path = "achd_pick_place.mp4";
-    for (int i = 1; i < argc; ++i) {
-        std::string arg(argv[i]);
-        if (arg == "--headless") {
-            headless = true;
-        } else if (arg == "--record") {
-            do_record = true;
-            headless  = true;
-            if (i + 1 < argc && argv[i + 1][0] != '-') record_path = argv[++i];
-        } else if (arg == "--print-ee-angular-vel") {
-            print_ee_angular_vel = true;
-        }
-    }
+    const mj_kdl_examples::Args args =
+      mj_kdl_examples::parse_args(argc, argv, "achd_pick_place.mp4");
+    const bool headless             = args.headless;
+    bool       print_ee_angular_vel = false;
+    for (int i = 1; i < argc; ++i)
+        if (std::string(argv[i]) == "--print-ee-angular-vel") print_ee_angular_vel = true;
 
     const std::string arm_mjcf   = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
     const std::string grp_mjcf   = mj_kdl_examples::asset("robotiq_2f85/2f85.xml");
@@ -296,7 +290,7 @@ int main(int argc, char *argv[])
     mjData  *data  = env.data;
 
     mj_kdl::ToolFrameSpec tool;
-    tool.tool_body = "g_base";
+    tool.tool_body = "g_base_mount";
     tool.tcp_site  = "g_pinch";
 
     mj_kdl::Robot robot;
@@ -351,47 +345,38 @@ int main(int argc, char *argv[])
         return KDL::Frame(grasp_rot, KDL::Vector(base_x, base_y, base_z));
     };
 
+    // clang-format off
     const std::vector<Phase> phases = {
-        { "HOME",        home_tcp,                                      1.0,                 2.5, 0.03, 0.05, 0.0   },
+        { "HOME",       home_tcp,                                      1.0,                 2.5, 0.03, 0.05, 0.0   },
         { "PICK_ABOVE",  target_frame(kPickX,  kPickY,  kTableZ + z_above), 8.0,            14.0, 0.04, 0.03, 0.0   },
         { "PICK",        target_frame(kPickX,  kPickY,  kTableZ + z_grasp), 5.0,            12.0, 0.02, 0.03, 0.0   },
-        { "CLOSE",       target_frame(kPickX,  kPickY,  kTableZ + z_grasp), 1.5,             2.5, -1.0, -1.0, 0.8 },
-        { "LIFT",        target_frame(kPickX,  kPickY,  kTableZ + z_lift),  3.0,             8.0, 0.04, 0.03, 0.8 },
-        { "PLACE_ABOVE", target_frame(kPlaceX, kPlaceY, kTableZ + z_above), 5.0,            12.0, 0.04, 0.03, 0.8 },
-        { "PLACE",       target_frame(kPlaceX, kPlaceY, kTableZ + z_grasp), 5.0,            14.0, 0.02, 0.03, 0.8 },
+        { "CLOSE",       target_frame(kPickX,  kPickY,  kTableZ + z_grasp), 1.5,             2.5, -1.0, -1.0, kGripperClosed },
+        { "LIFT",        target_frame(kPickX,  kPickY,  kTableZ + z_lift),  3.0,             8.0, 0.04, 0.03, kGripperClosed },
+        { "PLACE_ABOVE", target_frame(kPlaceX, kPlaceY, kTableZ + z_above), 5.0,            12.0, 0.04, 0.03, kGripperClosed },
+        { "PLACE",       target_frame(kPlaceX, kPlaceY, kTableZ + z_grasp), 5.0,            14.0, 0.02, 0.03, kGripperClosed },
         { "OPEN",        target_frame(kPlaceX, kPlaceY, kTableZ + z_grasp), 1.0,             2.0, -1.0, -1.0, 0.0   },
         { "RETREAT",     target_frame(kPlaceX, kPlaceY, kTableZ + z_above), 3.0,             6.0, 0.04, 0.08, 0.0   },
-        { "HOLD",        target_frame(kPlaceX, kPlaceY, kTableZ + z_above), headless ? 4.0 : 1e9, headless ? 4.0 : 1e9, -1.0, -1.0, 0.0 },
+        { "HOLD",        target_frame(kPlaceX, kPlaceY, kTableZ + z_above), 4.0,             4.0, -1.0, -1.0, 0.0 },
     };
+    // clang-format on
 
     if (!mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::TORQUE)) return 1;
     int qadr = model->jnt_qposadr[cube_jnt];
 
-    auto reset_cube = [&]() {
+    bool aborted = false;
+    bool restart = false;
+    env.on_reset = [&](mj_kdl::ResetContext *) {
+        mj_kdl::set_joint_pos(&robot, q_home);
         data->qpos[qadr]     = kPickX;
         data->qpos[qadr + 1] = kPickY;
         data->qpos[qadr + 2] = kSceneBaseZ + kCubeHS;
         data->qpos[qadr + 3] = 1.0;
         data->qpos[qadr + 4] = data->qpos[qadr + 5] = data->qpos[qadr + 6] = 0.0;
-    };
 
-    env.on_reset = [&](mj_kdl::ResetContext *) {
-        mj_kdl::set_joint_pos(&robot, q_home);
-        reset_cube();
         data->ctrl[fingers->ctrl_id] = 0.0;
+        restart                      = true;
     };
-
-    double prev_sim_time = data->time;
-    bool   aborted       = false;
-    bool   restart       = false;
-
-    auto reset_scene = [&]() {
-        mj_kdl::reset(&env);
-        prev_sim_time = data->time;
-        restart       = true;
-    };
-
-    reset_scene();
+    mj_kdl::reset(&env);
 
     if (!headless && !mj_kdl::open_viewer(&env)) {
         std::cerr << "open_viewer() failed\n";
@@ -400,9 +385,9 @@ int main(int argc, char *argv[])
 
     mj_kdl::VideoRecorder recorder;
     bool recorder_ok = false;
-    if (do_record) {
+    if (args.record) {
         const mj_kdl::Status rec = mj_kdl::init_video_recorder(
-          &recorder, model, record_path.c_str(), mj_kdl::VideoResolution::R720p, kRecordFps
+          &recorder, model, args.record_path.c_str(), mj_kdl::VideoResolution::R720p, kRecordFps
         );
         recorder_ok = static_cast<bool>(rec);
         if (!rec) std::cerr << "recording disabled: " << rec.error << "\n";
@@ -447,12 +432,6 @@ int main(int argc, char *argv[])
             KDL::Frame prev_target = phase_start;
             bool first_target = true;
             while (true) {
-                if (data->time < prev_sim_time - 1e-6) {
-                    reset_scene();
-                    break;
-                }
-                prev_sim_time = data->time;
-
                 double phase_alpha =
                   phase.duration > 0.0 ? smoothstep((data->time - t_enter) / phase.duration) : 1.0;
                 KDL::Frame target = lerp_frame(phase_start, phase.target, phase_alpha);
@@ -537,6 +516,7 @@ int main(int argc, char *argv[])
                     aborted = true;
                     break;
                 }
+                if (restart) break;
                 mj_kdl::pace_realtime(&env);
                 if (recorder_ok && sim_step % steps_per_record_frame == 0) {
                     if (!mj_kdl::record_frame(&recorder, &env)) {
@@ -571,7 +551,7 @@ int main(int argc, char *argv[])
     }
     if (recorder_ok) {
         mj_kdl::cleanup(&recorder);
-        std::cout << "Saved recording: " << record_path << "\n";
+        std::cout << "Saved recording: " << args.record_path << "\n";
     }
     mj_kdl::cleanup(&env);
     return ret;

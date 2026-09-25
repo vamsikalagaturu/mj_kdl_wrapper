@@ -16,6 +16,7 @@ HOME_POSE = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 
 KP = [100, 200, 100, 200, 100, 200, 100]
 KD = [10, 20, 10, 20, 10, 20, 10]
+GRIPPER_CLOSED = 0.82  # [rad] driver joint; the bundled 2F-85's ctrlrange is 0..0.82
 
 
 def attachment_gripper(path: str, prefix: str = "g_") -> mjk.AttachmentSpec:
@@ -61,10 +62,10 @@ def main() -> int:
     env = mjk.Env.build(spec)
     try:
         tool1 = mjk.ToolFrameSpec()
-        tool1.tool_body = "g_base"
+        tool1.tool_body = "g_base_mount"
         tool1.tcp_site = "g_pinch"
         tool2 = mjk.ToolFrameSpec()
-        tool2.tool_body = "r2_g_base"
+        tool2.tool_body = "r2_g_base_mount"
         tool2.tcp_site = "r2_g_pinch"
         arm1 = env.create_robot("base_link", "bracelet_link", tool=tool1)
         arm2 = env.create_robot("r2_base_link", "r2_bracelet_link", tool=tool2)
@@ -82,7 +83,7 @@ def main() -> int:
             env.update()
             impedance(arm1, HOME_POSE)
             impedance(arm2, HOME_POSE)
-            grip = 255.0 if math.fmod(env.time(), 6.0) < 3.0 else 0.0
+            grip = GRIPPER_CLOSED if math.fmod(env.time(), 6.0) < 3.0 else 0.0
             for name in ("g_fingers_actuator", "r2_g_fingers_actuator"):
                 if env.has_actuator(name):
                     env.set_actuator_ctrl(name, grip)
@@ -91,23 +92,18 @@ def main() -> int:
         if args.gui:
             # The UI's reset button re-homes both arms through on_reset.
             env.open_viewer("ex_dual_arm.py")
-            while env.viewer.is_running():
-                step()
-                if not env.step():
-                    break
-                env.pace()
-        else:
-            end = env.time() + 1.2
-            while env.time() < end:
-                step()
-                env.step()
-                env.pace()
-            arm1_frame = arm1.fk_frame()
-            arm2_frame = arm2.fk_frame()
-            arm1_pos = [arm1_frame.p.x(), arm1_frame.p.y(), arm1_frame.p.z()]
-            arm2_pos = [arm2_frame.p.x(), arm2_frame.p.y(), arm2_frame.p.z()]
-            print(f"arm1 EE: {[round(x, 4) for x in arm1_pos]}")
-            print(f"arm2 EE: {[round(x, 4) for x in arm2_pos]}")
+        end = env.time() + 1.2
+        while env.time() < end:
+            step()
+            if not env.step():
+                break
+            env.pace()
+        arm1_frame = arm1.fk_frame()
+        arm2_frame = arm2.fk_frame()
+        arm1_pos = [arm1_frame.p.x(), arm1_frame.p.y(), arm1_frame.p.z()]
+        arm2_pos = [arm2_frame.p.x(), arm2_frame.p.y(), arm2_frame.p.z()]
+        print(f"arm1 EE: {[round(x, 4) for x in arm1_pos]}")
+        print(f"arm2 EE: {[round(x, 4) for x in arm2_pos]}")
     finally:
         env.close()
     return 0

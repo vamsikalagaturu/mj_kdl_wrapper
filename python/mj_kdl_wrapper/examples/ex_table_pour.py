@@ -114,7 +114,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
 
     env = mjk.Env.build(spec)
     tool = mjk.ToolFrameSpec()
-    tool.tool_body = "g_base"
+    tool.tool_body = "g_base_mount"
     tool.tcp_site = "g_pinch"
     robot = env.create_robot("base_link", "bracelet_link", tool=tool)
     return env, robot
@@ -305,11 +305,10 @@ def run_phase(
             return False
         if not step_once(env):
             return False
-        # The UI's reset button has already reset env (on_reset included); restart the phases.
-        if gui and env.time() < state["prev"] - 1e-6:
-            state["prev"] = env.time()
+        # on_reset flags a UI reset (env is already reset); restart the phases.
+        if state["reset"]:
+            state["reset"] = False
             raise ResetRequested()
-        state["prev"] = env.time()
         step_counter[0] += 1
         if recorder is not None and step_counter[0] % record_every == 0:
             recorder.record_frame()
@@ -326,17 +325,20 @@ def main() -> int:
     recorder = None
     try:
         robot.set_control_mode(mjk.CtrlMode.TORQUE)
+        state = {"reset": False}
 
         def on_reset(ctx):
             place_balls_in_bottle(env, robot)  # also re-homes the arm
             if env.has_actuator("g_fingers_actuator"):
                 env.set_actuator_ctrl("g_fingers_actuator", GRIPPER_CLOSED)
+            state["reset"] = True
 
         env.on_reset = on_reset
         env.reset()
 
         waypoints = build_waypoints(env, robot)
         env.reset()  # waypoint search moved the arm; start the run from home again
+        state["reset"] = False
         g = GRIPPER_CLOSED
         phases = [
             Phase("HOME", waypoints["home"], 1.0, 2.5, 0.08, g),
@@ -345,7 +347,7 @@ def main() -> int:
             Phase("TILT", waypoints["tilt"], 7.0, 10.0, 0.07, g),
             Phase("POUR_HOLD", waypoints["tilt"], 10.0 if args.gui else 9.0, 0.0, -1.0, g),
             Phase("RETREAT", waypoints["retreat"], 2.0, 4.0, 0.08, g),
-            Phase("HOLD", waypoints["retreat"], 10.0 if args.gui else 1.0, 0.0, -1.0, g),
+            Phase("HOLD", waypoints["retreat"], 1.0, 0.0, -1.0, g),
         ]
 
         fps = 60
@@ -355,7 +357,6 @@ def main() -> int:
                 env, args.record, mjk.VideoResolution.R1080p, fps
             )
         step_counter = [0]
-        state = {"prev": env.time()}
         if args.gui:
             env.open_viewer("ex_table_pour.py")
             while env.viewer.is_running():

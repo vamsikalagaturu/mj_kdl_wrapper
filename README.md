@@ -175,8 +175,7 @@ rationale, build ordering, and consuming it from your own nodes.
 
 The example catalog lives in [docs/examples.md](docs/examples.md).
 Every C++ `src/examples/ex_*.cpp` example has a same-name Python counterpart in
-`python/examples/`, including the named force-torque admittance demos:
-`ex_admittance_ft`, `ex_admittance_ft_rnea`, and `ex_admittance_ft_achd`.
+`python/examples/`, including the named force-torque admittance demo `ex_admittance_ft`.
 
 ## Tests
 

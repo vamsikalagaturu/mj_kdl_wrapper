@@ -15,6 +15,7 @@ import mj_kdl_wrapper as mjk
 
 SURFACE_Z = 0.7
 HOME_POSE = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
+GRIPPER_CLOSED = 0.82  # [rad] driver joint; the bundled 2F-85's ctrlrange is 0..0.82
 
 
 def attachment_gripper(path: str) -> mjk.AttachmentSpec:
@@ -93,7 +94,7 @@ def build_env(model_path: str, gripper_path: str, table_path: str) -> tuple[mjk.
     spec.cameras = [overview, side]
     env = mjk.Env.build(spec)
     tool = mjk.ToolFrameSpec()
-    tool.tool_body = "g_base"
+    tool.tool_body = "g_base_mount"
     tool.tcp_site = "g_pinch"
     robot = env.create_robot("base_link", "bracelet_link", tool=tool)
     return env, robot
@@ -103,16 +104,11 @@ def run_loop(env: mjk.Env, step_fn, *, duration: float, gui: bool) -> None:
     if gui:
         # The UI's reset button runs env's reset, on_reset included.
         env.open_viewer("ex_table_scene.py")
-        while env.viewer.is_running():
-            step_fn()
-            if not env.step():
-                break
-            env.pace()
-        return
     end = env.time() + duration
     while env.time() < end:
         step_fn()
-        env.step()
+        if not env.step():
+            break
         env.pace()
 
 
@@ -140,7 +136,7 @@ def main() -> int:
             robot.jnt_trq_cmd = robot.gravity_torques(-9.81)
             if env.has_actuator("g_fingers_actuator"):
                 env.set_actuator_ctrl(
-                    "g_fingers_actuator", 255.0 if math.fmod(env.time(), 6.0) < 3.0 else 0.0
+                    "g_fingers_actuator", GRIPPER_CLOSED if math.fmod(env.time(), 6.0) < 3.0 else 0.0
                 )
             env.update()
 

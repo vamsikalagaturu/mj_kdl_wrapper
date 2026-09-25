@@ -9,9 +9,10 @@
  * Usage:
  *   ex_table_scene_mjcf [--headless]
  *
- * With --headless runs 500 steps and prints final EE drift. */
+ * Runs 500 steps and exits; --headless skips the viewer and prints the final EE drift. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "common.hpp"
 #include "example_paths.hpp"
 
 #include <kdl/chaindynparam.hpp>
@@ -22,9 +23,10 @@
 #include <iostream>
 #include <string>
 
-static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
+using mj_kdl_examples::kHomePose;
 static constexpr double kObjectMass  = 0.1;                    // [kg]
 static constexpr double kFriction[3] = { 1.0, 0.005, 0.0001 }; // MuJoCo's geom default
+static constexpr int    kSteps       = 500;
 
 static mj_kdl::SceneObject make_box(
   const char *name,
@@ -86,9 +88,7 @@ static mj_kdl::SceneObject make_sphere(
 
 int main(int argc, char *argv[])
 {
-    bool headless = false;
-    for (int i = 1; i < argc; ++i)
-        if (std::string(argv[i]) == "--headless") headless = true;
+    const bool headless = mj_kdl_examples::parse_args(argc, argv).headless;
 
     const std::string mjcf     = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
     const std::string grp_mjcf = mj_kdl_examples::asset("robotiq_2f85/2f85.xml");
@@ -171,7 +171,7 @@ int main(int argc, char *argv[])
         std::cout << " " << name;
     std::cout << "\n";
 
-    const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base", .tcp_site = "g_pinch" };
+    const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base_mount", .tcp_site = "g_pinch" };
 
     if (!mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool)) {
         std::cerr << "init_robot_from_mjcf() failed\n";
@@ -193,7 +193,7 @@ int main(int argc, char *argv[])
     // reset() seeds the finger slot from ctrl, so the hook sets ctrl.
     env.on_reset = [&](mj_kdl::ResetContext *ctx) {
         mj_kdl::set_joint_pos(&robot, q_home);
-        ctx->data->ctrl[fingers->ctrl_id] = 0.8;
+        ctx->data->ctrl[fingers->ctrl_id] = mj_kdl_examples::kGripperClosed;
     };
 
     mj_kdl::reset(&env);
@@ -204,14 +204,15 @@ int main(int argc, char *argv[])
         for (unsigned i = 0; i < n; ++i) q(i) = robot.jnt_pos_msr[i];
         dyn.JntToGravity(q, g);
         for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = g(i);
-        fingers->command = (std::fmod(env.data->time, 6.0) < 3.0) ? 0.8 : 0.0;
+        fingers->command =
+          (std::fmod(env.data->time, 6.0) < 3.0) ? mj_kdl_examples::kGripperClosed : 0.0;
     };
 
     if (headless) {
         KDL::Frame ee_start;
         fk.JntToCart(q_home, ee_start);
 
-        for (int step = 0; step < 500; ++step) {
+        for (int step = 0; step < kSteps; ++step) {
             ctrl_step();
             mj_kdl::step(&env);
         }
@@ -221,14 +222,14 @@ int main(int argc, char *argv[])
         KDL::Frame ee_end;
         fk.JntToCart(q_end, ee_end);
         double drift = (ee_start.p - ee_end.p).Norm();
-        std::cout << "EE drift after 500 steps: " << std::fixed << std::setprecision(3)
+        std::cout << "EE drift after " << kSteps << " steps: " << std::fixed << std::setprecision(3)
                   << drift * 1000.0 << " mm\n";
     } else {
         if (!mj_kdl::open_viewer(&env)) {
             std::cerr << "open_viewer() failed\n";
             return 1;
         }
-        while (true) {
+        for (int step = 0; step < kSteps; ++step) {
             ctrl_step();
             if (!mj_kdl::step(&env)) break;
             mj_kdl::pace_realtime(&env);

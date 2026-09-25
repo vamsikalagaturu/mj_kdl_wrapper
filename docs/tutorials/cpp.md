@@ -232,7 +232,7 @@ Tell KDL about the attached tool when initializing the robot:
 
 ```cpp
 mj_kdl::ToolFrameSpec tool{
-    .tool_body = "g_base",
+    .tool_body = "g_base_mount",
     .tcp_site  = "g_pinch",
 };
 
@@ -755,7 +755,7 @@ Initialize the robot with gripper inertia and TCP site:
 ```cpp
 mj_kdl::Robot robot;
 mj_kdl::ToolFrameSpec tool{
-    .tool_body = "g_base",
+    .tool_body = "g_base_mount",
     .tcp_site  = "g_pinch",
 };
 

@@ -1,4 +1,5 @@
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "common.hpp"
 #include "example_paths.hpp"
 
 #include <kdl/chainhdsolver_vereshchagin.hpp>
@@ -14,10 +15,10 @@
 #include <string>
 #include <vector>
 
+static constexpr int    kSlideSteps   = 2000;
 static constexpr double kTableZ       = 0.447;
 static constexpr double kMoveX        = 0.20;
 static constexpr double kVMaxLin      = 0.08;
-static constexpr double kTauMax       = 59.0;
 static constexpr double kKpLin        = 200.0;
 static constexpr double kKdLin        = 30.0;
 static constexpr double kKpRot        = 175.0;
@@ -123,7 +124,8 @@ static bool control_step(
     if (achd.CartToJnt(q, qd, qdd, alpha, beta, f_ext_achd, ff_tau, constraint_tau) < 0) return false;
     if (rnea.CartToJnt(q, qd, qdd, f_ext_rnea_zero, tau_cmd) < 0) return false;
 
-    for (unsigned i = 0; i < q.rows(); ++i) robot.jnt_trq_cmd[i] = clamp_abs(tau_cmd(i), kTauMax);
+    // update() clamps each torque to its joint's limit and reports it in jnt_saturated.
+    for (unsigned i = 0; i < q.rows(); ++i) robot.jnt_trq_cmd[i] = tau_cmd(i);
     mj_kdl::update(&env);
 
     if (print_debug) {
@@ -137,9 +139,7 @@ static bool control_step(
 
 int main(int argc, char **argv)
 {
-    bool headless = false;
-    for (int i = 1; i < argc; ++i)
-        if (std::string(argv[i]) == "--headless") headless = true;
+    const bool        headless   = mj_kdl_examples::parse_args(argc, argv).headless;
     const std::string arm_mjcf   = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
     const std::string grp_mjcf   = mj_kdl_examples::asset("robotiq_2f85/2f85.xml");
     const std::string table_mjcf = mj_kdl_examples::asset("table.xml");
@@ -169,7 +169,7 @@ int main(int argc, char **argv)
     mj_kdl::Env env;
     if (!mj_kdl::init_env(&env, &scene)) return 1;
 
-    const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base", .tcp_site = "g_pinch" };
+    const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base_mount", .tcp_site = "g_pinch" };
     mj_kdl::Robot robot;
     if (!mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool))
         return 1;
@@ -179,7 +179,11 @@ int main(int argc, char **argv)
     KDL::JntArray q_start(n);
     for (unsigned i = 0; i < n; ++i) q_start(i) = kTablePose[i];
 
-    env.on_reset = [&](mj_kdl::ResetContext *) { mj_kdl::set_joint_pos(&robot, q_start); };
+    bool restarted = false;
+    env.on_reset   = [&](mj_kdl::ResetContext *) {
+        mj_kdl::set_joint_pos(&robot, q_start);
+        restarted = true;
+    };
     mj_kdl::reset(&env);
 
     // Let contacts settle with the table, the position servos holding the pose, before starting
@@ -262,17 +266,14 @@ int main(int argc, char **argv)
     std::array<double, 5> err_prev{};
     bool first_pid = true;
     int step_count = 0;
-    double prev_sim_time = env.data->time;
 
-    auto reset_scene = [&]() {
-        mj_kdl::reset(&env);
+    auto restart_task = [&]() {
         mj_kdl::update(&env);
         fill_q_state(robot, q, qd);
         fk_pos.JntToCart(q, tracked);
-        err_prev    = {};
-        first_pid   = true;
-        step_count  = 0;
-        prev_sim_time = env.data->time;
+        err_prev   = {};
+        first_pid  = true;
+        step_count = 0;
     };
 
     auto step_control = [&]() {
@@ -292,7 +293,7 @@ int main(int argc, char **argv)
     };
 
     if (headless) {
-        for (int i = 0; i < 2000; ++i) {
+        for (int i = 0; i < kSlideSteps; ++i) {
             if (!step_control() || !mj_kdl::step(&env)) break;
         }
         mj_kdl::update(&env);
@@ -309,11 +310,13 @@ int main(int argc, char **argv)
                   << " tcp_rot_err_rad=" << err.rot.Norm() << "\n";
     } else {
         if (!mj_kdl::open_viewer(&env)) return 1;
-        while (true) {
-            if (env.data->time < prev_sim_time - 1e-6)
-                reset_scene();
-            prev_sim_time = env.data->time;
+        restarted = false;
+        while (step_count < kSlideSteps) {
             if (!step_control() || !mj_kdl::step(&env)) break;
+            if (restarted) {
+                restarted = false;
+                restart_task();
+            }
             mj_kdl::pace_realtime(&env);
         }
     }

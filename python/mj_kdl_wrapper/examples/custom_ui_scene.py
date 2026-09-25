@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch the mj_kdl_wrapper custom Simulate UI from Python."""
+"""Launch the mj_kdl_wrapper custom Simulate UI from Python for one simulated second."""
 
 from __future__ import annotations
 
@@ -25,7 +25,8 @@ def main() -> int:
         robot.jnt_pos_cmd = [0.0] * robot.n_joints
 
         env.open_viewer(TITLE)
-        while env.viewer.is_running():
+        end = env.time() + 1.0
+        while env.time() < end:
             env.update()
             if not env.step():
                 break

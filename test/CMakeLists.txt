@@ -47,8 +47,6 @@ if(BUILD_EXAMPLES)
     ex_vel_ctrl
     ex_impedance
     ex_admittance_ft
-    ex_admittance_ft_rnea
-    ex_admittance_ft_achd
     ex_pick
     ex_table_pick_place
     ex_rnea_pick_place

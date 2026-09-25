@@ -120,7 +120,7 @@ the TCP site and includes the tool transform:
 
 ```python
 tool = mjk.ToolFrameSpec()
-tool.tool_body = "g_base"
+tool.tool_body = "g_base_mount"
 tool.tcp_site = "g_pinch"
 
 robot = env.create_robot("base_link", "bracelet_link", tool=tool)

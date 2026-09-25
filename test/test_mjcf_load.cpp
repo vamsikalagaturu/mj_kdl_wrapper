@@ -191,7 +191,7 @@ class MjcfGripperTest : public testing::Test
         ASSERT_GE(model_->nq, 13);
         ASSERT_GE(model_->nu, 8);
 
-        const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base", .tcp_site = "g_pinch" };
+        const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base_mount", .tcp_site = "g_pinch" };
         ASSERT_TRUE(
           mj_kdl::init_robot_from_mjcf(&s_, &env_, "base_link", "bracelet_link", "", &tool)
         );

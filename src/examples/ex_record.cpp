@@ -17,6 +17,7 @@
  * Output defaults to sim.mp4; resolution defaults to 1080p. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "common.hpp"
 #include "example_paths.hpp"
 
 #include <kdl/chaindynparam.hpp>
@@ -25,7 +26,7 @@
 #include <iostream>
 #include <string>
 
-static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
+using mj_kdl_examples::kHomePose;
 static constexpr int    kFps         = 60;
 static constexpr double kDuration    = 5.0; // seconds
 

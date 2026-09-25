@@ -2,8 +2,8 @@
  * Two Kinova Gen3 arms, each fitted with a Robotiq 2F-85 gripper,
  * in a shared MuJoCo scene.
  *
- * arm1 at x = -1.5 m, facing +X.
- * arm2 at x = +1.5 m, facing +X; all element names prefixed "r2_".
+ * arm1 at x = -1.0 m, facing +X.
+ * arm2 at x = +1.0 m, facing +X; all element names prefixed "r2_".
  *
  * Both arms hold the home pose via PD + KDL gravity compensation.
  * Grippers cycle open/closed every 3 s.
@@ -18,9 +18,10 @@
  * Usage:
  *   ex_dual_arm [--headless]
  *
- * --headless: run 600 steps and print both EE positions, then exit. */
+ * Runs 600 steps and exits; --headless skips the viewer and prints both EE positions. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "common.hpp"
 #include "example_paths.hpp"
 
 #include <kdl/chaindynparam.hpp>
@@ -30,16 +31,17 @@
 #include <iostream>
 #include <string>
 
-static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
+using mj_kdl_examples::kHomePose;
 
 static constexpr double kKp[7] = { 100, 200, 100, 200, 100, 200, 100 };
 static constexpr double kKd[7] = { 10, 20, 10, 20, 10, 20, 10 };
+static constexpr int    kSteps = 600;
+
+using mj_kdl_examples::kGripperClosed;
 
 int main(int argc, char *argv[])
 {
-    bool headless = false;
-    for (int i = 1; i < argc; ++i)
-        if (std::string(argv[i]) == "--headless") headless = true;
+    const bool headless = mj_kdl_examples::parse_args(argc, argv).headless;
 
     const std::string arm_mjcf = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
     const std::string grp_mjcf = mj_kdl_examples::asset("robotiq_2f85/2f85.xml");
@@ -75,9 +77,9 @@ int main(int argc, char *argv[])
     }
 
     mj_kdl::ToolFrameSpec tool1, tool2;
-    tool1.tool_body = "g_base";
+    tool1.tool_body = "g_base_mount";
     tool1.tcp_site  = "g_pinch";
-    tool2.tool_body = "r2_g_base";
+    tool2.tool_body = "r2_g_base_mount";
     tool2.tcp_site  = "r2_g_pinch";
 
     mj_kdl::Robot arm1, arm2;
@@ -122,12 +124,12 @@ int main(int argc, char *argv[])
     env.on_reset = [&](mj_kdl::ResetContext *ctx) {
         mj_kdl::set_joint_pos(&arm1, q_home);
         mj_kdl::set_joint_pos(&arm2, q_home);
-        ctx->data->ctrl[fing1->ctrl_id] = 0.8;
-        ctx->data->ctrl[fing2->ctrl_id] = 0.8;
+        ctx->data->ctrl[fing1->ctrl_id] = kGripperClosed;
+        ctx->data->ctrl[fing2->ctrl_id] = kGripperClosed;
+        prime_grav();
     };
 
     mj_kdl::reset(&env);
-    prime_grav();
     mj_kdl::update(&env);
 
     // Per-step: update() reads sensors and flushes the previous jnt_trq_cmd;
@@ -144,12 +146,12 @@ int main(int argc, char *argv[])
             arm2.jnt_trq_cmd[i] =
               kKp[i] * (kHomePose[i] - arm2.jnt_pos_msr[i]) - kKd[i] * arm2.jnt_vel_msr[i] + g2(i);
         }
-        fing1->command = (std::fmod(env.data->time, 6.0) < 3.0) ? 0.8 : 0.0;
+        fing1->command = (std::fmod(env.data->time, 6.0) < 3.0) ? kGripperClosed : 0.0;
         fing2->command = fing1->command;
     };
 
     if (headless) {
-        for (int step = 0; step < 600; ++step) {
+        for (int step = 0; step < kSteps; ++step) {
             ctrl_step();
             mj_kdl::step(&env);
         }
@@ -170,11 +172,7 @@ int main(int argc, char *argv[])
             std::cerr << "open_viewer() failed\n";
             return 1;
         }
-        // step() resets the robots when the UI resets; the gravity prime is ours to redo.
-        double prev_sim_time = env.data->time;
-        while (true) {
-            if (env.data->time < prev_sim_time - 1e-6) prime_grav();
-            prev_sim_time = env.data->time;
+        for (int step = 0; step < kSteps; ++step) {
             ctrl_step();
             if (!mj_kdl::step(&env)) break;
             mj_kdl::pace_realtime(&env);

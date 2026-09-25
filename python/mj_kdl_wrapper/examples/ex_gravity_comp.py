@@ -31,16 +31,11 @@ def run_loop(env: mjk.Env, step_fn, *, duration: float, gui: bool) -> None:
     if gui:
         # The UI's reset button runs env's reset, on_reset included.
         env.open_viewer("ex_gravity_comp.py")
-        while env.viewer.is_running():
-            step_fn()
-            if not env.step():
-                break
-            env.pace()
-        return
     end = env.time() + duration
     while env.time() < end:
         step_fn()
-        env.step()
+        if not env.step():
+            break
         env.pace()
 
 

@@ -125,7 +125,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     env = mjk.Env.build(spec)
 
     tool = mjk.ToolFrameSpec()
-    tool.tool_body = "g_base"
+    tool.tool_body = "g_base_mount"
     tool.tcp_site = "g_pinch"
     robot = env.create_robot("base_link", "bracelet_link", tool=tool)
     return env, robot
@@ -323,7 +323,7 @@ Tell KDL about the attached tool when creating the robot:
 
 ```python
 tool = mjk.ToolFrameSpec()
-tool.tool_body = "g_base"
+tool.tool_body = "g_base_mount"
 tool.tcp_site = "g_pinch"
 
 robot = env.create_robot("base_link", "bracelet_link", tool=tool)
@@ -576,7 +576,7 @@ env = mjk.Env.build(spec)
 
 ```python
 tool = mjk.ToolFrameSpec()
-tool.tool_body = "g_base"
+tool.tool_body = "g_base_mount"
 tool.tcp_site = "g_pinch"
 robot = env.create_robot("base_link", "bracelet_link", tool=tool)
 robot.ctrl_mode = mjk.CtrlMode.TORQUE

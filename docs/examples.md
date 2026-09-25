@@ -37,9 +37,7 @@ bindings for FK, IK, RNEA, and ACHD instead of re-binding KDL classes locally.
 | `ex_rnea_pick_place` | table + blue cube | Cartesian target interpolation with IK + RNEA inverse dynamics |
 | `ex_achd_table_slide` | table contact | ACHD partial constraint comparison with wrist/table support |
 | `ex_achd_pick_place` | table + blue cube | ACHD Cartesian pick/place with 6D TCP regulation and half-arm support wrench |
-| `ex_admittance_ft` | table + wrist FT + gripper | Admittance control (POSITION inner loop) driven by a named force-torque sensor |
-| `ex_admittance_ft_rnea` | table + wrist FT + gripper | Same admittance, RNEA task-space computed-torque inner loop |
-| `ex_admittance_ft_achd` | table + wrist FT + gripper | Same admittance, ACHD (Vereshchagin) task-space inner loop |
+| `ex_admittance_ft` | table + wrist FT + gripper | Admittance control driven by a named force-torque sensor, RNEA task-space computed-torque inner loop |
 | `ex_dual_arm` | two arms + grippers | multi-robot scene with independent KDL chains |
 | `ex_record` | arm only | headless MP4 recording |
 
@@ -94,7 +92,7 @@ the actuator handles the PD tracking internally.
 **What it does:**
 - Holds the arm at the home pose using a joint-space impedance controller.
 - Gripper cycles fully closed and open every 3 s (`fmod(t, 6) < 3 ? 0.8 : 0`).
-- KDL chain is built with `tool_body = "g_base"` so gripper inertia is lumped
+- KDL chain is built with `tool_body = "g_base_mount"` so gripper inertia is lumped
   into the last segment — gravity compensation is correct for the full arm+gripper mass.
 
 **Control law:** `CtrlMode::TORQUE` — PD + KDL gravity.
@@ -239,28 +237,17 @@ Run headless:
 
 ---
 
-## ex_admittance_ft / ex_admittance_ft_rnea / ex_admittance_ft_achd
+## ex_admittance_ft
 
 **Scene:** Kinova GEN3 + wrist FT sensor + Robotiq 2F-85 gripper mounted on a
 table.
 
-**What they do:** Admittance control for the whole run. Admittance is an outer
-force->position loop wrapped around an inner motion controller; the three
-examples share the outer loop and differ only in the inner loop:
-
-- `ex_admittance_ft` -- ideal **POSITION** inner loop (`CtrlMode::POSITION`,
-  `set_joint_pos`): the TCP follows the commanded offset exactly.
-- `ex_admittance_ft_rnea` -- **RNEA task-space computed-torque** inner loop
-  (`CtrlMode::TORQUE`, `ChainIkSolverVel_wdls` + `ChainIdSolver_RNE`): a
-  Cartesian PD on TCP pose error becomes desired TCP acceleration, WDLS maps it
-  to `qddot`, and RNEA maps that to torque.
-- `ex_admittance_ft_achd` -- **ACHD task-space** inner loop (`CtrlMode::TORQUE`,
-  `ChainHdSolver_Vereshchagin` + `ChainIdSolver_RNE`): a Cartesian PD on the TCP
-  pose error is the desired acceleration (`beta`), ACHD resolves it into joint
-  accelerations through the constrained dynamics, and RNEA maps those to torque.
-  No IK step -- the Cartesian target feeds the solver directly.
-
-All three:
+**What it does:** Admittance control for the whole run. Admittance is an outer
+force->position loop wrapped around an inner motion controller; here the inner
+loop is **RNEA task-space computed torque** (`CtrlMode::TORQUE`,
+`ChainIkSolverVel_wdls` + `ChainIdSolver_RNE`): a Cartesian PD on the TCP pose
+error becomes desired TCP acceleration, WDLS maps it to `qddot`, and RNEA maps
+that to torque. It:
 - Attach the bundled `ft_sensor.xml` between the wrist pinch site and the gripper
   and register `wrist_ft` as a named `ForceTorqueSensorSpec` (read as a
   KDL/PyKDL wrench).
@@ -280,24 +267,18 @@ v += a*dt;  x += v*dt           # x is the TCP offset from the home pose
 target_tcp = nominal_tcp translated by x
 ```
 
-Run C++ headless self-checks or interactive windows:
+Run the C++ headless self-check or the viewer (the run ends by itself):
 
 ```bash
 ./build/src/examples/ex_admittance_ft --headless
-./build/src/examples/ex_admittance_ft_rnea --headless
-./build/src/examples/ex_admittance_ft_achd --headless
 ./build/src/examples/ex_admittance_ft
 ```
 
-Run the same Python examples headless or interactive:
+Run the same Python example headless or with the viewer:
 
 ```bash
 python examples/ex_admittance_ft.py            # headless self-check
 python examples/ex_admittance_ft.py --gui
-python examples/ex_admittance_ft_rnea.py
-python examples/ex_admittance_ft_rnea.py --gui
-python examples/ex_admittance_ft_achd.py
-python examples/ex_admittance_ft_achd.py --gui
 ```
 
 ---

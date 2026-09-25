@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
-"""Kinova + Robotiq tabletop admittance control driven by a named FT sensor.
+"""Admittance control with an RNEA computed-torque inner loop, FT-driven.
 
-The robot stays in ONE control law for the whole run: admittance. Admittance
-control is an outer force->position loop wrapped around a stiff inner position
-controller (it is the position-controlled dual of impedance control, which is
-torque-based). The outer loop maps external force to a TCP position offset; the
-inner loop (POSITION mode) tracks that offset exactly.
+Admittance control is an outer force->position loop wrapped around an inner
+motion controller; here the inner loop is COMPUTED TORQUE in task space:
+
+    beta = Cartesian PD on TCP pose error             (desired TCP accel)
+    qddot_des = WDLS(beta)                            (resolved acceleration)
+    tau = RNEA(q, qdot, qddot_des)                    (KDL ChainIdSolver_RNE)
+    apply tau in TORQUE mode
+
+RNEA inverse dynamics maps the resolved joint acceleration to torques through
+the full arm dynamics (gravity, Coriolis, inertia). Keeping the servo in
+Cartesian space avoids the unstable joint-IK target chasing that makes FT
+hand-guiding wobble after release.
 
 Outer admittance law per Cartesian axis (no position stiffness):
 
@@ -37,6 +44,12 @@ import mj_kdl_wrapper as mjk
 HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 TABLE_Z = 0.70
 
+# Cartesian computed-torque inner-loop gains. A Cartesian PD produces desired
+# TCP acceleration; WDLS maps it to qddot; RNEA maps qddot to torque.
+KP_LIN, KD_LIN = 2500.0, 100.0
+KP_ROT, KD_ROT = 2500.0, 100.0
+BETA_LIN_MAX, BETA_ROT_MAX = 300.0, 300.0
+
 # Admittance outer loop: virtual mass, damping, stiffness (isotropic).
 # K_ADM = 0 -> pure hand-guiding: holds pose on release. Set > 0 to self-center.
 M_ADM, D_ADM, K_ADM = 8.0, 80.0, 0.0
@@ -45,8 +58,10 @@ MAX_OFFSET = 0.20     # m; reachable workspace half-extent around home
 MAX_VEL = 0.25        # m/s
 TOOL_BODY = "g_base"  # rigid gripper base; where the headless self-check pushes
 GRIPPER_ACTUATOR = "g_fingers_actuator"
+GRIPPER_CLOSED = 0.82  # rad; driver joint, the bundled 2F-85's ctrlrange is 0..0.82
 SETTLE_STEPS = 300  # ~0.6 s at dt=0.002 to close the gripper before taring
 HANDOFF_TARE_TIME = 1.0  # s; let scripted-motion transients settle before FT hand-guiding
+GUIDE_TIME = 4.7  # s; hand-guiding window, as long as the self-check's push phases
 SELFCHECK_PUSH = (8.0, 12.0, 6.0)
 
 # Intro helical force: amplitude/shape and how long it is applied.
@@ -138,7 +153,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     ft.frame_site = "wrist_ft_site"
 
     tool = mjk.ToolFrameSpec()
-    tool.tool_body = "g_base"
+    tool.tool_body = "g_base_mount"
     tool.tcp_site = "g_pinch"
     tool.ft_sensors = [ft]
 
@@ -146,52 +161,49 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     return env, robot
 
 
-def ik_step(
-    ik: kdl.ChainIkSolverVel_wdls,
-    fk: kdl.ChainFkSolverPos_recursive,
-    q_seed: list[float],
-    target: kdl.Frame,
-    limits: list[tuple[float, float]],
-) -> list[float]:
-    q = jnt(q_seed)
-    dq = kdl.JntArray(len(q_seed))
-    current = kdl.Frame()
-    fk.JntToCart(q, current)
-    dx = kdl.diff(current, target)
-    if dx.vel.Norm() > 0.03:
-        dx.vel = dx.vel * (0.03 / dx.vel.Norm())
-    if dx.rot.Norm() > 0.15:
-        dx.rot = dx.rot * (0.15 / dx.rot.Norm())
-    if ik.CartToJnt(q, dx, dq) < 0:
-        return q_seed
-    out = []
-    for i, value in enumerate(q_seed):
-        low, high = limits[i]
-        next_value = value + dq[i]
-        if math.isfinite(low) and math.isfinite(high) and high > low:
-            next_value = clamp(next_value, low, high)
-        out.append(next_value)
-    return out
+def jacobian_twist(jac: kdl.Jacobian, qdot: kdl.JntArray) -> list[float]:
+    return [sum(jac[row, col] * qdot[col] for col in range(qdot.rows())) for row in range(6)]
 
 
-def hold(robot: mjk.Robot, q: list[float]) -> None:
-    """Inner position loop: command and pin the arm to q (exact tracking).
+def rnea_track(env: mjk.Env, robot: mjk.Robot, state: dict, target: kdl.Frame) -> None:
+    """Task-space computed torque: Cartesian PD -> qddot -> RNEA torque."""
+    q = jnt(robot.jnt_pos_msr)
+    qdot = jnt(robot.jnt_vel_msr)
 
-    Admittance control is an outer force->position loop wrapped around a stiff
-    inner position controller. The Kinova's position actuators are too soft to
-    track a moving Cartesian target, so we make the inner loop ideal by also
-    setting the joint state directly; the next step recomputes kinematics and sensors.
-    """
-    robot.jnt_pos_cmd = q
-    robot.set_joint_pos(q)
+    err = kdl.diff(robot.fk_frame(), target)
+    jac = kdl.Jacobian(robot.n_joints)
+    state["jac_solver"].JntToJac(q, jac)
+    tcp_vel = jacobian_twist(jac, qdot)
+
+    qddot = kdl.JntArray(robot.n_joints)
+    beta = kdl.Twist()
+    beta.vel = kdl.Vector(
+        clamp(KP_LIN * err.vel.x() - KD_LIN * tcp_vel[0], -BETA_LIN_MAX, BETA_LIN_MAX),
+        clamp(KP_LIN * err.vel.y() - KD_LIN * tcp_vel[1], -BETA_LIN_MAX, BETA_LIN_MAX),
+        clamp(KP_LIN * err.vel.z() - KD_LIN * tcp_vel[2], -BETA_LIN_MAX, BETA_LIN_MAX),
+    )
+    beta.rot = kdl.Vector(
+        clamp(KP_ROT * err.rot.x() - KD_ROT * tcp_vel[3], -BETA_ROT_MAX, BETA_ROT_MAX),
+        clamp(KP_ROT * err.rot.y() - KD_ROT * tcp_vel[4], -BETA_ROT_MAX, BETA_ROT_MAX),
+        clamp(KP_ROT * err.rot.z() - KD_ROT * tcp_vel[5], -BETA_ROT_MAX, BETA_ROT_MAX),
+    )
+    if state["acc_ik"].CartToJnt(q, beta, qddot) < 0:
+        raise RuntimeError("RNEA task acceleration solve failed")
+
+    tau = kdl.JntArray(robot.n_joints)
+    wrenches = [kdl.Wrench.Zero() for _ in range(state["n_seg"])]
+    if state["id_solver"].CartToJnt(q, qdot, qddot, wrenches, tau) < 0:
+        raise RuntimeError("RNEA inverse dynamics failed")
+    robot.jnt_trq_cmd = [tau[i] for i in range(robot.n_joints)]
+    env.update()
 
 
 def close_gripper(env: mjk.Env) -> None:
     if env.has_actuator(GRIPPER_ACTUATOR):
-        env.set_actuator_ctrl(GRIPPER_ACTUATOR, 255.0)
+        env.set_actuator_ctrl(GRIPPER_ACTUATOR, GRIPPER_CLOSED)
 
 
-def settle_and_tare(env: mjk.Env, robot: mjk.Robot) -> list[float]:
+def settle_and_tare(env: mjk.Env, robot: mjk.Robot, state: dict) -> list[float]:
     """Close the gripper, hold home until the wrist load settles, then tare.
 
     The gripper's static load shows up at the FT site only once it has closed
@@ -200,10 +212,12 @@ def settle_and_tare(env: mjk.Env, robot: mjk.Robot) -> list[float]:
     admittance turns into permanent drift. So we hold the closed-gripper home
     pose for a moment first, then capture the bias.
     """
+    env.update()
+    home = robot.fk_frame()
     for _ in range(SETTLE_STEPS):
         env.update()
         close_gripper(env)
-        hold(robot, HOME)
+        rnea_track(env, robot, state, home)
         if not env.step():
             break
         env.pace()
@@ -217,17 +231,17 @@ def measured_force(robot: mjk.Robot, state: dict) -> list[float]:
     The MuJoCo force sensor reports the reaction wrench at the site, so the
     external push the user applies is the negated, bias-removed reading. The
     bias is the gripper's static gravity load captured after the gripper closes
-    and the wrist load settles (see settle_and_tare); expressed in
-    the world frame this is just the distal weight (mg, downward) and is
-    invariant to the arm configuration, so a single tare stays valid as the TCP
-    translates around home. Sub-deadband residue (noise, settling transients)
-    is rejected to zero.
+    and the wrist load settles (see settle_and_tare); expressed in the world
+    frame this is just the distal weight (mg, downward) and is invariant to the
+    arm configuration, so a single tare stays valid as the TCP translates around
+    home. Sub-deadband residue (noise, settling transients) is rejected to zero.
     """
     wrench = robot.ft_sensor("wrist_ft")
     f_world = xyz(robot.ft_sensor_frame("wrist_ft").M * wrench.force)
     bias = state["bias"]
     f_ext = [bias[i] - f_world[i] for i in range(3)]
-    if vnorm(f_ext) < FORCE_DEADBAND:
+    force_norm = vnorm(f_ext)
+    if force_norm < FORCE_DEADBAND:
         return [0.0, 0.0, 0.0]
     return f_ext
 
@@ -255,8 +269,8 @@ def spiral_force(t: float) -> list[float]:
     """Scripted external force whose direction sweeps a helix over TEACH_TIME.
 
     The force is D_ADM times the velocity of a helical path, so a mass-damper
-    admittance (steady state v = F / D) turns it into helical motion. Applied to
-    the tool and sensed by the FT sensor, this drives the intro helix.
+    admittance (steady state v = F / D) turns it into helical motion. Fed into
+    the admittance, this drives the intro helix.
     """
     if t < 0.0 or t > TEACH_TIME:
         return [0.0, 0.0, 0.0]
@@ -269,48 +283,42 @@ def spiral_force(t: float) -> list[float]:
 
 
 def admittance_step(env, robot, nominal, state, force):
-    """One admittance tick: force -> offset (outer loop) -> position-tracked TCP.
+    """One admittance tick: force -> offset (outer loop) -> RNEA-tracked TCP.
 
     env.update() must have run this step so the FT read behind `force` is
     current. Returns the commanded target frame (for tracing).
     """
-    ik = state["ik"]
-    fk = state["fk"]
     admittance_update(state, force, env.timestep())
     target = kdl.Frame(nominal.M, nominal.p + kdl.Vector(*state["offset"]))
-    state["q_des"] = ik_step(ik, fk, state["q_des"], target, robot.joint_limits)
-    hold(robot, state["q_des"])
+    rnea_track(env, robot, state, target)
     return target
 
 
 def run_gui(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dict) -> None:
-    """Admittance control for the whole run (POSITION inner loop throughout).
+    """Admittance control for the whole run (RNEA computed-torque inner loop).
 
     For the first TEACH_TIME seconds a scripted helical force drives the
     admittance, so the TCP traces a helix. After that the scripted force stops
     and you can ctrl + right-drag the gripper to apply your own force, which the
-    FT senses; the same admittance responds and holds on release.
+    FT senses; the same admittance responds and holds on release. The run ends
+    GUIDE_TIME seconds into hand-guiding.
     """
     env.open_viewer("ex_admittance_ft.py")
     viewer = env.viewer
     viewer.set_free_camera(1.55, 145.0, -24.0, (0.05, 0.0, TABLE_Z + 0.35))
-    prev = env.time()
     start = env.time()
     handoff_tared = False
     target_prev: list[float] | None = None
     tcp_prev: list[float] | None = None
     trace_step = 0
     try:
-        while viewer.is_running():
-            # The UI's reset button has already reset env (on_reset included).
-            if env.time() < prev - 1e-6:
+        while env.time() - start < TEACH_TIME + HANDOFF_TARE_TIME + GUIDE_TIME:
+            # on_reset flags a UI reset and has already re-seeded the admittance state.
+            if state["reset"]:
+                state["reset"] = False
                 start = env.time()
                 handoff_tared = False
-                state["offset"] = [0.0, 0.0, 0.0]
-                state["vel"] = [0.0, 0.0, 0.0]
-                state["q_des"] = HOME[:]
                 target_prev = tcp_prev = None
-            prev = env.time()
             t = env.time() - start
             env.update()
             close_gripper(env)
@@ -425,6 +433,8 @@ def run_selfcheck(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dic
         err = [tcp.p[i] - target.p[i] for i in range(3)]
         if push_recovery_err is None and t >= 2.0:
             push_recovery_err = vnorm(err)
+        # Sample once the torque loop's settle transient has died (it can ring
+        # for ~1.5 s after release); hold drift is then the steady drift.
         if settled is None and t >= 2.5:
             settled = state["offset"][:]
         if not env.step():
@@ -451,33 +461,35 @@ def main() -> int:
     env, robot = build_env()
     try:
         chain = robot.kdl_chain()
-        fk = kdl.ChainFkSolverPos_recursive(chain)
-        ik = kdl.ChainIkSolverVel_wdls(chain)
-        ik.setLambda(0.05)
-        robot.ctrl_mode = mjk.CtrlMode.POSITION  # inner loop of the admittance controller
+        acc_ik = kdl.ChainIkSolverVel_wdls(chain)
+        acc_ik.setLambda(0.05)
+        robot.set_control_mode(mjk.CtrlMode.TORQUE)  # RNEA computed-torque inner loop
 
         state = {
             "bias": [0.0, 0.0, 0.0],
             "offset": [0.0, 0.0, 0.0],
             "vel": [0.0, 0.0, 0.0],
-            "q_des": HOME[:],
-            "ik": ik,
-            "fk": fk,
+            "jac_solver": kdl.ChainJntToJacSolver(chain),
+            "acc_ik": acc_ik,
+            "id_solver": kdl.ChainIdSolver_RNE(chain, kdl.Vector(0.0, 0.0, -9.81)),
+            "n_seg": chain.getNrOfSegments(),
+            "reset": False,
         }
 
         def on_reset(ctx):
             robot.set_joint_pos(HOME)
             state["offset"] = [0.0, 0.0, 0.0]
             state["vel"] = [0.0, 0.0, 0.0]
-            state["q_des"] = HOME[:]
             env.set_body_wrench(TOOL_BODY, (0.0, 0.0, 0.0))
+            state["reset"] = True
 
         env.on_reset = on_reset
         env.reset()
+        state["reset"] = False
         # Single tare after settling. Orientation is held during hand-guiding so
         # the world-frame gravity bias stays ~constant; a slow auto-tare would be
         # needed only if drift exceeded the deadband during large reorientations.
-        state["bias"] = settle_and_tare(env, robot)
+        state["bias"] = settle_and_tare(env, robot, state)
         nominal = robot.fk_frame()
 
         print(f"FT bias: [{state['bias'][0]:.3f}, {state['bias'][1]:.3f}, {state['bias'][2]:.3f}] N")
