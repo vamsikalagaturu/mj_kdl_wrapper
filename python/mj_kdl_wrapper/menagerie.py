@@ -23,6 +23,8 @@ from importlib import resources
 from pathlib import Path
 
 MENAGERIE_REPO = "https://github.com/google-deepmind/mujoco_menagerie.git"
+# Same commit as MJ_KDL_MENAGERIE_GIT_SHA in cmake/Versions.cmake; scripts/check_versions.py checks.
+MENAGERIE_COMMIT = "4c358ef9d9d7f32ca58b40b490884a0c1726a440"
 
 # logical name -> (Menagerie subdirectory, model file within it)
 _MODELS = {
@@ -126,19 +128,26 @@ def _run(cmd: list[str]) -> bool:
 
 
 def fetch(dest: str | os.PathLike[str] | None = None) -> dict[str, str]:
-    """Shallow-clone the full MuJoCo Menagerie into ``dest`` (default: cache).
+    """Shallow-fetch MuJoCo Menagerie at MENAGERIE_COMMIT into ``dest`` (default: cache).
 
-    Returns a mapping of model name -> resolved path. Requires ``git``.
+    An existing checkout is kept as is. Returns a mapping of model name -> resolved path.
+    Requires ``git``.
     """
     if shutil.which("git") is None:
         raise RuntimeError("git is required to fetch MuJoCo Menagerie")
 
     target = Path(dest) if dest is not None else _cache_dir()
     if not (target / ".git").exists():
-        target.parent.mkdir(parents=True, exist_ok=True)
         shutil.rmtree(target, ignore_errors=True)
-        if not _run(["git", "clone", "--depth", "1", MENAGERIE_REPO, str(target)]):
-            raise RuntimeError(f"failed to clone {MENAGERIE_REPO}")
+        target.mkdir(parents=True)
+        git = ["git", "-C", str(target)]
+        # A clone can only be shallow at a branch or tag; fetch the one pinned commit instead.
+        if not (
+            _run([*git, "init", "-q"])
+            and _run([*git, "fetch", "-q", "--depth", "1", MENAGERIE_REPO, MENAGERIE_COMMIT])
+            and _run([*git, "checkout", "-q", "--detach", "FETCH_HEAD"])
+        ):
+            raise RuntimeError(f"failed to fetch {MENAGERIE_REPO} at {MENAGERIE_COMMIT}")
 
     resolved = {}
     for name, (subdir, filename) in _MODELS.items():

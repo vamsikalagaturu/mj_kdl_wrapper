@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
+import urllib.request
 from pathlib import Path
 
 
@@ -21,6 +23,18 @@ def read_supported_version() -> str:
     if not match:
         raise SystemExit(f"Could not find MJ_KDL_MUJOCO_VERSION in {VERSION_FILE}")
     return match.group("version")
+
+
+def release_sha256(version: str) -> str:
+    url = (
+        "https://github.com/google-deepmind/mujoco/releases/download/"
+        f"{version}/mujoco-{version}-linux-x86_64.tar.gz"
+    )
+    digest = hashlib.sha256()
+    with urllib.request.urlopen(url) as response:
+        for chunk in iter(lambda: response.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def write(path: Path, text: str) -> None:
@@ -53,6 +67,16 @@ def main() -> int:
         VERSION_FILE,
         [(f'MJ_KDL_MUJOCO_VERSION "{old_version}"', f'MJ_KDL_MUJOCO_VERSION "{new_version}"')],
     )
+    if new_version != old_version:
+        text = VERSION_FILE.read_text(encoding="utf-8")
+        write(
+            VERSION_FILE,
+            re.sub(
+                r'(MJ_KDL_MUJOCO_SHA256 ")[0-9a-f]*(")',
+                rf"\g<1>{release_sha256(new_version)}\g<2>",
+                text,
+            ),
+        )
 
     common = [
         (old_version, new_version),

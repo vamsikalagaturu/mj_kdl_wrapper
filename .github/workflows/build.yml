@@ -29,9 +29,6 @@ jobs:
             ccache ninja-build \
             libeigen3-dev libglfw3-dev libgl-dev libegl-dev
 
-      - name: Check version metadata
-        run: python3 scripts/check_versions.py
-
       # Native MuJoCo release (cached between runs).
       - name: Cache MuJoCo
         id: cache-mujoco
@@ -46,6 +43,10 @@ jobs:
           wget -q "https://github.com/google-deepmind/mujoco/releases/download/${MUJOCO_VERSION}/mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
           tar xzf "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz" -C /tmp
           rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
+
+      # After the MuJoCo install, so its header number is checked too.
+      - name: Check version metadata
+        run: python3 scripts/check_versions.py
 
       # Compiler cache, shared with the tests workflow via the common prefix.
       - name: Cache ccache

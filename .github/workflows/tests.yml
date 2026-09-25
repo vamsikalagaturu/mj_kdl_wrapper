@@ -93,4 +93,6 @@ jobs:
         run: |
           set -o pipefail
           ctest --test-dir build --output-on-failure --timeout 300 | tee ctest.log
-          ! grep -q "tests did not run" ctest.log
+          # A test that did not run fails the job; an opt-in DISABLED_ one is expected not to.
+          ! awk '/tests did not run/{f=1;next} f&&/^[ \t]+[0-9]+ - /{print;next} {f=0}' ctest.log \
+            | grep -v '(Disabled)'

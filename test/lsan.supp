@@ -1,0 +1,2 @@
+# The EGL driver's D-Bus client never frees its connection.
+leak:libdbus-1.so

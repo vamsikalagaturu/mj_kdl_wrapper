@@ -66,8 +66,9 @@ the wrapper against it:
 ```bash
 # Workspace with the KDL fork and the wrapper as sibling packages
 mkdir -p ~/ros2_ws/src && cd ~/ros2_ws
-git clone -b vereshchagin-driver-weighting \
-  https://github.com/secorolab/orocos_kinematics_dynamics.git src/orocos_kinematics_dynamics
+git clone https://github.com/secorolab/orocos_kinematics_dynamics.git src/orocos_kinematics_dynamics
+# The pinned commit: MJ_KDL_OROCOS_KDL_GIT_SHA in cmake/Versions.cmake
+git -C src/orocos_kinematics_dynamics checkout c86af053388aa78d2c5ad2fa6afe1fd556621ce8
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git src/mj_kdl_wrapper
 
 # Use your distro: jazzy or lyrical

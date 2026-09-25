@@ -70,8 +70,4 @@ if(TARGET mj_kdl_wrapper::camera_ros)
   target_link_libraries(test_camera_ros PRIVATE mj_kdl_wrapper::camera_ros GTest::gtest)
   target_compile_options(test_camera_ros PRIVATE -Wall -Wextra)
   gtest_discover_tests(test_camera_ros DISCOVERY_TIMEOUT 60 PROPERTIES RUN_SERIAL TRUE)
-  list(APPEND ALL_TESTS test_camera_ros)
 endif()
-
-install(TARGETS ${ALL_TESTS}
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

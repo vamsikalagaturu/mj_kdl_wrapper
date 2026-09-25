@@ -1,5 +1,9 @@
 set(MJ_KDL_VERSION "0.3.21")
 set(MJ_KDL_MUJOCO_VERSION "3.14.0")
+# sha256 of mujoco-<version>-linux-x86_64.tar.gz; scripts/update_mujoco_version.py rewrites it.
+set(MJ_KDL_MUJOCO_SHA256 "326f0da78a7767cc18fab7205c993a771b5f19eda913648f958ee3f625240944")
+set(MJ_KDL_OROCOS_KDL_GIT_SHA "c86af053388aa78d2c5ad2fa6afe1fd556621ce8")
+set(MJ_KDL_MENAGERIE_GIT_SHA "4c358ef9d9d7f32ca58b40b490884a0c1726a440")
 
 if(NOT MJ_KDL_MUJOCO_VERSION MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$")
   message(FATAL_ERROR "Invalid MJ_KDL_MUJOCO_VERSION: ${MJ_KDL_MUJOCO_VERSION}")

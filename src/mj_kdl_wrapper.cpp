@@ -18,9 +18,7 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #endif
-#ifdef MJ_KDL_RELOCATABLE_PLUGINS
 #include <dlfcn.h>
-#endif
 
 #include <kdl/frames.hpp>
 
@@ -61,16 +59,14 @@ extern char **environ;
 
 namespace mj_kdl {
 
+// Next to this library first, so an installed tree keeps its plugins after it is moved.
 static std::string default_mujoco_plugin_dir()
 {
-#ifdef MJ_KDL_RELOCATABLE_PLUGINS
     Dl_info info{};
     if (dladdr(reinterpret_cast<void *>(&default_mujoco_plugin_dir), &info) && info.dli_fname) {
-        std::string library_path(info.dli_fname);
-        const auto  slash = library_path.find_last_of('/');
-        if (slash != std::string::npos) { return library_path.substr(0, slash) + "/mujoco_plugin"; }
+        const auto dir = std::filesystem::path(info.dli_fname).parent_path() / "mujoco_plugin";
+        if (std::filesystem::is_directory(dir)) return dir.string();
     }
-#endif
     return MUJOCO_PLUGIN_DIR;
 }
 

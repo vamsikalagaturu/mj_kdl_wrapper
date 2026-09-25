@@ -44,7 +44,6 @@ Documentation = "https://github.com/vamsikalagaturu/mj_kdl_wrapper#readme"
 Issues = "https://github.com/vamsikalagaturu/mj_kdl_wrapper/issues"
 
 [tool.scikit-build]
-experimental = true
 cmake.args = [
   "-DBUILD_PYTHON_BINDINGS=ON",
   "-DBUILD_TESTS=OFF",

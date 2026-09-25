@@ -46,12 +46,14 @@ jobs:
         with:
           path: ws/src/mj_kdl_wrapper
 
-      # The secorolab Orocos KDL fork is a sibling workspace package.
+      # The secorolab Orocos KDL fork is a sibling workspace package, at MJ_KDL_OROCOS_KDL_GIT_SHA
+      # (cmake/Versions.cmake; scripts/check_versions.py keeps the two equal).
       - name: Clone the Orocos KDL fork
         run: |
-          git clone --depth 1 -b feature/achd_fixed_joint \
-            https://github.com/secorolab/orocos_kinematics_dynamics.git \
+          git clone https://github.com/secorolab/orocos_kinematics_dynamics.git \
             ws/src/orocos_kinematics_dynamics
+          git -C ws/src/orocos_kinematics_dynamics checkout --detach \
+            c86af053388aa78d2c5ad2fa6afe1fd556621ce8
 
       # Build the shared KDL first, then the wrapper against it (FROM_PACKAGE).
       - name: colcon build (KDL first, then the wrapper against it)

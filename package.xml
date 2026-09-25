@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>mj_kdl_wrapper</name>
+  <version>0.3.21</version>
+  <description>MuJoCo physics with Orocos KDL kinematics and dynamics</description>
+  <maintainer email="tools@vamsi.sh">Vamsi Kalagaturu</maintainer>
+  <license>MIT</license>
+  <author>Vamsi Kalagaturu</author>
+
+  <buildtool_depend>cmake</buildtool_depend>
+
+  <!-- The secorolab fork, as a workspace package; stock distro KDL lacks its solvers. -->
+  <depend>orocos_kdl</depend>
+  <depend>eigen</depend>
+  <depend>libglfw3-dev</depend>
+  <depend>opengl</depend>
+  <!-- libegl-dev (optional video recorder) has no rosdep key: install it with apt. -->
+  <exec_depend>ffmpeg</exec_depend>
+
+  <export>
+    <build_type>cmake</build_type>
+  </export>
+</package>
