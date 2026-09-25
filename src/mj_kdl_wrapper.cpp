@@ -1484,6 +1484,12 @@ std::string scene_object_site_name(const SceneObject &obj, const char *site_name
 namespace {
     const mjData *g_kin_data  = nullptr;
     bool          g_kin_fresh = false;
+
+    // The mjData whose mj_step1 results are current, and the inputs mj_step1 read.
+    const mjData       *g_step1_data = nullptr;
+    std::vector<mjtNum> g_step1_inputs;
+    constexpr int       kStep1Inputs =
+      mjSTATE_FULLPHYSICS | mjSTATE_EQ_ACTIVE | mjSTATE_MOCAP_POS | mjSTATE_MOCAP_QUAT;
 } // namespace
 
 void mark_kinematics_fresh(const mjData *data)
@@ -1500,6 +1506,7 @@ void mark_kinematics_forgotten(const mjData *data)
         g_kin_data  = nullptr;
         g_kin_fresh = false;
     }
+    if (g_step1_data == data) g_step1_data = nullptr;
 }
 
 /* mj_forward, but only when something has happened since the last one. */
@@ -1960,13 +1967,43 @@ void set_body_pose(
 
 static bool tick_impl(Viewer *v, mjModel *m, mjData *d, bool paused); // defined below
 
+// Compared, not trusted: a caller may write qpos, qvel or mocap between two steps.
+static bool step1_current(const mjModel *m, const mjData *d)
+{
+    if (g_step1_data != d || !g_kin_fresh || g_kin_data != d) return false;
+    static std::vector<mjtNum> now;
+    now.resize(mj_stateSize(m, kStep1Inputs));
+    mj_getState(m, d, now.data(), kStep1Inputs);
+    return now == g_step1_inputs;
+}
+
+// mj_step1: frames and position/velocity sensors for the current state.
+static void begin_step(const mjModel *m, mjData *d)
+{
+    if (step1_current(m, d)) return;
+    mj_step1(m, d);
+    g_step1_inputs.resize(mj_stateSize(m, kStep1Inputs));
+    mj_getState(m, d, g_step1_inputs.data(), kStep1Inputs);
+    g_step1_data = d;
+    mark_kinematics_fresh(d);
+}
+
+// mj_step2: integrate the commands set since begin_step().
+static void end_step(const mjModel *m, mjData *d)
+{
+    begin_step(m, d);
+    mj_step2(m, d);
+    g_step1_data = nullptr;
+    mark_kinematics_stale();
+}
+
 bool step(Robot *s)
 {
     if (!s->model || !s->data) return true;
     if (g_viewer) return tick_impl(g_viewer, s->model, s->data, s->paused);
     if (s->paused) return true;
-    mj_step(s->model, s->data);
-    mark_kinematics_fresh(s->data);
+    end_step(s->model, s->data);
+    begin_step(s->model, s->data);
     return true;
 }
 
@@ -3161,8 +3198,8 @@ static bool tick_impl(Viewer *v, mjModel *m, mjData *d, bool paused)
 
             if (sim->run) {
                 if (sim->pert.active) mjv_applyPerturbForce(m, d, &sim->pert);
-                mj_step(m, d);
-                mark_kinematics_fresh(d);
+                end_step(m, d);
+                begin_step(m, d);
                 sim->AddToHistory();
             } else {
                 mj_forward(m, d);
@@ -3182,7 +3219,8 @@ static bool tick_impl(Viewer *v, mjModel *m, mjData *d, bool paused)
 
     if (!paused) {
         if (v->pert.active) mjv_applyPerturbForce(m, d, &v->pert);
-        mj_step(m, d);
+        end_step(m, d);
+        begin_step(m, d);
     }
 
     render(v, m, d); // includes glfwPollEvents + swap

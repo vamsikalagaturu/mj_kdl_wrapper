@@ -934,7 +934,9 @@ void cleanup(VideoRecorder *vr);
  * @ingroup grp_robot
  * Advance one physics timestep.
  *
- * Headless (no viewer active): calls mj_step() and returns true.
+ * Headless (no viewer active): mj_step2() then mj_step1() (MuJoCo's split mj_step()), and
+ * returns true. Afterwards the joint state, body frames and position/velocity sensors all
+ * describe the new state; force and acceleration sensors describe the step just taken.
  * GUI (init_window_sim() was called): advances physics, renders, syncs to real
  * time, and polls GLFW events -- exactly what tick() used to do.  Returns false
  * once the user closes the window.

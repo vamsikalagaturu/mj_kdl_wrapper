@@ -21,6 +21,21 @@ double realtime_factor_of(const Viewer *v);         // the user's speed setting;
 
 In Python, `robot.pace()` and `viewer.pace()`.
 
+## What step() leaves current
+
+`step()` runs MuJoCo's split step in the order MuJoCo documents for a control loop: `mj_step2`
+integrates the commands set since the last `step()`, then `mj_step1` computes the new state's
+positions and velocities. After `step()`:
+
+- `update()` reads joint state, and `get_body_frame()` / `get_site_frame()` return frames, for the
+  same instant; position and velocity sensors describe it too.
+- Force, torque and acceleration sensors describe the step just taken (they depend on the
+  commands that step applied).
+- Commands written by `update()` are applied by the next `step()`.
+
+Writing `qpos`, `qvel` or a mocap pose directly between two steps is fine: `step()` notices and
+recomputes before integrating. The cost per cycle is that of one `mj_step`.
+
 ## If your loop has no timing of its own
 
 Call `pace_realtime` once per iteration. This is what the bundled examples do, and it reproduces

@@ -33,6 +33,7 @@ cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON
 | `test_mjcf_trq_ctrl` | gravity accuracy with gripper mass, impedance drift |
 | `test_mjcf_pick` | full pick-and-place with gripper: cube lifted > 0.20 m |
 | `test_control_modes` | control modes as actuator groups: added actuators, switching, limits |
+| `test_scene_state` | `SceneState` slots, and what `step()` leaves current |
 | `urdf_solver_probe` | standalone Kinova URDF ACHD probe plus URDF-vs-MuJoCo RNEA torque comparison |
 
 ---
@@ -102,6 +103,17 @@ converges from home to the target pose within the configured joint tolerance.
 - KDL chain has 7 joints.
 - IK error < 2 mm for each waypoint.
 - Full pick sequence: cube lifted > 0.20 m.
+
+### test_scene_state
+
+**Scene:** GEN3, a falling cube and 50 fixed filler bodies.
+
+- **FreeBodyPoseAndDerivedFrameAgreeAfterAStep** -- after `step()`, the cube's body frame equals
+  its `qpos` pose to 1e-12 (no one-step lag).
+- **StepMatchesMjStepBitwise** -- 200 `step()` calls give the same `qpos`/`qvel` as `mj_step`.
+- **StepHonoursAQposWrittenBetweenSteps** -- a direct `qpos` write before `step()` is integrated
+  as `mj_step` would, and the frame follows it.
+- Slot binding, read/apply matching `update()`, wrench clearing.
 
 ### test_control_modes
 

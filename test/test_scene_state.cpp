@@ -8,6 +8,7 @@
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "example_paths.hpp"
 
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -66,22 +67,14 @@ class SceneStateTest : public testing::Test
         mj_kdl::cleanup(&robot_);
         mj_kdl::destroy_scene(model_, data_);
     }
-
-    // What the control loop does: mj_step, then the kinematics are declared current for the
-    // state that step produced, exactly as mj_kdl::step() marks them.
-    void step_as_the_loop_does()
-    {
-        mj_step(model_, data_);
-        mj_kdl::mark_kinematics_fresh(data_);
-    }
 };
 
-TEST_F(SceneStateTest, FreeBodyPoseComesFromQposNotTheDerivedFrame)
+TEST_F(SceneStateTest, FreeBodyPoseAndDerivedFrameAgreeAfterAStep)
 {
     mj_kdl::SceneFreeBodySlot *cube = mj_kdl::bind_scene_free_body(&scene_, "cube");
     ASSERT_NE(cube, nullptr);
 
-    for (int i = 0; i < 3; ++i) step_as_the_loop_does();
+    for (int i = 0; i < 3; ++i) mj_kdl::step(&robot_);
     mj_kdl::read_scene_state(&scene_, data_);
 
     const double *q = data_->qpos + cube->qpos_adr;
@@ -90,16 +83,45 @@ TEST_F(SceneStateTest, FreeBodyPoseComesFromQposNotTheDerivedFrame)
     EXPECT_EQ(cube->pose.p.z(), q[2]);
     EXPECT_EQ(cube->seq, 1u);
 
+    // The cube is falling, so a frame one step behind qpos would differ by ~1e-4.
     KDL::Frame derived;
     ASSERT_TRUE(mj_kdl::get_body_frame(model_, data_, "cube", &derived));
-    EXPECT_GT(std::abs(derived.p.z() - cube->pose.p.z()), 1e-7);
-
-    mj_forward(model_, data_);
-    mj_kdl::mark_kinematics_fresh(data_);
-    ASSERT_TRUE(mj_kdl::get_body_frame(model_, data_, "cube", &derived));
-    EXPECT_NEAR(derived.p.z(), cube->pose.p.z(), 1e-12);
     EXPECT_NEAR(derived.p.x(), cube->pose.p.x(), 1e-12);
     EXPECT_NEAR(derived.p.y(), cube->pose.p.y(), 1e-12);
+    EXPECT_NEAR(derived.p.z(), cube->pose.p.z(), 1e-12);
+}
+
+TEST_F(SceneStateTest, StepMatchesMjStepBitwise)
+{
+    if (!model_) return;
+    mjData *reference = mj_makeData(model_);
+    mj_copyData(reference, model_, data_);
+    for (int i = 0; i < 200; ++i) {
+        mj_kdl::step(&robot_);
+        mj_step(model_, reference);
+    }
+    EXPECT_EQ(std::memcmp(data_->qpos, reference->qpos, sizeof(mjtNum) * model_->nq), 0);
+    EXPECT_EQ(std::memcmp(data_->qvel, reference->qvel, sizeof(mjtNum) * model_->nv), 0);
+    mj_deleteData(reference);
+}
+
+TEST_F(SceneStateTest, StepHonoursAQposWrittenBetweenSteps)
+{
+    if (!model_) return;
+    const int adr = mj_kdl::bind_scene_free_body(&scene_, "cube")->qpos_adr;
+    mj_kdl::step(&robot_);
+    mjData *reference = mj_makeData(model_);
+    mj_copyData(reference, model_, data_);
+
+    data_->qpos[adr + 2] = reference->qpos[adr + 2] = 2.0;
+    mj_kdl::step(&robot_);
+    mj_step(model_, reference);
+    EXPECT_EQ(data_->qpos[adr + 2], reference->qpos[adr + 2]);
+
+    KDL::Frame cube;
+    ASSERT_TRUE(mj_kdl::get_body_frame(model_, data_, "cube", &cube));
+    EXPECT_NEAR(cube.p.z(), data_->qpos[adr + 2], 1e-12);
+    mj_deleteData(reference);
 }
 
 TEST_F(SceneStateTest, BindFreeBodyRejectsFixedUnknownAndDuplicate)
@@ -156,7 +178,7 @@ TEST_F(SceneStateTest, ReadAndApplyTogetherMatchUpdate)
     if (!model_) return;
     robot_.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
     for (int i = 0; i < robot_.n_joints; ++i) robot_.jnt_trq_cmd[i] = 0.1 * (i + 1);
-    step_as_the_loop_does();
+    mj_kdl::step(&robot_);
 
     mj_kdl::update(&robot_);
     const std::vector<double> ctrl_after_update(data_->ctrl, data_->ctrl + model_->nu);

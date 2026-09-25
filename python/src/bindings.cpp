@@ -382,6 +382,7 @@ struct PyScene : std::enable_shared_from_this<PyScene>
     {
         if (!model || !data) throw std::runtime_error("scene is closed");
         mj_step(model, data);
+        mj_kdl::mark_kinematics_stale();
     }
 
     void step_n(int n)
