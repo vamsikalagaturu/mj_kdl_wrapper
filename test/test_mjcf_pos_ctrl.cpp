@@ -111,17 +111,6 @@ TEST_F(MjcfPosCtrlTest, ClampCtrlrange)
     }
 }
 
-TEST_F(MjcfPosCtrlTest, QfrcAppliedUnchangedInPositionMode)
-{
-    // In POSITION mode, update() must NOT zero qfrc_applied (user-set values
-    // should be preserved so external disturbances can be applied).
-    const int dof0 = s_.kdl_to_mj_dof[0];
-    data_->qfrc_applied[dof0] = 5.0; // sentinel external disturbance
-    mj_kdl::update(&s_);
-    EXPECT_DOUBLE_EQ(data_->qfrc_applied[dof0], 5.0)
-      << "update() clobbered qfrc_applied in POSITION mode";
-}
-
 int main(int argc, char *argv[])
 {
     testing::InitGoogleTest(&argc, argv);

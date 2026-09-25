@@ -130,6 +130,34 @@ TEST_F(Gen3ModesTest, TorqueIsLimitedByTheModelsForcerange)
     mj_forward(model_, data_);
     EXPECT_DOUBLE_EQ(data_->actuator_force[arm_.mode_ctrl[kTrq][1]], 105.0);
     EXPECT_DOUBLE_EQ(data_->qfrc_actuator[arm_.kdl_to_mj_dof[1]], 105.0);
+    for (int i = 0; i < 7; ++i) EXPECT_EQ(arm_.jnt_saturated[i], i == 1) << "joint " << i;
+
+    arm_.jnt_trq_cmd[1] = 10.0;
+    mj_kdl::update(&arm_);
+    EXPECT_EQ(arm_.jnt_saturated[1], 0);
+}
+
+TEST_F(Gen3ModesTest, QfrcAppliedIsLeftToTheUser)
+{
+    auto expect_untouched = [&](const char *when) {
+        for (int i = 0; i < 7; ++i)
+            EXPECT_EQ(data_->qfrc_applied[arm_.kdl_to_mj_dof[i]], 5.0) << when << ", joint " << i;
+    };
+    for (int i = 0; i < 7; ++i) data_->qfrc_applied[arm_.kdl_to_mj_dof[i]] = 5.0;
+
+    arm_.jnt_pos_cmd[1] += 0.1;
+    mj_kdl::update(&arm_);
+    expect_untouched("POSITION");
+
+    ASSERT_TRUE(mj_kdl::set_control_mode(&arm_, mj_kdl::CtrlMode::TORQUE));
+    expect_untouched("switch to TORQUE");
+    for (int i = 0; i < 7; ++i) arm_.jnt_trq_cmd[i] = 3.0;
+    mj_kdl::update(&arm_);
+    expect_untouched("TORQUE");
+
+    arm_.ctrl_mode = mj_kdl::CtrlMode::POSITION;
+    mj_kdl::update(&arm_);
+    expect_untouched("switch back through ctrl_mode");
 }
 
 TEST_F(Gen3ModesTest, TwoArmsRunDifferentModes)
@@ -218,6 +246,38 @@ TEST_F(MotorWheelModesTest, VelocityTracksThenTorqueTakesOver)
     EXPECT_EQ(data_->actuator_force[actuator("wheel_velocity")], 0.0);
     // One step of coasting on joint damping alone (~21 rad/s^2 here), not a jump.
     EXPECT_NEAR(wheel->velocity, before, 0.1) << "no jump at the switch";
+}
+
+TEST_F(MotorWheelModesTest, SceneActuatorFlagsAClampedCommand)
+{
+    mj_kdl::SceneState scene;
+    ASSERT_TRUE(mj_kdl::init_scene_state(&scene, model_));
+    mj_kdl::SceneActuatorSlot *motor = mj_kdl::bind_scene_actuator(&scene, "wheel");
+    ASSERT_NE(motor, nullptr);
+
+    motor->command = 20.0;
+    mj_kdl::apply_scene_state(&scene, data_);
+    EXPECT_EQ(data_->ctrl[motor->ctrl_id], 12.0);
+    EXPECT_TRUE(motor->saturated);
+
+    motor->command = 5.0;
+    mj_kdl::apply_scene_state(&scene, data_);
+    EXPECT_FALSE(motor->saturated);
+}
+
+TEST_F(MotorWheelModesTest, ForceLimitsFollowTheActiveMode)
+{
+    mj_kdl::Robot wheel;
+    ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&wheel, model_, data_, "drive", "wheel"));
+    ASSERT_EQ(wheel.n_joints, 1);
+    ASSERT_EQ(wheel.ctrl_mode, mj_kdl::CtrlMode::TORQUE);
+    EXPECT_DOUBLE_EQ(mj_kdl::joint_force_limits(&wheel)[0], 12.0) << "the motor's ctrlrange";
+
+    ASSERT_TRUE(mj_kdl::set_control_mode(&wheel, mj_kdl::CtrlMode::VELOCITY));
+    EXPECT_DOUBLE_EQ(mj_kdl::joint_force_limits(&wheel)[0], 12.0) << "the velocity forcerange";
+
+    model_->actuator_forcerange[2 * actuator("wheel_velocity") + 1] = 20.0;
+    EXPECT_DOUBLE_EQ(mj_kdl::joint_force_limits(&wheel)[0], 20.0);
 }
 
 int main(int argc, char *argv[])

@@ -32,6 +32,7 @@ cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON
 | `test_mjcf_vel_ctrl` | velocity-style convergence control |
 | `test_mjcf_trq_ctrl` | gravity accuracy with gripper mass, impedance drift |
 | `test_mjcf_pick` | full pick-and-place with gripper: cube lifted > 0.20 m |
+| `test_control_modes` | control modes as actuator groups: added actuators, switching, limits |
 | `urdf_solver_probe` | standalone Kinova URDF ACHD probe plus URDF-vs-MuJoCo RNEA torque comparison |
 
 ---
@@ -78,8 +79,6 @@ Two fixtures:
 settles 1 s.  Max joint error < 0.05 rad.
 
 - **ClampCtrlrange** -- position commands are clamped to the actuator `ctrlrange`; out-of-range setpoints are rejected.
-- **QfrcAppliedUnchangedInPositionMode** -- `qfrc_applied` is never written in POSITION mode; torque commands from a prior TORQUE phase are not silently zeroed.
-
 ### test_mjcf_vel_ctrl
 
 Velocity-style control implemented by integrating a proportional velocity command
@@ -101,3 +100,16 @@ converges from home to the target pose within the configured joint tolerance.
 - KDL chain has 7 joints.
 - IK error < 2 mm for each waypoint.
 - Full pick sequence: cube lifted > 0.20 m.
+
+### test_control_modes
+
+Each mode is an actuator group switched with `opt.disableactuator`.
+
+- **Gen3ModesTest** (Menagerie GEN3): the `<joint>_torque` motors are added in a disabled group;
+  POSITION -> TORQUE -> POSITION holds the pose within 0.01 rad; TORQUE saturates at the
+  servo's `forcerange` (105 Nm); `update()` and mode switches never write `qfrc_applied`;
+  two arms run different modes.
+- **MotorWheelModesTest** (`fixtures/motor_wheel.xml`): only the listed wheel gets a
+  `<velocity>` actuator, the pivot is left alone; VELOCITY tracks 5 rad/s through `SceneState`,
+  then TORQUE takes over without a jump; a motor-driven robot starts in TORQUE and
+  `joint_force_limits()` follows the active mode.

@@ -222,6 +222,8 @@ class Robot:
     jnt_pos_cmd: list[float]
     jnt_vel_cmd: list[float]
     jnt_trq_cmd: list[float]
+    @property
+    def jnt_saturated(self) -> list[bool]: ...
     def set_control_mode(self, mode: CtrlMode) -> None: ...
     """Switch mode without a jump: seeds the new mode's commands from the current state."""
     @staticmethod

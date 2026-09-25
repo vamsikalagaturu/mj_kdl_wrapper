@@ -1719,6 +1719,14 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
             self.set_port(&mj_kdl::Robot::jnt_trq_cmd, values);
         }
       )
+      .def_property_readonly(
+        "jnt_saturated",
+        [](const PyRobot &self) {
+            self.ensure_active();
+            const auto &sat = self.robot.jnt_saturated;
+            return std::vector<bool>(sat.begin(), sat.end());
+        }
+      )
       .def(
         "set_control_mode",
         [](PyRobot &self, CtrlMode mode) {

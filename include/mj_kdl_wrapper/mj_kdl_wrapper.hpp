@@ -386,6 +386,7 @@ struct Robot
     std::vector<double> jnt_pos_cmd; // [rad]   - position setpoints  (POSITION mode)
     std::vector<double> jnt_vel_cmd; // [rad/s] - velocity setpoints  (VELOCITY mode)
     std::vector<double> jnt_trq_cmd; // [Nm]    - torque commands     (TORQUE mode)
+    std::vector<uint8_t> jnt_saturated; // 1 if the command was clamped to ctrlrange (update())
 
     /* Internal state - populated by init_robot() / init_from_mjcf(). */
     std::vector<int> kdl_to_mj_qpos; // KDL index -> MuJoCo qpos address
@@ -557,8 +558,9 @@ struct SceneWrenchSlot
 struct SceneActuatorSlot
 {
     std::string name;
-    int         ctrl_id = -1;
-    double      command = 0.0;
+    int         ctrl_id   = -1;
+    double      command   = 0.0;
+    bool        saturated = false; // command was clamped to ctrlrange (apply_scene_state())
 };
 
 /**
@@ -635,12 +637,10 @@ const ForceTorqueSensor *find_ft_sensor(const Robot *r, const char *name);
 
 /**
  * @ingroup grp_robot
- * Per-joint torque/force saturation limit in KDL joint order, read from the
- * MuJoCo actuator forcerange (`mjModel::actuator_forcerange`). For each KDL
- * joint, the returned bound is symmetric: max(|lo|, |hi|) of the driving
- * actuator's forcerange. Joints with no driving actuator
- * (`kdl_to_mj_ctrl[i] == -1`) or an unlimited actuator (`actuator_forcelimited`
- * false) fall back to `fallback`.
+ * Per-joint torque/force saturation limit in KDL joint order for the actuator
+ * of the robot's `ctrl_mode`: max(|lo|, |hi|) of its `forcerange` times |gear|,
+ * and in TORQUE mode at most its `ctrlrange` times |gear|. Joints with no
+ * actuator for that mode or an unlimited one fall back to `fallback`.
  *
  * @param r         Initialized robot (init_robot_from_mjcf() already called).
  * @param fallback  Bound used for joints without a force-limited actuator;

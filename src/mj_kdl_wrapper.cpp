@@ -949,16 +949,17 @@ static bool build_index_map(Robot *s, const std::string &pfx = "")
     s->jnt_pos_cmd.assign(n, 0.0);
     s->jnt_vel_cmd.assign(n, 0.0);
     s->jnt_trq_cmd.assign(n, 0.0);
+    s->jnt_saturated.assign(n, 0);
 
-    // The mode the model is in now: the enabled mode group, else what every joint drives natively.
+    // The mode the model is in now: every joint has its actuator and its group is enabled.
     for (int mode = 0; mode < 3; ++mode) {
-        const bool live =
-          s->robot_index >= 0
-            ? !(m->opt.disableactuator & (1 << mode_group(s->robot_index, mode)))
-            : std::all_of(s->mode_ctrl[mode].begin(), s->mode_ctrl[mode].end(), [](int a) {
-                  return a >= 0;
-              });
-        if (live && n > 0) {
+        const bool driven =
+          std::all_of(s->mode_ctrl[mode].begin(), s->mode_ctrl[mode].end(), [](int a) {
+              return a >= 0;
+          });
+        const bool enabled =
+          s->robot_index < 0 || !(m->opt.disableactuator & (1 << mode_group(s->robot_index, mode)));
+        if (driven && enabled && n > 0) {
             s->ctrl_mode    = static_cast<CtrlMode>(mode);
             s->applied_mode = s->ctrl_mode;
             s->mode_applied = true;
@@ -1863,12 +1864,21 @@ std::vector<double> joint_force_limits(const Robot *r, double fallback)
 {
     std::vector<double> limits(r->n_joints, fallback);
     if (!r->model) return limits;
+    const mjModel *m     = r->model;
+    const bool     trq   = r->ctrl_mode == CtrlMode::TORQUE;
+    const auto     bound = [](const mjtNum *range) {
+        return std::max(std::abs(range[0]), std::abs(range[1]));
+    };
     for (int i = 0; i < r->n_joints; ++i) {
-        const int ctrl_id = r->kdl_to_mj_ctrl[i];
-        if (ctrl_id < 0 || !r->model->actuator_forcelimited[ctrl_id]) continue;
-        const double lo = r->model->actuator_forcerange[2 * ctrl_id];
-        const double hi = r->model->actuator_forcerange[2 * ctrl_id + 1];
-        limits[i]       = std::max(std::abs(lo), std::abs(hi));
+        const int a = r->mode_ctrl[static_cast<int>(r->ctrl_mode)][i];
+        if (a < 0) continue;
+        const double gear = std::abs(m->actuator_gear[6 * a]);
+        double       lim  = fallback;
+        if (m->actuator_forcelimited[a]) lim = bound(m->actuator_forcerange + 2 * a) * gear;
+        // TORQUE commands ctrl = tau / gear, clamped to ctrlrange.
+        if (trq && m->actuator_ctrllimited[a])
+            lim = std::min(lim, bound(m->actuator_ctrlrange + 2 * a) * gear);
+        limits[i] = lim;
     }
     return limits;
 }
@@ -2028,8 +2038,9 @@ static void sync_robot_after_reset(Robot *r)
         r->jnt_vel_msr[i] = d->qvel[dof_id];
         r->jnt_trq_msr[i] = d->qfrc_actuator[dof_id];
         r->jnt_pos_cmd[i] = q;
-        r->jnt_vel_cmd[i] = 0.0;
-        r->jnt_trq_cmd[i] = 0.0;
+        r->jnt_vel_cmd[i]   = 0.0;
+        r->jnt_trq_cmd[i]   = 0.0;
+        r->jnt_saturated[i] = 0;
 
         // Hold the reset pose in whatever mode the robot is in.
         for (int mode = 0; mode < 3; ++mode) {
@@ -2193,7 +2204,8 @@ void apply_commands(Robot *r)
         case CtrlMode::VELOCITY: u = gear * r->jnt_vel_cmd[i]; break;
         case CtrlMode::TORQUE: u = r->jnt_trq_cmd[i] / gear; break;
         }
-        d->ctrl[a] = clamp_ctrlrange(m, a, u);
+        d->ctrl[a]          = clamp_ctrlrange(m, a, u);
+        r->jnt_saturated[i] = d->ctrl[a] != u;
     }
 }
 
@@ -2373,9 +2385,10 @@ void apply_scene_state(SceneState *s, mjData *data)
         target[4]      = slot.wrench.torque.y();
         target[5]      = slot.wrench.torque.z();
     }
-    for (const auto &slot : s->actuators) {
+    for (auto &slot : s->actuators) {
         if (slot.ctrl_id < 0) continue;
         data->ctrl[slot.ctrl_id] = clamp_ctrlrange(s->model, slot.ctrl_id, slot.command);
+        slot.saturated           = data->ctrl[slot.ctrl_id] != slot.command;
     }
 }
 

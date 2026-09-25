@@ -161,6 +161,10 @@ def test_control_modes_switch_and_opt_out():
         assert robot.ctrl_mode == mjk.CtrlMode.TORQUE
         assert robot.jnt_trq_cmd == [0.0] * robot.n_joints
         assert len(robot.jnt_vel_cmd) == robot.n_joints
+        assert robot.jnt_saturated == [False] * robot.n_joints
+        robot.jnt_trq_cmd = [1000.0] * robot.n_joints
+        robot.update()
+        assert robot.jnt_saturated == [True] * robot.n_joints
         with pytest.raises(RuntimeError, match="control mode"):
             robot.set_control_mode(mjk.CtrlMode.VELOCITY)
         env.set_control_mode(0, mjk.CtrlMode.POSITION)
