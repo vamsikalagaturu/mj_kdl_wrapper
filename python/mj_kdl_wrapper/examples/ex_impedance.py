@@ -10,6 +10,8 @@ from __future__ import annotations
 import argparse
 import math
 
+import PyKDL as kdl
+
 import mj_kdl_wrapper as mjk
 
 HOME_POSE = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
@@ -44,9 +46,20 @@ def build_env(model_path: str, gripper_path: str) -> tuple[mjk.Env, mjk.Robot]:
     return env, robot
 
 
-def apply_pd_gravity(env: mjk.Env, robot: mjk.Robot, target: list[float]) -> None:
+def gravity(robot: mjk.Robot, dyn: kdl.ChainDynParam) -> kdl.JntArray:
+    q = kdl.JntArray(robot.n_joints)
+    for i, value in enumerate(robot.jnt_pos_msr):
+        q[i] = value
+    g = kdl.JntArray(robot.n_joints)
+    dyn.JntToGravity(q, g)
+    return g
+
+
+def apply_pd_gravity(
+    env: mjk.Env, robot: mjk.Robot, dyn: kdl.ChainDynParam, target: list[float]
+) -> None:
     env.update()
-    grav = robot.gravity_torques(-9.81)
+    grav = gravity(robot, dyn)
     robot.jnt_trq_cmd = [
         KP[i] * (target[i] - robot.jnt_pos_msr[i]) - KD[i] * robot.jnt_vel_msr[i] + grav[i]
         for i in range(robot.n_joints)
@@ -58,8 +71,8 @@ def run_loop(env: mjk.Env, step_fn, *, duration: float, gui: bool) -> None:
     if gui:
         # The UI's reset button runs env's reset, on_reset included.
         env.open_viewer("ex_impedance.py")
-    end = env.time() + duration
-    while env.time() < end:
+    end = env.data.time + duration
+    while env.data.time < end:
         step_fn()
         if not env.step():
             break
@@ -79,13 +92,13 @@ def main() -> int:
         robot.set_control_mode(mjk.CtrlMode.TORQUE)
         env.on_reset = lambda ctx: robot.set_joint_pos(HOME_POSE)
         env.reset()
+        chain = robot.kdl_chain()
+        dyn = kdl.ChainDynParam(chain, kdl.Vector(0.0, 0.0, -9.81))
 
         def step():
-            if env.has_actuator("g_fingers_actuator"):
-                env.set_actuator_ctrl(
-                    "g_fingers_actuator", GRIPPER_CLOSED if math.fmod(env.time(), 6.0) < 3.0 else 0.0
-                )
-            apply_pd_gravity(env, robot, HOME_POSE)
+            grip = GRIPPER_CLOSED if math.fmod(env.data.time, 6.0) < 3.0 else 0.0
+            env.data.actuator("g_fingers_actuator").ctrl[0] = grip
+            apply_pd_gravity(env, robot, dyn, HOME_POSE)
 
         run_loop(env, step, duration=3.0, gui=args.gui)
         print(f"final q: {robot.jnt_pos_msr.round(4).tolist()}")

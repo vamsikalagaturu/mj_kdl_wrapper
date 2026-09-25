@@ -11,11 +11,11 @@ for wall time to catch up. Pacing belongs to the loop that owns the timing, not 
 a `step()` that sleeps spends a time budget it does not own, and does so invisibly at the call
 site, which makes it impossible to compose with an application that already paces itself.
 
-Two functions make the choice explicit:
+A call and a field make the choice explicit:
 
 ```cpp
-void   pace_realtime(Env *env);               // sleep out this step's share of wall time
-double realtime_factor_of(const Viewer *v);   // the user's speed setting; 0.0 == uncapped
+void   pace_realtime(Env *env);        // sleep out this step's share of wall time
+double Viewer::realtime_factor;        // the user's speed setting; 0.0 == uncapped
 ```
 
 In Python, the `Env` has the same pacing call (see the Python API guide).
@@ -60,7 +60,7 @@ sees every deadline already missed, and your loop's timing statistics become mea
 the user's speed setting and scale your own period instead:
 
 ```cpp
-const double rtf = mj_kdl::realtime_factor_of(&env.viewer);   // 0.0 means uncapped
+const double rtf = env.viewer.realtime_factor;   // 0.0 means uncapped
 const long period_ns = (rtf > 0.0) ? static_cast<long>(nominal_ns / rtf) : 0;
 ```
 
@@ -74,8 +74,8 @@ half speed, `0.0` means uncapped (shown as `RTF: MAX` in the Simulate UI). The `
 adjust it at run time.
 
 It is written on the control thread — the render thread only pushes key presses into an atomic,
-which `step()` drains — so `realtime_factor_of` reads it without a lock. Call it from the same
-thread that calls `step()`.
+which `step()` drains — so it is read without a lock. Read it from the same thread that calls
+`step()`.
 
 ## Migrating from 0.3.1 and earlier
 

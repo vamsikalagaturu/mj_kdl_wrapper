@@ -20,7 +20,7 @@ if (mj_kdl::Status s = mj_kdl::init_env(&env, &sc); !s) {
 }
 ```
 
-Per-cycle getters (`get_body_frame()`, `get_joint_position()`, ...) return `bool`, and the
+Per-cycle getters (`get_body_frame()`, `get_site_frame()`) return `bool`, and the
 `bind_scene_*()` calls return a pointer (`nullptr` when the name does not resolve).
 
 ## Resolving Models And Assets
@@ -101,12 +101,14 @@ Set wrapper log verbosity globally when debugging scene construction:
 mj_kdl::set_log_level(mj_kdl::LogLevel::INFO);
 ```
 
-The raw `mjSpec` helpers (`add_skybox_to_spec()`, `add_floor_to_spec()`,
-`add_objects_to_spec()`, `compile_and_make_data()`, and
-`ensure_plugins_loaded()`) exist for advanced callers that build MuJoCo specs
-directly. Most users should go through `SceneSpec` and `build_scene()` so
-plugins, decorations, objects, robots, cameras, compilation, and ownership all
-follow the same path.
+`SceneSpec` and `build_scene()` are the only way in: plugins, decorations, objects, robots,
+cameras, compilation and ownership all follow the same path.
+
+`env.model` and `env.data` are plain MuJoCo pointers, so any `mj_*` call works on them
+directly. To run the `Env` on a pair of your own, set `env.adopt` before `init_env()`: it
+receives each compiled `(mjModel*, mjData*)` (at init and at every `scene_add_object()` /
+`scene_remove_object()` rebuild) and returns the pair the `Env` runs on, which the `Env` then
+never frees; freeing it, and the compiled pair when you return a different one, is yours.
 
 ## Init A KDL Chain
 
@@ -172,8 +174,7 @@ mj_kdl::ToolFrameSpec tool{
 };
 
 mj_kdl::update(&env);
-const auto *sensor = mj_kdl::find_ft_sensor(&robot, "wrist_ft");
-KDL::Wrench wrench = sensor ? sensor->wrench : KDL::Wrench::Zero();
+KDL::Wrench wrench = robot.ft_sensors[0].wrench;   // robot.ft_sensors, in ToolFrameSpec order
 ```
 
 When `force_sensor` and `torque_sensor` are omitted, the wrapper resolves
@@ -298,7 +299,7 @@ mj_kdl::SceneObject table{
 };
 sc.objects.push_back(table);
 
-std::string mount = mj_kdl::scene_object_site_name(table, "table_top");
+std::string mount = "table_top";   // the asset's own site name; SceneObject::prefix would prepend to it
 
 sc.robots.push_back(mj_kdl::RobotSpec{
     .path      = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
@@ -343,16 +344,17 @@ sc.cameras.push_back(mj_kdl::CameraSpec{
 });
 ```
 
-After building, `get_camera_names()` returns robot MJCF cameras and cameras
-added through the scene spec. `use_camera()` switches a viewer or recorder to a
-fixed camera; pass `nullptr` or `""` to return to the free camera.
+After building, the model holds robot MJCF cameras and cameras added through the scene spec.
+`use_camera()` switches the viewer to a fixed camera; pass `nullptr` or `""` to return to the
+free camera. A recorder's camera is its `vr.cam`, written directly:
 
 ```cpp
-for (const auto &name : mj_kdl::get_camera_names(env.model)) {
-    LOG_INFO("camera: " << name);
+for (int i = 0; i < env.model->ncam; ++i) {
+    LOG_INFO("camera: " << mj_id2name(env.model, mjOBJ_CAMERA, i));
 }
 mj_kdl::use_camera(&env.viewer, env.model, "overview");
-mj_kdl::use_camera(&vr, env.model, "overview");
+vr.cam.type       = mjCAMERA_FIXED;
+vr.cam.fixedcamid = mj_name2id(env.model, mjOBJ_CAMERA, "overview");
 ```
 
 Use `get_body_frame()` and `get_site_frame()` to read world poses as
@@ -371,8 +373,9 @@ const double quat[4] = { 0.0, 0.0, 0.0, 1.0 };   // [x, y, z, w]: identity
 mj_kdl::set_body_pose(&env, "red_cube", pos, quat);
 ```
 
-`get_joint_position(&env, name, &q)` and `get_joint_velocity()` read one joint by
-name (or the joint an actuator of that name drives).
+A joint no `Robot` owns is read through a slot: `bind_scene_joint(&env.scene, name)` once,
+then its `position` and `velocity` after each `update(&env)`. Or read `env.data->qpos` at the
+joint's `jnt_qposadr` directly.
 
 ## Control Loop
 
@@ -510,7 +513,7 @@ record the view a freshly opened GUI window shows, point the recorder at the
 default free camera:
 
 ```cpp
-mj_kdl::use_camera(&vr, env.model, "");   // mjv_defaultFreeCamera, the view a window opens with
+mjv_defaultFreeCamera(env.model, &vr.cam);   // the view a window opens with
 ```
 
 The Simulate UI's Recorder panel offers `Current`, `Free`, `Tracking`, and the

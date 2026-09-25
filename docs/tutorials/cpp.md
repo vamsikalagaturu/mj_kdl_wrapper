@@ -334,17 +334,17 @@ matching MuJoCo's contact-dimensionality integers. Default is `Tangential`.
 in the Simulate UI with `open_viewer(&env, "object scene")`.
 
 After `build_scene`, an MJCF-backed `SceneObject` exposes its root body in
-the compiled scene under `obj.name` (i.e. the asset's internal root body name
-is rewritten so callers never need to know it). All other elements (sites,
-geoms, joints, child bodies) keep the `obj.name + "_"` prefix.
+the compiled scene under `obj.name` (the asset's internal root body name is
+rewritten so callers never need to know it). All other elements (sites, geoms,
+joints, child bodies) keep their authored names, with `obj.prefix` prepended
+when it is set. The same asset used twice needs distinct prefixes; otherwise
+the build fails on the repeated names.
 
-`scene_object_site_name(obj, "site_name")` returns the compiled name of a
-site authored inside the asset, for places that need a string at runtime:
+So a site authored inside the asset is found by its own name:
 
 ```cpp
-const std::string site = mj_kdl::scene_object_site_name(table, "table_top");
 KDL::Frame world_T_table_top;
-mj_kdl::get_site_frame(&env, site.c_str(), &world_T_table_top);
+mj_kdl::get_site_frame(&env, "table_top", &world_T_table_top);
 ```
 
 Frame getters recompute the kinematics only when the state changed since they were
@@ -355,7 +355,7 @@ Combined, this lets a robot sit on the tabletop without hand-threading
 heights:
 
 ```cpp
-const std::string mount = mj_kdl::scene_object_site_name(table, "table_top");
+const std::string mount = "table_top";
 
 scene.robots.push_back(mj_kdl::RobotSpec{
     .path      = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
@@ -402,16 +402,17 @@ After compile, all cameras are visible to MuJoCo and include:
 List them:
 
 ```cpp
-for (const auto &name : mj_kdl::get_camera_names(env.model)) {
-    std::cout << name << "\n";
+for (int i = 0; i < env.model->ncam; ++i) {
+    std::cout << mj_id2name(env.model, mjOBJ_CAMERA, i) << "\n";
 }
 ```
 
-Use one in the viewer or recorder:
+Use one in the viewer, or set the recorder's `cam` directly:
 
 ```cpp
 mj_kdl::use_camera(&env.viewer, env.model, "front");
-mj_kdl::use_camera(&recorder, env.model, "front");
+recorder.cam.type       = mjCAMERA_FIXED;
+recorder.cam.fixedcamid = mj_name2id(env.model, mjOBJ_CAMERA, "front");
 ```
 
 The Simulate UI also has its own live camera selector in the Rendering panel.
@@ -704,8 +705,7 @@ scene.add_skybox = true;
 scene.objects.push_back(table);
 scene.objects.push_back(cube);
 
-const std::string mount =
-    mj_kdl::scene_object_site_name(table, "table_top");
+const std::string mount = "table_top";
 
 scene.robots.push_back(mj_kdl::RobotSpec{
     .path        = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
@@ -726,15 +726,13 @@ mj_kdl::init_env(&env, &scene);
 
 ### 12.2 Read Table Sites Instead Of Hardcoding Geometry
 
-The table asset defines a `table_top` site. Because MJCF-backed objects are
-prefixed when attached, get the compiled site name through the helper:
+The table asset defines a `table_top` site, compiled under that name (the table
+sets no `prefix`):
 
 ```cpp
 KDL::Frame world_T_table_top;
-const std::string table_top_site =
-    mj_kdl::scene_object_site_name(table, "table_top");
 
-if (!mj_kdl::get_site_frame(&env, table_top_site.c_str(), &world_T_table_top)) {
+if (!mj_kdl::get_site_frame(&env, "table_top", &world_T_table_top)) {
     throw std::runtime_error("table_top site not found");
 }
 
@@ -1028,14 +1026,13 @@ command ports, while both share the same `Env`; one `update(&env)` reads and com
 The included examples show how these pieces combine:
 
 - `ex_table_scene`: table asset, primitive objects, sites, cameras, reset hook.
-- `ex_pick`: IK waypoints, state machine, torque impedance.
-- `ex_table_pick_place`: tabletop pick/place using table asset sites.
-- `ex_table_pour`: gripper-held bottle asset, free particles, receiver asset.
-- `ex_rnea_pick_place`, `ex_achd_pick_place`, `ex_achd_table_slide`, `ex_achd_press`:
-  computed torque through RNEA and ACHD.
+- `ex_table_pick_place`: IK waypoints, phase table, torque impedance, table asset sites.
+- `ex_table_pour`: gripper-held bottle asset, free particles, receiver asset; `--record`
+  writes an MP4.
+- `ex_rnea_pick_place`, `ex_achd_pick_place`, `ex_achd_table_slide`: computed torque through
+  RNEA and ACHD; the slide also presses on the table through ACHD's external-force input.
 - `ex_admittance_ft`: F/T admittance around an RNEA task-space inner loop.
 - `ex_dual_arm`: two prefixed robots in one scene.
-- `ex_record`: headless MP4 recording.
 
 Read `../examples.md` for behavior summaries and expected outputs.
 
@@ -1074,9 +1071,9 @@ Use this checklist when a scene behaves incorrectly:
 | KDL gravity is wrong with a tool | `ToolFrameSpec::tool_body` points at the tool subtree root (2F-85: `g_base_mount`, not `g_base`) |
 | Torque commands saturate | `jnt_saturated`; compare against `joint_force_limits(&robot)` |
 | TCP frame is wrong | `ToolFrameSpec::tcp_site` names an authored MuJoCo site |
-| Object asset site not found | Use `scene_object_site_name(object, "site")` to account for prefixes |
+| Object asset site not found | Use the asset's own site name, with `SceneObject::prefix` in front if one is set |
 | Recorder fails | `BUILD_RECORDER=ON`, EGL available, ffmpeg installed, output path writable |
-| Camera missing in recorder list | Camera must exist in the compiled `mjModel` (`get_camera_names(model)`) |
+| Camera missing in recorder list | Camera must exist in the compiled `mjModel` (`mj_name2id(model, mjOBJ_CAMERA, name) >= 0`) |
 
 ## 17. Development Checks
 

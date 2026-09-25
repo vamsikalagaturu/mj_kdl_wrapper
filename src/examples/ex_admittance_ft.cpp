@@ -119,8 +119,11 @@ static void admittance_update(Admittance &a, const KDL::Vector &force, double dt
 // The sensor's force rotated into the world frame.
 static KDL::Vector ft_force_world(const mj_kdl::Robot &robot)
 {
-    const mj_kdl::ForceTorqueSensor *ft = mj_kdl::find_ft_sensor(&robot, kFtSensor);
-    if (!ft || ft->frame_site_id < 0) return KDL::Vector::Zero();
+    const auto ft =
+      std::find_if(robot.ft_sensors.begin(), robot.ft_sensors.end(), [](const auto &s) {
+          return s.name == kFtSensor;
+      });
+    if (ft == robot.ft_sensors.end() || ft->frame_site_id < 0) return KDL::Vector::Zero();
     const double       *m = robot.data->site_xmat + 9 * ft->frame_site_id;
     const KDL::Rotation R(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
     return R * ft->wrench.force;
@@ -165,9 +168,8 @@ static bool build_scene(Scene &s)
     gripper_spec.prefix    = "g_";
 
     mj_kdl::RobotSpec robot_spec;
-    robot_spec.path             = arm;
-    const std::string table_top = mj_kdl::scene_object_site_name(table, "table_top");
-    robot_spec.attach_to        = { mj_kdl::AttachKind::Site, table_top };
+    robot_spec.path      = arm;
+    robot_spec.attach_to = { mj_kdl::AttachKind::Site, "table_top" };
     robot_spec.attachments.push_back(ft_spec);
     robot_spec.attachments.push_back(gripper_spec);
 

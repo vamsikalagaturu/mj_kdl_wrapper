@@ -302,6 +302,65 @@ TEST(EnvSpec, OwnsItsStringsAcrossARebuild)
     mj_kdl::cleanup(&env);
 }
 
+TEST(EnvAdopt, RunsOnTheCallersPairAndNeverFreesIt)
+{
+    if (!fs::exists(mj_kdl_examples::find_menagerie_model("kinova_gen3/gen3.xml")))
+        GTEST_SKIP() << "kinova_gen3 not found";
+
+    std::vector<std::pair<mjModel *, mjData *>> owned;
+    mj_kdl::Env                                 env;
+    mj_kdl::Robot                               robot;
+    env.adopt = [&](mjModel *m, mjData *d) {
+        mjModel *om = mj_copyModel(nullptr, m);
+        mjData  *od = mj_makeData(om);
+        mj_copyData(od, m, d);
+        mj_kdl::destroy_scene(m, d);
+        owned.emplace_back(om, od);
+        return owned.back();
+    };
+
+    mj_kdl::SceneSpec sc;
+    sc.timestep   = 0.002;
+    sc.add_floor  = true;
+    sc.add_skybox = false;
+    sc.robots.push_back(mj_kdl::RobotSpec{
+      .path = mj_kdl_examples::find_menagerie_model("kinova_gen3/gen3.xml") });
+    ASSERT_TRUE(mj_kdl::init_env(&env, &sc));
+    ASSERT_EQ(owned.size(), 1u);
+    EXPECT_EQ(env.model, owned[0].first);
+    ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link"));
+    for (int k = 0; k < 10; ++k) ASSERT_TRUE(mj_kdl::step(&env));
+
+    mj_kdl::SceneObject cube;
+    cube.name  = "cube";
+    cube.shape = mj_kdl::Shape::BOX;
+    cube.mass  = 0.1;
+    for (int k = 0; k < 3; ++k) cube.size[k] = 0.02;
+    for (int k = 0; k < 4; ++k) cube.rgba[k] = 1.0f;
+    for (int k = 0; k < 3; ++k) cube.friction[k] = 0.5;
+    cube.has_rgba = true;
+    cube.pos[0]   = 0.5;
+    cube.pos[2]   = 0.02;
+    ASSERT_TRUE(mj_kdl::scene_add_object(&env, cube));
+    ASSERT_EQ(owned.size(), 2u);
+    EXPECT_EQ(env.model, owned[1].first);
+    EXPECT_EQ(robot.model, owned[1].first);
+    EXPECT_GT(owned[1].first->nbody, owned[0].first->nbody);
+    for (int k = 0; k < 10; ++k) ASSERT_TRUE(mj_kdl::step(&env));
+
+    const fs::path xml = fs::temp_directory_path() / "mj_kdl_adopted.xml";
+    EXPECT_TRUE(mj_kdl::save_model_xml(env.model, xml.c_str())) << "the spec follows the pair";
+    fs::remove(xml);
+
+    mj_kdl::cleanup(&env);
+    // Both pairs are still the caller's: usable here, freed once here (ASan sees a double free).
+    for (auto &[m, d] : owned) {
+        mj_step(m, d);
+        mj_deleteData(d);
+        mj_deleteModel(m);
+    }
+}
+
 TEST(SceneFloor, PlacedAtFloorZ)
 {
     mj_kdl::SceneSpec sc;
@@ -352,18 +411,6 @@ TEST(Recorder, OutputPathReachesFfmpegVerbatim)
     EXPECT_FALSE(fs::exists(marker)) << "the path went through a shell";
     EXPECT_FALSE(fs::exists(fs::current_path() / "injected"));
     fs::remove_all(dir);
-}
-
-TEST(Recorder, FreeCameraLeavesAFixedCamera)
-{
-    mj_kdl::VideoRecorder vr;
-    vr.cam.type       = mjCAMERA_FIXED;
-    vr.cam.fixedcamid = 3;
-    mj_kdl::set_free_camera(&vr, 2.0, 90.0, -30.0, { 0.1, 0.2, 0.3 });
-    EXPECT_EQ(vr.cam.type, mjCAMERA_FREE);
-    EXPECT_EQ(vr.cam.fixedcamid, -1);
-    EXPECT_DOUBLE_EQ(vr.cam.distance, 2.0);
-    EXPECT_DOUBLE_EQ(vr.cam.lookat[2], 0.3);
 }
 
 TEST_F(InitTest, AFailureSaysWhy)

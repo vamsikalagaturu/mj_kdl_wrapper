@@ -13,7 +13,7 @@ import argparse
 
 import mj_kdl_wrapper as mjk
 
-GRASPS = ["cabinet_grasp1", "cabinet_grasp2", "cabinet_grasp3"]
+GRASPS = ["grasp1", "grasp2", "grasp3"]
 GUI_TIME = 10.0  # [s] simulated
 
 
@@ -44,8 +44,8 @@ def run_headless(env: mjk.Env) -> None:
 
 def run_gui(env: mjk.Env) -> None:
     env.open_viewer("ex_cabinet.py")
-    end = env.time() + GUI_TIME
-    while env.time() < end:
+    end = env.data.time + GUI_TIME
+    while env.data.time < end:
         if not env.step():
             break
         env.pace()

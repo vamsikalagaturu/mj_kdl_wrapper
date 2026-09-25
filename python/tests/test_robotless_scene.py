@@ -39,7 +39,7 @@ def test_robotless_scene_applies_timestep():
     spec.objects = [_cube()]
     env = mjk.Env.build(spec)  # no robots
     try:
-        assert env.timestep() == 0.004
+        assert env.model.opt.timestep == 0.004
         assert env.step()
     finally:
         env.close()
@@ -60,21 +60,19 @@ def test_mesh_scene_object_builds_and_moves():
     try:
         # Meshes compiled -> the drawer's grasp site exists; force pulls the
         # drawer through the cabinet rails, then out and onto the floor.
-        closed = env.site_frame("cabinet_grasp1").p
-        env.set_body_wrench("cabinet_drawer1", [40.0, 0.0, 0.0])
-        env.update()
+        closed = env.site_frame("grasp1").p
+        env.data.body("drawer1").xfrc_applied[:3] = [40.0, 0.0, 0.0]
         for _ in range(120):
             env.step()
-        guided = env.site_frame("cabinet_grasp1").p
+        guided = env.site_frame("grasp1").p
         assert guided.x() > closed.x() + 0.05
         assert abs(guided.y()) < 0.03
         for _ in range(400):
             env.step()
-        env.set_body_wrench("cabinet_drawer1", [0.0, 0.0, 0.0])
-        env.update()
+        env.data.body("drawer1").xfrc_applied[:] = 0.0
         for _ in range(400):
             env.step()
-        opened = env.site_frame("cabinet_grasp1").p
+        opened = env.site_frame("grasp1").p
         assert opened.x() > closed.x() + 0.3
         assert opened.z() < closed.z() - 0.01
     finally:

@@ -42,11 +42,42 @@ TEST(SceneObjectTransform, PathBackedObjectAppliesQuat)
     mj_kdl::Env env;
     ASSERT_TRUE(mj_kdl::init_env(&env, &spec));
     KDL::Frame frame;
-    ASSERT_TRUE(mj_kdl::get_site_frame(&env, "turned_table_top", &frame));
+    ASSERT_TRUE(mj_kdl::get_site_frame(&env, "table_top", &frame));
     const KDL::Vector y = frame.M * KDL::Vector(0.0, 1.0, 0.0);
     EXPECT_NEAR(y.x(), -0.456825992585671, 1e-9);
     EXPECT_NEAR(y.y(), 0.802872337479472, 1e-9);
     EXPECT_NEAR(y.z(), 0.383022221559489, 1e-9);
+}
+
+TEST(SceneObjectPrefix, NamesStayAsAuthoredUnlessAPrefixIsSet)
+{
+    const std::string table_mjcf = mj_kdl_examples::find_asset("table.xml");
+    const auto        table      = [&](const char *name, const char *prefix) {
+        return mj_kdl::SceneObject{
+                        .name = name, .mjcf_path = table_mjcf, .prefix = prefix, .fixed = true
+        };
+    };
+    KDL::Frame frame;
+
+    mj_kdl::SceneSpec one;
+    one.timestep = 0.002;
+    one.objects  = { table("t1", "") };
+    mj_kdl::Env env;
+    ASSERT_TRUE(mj_kdl::init_env(&env, &one));
+    EXPECT_TRUE(mj_kdl::get_site_frame(&env, "table_top", &frame));
+    mj_kdl::cleanup(&env);
+
+    mj_kdl::SceneSpec twins = one;
+    twins.objects           = { table("t1", ""), table("t2", "") };
+    const mj_kdl::Status s  = mj_kdl::init_env(&env, &twins);
+    EXPECT_FALSE(s);
+    EXPECT_NE(s.error.find("SceneObject::prefix"), std::string::npos) << s.error;
+
+    twins.objects = { table("t1", "a_"), table("t2", "b_") };
+    ASSERT_TRUE(mj_kdl::init_env(&env, &twins));
+    EXPECT_TRUE(mj_kdl::get_site_frame(&env, "a_table_top", &frame));
+    EXPECT_TRUE(mj_kdl::get_site_frame(&env, "b_table_top", &frame));
+    mj_kdl::cleanup(&env);
 }
 
 static mj_kdl::SceneObject make_box(
@@ -89,7 +120,6 @@ class TableSceneTest : public testing::Test
     std::string       mjcf_;
     mj_kdl::SceneSpec spec_;
     mj_kdl::SceneObject table_obj_;
-    std::string       table_mount_site_; // compiled site name; lifetime backs RobotSpec.attach_to.name
     mj_kdl::Env       env_;
     mj_kdl::Robot     s_;
 
@@ -119,7 +149,6 @@ class TableSceneTest : public testing::Test
             .pos       = { 0.0, 0.0, surface_z },
             .fixed     = true,
         };
-        table_mount_site_ = mj_kdl::scene_object_site_name(table_obj_, "table_top");
 
         std::vector<mj_kdl::SceneObject> objects;
         objects.push_back(table_obj_);
@@ -137,13 +166,13 @@ class TableSceneTest : public testing::Test
 
         spec_.robots.push_back(mj_kdl::RobotSpec{
             .path      = mjcf_,
-            .attach_to = { mj_kdl::AttachKind::Site, table_mount_site_ },
+            .attach_to = { mj_kdl::AttachKind::Site, "table_top" },
             .attachments = {},
         });
 
         ASSERT_TRUE(mj_kdl::init_env(&env_, &spec_));
         KDL::Frame world_T_table_top;
-        ASSERT_TRUE(mj_kdl::get_site_frame(&env_, table_mount_site_.c_str(), &world_T_table_top));
+        ASSERT_TRUE(mj_kdl::get_site_frame(&env_, "table_top", &world_T_table_top));
         EXPECT_NEAR(world_T_table_top.p.z(), surface_z, 1e-9);
 
         ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s_, &env_, "base_link", "bracelet_link"));

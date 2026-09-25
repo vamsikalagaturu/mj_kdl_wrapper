@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Table pour example ported from src/examples/ex_table_pour.cpp."""
+"""Table pour example ported from src/examples/ex_table_pour.cpp.
+
+--record [out.mp4] also writes a 1080p MP4 through VideoRecorder (EGL + ffmpeg).
+"""
 
 from __future__ import annotations
 
@@ -219,9 +222,15 @@ def build_waypoints(env: mjk.Env, robot: mjk.Robot) -> dict[str, list[float]]:
     }
 
 
-def apply_pd_gravity(env: mjk.Env, robot: mjk.Robot, target: list[float]) -> None:
+def apply_pd_gravity(
+    env: mjk.Env, robot: mjk.Robot, dyn: kdl.ChainDynParam, target: list[float]
+) -> None:
     env.update()
-    gravity = robot.gravity_torques(-9.81)
+    q = kdl.JntArray(robot.n_joints)
+    for i, value in enumerate(robot.jnt_pos_msr):
+        q[i] = value
+    gravity = kdl.JntArray(robot.n_joints)
+    dyn.JntToGravity(q, gravity)
     robot.jnt_trq_cmd = [
         KP[i] * (target[i] - robot.jnt_pos_msr[i]) - KD[i] * robot.jnt_vel_msr[i] + gravity[i]
         for i in range(robot.n_joints)
@@ -278,6 +287,7 @@ def step_once(env: mjk.Env) -> bool:
 def run_phase(
     env: mjk.Env,
     robot: mjk.Robot,
+    dyn: kdl.ChainDynParam,
     phase: Phase,
     gui: bool,
     recorder: mjk.VideoRecorder | None,
@@ -288,13 +298,12 @@ def run_phase(
     print(f"State: {phase.name}")
     env.update()
     start = robot.jnt_pos_msr[:]
-    t0 = env.time()
+    t0 = env.data.time
     while True:
-        elapsed = env.time() - t0
+        elapsed = env.data.time - t0
         alpha = clamp(elapsed / phase.duration, 0.0, 1.0) if phase.duration > 0.0 else 1.0
-        if env.has_actuator("g_fingers_actuator"):
-            env.set_actuator_ctrl("g_fingers_actuator", phase.gripper)
-        apply_pd_gravity(env, robot, lerp(start, phase.target, alpha))
+        env.data.actuator("g_fingers_actuator").ctrl[0] = phase.gripper
+        apply_pd_gravity(env, robot, dyn, lerp(start, phase.target, alpha))
 
         done_time = elapsed >= phase.duration
         done_pose = phase.settle_tol < 0.0 or max_abs_joint_err(robot, phase.target) <= phase.settle_tol
@@ -329,8 +338,7 @@ def main() -> int:
 
         def on_reset(ctx):
             place_balls_in_bottle(env, robot)  # also re-homes the arm
-            if env.has_actuator("g_fingers_actuator"):
-                env.set_actuator_ctrl("g_fingers_actuator", GRIPPER_CLOSED)
+            env.data.actuator("g_fingers_actuator").ctrl[0] = GRIPPER_CLOSED
             state["reset"] = True
 
         env.on_reset = on_reset
@@ -339,6 +347,8 @@ def main() -> int:
         waypoints = build_waypoints(env, robot)
         env.reset()  # waypoint search moved the arm; start the run from home again
         state["reset"] = False
+        chain = robot.kdl_chain()
+        dyn = kdl.ChainDynParam(chain, kdl.Vector(0.0, 0.0, -9.81))
         g = GRIPPER_CLOSED
         phases = [
             Phase("HOME", waypoints["home"], 1.0, 2.5, 0.08, g),
@@ -351,7 +361,7 @@ def main() -> int:
         ]
 
         fps = 60
-        record_every = max(1, int(1.0 / (fps * env.timestep())))
+        record_every = max(1, int(1.0 / (fps * env.model.opt.timestep)))
         if args.record:
             recorder = mjk.VideoRecorder.open_preset(
                 env, args.record, mjk.VideoResolution.R1080p, fps
@@ -363,7 +373,7 @@ def main() -> int:
                 try:
                     for phase in phases:
                         if not run_phase(
-                            env, robot, phase, True, recorder, record_every, step_counter, state
+                            env, robot, dyn, phase, True, recorder, record_every, step_counter, state
                         ):
                             raise StopIteration
                     break
@@ -374,7 +384,7 @@ def main() -> int:
         else:
             for phase in phases:
                 if not run_phase(
-                    env, robot, phase, False, recorder, record_every, step_counter, state
+                    env, robot, dyn, phase, False, recorder, record_every, step_counter, state
                 ):
                     break
         in_receiver, centroid = balls_in_receiver(env)

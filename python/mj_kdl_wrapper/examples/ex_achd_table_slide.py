@@ -1,26 +1,35 @@
 #!/usr/bin/env python3
 """ACHD table-slide example using PyKDL's Vereshchagin solver directly.
 
-Ported from src/examples/ex_achd_table_slide.cpp. Slides the TCP along +X under
-an acceleration-constrained hybrid-dynamics controller. An Env on_reset hook
-restores the start pose (and re-primes the PID) so the simulate-UI reset replays
-the slide.
+Ported from src/examples/ex_achd_table_slide.cpp. The arm settles on the table under its
+position servos, then slides its TCP 0.2 m along +X in TORQUE mode under ACHD (linear Z left
+free) + RNEA while pressing down with PRESS_FORCE through ACHD's external-force input (driver
+weights 1, the pinned KDL fork's setDriverWeights). Over the second half of the slide it
+measures the table's contact normal force with mujoco.mj_contactForce on env.model/env.data,
+prints the mean against the command, and exits 1 if the contact was not held.
 """
 
 from __future__ import annotations
 
 import argparse
+import math
 
+import mujoco
+import numpy as np
 import PyKDL as kdl
 import mj_kdl_wrapper as mjk
 
 TABLE_POSE = [-0.00258, 1.43, 3.14, -1.70, -0.018, 1.74, 1.57]
 TABLE_Z = 0.447
 MOVE_X = 0.20
+V_MAX_LIN = 0.08  # [m/s] the tracked reference moves toward the target at this speed
 KPLIN, KDLIN = 200.0, 30.0
 KPROT, KDROT = 175.0, 28.0
 BETA_MAX = 120.0
-GRIPPER_CLOSED = 0.82  # [rad] driver joint; the bundled 2F-85's ctrlrange is 0..0.82
+PRESS_FORCE = 10.0  # [N] commanded straight down at the TCP
+SETTLE_STEPS = 300
+SLIDE_STEPS = 2000
+CONTACT_HELD = 0.5  # the contact chatters while sliding
 
 
 def build_env() -> tuple[mjk.Env, mjk.Robot]:
@@ -51,7 +60,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     return env, robot
 
 
-def jnt(values: list[float]) -> kdl.JntArray:
+def jnt(values) -> kdl.JntArray:
     out = kdl.JntArray(len(values))
     for i, v in enumerate(values):
         out[i] = v
@@ -60,6 +69,19 @@ def jnt(values: list[float]) -> kdl.JntArray:
 
 def clamp_abs(value: float, limit: float) -> float:
     return max(-limit, min(limit, value))
+
+
+# Sum of contact normal forces on one geom; positive pushes the bodies apart.
+def contact_normal_force(model: mujoco.MjModel, data: mujoco.MjData, geom: int) -> float:
+    total = 0.0
+    force = np.zeros(6)
+    for i in range(data.ncon):
+        contact = data.contact[i]
+        if geom not in (contact.geom1, contact.geom2):
+            continue
+        mujoco.mj_contactForce(model, data, i, force)
+        total += force[0]
+    return total
 
 
 def alpha_no_linear_z() -> kdl.Jacobian:
@@ -72,41 +94,88 @@ def alpha_no_linear_z() -> kdl.Jacobian:
     return alpha
 
 
-def achd_step(env, robot, chain, fk, achd, rnea, target, err_prev, first_pid):
-    env.update()
-    q = jnt(robot.jnt_pos_msr)
-    qd = jnt(robot.jnt_vel_msr)
-    current = kdl.Frame()
-    fk.JntToCart(q, current)
-    err = kdl.diff(current, target)
-    dt = 0.002
-    e = [err.vel.x(), err.vel.y(), err.rot.x(), err.rot.y(), err.rot.z()]
-    if first_pid[0]:
-        err_prev[:] = e
-        first_pid[0] = False
-    de = [(e[i] - err_prev[i]) / dt for i in range(5)]
-    err_prev[:] = e
-    beta = kdl.JntArray(5)
-    beta[0] = clamp_abs(KPLIN * e[0] + KDLIN * de[0], BETA_MAX)
-    beta[1] = clamp_abs(KPLIN * e[1] + KDLIN * de[1], BETA_MAX)
-    beta[2] = clamp_abs(KPROT * e[2] + KDROT * de[2], BETA_MAX)
-    beta[3] = clamp_abs(KPROT * e[3] + KDROT * de[3], BETA_MAX)
-    beta[4] = clamp_abs(KPROT * e[4] + KDROT * de[4], BETA_MAX)
+class Slide:
+    """The ACHD controller and the press measurement; restart() replays it from the current pose."""
 
-    n = robot.n_joints
-    qdd = kdl.JntArray(n)
-    ff = kdl.JntArray(n)
-    constraint_tau = kdl.JntArray(n)
-    f_ext = [kdl.Wrench.Zero() for _ in range(chain.getNrOfSegments())]
-    if achd.CartToJnt(q, qd, qdd, alpha_no_linear_z(), beta, f_ext, ff, constraint_tau) < 0:
-        raise RuntimeError("PyKDL ACHD failed")
+    def __init__(self, env: mjk.Env, robot: mjk.Robot):
+        self.env, self.robot = env, robot
+        self.chain = robot.kdl_chain()
+        self.fk = kdl.ChainFkSolverPos_recursive(self.chain)
+        gravity_z = env.model.opt.gravity[2]
+        self.achd = kdl.ChainHdSolver_Vereshchagin(
+            self.chain, kdl.Twist(kdl.Vector(0.0, 0.0, -gravity_z), kdl.Vector.Zero()), 5
+        )
+        # Driver weights 1 pass the commanded wrench through to the environment.
+        self.achd.setDriverWeights(np.ones(5), np.zeros(5))
+        self.rnea = kdl.ChainIdSolver_RNE(self.chain, kdl.Vector(0.0, 0.0, gravity_z))
+        self.alpha = alpha_no_linear_z()
+        segments = self.chain.getNrOfSegments()
+        self.f_ext = [kdl.Wrench.Zero() for _ in range(segments)]
+        self.f_ext[-1] = kdl.Wrench(kdl.Vector(0.0, 0.0, -PRESS_FORCE), kdl.Vector.Zero())
+        self.no_wrench = [kdl.Wrench.Zero() for _ in range(segments)]
+        self.table_geom = env.model.geom("top").id
+        self.restart()
+        self.target = kdl.Frame(self.tracked.M, self.tracked.p + kdl.Vector(MOVE_X, 0.0, 0.0))
 
-    tau = kdl.JntArray(n)
-    rnea_wrenches = [kdl.Wrench.Zero() for _ in range(chain.getNrOfSegments())]
-    if rnea.CartToJnt(q, qd, qdd, rnea_wrenches, tau) < 0:
-        raise RuntimeError("PyKDL RNEA failed")
-    robot.jnt_trq_cmd = [tau[i] for i in range(n)]
-    env.update()
+    def tcp(self) -> kdl.Frame:
+        frame = kdl.Frame()
+        self.fk.JntToCart(jnt(self.robot.jnt_pos_msr), frame)
+        return frame
+
+    def restart(self) -> None:
+        self.env.update()
+        self.tracked = self.tcp()
+        self.err_prev = None
+        self.steps = 0
+        self.contact_steps = 0
+        self.reaction_sum = 0.0
+        self.reaction_count = 0
+
+    def control(self) -> None:
+        env, robot = self.env, self.robot
+        dt = env.model.opt.timestep
+        to_goal = self.target.p - self.tracked.p
+        dist = to_goal.Norm()
+        if dist > 1e-4:
+            self.tracked.p += to_goal * (min(dist, V_MAX_LIN * dt) / dist)
+
+        env.update()
+        q, qd = jnt(robot.jnt_pos_msr), jnt(robot.jnt_vel_msr)
+        current = kdl.Frame()
+        self.fk.JntToCart(q, current)
+        err = kdl.diff(current, self.tracked)
+        e = [err.vel.x(), err.vel.y(), err.rot.x(), err.rot.y(), err.rot.z()]
+        prev = self.err_prev or e
+        de = [(e[i] - prev[i]) / dt for i in range(5)]
+        self.err_prev = e
+        gains = [(KPLIN, KDLIN)] * 2 + [(KPROT, KDROT)] * 3
+        beta = kdl.JntArray(5)
+        for i, (kp, kd) in enumerate(gains):
+            beta[i] = clamp_abs(kp * e[i] + kd * de[i], BETA_MAX)
+
+        n = robot.n_joints
+        # Gravity as feed-forward, so only the commanded press pushes the free linear Z down.
+        ff = kdl.JntArray(n)
+        if self.rnea.CartToJnt(q, kdl.JntArray(n), kdl.JntArray(n), self.no_wrench, ff) < 0:
+            raise RuntimeError("PyKDL RNEA failed")
+        qdd, constraint_tau, tau = kdl.JntArray(n), kdl.JntArray(n), kdl.JntArray(n)
+        if self.achd.CartToJnt(q, qd, qdd, self.alpha, beta, self.f_ext, ff, constraint_tau) < 0:
+            raise RuntimeError("PyKDL ACHD failed")
+        if self.rnea.CartToJnt(q, qd, qdd, self.no_wrench, tau) < 0:
+            raise RuntimeError("PyKDL RNEA failed")
+        # update() clamps each torque to its joint's limit and reports it in jnt_saturated.
+        robot.jnt_trq_cmd = [tau[i] for i in range(n)]
+        env.update()
+        self.steps += 1
+
+    # Measured over the second half of the slide: the press first has to bring the TCP down.
+    def measure(self) -> None:
+        if self.steps <= SLIDE_STEPS // 2:
+            return
+        reaction = contact_normal_force(self.env.model, self.env.data, self.table_geom)
+        self.contact_steps += reaction > 0.0
+        self.reaction_sum += reaction
+        self.reaction_count += 1
 
 
 def main() -> int:
@@ -116,49 +185,54 @@ def main() -> int:
 
     env, robot = build_env()
     try:
-        chain = robot.kdl_chain()
-        fk = kdl.ChainFkSolverPos_recursive(chain)
-        achd = kdl.ChainHdSolver_Vereshchagin(
-            chain, kdl.Twist(kdl.Vector(0.0, 0.0, 9.81), kdl.Vector.Zero()), 5
-        )
-        rnea = kdl.ChainIdSolver_RNE(chain, kdl.Vector(0.0, 0.0, -9.81))
-        robot.set_control_mode(mjk.CtrlMode.TORQUE)
-
-        err_prev = [0.0] * 5
-        first_pid = [True]
+        restarted = [False]
 
         def on_reset(ctx):
             robot.set_joint_pos(TABLE_POSE)
-            first_pid[0] = True  # re-prime PID after a reset
+            restarted[0] = True
 
         env.on_reset = on_reset
         env.reset()
-
-        env.update()
-        start = kdl.Frame()
-        fk.JntToCart(jnt(TABLE_POSE), start)
-        target = kdl.Frame(start.M, start.p + kdl.Vector(MOVE_X, 0.0, 0.0))
-
-        def step():
-            if env.has_actuator("g_fingers_actuator"):
-                env.set_actuator_ctrl("g_fingers_actuator", GRIPPER_CLOSED)
-            achd_step(env, robot, chain, fk, achd, rnea, target, err_prev, first_pid)
+        # Let contacts settle with the table, the position servos holding the pose, before
+        # starting the horizontal task in torque mode.
+        for _ in range(SETTLE_STEPS):
+            env.step()
+        robot.set_control_mode(mjk.CtrlMode.TORQUE)
+        slide = Slide(env, robot)
 
         if args.gui:
             # The UI's reset button runs env's reset, on_reset included.
             env.open_viewer("ex_achd_table_slide.py")
-        end = env.time() + 2.0
-        while env.time() < end:
-            step()
+        restarted[0] = False
+        while slide.steps < SLIDE_STEPS:
+            slide.control()
             if not env.step():
                 break
+            slide.measure()
+            if restarted[0]:
+                restarted[0] = False
+                slide.restart()
             env.pace()
-        print(f"tcp target x shift: {MOVE_X:.3f} m")
-        final_frame = robot.fk_frame()
-        final_pos = [final_frame.p.x(), final_frame.p.y(), final_frame.p.z()]
-        print(f"final bracelet frame: {[round(x, 3) for x in final_pos]}")
+
+        env.update()
+        err = kdl.diff(slide.tcp(), slide.target)
+        xy_err = math.hypot(err.vel.x(), err.vel.y())
+        print(
+            f"tcp_xy_err_mm={xy_err * 1000:.3f} tcp_z_error_unconstrained_mm="
+            f"{err.vel.z() * 1000:.3f} tcp_rot_err_rad={err.rot.Norm():.3f}"
+        )
+        count = max(slide.reaction_count, 1)
+        contact = slide.contact_steps / count
+        mean = slide.reaction_sum / count
+        print(
+            f"table_contact_fraction={contact:.3f} mean_table_reaction_N={mean:.3f} "
+            f"commanded_press_N={PRESS_FORCE:.3f} reaction_over_command={mean / PRESS_FORCE:.3f}"
+        )
     finally:
         env.close()
+    if contact < CONTACT_HELD:
+        print("table contact not held during the slide")
+        return 1
     return 0
 
 

@@ -177,9 +177,15 @@ def build_waypoints(env: mjk.Env, robot: mjk.Robot) -> dict[str, list[float]]:
     }
 
 
-def apply_pd_gravity(env: mjk.Env, robot: mjk.Robot, target: list[float]) -> None:
+def apply_pd_gravity(
+    env: mjk.Env, robot: mjk.Robot, dyn: kdl.ChainDynParam, target: list[float]
+) -> None:
     env.update()
-    gravity = robot.gravity_torques(-9.81)
+    q = kdl.JntArray(robot.n_joints)
+    for i, value in enumerate(robot.jnt_pos_msr):
+        q[i] = value
+    gravity = kdl.JntArray(robot.n_joints)
+    dyn.JntToGravity(q, gravity)
     robot.jnt_trq_cmd = [
         KP[i] * (target[i] - robot.jnt_pos_msr[i]) - KD[i] * robot.jnt_vel_msr[i] + gravity[i]
         for i in range(robot.n_joints)
@@ -205,17 +211,18 @@ def step_once(env: mjk.Env, state: dict) -> bool:
     return True
 
 
-def run_phase(env: mjk.Env, robot: mjk.Robot, phase: Phase, gui: bool, state: dict) -> bool:
+def run_phase(
+    env: mjk.Env, robot: mjk.Robot, dyn: kdl.ChainDynParam, phase: Phase, gui: bool, state: dict
+) -> bool:
     print(f"State: {phase.name}")
     env.update()
     start = robot.jnt_pos_msr[:]
-    t0 = env.time()
+    t0 = env.data.time
     while True:
-        elapsed = env.time() - t0
+        elapsed = env.data.time - t0
         alpha = clamp(elapsed / phase.duration, 0.0, 1.0) if phase.duration > 0.0 else 1.0
-        if env.has_actuator("g_fingers_actuator"):
-            env.set_actuator_ctrl("g_fingers_actuator", phase.gripper)
-        apply_pd_gravity(env, robot, lerp(start, phase.target, alpha))
+        env.data.actuator("g_fingers_actuator").ctrl[0] = phase.gripper
+        apply_pd_gravity(env, robot, dyn, lerp(start, phase.target, alpha))
 
         done_time = elapsed >= phase.duration
         done_pose = phase.settle_tol < 0.0 or max_abs_joint_err(robot, phase.target) <= phase.settle_tol
@@ -242,13 +249,14 @@ def main() -> int:
         def on_reset(ctx):
             robot.set_joint_pos(HOME)
             env.set_body_pose("cube", CUBE_START)
-            if env.has_actuator("g_fingers_actuator"):
-                env.set_actuator_ctrl("g_fingers_actuator", 0.0)
+            env.data.actuator("g_fingers_actuator").ctrl[0] = 0.0
             state["reset"] = True
 
         env.on_reset = on_reset
         env.reset()
         state["reset"] = False
+        chain = robot.kdl_chain()
+        dyn = kdl.ChainDynParam(chain, kdl.Vector(0.0, 0.0, -9.81))
 
         waypoints = build_waypoints(env, robot)
         phases = [
@@ -268,7 +276,7 @@ def main() -> int:
             while env.viewer.is_running():
                 try:
                     for phase in phases:
-                        if not run_phase(env, robot, phase, True, state):
+                        if not run_phase(env, robot, dyn, phase, True, state):
                             raise StopIteration
                     break
                 except ResetRequested:
@@ -277,7 +285,7 @@ def main() -> int:
                     break
         else:
             for phase in phases:
-                if not run_phase(env, robot, phase, False, state):
+                if not run_phase(env, robot, dyn, phase, False, state):
                     break
         cube = env.body_frame("cube")
         cube_pos = [cube.p.x(), cube.p.y(), cube.p.z()]

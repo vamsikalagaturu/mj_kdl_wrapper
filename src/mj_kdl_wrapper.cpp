@@ -70,7 +70,7 @@ static std::string default_mujoco_plugin_dir()
     return MUJOCO_PLUGIN_DIR;
 }
 
-void ensure_plugins_loaded()
+static void ensure_plugins_loaded()
 {
     static std::once_flag flag;
     std::call_once(flag, []() {
@@ -107,6 +107,7 @@ struct EnvInternals
     std::vector<mjtNum>                  computed_from;
     bool                                 computed = false;
     std::unordered_map<std::string, int> names[mjNOBJECT]; // mj_name2id per object type
+    bool                                 adopted = false;  // model/data came from Env::adopt
 };
 
 Robot::Robot() : _impl(std::make_unique<RobotInternals>()) {}
@@ -502,7 +503,7 @@ static mjsBody *first_root_body(mjSpec *spec)
     return first ? mjs_asBody(first) : nullptr;
 }
 
-void add_skybox_to_spec(mjSpec *spec)
+static void add_skybox_to_spec(mjSpec *spec)
 {
     mjsBody *wb = world_body(spec);
 
@@ -526,7 +527,7 @@ void add_skybox_to_spec(mjSpec *spec)
     sun->pos[2]   = kSunHeight;
 }
 
-void add_floor_to_spec(mjSpec *spec, double floor_z)
+static void add_floor_to_spec(mjSpec *spec, double floor_z)
 {
     mjsBody *wb = world_body(spec);
 
@@ -571,7 +572,7 @@ template<std::size_t N, class T> static bool all_set(const T (&values)[N])
     return std::none_of(values, values + N, [](T v) { return std::isnan(v); });
 }
 
-Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
+static Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
 {
     for (const auto &obj : objects) {
         if (!obj.mjcf_path.empty()) {
@@ -599,15 +600,12 @@ Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects
             mjsBody *root = first_root_body(asset.get());
             if (!root) MJ_FAIL("no root body found in object asset '" << obj.mjcf_path << "'");
 
-            std::string prefix   = obj.name.empty() ? "" : obj.name + "_";
-            mjsBody    *attached = nullptr;
+            mjsBody *attached = nullptr;
             if (Status s =
-                  attach_child(spec, obj.attach_to, obj.pos, obj.quat, root, prefix, &attached);
+                  attach_child(spec, obj.attach_to, obj.pos, obj.quat, root, obj.prefix, &attached);
                 !s)
                 return s;
-            // Rename the asset's root body to obj.name so callers can write
-            // attach_to = { Body, obj.name } without knowing the MJCF-internal
-            // root body name. Other elements keep the obj.name + "_" prefix.
+            // attach_to = { Body, obj.name } then works without the asset's root body name.
             if (attached && !obj.name.empty()) {
                 mjs_setString(mjs_getName(attached->element), obj.name.c_str());
             }
@@ -789,11 +787,21 @@ static void add_sites_to_spec(mjSpec *spec, const std::vector<SiteSpec> &sites)
 // A compiled model cannot be written back to XML on its own; mj_saveXML needs its spec.
 static std::unordered_map<const mjModel *, MjSpecPtr> g_model_specs;
 
-Status compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data)
+static Status compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data)
 {
     MjSpecPtr owned = make_spec_ptr(spec);
     *out_model      = mj_compile(spec, nullptr);
-    if (!*out_model) MJ_FAIL("mj_compile failed: " << mjs_getError(spec));
+    if (!*out_model) {
+        const std::string error = mjs_getError(spec);
+        MJ_FAIL(
+          "mj_compile failed: " << error
+                                << (error.find("repeated name") != std::string::npos
+                                      ? " (an asset used twice needs a distinct prefix: "
+                                        "SceneObject::prefix, RobotSpec::prefix or "
+                                        "AttachmentSpec::prefix)"
+                                      : "")
+        );
+    }
     LOG_INFO(
       "scene compiled: nq=" << (*out_model)->nq << " nv=" << (*out_model)->nv
                             << " nbody=" << (*out_model)->nbody
@@ -1169,6 +1177,33 @@ void destroy_scene(mjModel *model, mjData *data)
     if (model) mj_deleteModel(model);
 }
 
+// Hand a freshly compiled pair to env->adopt, if set; the spec save_model_xml needs follows it.
+static Status adopt_pair(Env *env, mjModel **m, mjData **d, bool *adopted)
+{
+    *adopted = static_cast<bool>(env->adopt);
+    if (!*adopted) return {};
+    auto spec     = g_model_specs.extract(*m);
+    auto [am, ad] = env->adopt(*m, *d);
+    if (!am || !ad) MJ_FAIL("Env::adopt returned no model or data");
+    if (spec) {
+        spec.key() = am;
+        g_model_specs.insert(std::move(spec));
+    }
+    *m = am;
+    *d = ad;
+    return {};
+}
+
+// Free env's pair, unless adopt gave it: then its owner frees it.
+static void release_pair(Env *env)
+{
+    if (env->_impl->adopted)
+        g_model_specs.erase(env->model);
+    else
+        destroy_scene(env->model, env->data);
+    env->_impl->adopted = false;
+}
+
 static void close_viewer(Env *env);
 
 // Every cache is tied to the model it was taken from.
@@ -1183,14 +1218,17 @@ Status init_env(Env *env, const SceneSpec *spec)
     if (!env || !spec) MJ_FAIL("init_env: null env or spec");
 
     cleanup(env);
-    env->spec = *spec;
-    if (Status built = build_scene(&env->model, &env->data, &env->spec); !built) {
-        env->model = nullptr;
-        env->data  = nullptr;
-        return built;
-    }
-    env->scene       = SceneState{};
-    env->scene.model = env->model;
+    env->spec  = *spec;
+    mjModel *m = nullptr;
+    mjData  *d = nullptr;
+    if (Status built = build_scene(&m, &d, &env->spec); !built) return built;
+    bool adopted = false;
+    if (Status s = adopt_pair(env, &m, &d, &adopted); !s) return s;
+    env->model          = m;
+    env->data           = d;
+    env->_impl->adopted = adopted;
+    env->scene          = SceneState{};
+    env->scene.model    = env->model;
     return {};
 }
 
@@ -1204,7 +1242,7 @@ void cleanup(Env *env)
         r->data       = nullptr;
     }
     env->robots.clear();
-    destroy_scene(env->model, env->data);
+    release_pair(env);
     env->model = nullptr;
     env->data  = nullptr;
     env->scene = SceneState{};
@@ -1212,7 +1250,7 @@ void cleanup(Env *env)
     env->on_reset = nullptr;
 }
 
-Status attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
+static Status attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
 {
     if (!robot_spec || !a || a->mjcf_path.empty())
         MJ_FAIL("attach_to_spec: null spec or empty mjcf_path");
@@ -1478,15 +1516,19 @@ static bool rebind_robots(Env *env)
 
 // Swap in a rebuilt pair; the old one lives until the viewer has let go of it. Whatever no
 // longer resolves is logged and skipped from then on.
-static void swap_scene(Env *env, mjModel *m, mjData *d)
+static Status swap_scene(Env *env, mjModel *m, mjData *d)
 {
+    bool adopted = false;
+    if (Status s = adopt_pair(env, &m, &d, &adopted); !s) return s;
     reload_viewer(env, m, d);
-    destroy_scene(env->model, env->data);
-    env->model = m;
-    env->data  = d;
+    release_pair(env);
+    env->model          = m;
+    env->data           = d;
+    env->_impl->adopted = adopted;
     forget_model(env);
     rebind_robots(env);
     rebind_scene(env);
+    return {};
 }
 
 Status scene_add_object(Env *env, const SceneObject &obj)
@@ -1495,12 +1537,10 @@ Status scene_add_object(Env *env, const SceneObject &obj)
     env->spec.objects.push_back(obj);
     mjModel *m = nullptr;
     mjData  *d = nullptr;
-    if (Status built = build_scene(&m, &d, &env->spec); !built) {
-        env->spec.objects.pop_back();
-        return built;
-    }
-    swap_scene(env, m, d);
-    return {};
+    Status   s = build_scene(&m, &d, &env->spec);
+    if (s) s = swap_scene(env, m, d);
+    if (!s) env->spec.objects.pop_back();
+    return s;
 }
 
 Status scene_remove_object(Env *env, const std::string &name)
@@ -1515,18 +1555,10 @@ Status scene_remove_object(Env *env, const std::string &name)
     objects.erase(it);
     mjModel *m = nullptr;
     mjData  *d = nullptr;
-    if (Status built = build_scene(&m, &d, &env->spec); !built) {
-        objects.push_back(removed);
-        return built;
-    }
-    swap_scene(env, m, d);
-    return {};
-}
-
-std::string scene_object_site_name(const SceneObject &obj, const char *site_name)
-{
-    if (!site_name) return {};
-    return obj.name.empty() ? std::string(site_name) : obj.name + "_" + site_name;
+    Status   s = build_scene(&m, &d, &env->spec);
+    if (s) s = swap_scene(env, m, d);
+    if (!s) objects.push_back(removed);
+    return s;
 }
 
 bool get_site_frame(Env *env, const char *site_name, KDL::Frame *out)
@@ -1559,68 +1591,6 @@ bool get_body_frame(Env *env, const char *body_name, KDL::Frame *out)
     return true;
 }
 
-// A scalar joint by name, or the transmission joint of an actuator by that name; -1 when neither.
-static int resolve_joint_id(Env *env, const char *name)
-{
-    const mjModel *model = env->model;
-    int            jid   = cached_name2id(env, mjOBJ_JOINT, name);
-    if (jid < 0) {
-        const int aid = cached_name2id(env, mjOBJ_ACTUATOR, name);
-        if (aid < 0) return -1;
-        if (model->actuator_trntype[aid] == mjTRN_JOINT) {
-            jid = model->actuator_trnid[2 * aid];
-        } else if (model->actuator_trntype[aid] == mjTRN_TENDON) {
-            // A spatial tendon wraps sites and geoms; only a joint wrap names a joint.
-            const int adr = model->tendon_adr[model->actuator_trnid[2 * aid]];
-            if (model->wrap_type[adr] == mjWRAP_JOINT) jid = model->wrap_objid[adr];
-        }
-        if (jid < 0) {
-            LOG_ERROR("actuator '" << name << "' does not drive a joint");
-            return -1;
-        }
-    }
-    if (model->jnt_type[jid] == mjJNT_BALL || model->jnt_type[jid] == mjJNT_FREE) {
-        LOG_ERROR("joint of '" << name << "' is a ball or free joint, not a scalar one");
-        return -1;
-    }
-    return jid;
-}
-
-bool get_joint_position(Env *env, const char *name, double *out)
-{
-    if (!env || !env->model || !name || !out) return false;
-
-    const int jid = resolve_joint_id(env, name);
-    if (jid < 0) return false;
-
-    const auto lock = lock_env(env);
-    *out            = env->data->qpos[env->model->jnt_qposadr[jid]];
-    return true;
-}
-
-bool get_joint_velocity(Env *env, const char *name, double *out)
-{
-    if (!env || !env->model || !name || !out) return false;
-
-    const int jid = resolve_joint_id(env, name);
-    if (jid < 0) return false;
-
-    const auto lock = lock_env(env);
-    *out            = env->data->qvel[env->model->jnt_dofadr[jid]];
-    return true;
-}
-
-std::vector<std::string> get_camera_names(const mjModel *model)
-{
-    std::vector<std::string> names;
-    if (!model) return names;
-    for (int i = 0; i < model->ncam; ++i) {
-        const char *name = mj_id2name(model, mjOBJ_CAMERA, i);
-        if (name) names.push_back(name);
-    }
-    return names;
-}
-
 static bool use_camera_impl(mjvCamera *cam, const mjModel *model, const char *name)
 {
     if (!name || name[0] == '\0') {
@@ -1632,12 +1602,6 @@ static bool use_camera_impl(mjvCamera *cam, const mjModel *model, const char *na
     cam->type       = mjCAMERA_FIXED;
     cam->fixedcamid = id;
     return true;
-}
-
-bool use_camera(VideoRecorder *vr, const mjModel *model, const char *name)
-{
-    if (!vr || !model) return false;
-    return use_camera_impl(&vr->cam, model, name);
 }
 
 // Robot API
@@ -1870,15 +1834,6 @@ Status init_robot_from_chain(
     return {};
 }
 
-const ForceTorqueSensor *find_ft_sensor(const Robot *r, const char *name)
-{
-    if (!r || !name) return nullptr;
-    for (const auto &sensor : r->ft_sensors) {
-        if (sensor.name == name) return &sensor;
-    }
-    return nullptr;
-}
-
 std::vector<double> joint_force_limits(const Robot *r, double fallback)
 {
     std::vector<double> limits(r->n_joints, fallback);
@@ -1986,8 +1941,8 @@ bool step(Env *env)
 
 /* Pacing is the caller's job, not step()'s: a physics call that sleeps spends a time budget it
  * does not own, and does so invisibly at the call site. A loop with no timing of its own calls
- * this to track wall time; a loop that paces itself reads realtime_factor_of() and scales its
- * own period instead. */
+ * this to track wall time; a loop that paces itself reads Viewer::realtime_factor (written on
+ * the control thread, inside step()) and scales its own period instead. */
 void pace_realtime(Env *env)
 {
     using Clock = std::chrono::steady_clock;
@@ -2018,11 +1973,6 @@ void pace_realtime(Env *env)
      * a loop coming back from a stall does not burst to catch up. */
     v->_tick_t = now;
 }
-
-/* The user's current speed setting; 0.0 means uncapped. Read without a lock because the render
- * thread only ever pushes into the rtf_step atomic -- realtime_factor itself is written on the
- * control thread, inside step(), where that atomic is drained. */
-double realtime_factor_of(const Viewer *v) { return v ? v->realtime_factor : 1.0; }
 
 static mjtNum clamp_ctrlrange(const mjModel *m, int ci, mjtNum u)
 {
@@ -2710,17 +2660,6 @@ void set_free_camera(
         return;
     }
     set_free_camera_impl(&v->cam, distance, azimuth, elevation, lookat);
-}
-
-void set_free_camera(
-  VideoRecorder               *vr,
-  double                       distance,
-  double                       azimuth,
-  double                       elevation,
-  const std::array<double, 3> &lookat
-)
-{
-    if (vr) set_free_camera_impl(&vr->cam, distance, azimuth, elevation, lookat);
 }
 
 static void close_viewer(Env *env)

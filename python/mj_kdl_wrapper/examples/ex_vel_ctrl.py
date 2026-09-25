@@ -45,7 +45,7 @@ def main() -> int:
     model_path = mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
     env, robot = build_env(model_path)
     try:
-        dt = env.timestep()
+        dt = env.model.opt.timestep
         state = {"arrived": False}
 
         def on_reset(ctx):
@@ -74,8 +74,8 @@ def main() -> int:
         if args.gui:
             # The UI's reset button runs env's reset, on_reset included.
             env.open_viewer("ex_vel_ctrl.py")
-        end = env.time() + 5.0
-        while env.time() < end and not state["arrived"]:
+        end = env.data.time + 5.0
+        while env.data.time < end and not state["arrived"]:
             control_step()
             if not env.step():
                 break

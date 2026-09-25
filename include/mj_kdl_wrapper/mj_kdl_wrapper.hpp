@@ -19,6 +19,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 #include <chrono>
 
@@ -130,7 +131,7 @@ struct AttachmentSpec
     double       pos[3]  = { 0, 0, 0 };    // position offset [m]
     double       quat[4] = { 0, 0, 0, 1 }; // orientation offset [x, y, z, w]
 
-    /* Contact exclusion pairs registered by attach_to_spec(). */
+    /* Contact exclusion pairs registered by build_scene(). */
     std::vector<std::pair<std::string, std::string>> contact_exclusions; // (body1, body2) pairs
 };
 
@@ -160,7 +161,7 @@ struct CtrlModeSpec
  * One robot in a scene: a root MJCF (arm, mobile base, ...) with an ordered attachment
  * chain and a placement target.
  *
- * attachments is applied in order by build_scene() / attach_to_spec(): each entry's
+ * attachments is applied in order by build_scene(): each entry's
  * attach_to may reference any body, site, or frame in the accumulated spec (root + all
  * prior attachments). This naturally supports: fixed arm, arm+gripper, arm+mount+FT+
  * gripper, mobile base, mobile manipulator (base root, arm as first attachment), etc.
@@ -212,6 +213,10 @@ enum class Condim : int { Tangential = 3, Torsional = 4, Rolling = 6 };
  * @ingroup grp_types
  * A free-floating or fixed rigid body to place in the scene.
  *
+ * Names: an MJCF asset's elements keep their authored names, with prefix prepended when set;
+ * its root body is renamed to name. The same asset used twice needs distinct prefixes, or
+ * the build fails on the repeated names.
+ *
  * size:
  *   BOX       - half-extents (x, y, z)
  *   SPHERE    - {radius, 0, 0}
@@ -233,7 +238,8 @@ enum class Condim : int { Tangential = 3, Torsional = 4, Rolling = 6 };
  *
  * fixed:
  *   If true the body is welded to its parent (no freejoint); useful for
- *   static obstacles or fixtures. Ignored when mjcf_path is set.
+ *   static obstacles or fixtures. If false, an MJCF asset whose root has no joint
+ *   gets a freejoint named `<name>_free`.
  *
  * size, rgba, mass and friction start unset (NaN) and must be set explicitly
  * by the caller; build_scene() fails on a primitive that leaves one unset.
@@ -248,8 +254,9 @@ enum class Condim : int { Tangential = 3, Torsional = 4, Rolling = 6 };
  */
 struct SceneObject
 {
-    std::string  name;
+    std::string  name;      // the object's root body takes this name
     std::string  mjcf_path; // optional MJCF asset; when set, shape/size/mass/friction are ignored
+    std::string  prefix;    // prepended to the asset's element names; empty = as authored
     AttachTarget attach_to; // placement parent (default: world)
     Shape shape = Shape::Unspecified; // required for primitives; rejected at build time if not set
     // half-extents (BOX) / {radius, 0, 0} (SPHERE) / {radius, half-len, 0} (CYL)
@@ -284,8 +291,8 @@ struct SiteSpec
 /**
  * @ingroup grp_types
  * A named fixed camera to add to the world body of the scene.
- * After build_scene() the camera is accessible by name via get_camera_names()
- * and can be activated on a Viewer or VideoRecorder with use_camera().
+ * After build_scene() the camera is accessible by name (mj_name2id(model, mjOBJ_CAMERA, name))
+ * and can be activated on a Viewer with use_camera(), or on a VideoRecorder through vr.cam.
  *
  * pos and fovy start unset (NaN): there is no neutral camera position or field of view, so
  * the caller must specify both, and build_scene() fails otherwise. quat defaults to identity.
@@ -611,6 +618,8 @@ struct Env
     SceneState           scene;  // bind slots with bind_scene_*(&env.scene, ...)
     Viewer               viewer; // closed until open_viewer()
     ResetHook            on_reset;
+    // Takes each compiled pair; returns the pair to run on, which the Env never frees.
+    std::function<std::pair<mjModel *, mjData *>(mjModel *, mjData *)> adopt;
 
     Env();
     ~Env();
@@ -623,8 +632,9 @@ struct Env
 /**
  * @ingroup grp_scene
  * Save a model to an MJCF XML file, including runtime changes to its real-valued fields.
- * Works for any live model from build_scene()/compile_and_make_data(), and for the last model
- * loaded with mj_loadXML. Typical use: build a combined scene once, save it, reload it later.
+ * Works for any live model from build_scene() or init_env() (adopted ones too), and for the
+ * last model loaded with mj_loadXML. Typical use: build a combined scene once, save it, reload
+ * it later.
  * @param model  Model to save.
  * @param path   Output path for the MJCF XML file.
  * @return an empty Status on success, else the error.
@@ -676,9 +686,6 @@ Status init_robot_from_chain(
   const ToolFrameSpec            *tool   = nullptr
 );
 
-/** @ingroup grp_robot Find a configured logical force-torque sensor by name. */
-const ForceTorqueSensor *find_ft_sensor(const Robot *r, const char *name);
-
 /**
  * @ingroup grp_robot
  * Per-joint torque/force saturation limit in KDL joint order for the actuator
@@ -695,23 +702,10 @@ std::vector<double> joint_force_limits(const Robot *r, double fallback = 1e6);
 
 /**
  * @ingroup grp_scene
- * Apply one attachment to an arm spec using the MuJoCo spec API (mjs_attach).
- * Parses a->mjcf_path, attaches its first root body under a->attach_to with the given
- * pos/quat offset, prefixes all element names with a->prefix, and registers contact
- * exclusions via mjs_addExclude.  Can be called repeatedly to build a chain: each
- * subsequent a->attach_to may reference any body added by prior calls.
- * @param[in,out] robot_spec  Accumulated robot spec to attach into.
- * @param[in]     a           Attachment; a->mjcf_path must be set.
- * @return an empty Status on success, else the error.
- */
-Status attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a);
-
-/**
- * @ingroup grp_scene
  * Build a MuJoCo scene from one or more robots using the MuJoCo spec API.
  * This is the primary scene-building function.
  *
- * For each RobotSpec: mj_parseXML loads the root MJCF, then attach_to_spec() applies
+ * For each RobotSpec: mj_parseXML loads the root MJCF, then mjs_attach applies
  * each entry in RobotSpec::attachments in order (mount, sensor, gripper, etc.),
  * and mjs_attach places the complete robot spec at the given position.  A single
  * mj_compile produces the final model -- no intermediate XML files are written.
@@ -874,7 +868,7 @@ bool record_frame(VideoRecorder *vr, Env *env);
  * @ingroup grp_recorder
  * Initialise offscreen rendering only: EGL context and MuJoCo render buffers,
  * no ffmpeg process and no output file. Use with render_rgb() to grab frames;
- * use_camera(VideoRecorder*, ...) and cleanup(VideoRecorder*) work unchanged.
+ * the camera is vr->cam, as for a recording, and cleanup(VideoRecorder*) frees it.
  *
  * @param vr      VideoRecorder to initialise; freed by cleanup(VideoRecorder*).
  * @param model   MuJoCo model for the rendering context.
@@ -918,17 +912,9 @@ bool step(Env *env);
 /**
  * @ingroup grp_viewer
  * Sleep out this step's share of wall time at the viewer's real-time factor. step() never
- * sleeps; a loop that paces itself reads realtime_factor_of() instead. No-op headless.
+ * sleeps; a loop that paces itself reads Viewer::realtime_factor instead. No-op headless.
  */
 void pace_realtime(Env *env);
-
-/**
- * @ingroup grp_viewer
- * The viewer's current real-time factor, as the user has set it with the speed keys.
- * @param[in] v  Viewer, or nullptr.
- * @return the factor; 0.0 means uncapped ("RTF: MAX"), 1.0 if @p v is nullptr.
- */
-double realtime_factor_of(const Viewer *v);
 
 /**
  * @ingroup grp_viewer
@@ -1070,13 +1056,6 @@ Status scene_remove_object(Env *env, const std::string &name);
 
 /**
  * @ingroup grp_scene
- * Return the compiled MuJoCo name for a site inside an MJCF-backed SceneObject.
- * build_scene() prefixes all MJCF asset element names with obj.name + "_".
- */
-std::string scene_object_site_name(const SceneObject &obj, const char *site_name);
-
-/**
- * @ingroup grp_scene
  * Read a named MuJoCo site as a world-frame KDL frame. Recomputes the kinematics only when the
  * state has changed since they were last computed (a direct qpos write included).
  */
@@ -1087,30 +1066,6 @@ bool get_site_frame(Env *env, const char *site_name, KDL::Frame *out);
  * Read a named MuJoCo body as a world-frame KDL frame, as get_site_frame() does.
  */
 bool get_body_frame(Env *env, const char *body_name, KDL::Frame *out);
-
-/**
- * @ingroup grp_scene
- * Read a joint's position (qpos) in physical units (rad or m), by joint name.
- * If the name is not a joint, it is treated as an actuator name and resolved to
- * its transmission joint (direct joint, or the first tendon-wrapped joint).
- * Fails (logged) for a ball or free joint and for an actuator that drives no joint.
- */
-bool get_joint_position(Env *env, const char *name, double *out);
-
-/**
- * @ingroup grp_scene
- * Read a joint's velocity (qvel) in physical units (rad/s or m/s), by joint name.
- * Resolves the name exactly as get_joint_position() does.
- */
-bool get_joint_velocity(Env *env, const char *name, double *out);
-
-/**
- * @ingroup grp_scene
- * Return the names of all cameras in a compiled model.
- * Includes cameras from robot MJCFs (e.g. the Kinova wrist camera) and any
- * cameras added via SceneSpec::cameras.
- */
-std::vector<std::string> get_camera_names(const mjModel *model);
 
 /**
  * @ingroup grp_viewer
@@ -1131,76 +1086,5 @@ void set_free_camera(
   double                       elevation,
   const std::array<double, 3> &lookat
 );
-
-/**
- * @ingroup grp_recorder
- * Switch the video recorder to a named fixed camera defined in the model.
- * @return true if the camera name was found; false if not found (recorder unchanged).
- */
-bool use_camera(VideoRecorder *vr, const mjModel *model, const char *name);
-
-/**
- * @ingroup grp_recorder
- * Configure the video recorder's free orbit camera.
- */
-void set_free_camera(
-  VideoRecorder               *vr,
-  double                       distance,
-  double                       azimuth,
-  double                       elevation,
-  const std::array<double, 3> &lookat
-);
-
-/**
- * Internal spec-building helpers.
- *
- * These are used internally by build_scene() but are exposed here for advanced
- * callers that construct mjSpec objects directly. They are not part of the
- * stable public API and may change between releases.
- */
-
-/**
- * @ingroup grp_advanced
- * Add a sky gradient texture and overhead directional light to spec.
- * Corresponds to SceneSpec::add_skybox.
- */
-void add_skybox_to_spec(mjSpec *spec);
-
-/**
- * @ingroup grp_advanced
- * Add a checker groundplane texture, material, and floor plane geom to spec.
- * Corresponds to SceneSpec::add_floor, placed at floor_z along the world z axis
- * so a scene whose world frame is not at ground level still gets a ground.
- */
-void add_floor_to_spec(mjSpec *spec, double floor_z = 0.0);
-
-/**
- * @ingroup grp_advanced
- * Add free-floating or fixed rigid bodies to the world body of spec.
- * @param spec     MuJoCo spec to modify.
- * @param objects  List of objects to add.
- * @return an error (logged) for the first object that cannot be added, e.g. a field left unset.
- */
-Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects);
-
-/**
- * @ingroup grp_advanced
- * Compile spec into a model and create its data buffer. Takes ownership of spec: freed on
- * failure, otherwise kept with the model (for save_model_xml) and freed by destroy_scene().
- * @param[in]  spec       MuJoCo spec to compile; owned by the wrapper from here on.
- * @param[out] out_model  Newly allocated model on success; null on failure.
- * @param[out] out_data   Newly allocated data on success; null on failure.
- * @return an empty Status on success, else the error.
- */
-Status compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data);
-
-/**
- * @ingroup grp_advanced
- * Load MuJoCo decoder plugins (STL, OBJ, ...) once at first use.
- * Required for external mesh decoder plugin libraries.
- * Called automatically by all scene-building functions; call explicitly only
- * when building a scene via raw mjSpec APIs without going through the library.
- */
-void ensure_plugins_loaded();
 
 } // namespace mj_kdl

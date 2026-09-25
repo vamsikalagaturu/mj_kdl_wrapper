@@ -65,8 +65,8 @@ def test_pykdl_chain_frame_and_joint_array_interop():
         assert chain.getNrOfJoints() == robot.n_joints
 
         q = kdl.JntArray(robot.n_joints)
-        frame = robot.fk_frame(q)
-        assert isinstance(frame, kdl.Frame)
+        frame = kdl.Frame()
+        assert kdl.ChainFkSolverPos_recursive(chain).JntToCart(q, frame) >= 0
         robot.set_joint_pos(q)
     finally:
         env.close()
@@ -159,7 +159,7 @@ def test_set_body_pose_accepts_python_xyzw_quaternion():
         env.close()
 
 
-def test_reset_restores_commands_and_slots():
+def test_reset_restores_commands_and_clears_wrenches():
     _skip_without_model()
 
     spec = _scene_spec()
@@ -168,7 +168,7 @@ def test_reset_restores_commands_and_slots():
     try:
         robot = env.create_robot("base_link", "bracelet_link")
         robot.jnt_pos_cmd = [0.3] * robot.n_joints
-        env.set_body_wrench("cube", [0.0, 0.0, 50.0])
+        env.data.body("cube").xfrc_applied[2] = 50.0
         for _ in range(50):
             env.update()
             env.step()
@@ -226,9 +226,11 @@ def test_robot_from_a_given_chain_matches_the_derived_one():
     with mjk.Env.build(_scene_spec()) as env:
         derived = env.create_robot("base_link", "bracelet_link")
         env.reset()
-        given = env.create_robot_from_chain(derived.kdl_chain(), derived.joint_names)
+        chain = derived.kdl_chain()
+        given = env.create_robot_from_chain(chain, derived.joint_names)
         assert given.n_joints == derived.n_joints
-        assert given.fk_frame().p == derived.fk_frame().p
+        assert given.jnt_pos_msr.tolist() == derived.jnt_pos_msr.tolist()
+        assert given.kdl_chain().getNrOfSegments() == chain.getNrOfSegments()
 
 
 def test_joint_force_limits_follow_the_active_mode():
@@ -254,3 +256,26 @@ def test_offscreen_render_returns_an_image():
             rgb = rec.render_rgb()
         assert rgb.shape == (48, 64, 3) and rgb.dtype.name == "uint8"
         assert rgb.any()
+
+
+def test_env_runs_on_real_mujoco_objects():
+    _skip_without_model()
+    mujoco = pytest.importorskip("mujoco")
+
+    with mjk.Env.build(_scene_spec()) as env:
+        robot = env.create_robot("base_link", "bracelet_link")
+        assert isinstance(env.model, mujoco.MjModel)
+        assert isinstance(env.data, mujoco.MjData)
+        mujoco.mj_forward(env.model, env.data)
+
+        env.data.qpos[env.model.joint(robot.joint_names[0]).qposadr[0]] = 0.3
+        env.update()
+        assert robot.jnt_pos_msr[0] == pytest.approx(0.3)
+
+        old_model, old_data = env.model, env.data
+        env.add_object(_cube())
+        assert env.model.nbody == old_model.nbody + 1
+        assert env.model is not old_model and env.data is not old_data
+        assert env.step()
+    with pytest.raises(RuntimeError, match="closed"):
+        _ = env.model

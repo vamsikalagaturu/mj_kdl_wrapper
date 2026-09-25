@@ -25,8 +25,8 @@ def main() -> int:
         robot.jnt_pos_cmd = [0.0] * robot.n_joints
 
         env.open_viewer(TITLE)
-        end = env.time() + 1.0
-        while env.time() < end:
+        end = env.data.time + 1.0
+        while env.data.time < end:
             env.update()
             if not env.step():
                 break

@@ -15,7 +15,7 @@
  *   ex_achd_pick_place [--headless] [--record output.mp4]
  *
  * Runs the full sequence once, prints the final cube position and exits; --headless skips
- * the viewer. */
+ * the viewer; --record writes an MP4 offscreen (EGL + ffmpeg) and implies --headless. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "common.hpp"

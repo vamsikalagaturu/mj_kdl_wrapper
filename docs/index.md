@@ -22,7 +22,7 @@ The `Env` now owns everything the loop touches: the model/data, the robots, the 
 | `step(&robot)`, `step_n()`, `step(&viewer, m, d)` | `step(&env)` |
 | `update(&robot)`, `read_measurements()`, `apply_commands()` | `update(&env)` (every robot and scene slot) |
 | `pace_realtime(&robot)` / `(&viewer, m)` | `pace_realtime(&env)` |
-| `get_body_frame(m, d, ...)`, `get_site_frame`, `get_joint_*`, `set_body_pose(m, d, ...)` | same names, taking `&env` |
+| `get_body_frame(m, d, ...)`, `get_site_frame`, `set_body_pose(m, d, ...)` | same names, taking `&env` |
 | `init_scene_state()`, `read/apply/rebind_scene_state()` | `bind_scene_*(&env.scene, ...)`; `update(&env)` and rebuilds handle the rest |
 | `scene_add_object(&m, &d, &spec, ...)` | `scene_add_object(&env, ...)` |
 | `record_frame(&vr, m, d)`, `render_rgb(&vr, m, d, out)` | `record_frame(&vr, &env)`, `render_rgb(&vr, &env, out)` |
@@ -45,6 +45,18 @@ Also changed in 0.4:
 | Earlier docs used `tool_body = "g_base"` for the 2F-85, which leaves the mount's mass out of KDL | use `"g_base_mount"` |
 | Python: joint ports read as read-only numpy arrays | assign whole vectors; `port[i] = x` raises |
 | Python: `Env.save_xml()` -> `save_model_xml()`, `Robot.tip_to_tcp` -> `tip_T_tcp` | rename; there are no aliases |
+| `get_camera_names()` removed | loop `i < model->ncam` with `mj_id2name(model, mjOBJ_CAMERA, i)` |
+| `get_joint_position()` / `get_joint_velocity()` removed | a `bind_scene_joint()` slot's `position`/`velocity`, or `model`/`data` directly |
+| `realtime_factor_of()` removed | read `Viewer::realtime_factor` |
+| `use_camera(VideoRecorder*)` / `set_free_camera(VideoRecorder*)` removed (the `Viewer` overloads stay) | write `vr.cam`: `type = mjCAMERA_FIXED`, `fixedcamid = mj_name2id(model, mjOBJ_CAMERA, name)`; or `mjv_defaultFreeCamera()` |
+| `scene_object_site_name()` removed (C++ and Python) | the asset's own site name; objects are no longer auto-prefixed: set `SceneObject::prefix` (Python `SceneObject.prefix`) to prefix them |
+| `attach_to_spec()`, `add_floor_to_spec()`, `add_skybox_to_spec()`, `add_objects_to_spec()`, `compile_and_make_data()`, `ensure_plugins_loaded()` are internal | go through `SceneSpec` and `build_scene()`; to run on your own pair, set `Env::adopt` |
+| Python: `Env.time()`, `timestep()`, `camera_names()`, `save_binary()`, `mjk.mujoco_version()` removed | `env.data.time`, `env.model.opt.timestep`, `[env.model.camera(i).name for i in range(env.model.ncam)]`, `mujoco.mj_saveModel(env.model, path, None)`, `mjk.__mujoco_version__` |
+| Python: `Env.actuator_ctrl()`, `set_actuator_ctrl()`, `has_actuator()`, `set_body_wrench()` removed | `env.data.actuator(n).ctrl[0]` (read or assign), `env.model.actuator(n)` (`KeyError` when missing), `env.data.body(n).xfrc_applied[:] = [*f, *t]` |
+| Python: `Robot.fk_frame()`, `gravity_torques()` removed | PyKDL `ChainFkSolverPos_recursive` / `ChainDynParam` on `robot.kdl_chain()` with a `JntArray` of `robot.jnt_pos_msr` |
+| Python: `Robot.ft_sensor_frame(name)` removed | `env.site_frame(<the sensor's frame_site>)` |
+| `find_ft_sensor()` removed | search `robot.ft_sensors` (in `ToolFrameSpec::ft_sensors` order) by `.name` |
+| MJCF `SceneObject`s are no longer prefixed with `name + "_"` | use the asset's own element names; set `SceneObject::prefix` when an asset is used twice |
 
 ## Migrating from 0.3.1 {#sec_migrate_pacing}
 

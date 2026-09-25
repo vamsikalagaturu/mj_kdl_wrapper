@@ -16,7 +16,6 @@ A C++ library bridging [MuJoCo](https://github.com/google-deepmind/mujoco) physi
   <td align="center"><img src="docs/screenshots/ex_table_scene.png" width="380"/><br/><b>ex_table_scene</b> &mdash; Arm + table + scene objects</td>
 </tr>
 <tr>
-  <td align="center"><img src="docs/screenshots/ex_pick.png" width="380"/><br/><b>ex_pick</b> &mdash; Pick-and-place with Robotiq 2F-85</td>
   <td align="center"><img src="docs/screenshots/ex_dual_arm.png" width="380"/><br/><b>ex_dual_arm</b> &mdash; Dual arm + grippers</td>
 </tr>
 </table>
@@ -74,7 +73,7 @@ cmake --build build --parallel $(nproc)
 cmake --install build
 
 # check: run the pick-and-place example
-./build/src/examples/ex_pick
+./build/src/examples/ex_table_pick_place
 ```
 
 To share one KDL across several projects, set up a `ws/` folder, build the fork
@@ -136,7 +135,7 @@ cd mj_kdl_wrapper_examples
 mj-kdl-fetch-menagerie
 
 # check: run the pick-and-place example
-python examples/ex_pick.py --gui
+python examples/ex_table_pick_place.py --gui
 ```
 
 ### ROS 2 (colcon)
@@ -180,8 +179,7 @@ rationale, build ordering, and consuming it from your own nodes.
 
 The example catalog lives in [docs/examples.md](docs/examples.md). C++ examples are in
 `src/examples/`, Python ones in `python/mj_kdl_wrapper/examples/`; most exist in both
-(`ex_achd_press` is C++ only; `ex_cabinet`, `basic_scene`, `custom_ui_scene` and
-`viewer_scene` are Python only). Every example ends by itself: headless by default, and with
+(`ex_cabinet`, `basic_scene`, `custom_ui_scene` and `viewer_scene` are Python only). Every example ends by itself: headless by default, and with
 the viewer (`--gui` in Python, no `--headless` in C++) it runs the same sequence.
 
 ## Tests

@@ -70,17 +70,15 @@ TEST_F(MjcfFtSensorTest, ReadsNamedWrench)
     mj_kdl::Robot robot;
     ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&robot, &env_, "base_link", "bracelet_link", "", &tool)
     );
-    EXPECT_EQ(robot.ft_sensors.size(), 1u);
-    const mj_kdl::ForceTorqueSensor *sensor = mj_kdl::find_ft_sensor(&robot, "wrist_ft");
-    ASSERT_NE(sensor, nullptr);
+    ASSERT_EQ(robot.ft_sensors.size(), 1u);
+    const mj_kdl::ForceTorqueSensor *sensor = &robot.ft_sensors.front();
+    EXPECT_EQ(sensor->name, "wrist_ft");
     EXPECT_EQ(sensor->force_sensor, "wrist_ft_force");
     EXPECT_EQ(sensor->torque_sensor, "wrist_ft_torque");
     EXPECT_GE(sensor->frame_site_id, 0);
 
     mj_forward(env_.model, env_.data);
     mj_kdl::update(&env_);
-    sensor = mj_kdl::find_ft_sensor(&robot, "wrist_ft");
-    ASSERT_NE(sensor, nullptr);
     EXPECT_TRUE(std::isfinite(sensor->wrench.force.x()));
     EXPECT_TRUE(std::isfinite(sensor->wrench.force.y()));
     EXPECT_TRUE(std::isfinite(sensor->wrench.force.z()));

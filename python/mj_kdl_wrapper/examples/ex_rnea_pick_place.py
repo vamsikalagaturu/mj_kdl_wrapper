@@ -154,14 +154,13 @@ def step_once(env, state) -> bool:
 def run_phase(env, robot, solver, chain, phase, gui, state) -> bool:
     print(f"State: {phase['name']}")
     start = robot.jnt_pos_msr[:]
-    t0 = env.time()
+    t0 = env.data.time
     while True:
-        t_rel = env.time() - t0
+        t_rel = env.data.time - t0
         a = max(0.0, min(1.0, t_rel / phase["duration"]))
         target = [x + a * (y - x) for x, y in zip(start, phase["target"])]
         rnea_controller(robot, solver, chain, target)
-        if env.has_actuator("g_fingers_actuator"):
-            env.set_actuator_ctrl("g_fingers_actuator", phase["gripper"])
+        env.data.actuator("g_fingers_actuator").ctrl[0] = phase["gripper"]
         env.update()
 
         # Ramp for the duration, then settle to the tolerance, never past the timeout.
@@ -190,8 +189,7 @@ def main() -> int:
         def on_reset(ctx):
             robot.set_joint_pos(HOME)
             env.set_body_pose("cube", CUBE_START)
-            if env.has_actuator("g_fingers_actuator"):
-                env.set_actuator_ctrl("g_fingers_actuator", 0.0)
+            env.data.actuator("g_fingers_actuator").ctrl[0] = 0.0
             state["reset"] = True
 
         env.on_reset = on_reset

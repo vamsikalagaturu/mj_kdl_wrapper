@@ -1,3 +1,15 @@
+/* ex_achd_table_slide.cpp
+ * Kinova GEN3 + Robotiq 2F-85 slides its TCP 0.2 m along +X on a table while pressing down
+ * with kPressForce, under ACHD (KDL ChainHdSolver_Vereshchagin, linear Z left free) + RNEA.
+ * The press goes through ACHD's external-force input with driver weights 1, the pinned KDL
+ * fork's setDriverWeights(); the table's contact normal force is measured against it.
+ *
+ * Usage:
+ *   ex_achd_table_slide [--headless]
+ *
+ * Runs the slide once and exits 1 if the table contact was not held; prints the mean table
+ * reaction, the commanded press and their ratio. --headless skips the viewer. */
+
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
@@ -24,12 +36,28 @@ static constexpr double kKdLin        = 30.0;
 static constexpr double kKpRot        = 175.0;
 static constexpr double kKdRot        = 28.0;
 static constexpr double kBetaMax      = 120.0;
+static constexpr double kPressForce   = 10.0; // [N] commanded straight down at the TCP
+static constexpr double kContactHeld  = 0.5;  // the contact chatters while sliding
 
 static constexpr double kTablePose[7] = {
     -0.00258, 1.43, 3.14, -1.70, -0.018, 1.74, 1.57
 };
 
 static double clamp_abs(double v, double limit) { return std::max(-limit, std::min(limit, v)); }
+
+// Sum of contact normal forces on one geom; positive pushes the bodies apart.
+static double contact_normal_force(const mjModel *model, mjData *data, int geom)
+{
+    double total = 0.0;
+    for (int i = 0; i < data->ncon; ++i) {
+        const mjContact &c = data->contact[i];
+        if (c.geom1 != geom && c.geom2 != geom) continue;
+        double f[6];
+        mj_contactForce(model, data, i, f);
+        total += f[0];
+    }
+    return total;
+}
 
 static void print_array(const char *label, const KDL::JntArray &x)
 {
@@ -120,7 +148,9 @@ static bool control_step(
     beta(4) = clamp_abs(kKpRot * e[4] + kKdRot * de[4], kBetaMax);
     for (unsigned i = 0; i < 5; ++i) err_prev[i] = e[i];
 
-    KDL::SetToZero(ff_tau);
+    // Gravity as feed-forward, so only the commanded press pushes the free linear Z down.
+    const KDL::JntArray zero(q.rows());
+    if (rnea.CartToJnt(q, zero, zero, f_ext_rnea_zero, ff_tau) < 0) return false;
     if (achd.CartToJnt(q, qd, qdd, alpha, beta, f_ext_achd, ff_tau, constraint_tau) < 0) return false;
     if (rnea.CartToJnt(q, qd, qdd, f_ext_rnea_zero, tau_cmd) < 0) return false;
 
@@ -263,17 +293,38 @@ int main(int argc, char **argv)
         std::cout << "\n";
     }
 
+    // Driver weights 1 pass the commanded wrench through to the environment.
+    achd.setDriverWeights(Eigen::VectorXd::Ones(5), Eigen::VectorXd::Zero(5));
+    f_ext_achd.back()    = KDL::Wrench(KDL::Vector(0.0, 0.0, -kPressForce), KDL::Vector::Zero());
+    const int table_geom = mj_name2id(env.model, mjOBJ_GEOM, "top");
+    if (table_geom < 0) return 1;
+
     std::array<double, 5> err_prev{};
     bool first_pid = true;
     int step_count = 0;
+    // Measured over the second half of the slide: the press first has to bring the TCP down.
+    int    contact_steps  = 0;
+    double reaction_sum   = 0.0;
+    int    reaction_count = 0;
 
     auto restart_task = [&]() {
         mj_kdl::update(&env);
         fill_q_state(robot, q, qd);
         fk_pos.JntToCart(q, tracked);
-        err_prev   = {};
-        first_pid  = true;
-        step_count = 0;
+        err_prev       = {};
+        first_pid      = true;
+        step_count     = 0;
+        contact_steps  = 0;
+        reaction_sum   = 0.0;
+        reaction_count = 0;
+    };
+
+    auto measure_press = [&]() {
+        if (step_count <= kSlideSteps / 2) return;
+        const double reaction = contact_normal_force(env.model, env.data, table_geom);
+        if (reaction > 0.0) ++contact_steps;
+        reaction_sum += reaction;
+        ++reaction_count;
     };
 
     auto step_control = [&]() {
@@ -295,6 +346,7 @@ int main(int argc, char **argv)
     if (headless) {
         for (int i = 0; i < kSlideSteps; ++i) {
             if (!step_control() || !mj_kdl::step(&env)) break;
+            measure_press();
         }
         mj_kdl::update(&env);
         fill_q_state(robot, q, qd);
@@ -313,6 +365,7 @@ int main(int argc, char **argv)
         restarted = false;
         while (step_count < kSlideSteps) {
             if (!step_control() || !mj_kdl::step(&env)) break;
+            measure_press();
             if (restarted) {
                 restarted = false;
                 restart_task();
@@ -321,6 +374,17 @@ int main(int argc, char **argv)
         }
     }
 
+    const double contact_fraction =
+      reaction_count > 0 ? static_cast<double>(contact_steps) / reaction_count : 0.0;
+    const double mean_reaction = reaction_count > 0 ? reaction_sum / reaction_count : 0.0;
+    std::cout << std::fixed << std::setprecision(3) << "table_contact_fraction=" << contact_fraction
+              << " mean_table_reaction_N=" << mean_reaction << " commanded_press_N=" << kPressForce
+              << " reaction_over_command=" << mean_reaction / kPressForce << "\n";
+
     mj_kdl::cleanup(&env);
+    if (contact_fraction < kContactHeld) {
+        std::cerr << "table contact not held during the slide\n";
+        return 1;
+    }
     return 0;
 }

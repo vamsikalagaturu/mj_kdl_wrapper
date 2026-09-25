@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import math
 
+import PyKDL as kdl
+
 import mj_kdl_wrapper as mjk
 
 SURFACE_Z = 0.7
@@ -104,8 +106,8 @@ def run_loop(env: mjk.Env, step_fn, *, duration: float, gui: bool) -> None:
     if gui:
         # The UI's reset button runs env's reset, on_reset included.
         env.open_viewer("ex_table_scene.py")
-    end = env.time() + duration
-    while env.time() < end:
+    end = env.data.time + duration
+    while env.data.time < end:
         step_fn()
         if not env.step():
             break
@@ -127,17 +129,23 @@ def main() -> int:
         env.on_reset = lambda ctx: robot.set_joint_pos(HOME_POSE)
         env.reset()
 
-        top = env.site_frame(mjk.scene_object_site_name(env.spec.objects[0], "table_top"))
+        top = env.site_frame("table_top")
         print(f"table top z = {top.p.z():.3f}")
-        print(f"cameras: {' '.join(env.camera_names())}")
+        cameras = [env.model.camera(i).name for i in range(env.model.ncam)]
+        print(f"cameras: {' '.join(cameras)}")
+        chain = robot.kdl_chain()
+        dyn = kdl.ChainDynParam(chain, kdl.Vector(0.0, 0.0, -9.81))
 
         def step():
             env.update()
-            robot.jnt_trq_cmd = robot.gravity_torques(-9.81)
-            if env.has_actuator("g_fingers_actuator"):
-                env.set_actuator_ctrl(
-                    "g_fingers_actuator", GRIPPER_CLOSED if math.fmod(env.time(), 6.0) < 3.0 else 0.0
-                )
+            q = kdl.JntArray(robot.n_joints)
+            for i, value in enumerate(robot.jnt_pos_msr):
+                q[i] = value
+            g = kdl.JntArray(robot.n_joints)
+            dyn.JntToGravity(q, g)
+            robot.jnt_trq_cmd = [g[i] for i in range(robot.n_joints)]
+            grip = GRIPPER_CLOSED if math.fmod(env.data.time, 6.0) < 3.0 else 0.0
+            env.data.actuator("g_fingers_actuator").ctrl[0] = grip
             env.update()
 
         run_loop(env, step, duration=1.0, gui=args.gui)

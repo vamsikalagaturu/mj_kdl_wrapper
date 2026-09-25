@@ -195,7 +195,7 @@ uv pip install .                                                            # fr
 Verify:
 
 ```bash
-python -c "import PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mujoco.mj_versionString(), mjk.mujoco_version())"
+python -c "import PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mujoco.mj_versionString(), mjk.__mujoco_version__)"
 ```
 
 ### Python build options

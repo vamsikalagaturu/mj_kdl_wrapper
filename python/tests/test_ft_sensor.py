@@ -56,6 +56,6 @@ def test_ft_sensor_returns_pykdl_wrench():
 
         assert robot.ft_sensor_names == ["wrist_ft"]
         assert isinstance(robot.ft_sensor("wrist_ft"), kdl.Wrench)
-        assert isinstance(robot.ft_sensor_frame("wrist_ft"), kdl.Frame)
+        assert isinstance(env.site_frame("wrist_ft_site"), kdl.Frame)
     finally:
         env.close()

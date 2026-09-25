@@ -42,7 +42,7 @@ def main() -> int:
     print("Run, e.g.:")
     print(f"  cd {dest}")
     print("  mj-kdl-fetch-menagerie")
-    print("  python examples/ex_pick.py --gui")
+    print("  python examples/ex_table_pick_place.py --gui")
     return 0
 
 

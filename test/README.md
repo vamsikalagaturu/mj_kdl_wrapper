@@ -36,7 +36,7 @@ cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON
 | `test_control_modes` | control modes as actuator groups: added actuators, switching, limits |
 | `test_scene_state` | `Env` scene slots, what `step()` leaves current, what `reset()` restores |
 | `test_camera_ros` | ROS camera publisher (built only when configured with ROS) |
-| `ex_*_headless` | each C++ example except `ex_record` runs `--headless` and passes its own self-check |
+| `ex_*_headless` | each C++ example runs `--headless` and passes its own self-check |
 
 The opt-in viewer test (`DISABLED_` prefix, see test_scene_state) opens a Simulate window:
 
@@ -65,8 +65,6 @@ The opt-in viewer test (`DISABLED_` prefix, see test_scene_state) opens a Simula
   a pending `ctrl_mode`; `on_reset` runs after the re-seed and what it moves is read back.
 - **Recorder.OutputPathReachesFfmpegVerbatim** -- a path with `"` and `$(...)` is written as named
   and runs nothing (skips without EGL or ffmpeg).
-- **Recorder.FreeCameraLeavesAFixedCamera** -- `set_free_camera(VideoRecorder*)` switches a fixed
-  camera back to a free one.
 - **EnvSpec.OwnsItsStringsAcrossARebuild** -- `scene_add_object()` rebuilds after the caller's
   path and prefix strings are gone.
 - **AFailureSaysWhy** -- a failed call returns a `Status` whose `error` names the cause (unknown
@@ -103,8 +101,7 @@ Two fixtures:
   joints, EE within workspace at home; `joint_limits` follow the model (+-inf for a continuous
   joint); `save_model_xml()` output loads back with the same `nq`/`nbody`.
 - **MjcfGripperTest** (arm + 2F-85): `nq>=13`, `nu>=8`, KDL chain 7 joints,
-  EE workspace, gripper driver range `[~0, ~0.8]` rad; `get_joint_position()` by joint or
-  actuator name.
+  EE workspace, gripper driver range `[~0, ~0.8]` rad; `bind_scene_joint()` by joint name.
 - **MjcfPathTest** (`fixtures/meshdir/`): a relative model path to an MJCF with a relative
   `meshdir` builds.
 - **JointEdgeCaseTest** (`fixtures/joint_edge_cases.xml`): a chain refuses a body with two joints

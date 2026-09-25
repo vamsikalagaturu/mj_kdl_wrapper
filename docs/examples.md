@@ -18,11 +18,12 @@ Every example ends by itself. A C++ example (`src/examples/`) opens the Simulate
 given `--headless`; a Python one (`python/mj_kdl_wrapper/examples/`) runs headless unless given
 `--gui`. Either way it runs the same sequence or duration, prints its result, and exits;
 closing the window ends it early. The headless runs self-check and are registered with CTest
-(`ex_*_headless`). Exceptions: `ex_record` only records, and the Python `custom_ui_scene.py`
-and `viewer_scene.py` always open a window (for a fixed 1 s and 10 s of simulated time).
+(`ex_*_headless`). Exceptions: the Python `custom_ui_scene.py` and `viewer_scene.py` always
+open a window (for a fixed 1 s and 10 s of simulated time). Recording: `ex_table_pour --record
+[out.mp4]` (C++ and Python) and `ex_achd_pick_place --record` (C++) also write an MP4.
 
-Most examples exist in both languages. C++ only: `ex_achd_press`. Python only: `ex_cabinet`,
-`basic_scene`, `custom_ui_scene`, `viewer_scene`.
+Most examples exist in both languages. Python only: `ex_cabinet`, `basic_scene`,
+`custom_ui_scene`, `viewer_scene`.
 
 The Python counterparts use the public Python wrapper and upstream `PyKDL`
 bindings for FK, IK, RNEA, and ACHD instead of re-binding KDL classes locally.
@@ -35,16 +36,13 @@ bindings for FK, IK, RNEA, and ACHD instead of re-binding KDL classes locally.
 | `ex_impedance` | arm + gripper | joint impedance with gripper inertia |
 | `ex_table_scene` | table + free objects | table/object scene construction |
 | `ex_cabinet` | 3-drawer cabinet, no robot | object-only scene with grasp sites and Simulate UI viewer |
-| `ex_pick` | floor cube | scripted pick and lift |
 | `ex_table_pick_place` | table + blue cube | scripted tabletop pick, transfer, release, and retreat |
 | `ex_table_pour` | table + transparent receiver | scripted pour from small gripper-held bottle into a tabletop vessel |
 | `ex_rnea_pick_place` | table + blue cube | Cartesian target interpolation with IK + RNEA inverse dynamics |
-| `ex_achd_table_slide` | table contact | ACHD partial constraint comparison with wrist/table support |
+| `ex_achd_table_slide` | table contact | ACHD slide along +X while pressing 10 N down through ACHD's external-force input; C++ measures the table reaction |
 | `ex_achd_pick_place` | table + blue cube | ACHD Cartesian pick/place with 6D TCP regulation and half-arm support wrench |
-| `ex_achd_press` (C++) | table | ACHD press with a commanded wrench, measured against the table's contact force |
 | `ex_admittance_ft` | table + wrist FT + gripper | Admittance control driven by a named force-torque sensor, RNEA task-space computed-torque inner loop |
 | `ex_dual_arm` | two arms + grippers | multi-robot scene with independent KDL chains |
-| `ex_record` | arm only | headless MP4 recording |
 | `basic_scene` (Python) | arm only | minimal build, step and read |
 | `custom_ui_scene` (Python) | arm only | the wrapper's Simulate UI for 1 s |
 | `viewer_scene` (Python) | arm only | the scene in MuJoCo's own Python viewer for 10 s |
@@ -141,42 +139,6 @@ the headless drift is tens of mm; with the gripper still it is about 0.1 mm.
 
 ---
 
-## ex_pick
-
-**Scene:** Kinova GEN3 + 2F-85 gripper + orange cube (4 cm, mass 0.1 kg) on the floor.
-
-**What it does:**
-- Runs a scripted pick-and-place sequence via a 6-state machine:
-  `HOME -> PREGRASP -> GRASP -> CLOSE -> LIFT -> HOLD`
-- IK waypoints are solved offline using `KDL::ChainIkSolverPos_NR_JL` with
-  joint limits, seeded from each prior solution.
-- Each state linearly interpolates from the measured pose at state-entry
-  (`q_enter`) to the IK target over a nominal duration, transitioning when
-  both elapsed time and joint error criteria are met (or on timeout).
-
-**Control law:** `CtrlMode::TORQUE` — joint impedance (PD + KDL gravity) throughout all states.
-
-```
-tau[i] = g[i] + Kp[i] * (q_des[i] - q[i]) - Kd[i] * dq[i]
-q_des linearly interpolated: q_enter + alpha * (q_target - q_enter)
-alpha = clamp((t - t_enter) / duration, 0, 1)
-```
-
-State table (durations in seconds):
-
-| State    | Duration | Timeout | Settle tol | Gripper |
-|----------|----------|---------|------------|---------|
-| HOME     | 1.0      | 2.5     | 0.08 rad   | open    |
-| PREGRASP | 5.0      | 7.0     | 0.08 rad   | open    |
-| GRASP    | 5.0      | 8.0     | 0.03 rad   | open    |
-| CLOSE    | 1.5      | 2.5     | (none)     | closed  |
-| LIFT     | 3.0      | 5.0     | 0.08 rad   | closed  |
-| HOLD     | 1.0      | 1.0     | (none)     | closed  |
-
-**Headless output:** `cube Z after pick: X.XXX m`
-
----
-
 ## ex_table_pick_place
 
 **Scene:** Kinova GEN3 + 2F-85 gripper mounted on a table, with a blue cube
@@ -188,7 +150,7 @@ on the tabletop.
 - Runs a scripted sequence:
   `HOME -> PICK_ABOVE -> PICK -> CLOSE -> LIFT -> PLACE_ABOVE -> PLACE -> OPEN -> RETREAT -> HOLD`
 
-**Control law:** `CtrlMode::TORQUE` — joint impedance (PD + KDL gravity), matching `ex_pick`.
+**Control law:** `CtrlMode::TORQUE` — joint impedance (PD + KDL gravity).
 
 ```
 tau[i] = g[i] + Kp[i] * (q_des[i] - q[i]) - Kd[i] * dq[i]
@@ -235,8 +197,12 @@ from that ACHD `qddot`:
 pose error -> beta -> ACHD qddot -> RNEA(q, qdot, qddot) -> jnt_trq_cmd
 ```
 
-- `ex_achd_table_slide` compares table-supported motion with linear-Z
-  constrained vs unconstrained.
+- `ex_achd_table_slide` slides the TCP 0.2 m along +X with linear Z left free, pressing
+  10 N down at the TCP through ACHD's external-force input with driver weights 1 (the pinned
+  KDL fork's `setDriverWeights()`), gravity as feed-forward. The C++ example prints the mean
+  table reaction over the second half of the slide, the command and their ratio (not judged),
+  and exits 1 if contact was held for less than half of that window; the contact chatters while
+  sliding. It also prints a one-shot nc=6 vs nc=5 comparison.
 - `ex_achd_pick_place` runs a pick/place sequence.  During the place-side
   phases it feeds an ACHD-only upward support wrench on `half_arm_2_link` to
   keep the elbow/half-arm from dropping while preserving the TCP task.
@@ -246,12 +212,7 @@ Run headless:
 ```bash
 ./build/src/examples/ex_achd_table_slide --headless
 ./build/src/examples/ex_achd_pick_place --headless
-./build/src/examples/ex_achd_press --headless [--variant weighted|main] [--free-z] [--force N]
 ```
-
-- `ex_achd_press` (C++ only) descends until the table pushes back, then presses with a
-  commanded wrench and compares it with the measured table reaction. `--variant weighted` passes
-  the wrench through (`w_f_ext = 1`); `main` lets the constraint compensate it.
 
 ---
 
@@ -328,33 +289,15 @@ One `update(&env)` reads and commands both arms; each arm has its own `ChainDynP
 
 ---
 
-## ex_record
+## Recording
 
-**Scene:** Kinova GEN3 arm (arm only).
-
-**What it does:**
-- Records a 5 s gravity-compensated simulation to an H.264 MP4 using
-  `VideoRecorder` (EGL offscreen rendering + ffmpeg pipe).
-- No GLFW window is needed.
-- Camera orbits 360 degrees around the arm over the recording duration.
-- Frames are captured at exactly `kFps = 60` Hz regardless of the physics
-  timestep (`steps_per_frame = floor(1 / (fps * dt))`).
-
-**Control law:** `CtrlMode::TORQUE` — KDL gravity compensation.
-
-```
-tau[i] = JntToGravity(q)[i]
-```
-
-**Usage:**
+`--record [out.mp4]` runs an example headless and writes an H.264 MP4 through `VideoRecorder`
+(EGL offscreen rendering + ffmpeg pipe); no window is needed.
 
 ```bash
-./build/src/examples/ex_record [output.mp4] [360p|480p|720p|1080p|2k|4k]
-# e.g.
-./build/src/examples/ex_record fly.mp4 720p
+./build/src/examples/ex_table_pour --record pour.mp4        # 1080p, default table_pour.mp4
+./build/src/examples/ex_achd_pick_place --record pick.mp4   # 720p, default achd_pick_place.mp4
+python -m mj_kdl_wrapper.examples.ex_table_pour --record pour.mp4
 ```
-
-Resolution presets map to 16:9 dimensions (`R1080p` = 1920x1080, etc.).
-Default is `1080p`; output file defaults to `sim.mp4`.
 
 **Requires:** `BUILD_RECORDER=ON` (default) and `ffmpeg` in `PATH`.

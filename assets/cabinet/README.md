@@ -19,17 +19,16 @@ Every drawer carries a 96 mm bar handle and a grasp site at the handle center.
 | `handle_body_96mm.stl`   | Handle main body |
 | `handle_cover_96mm.stl`  | Handle cover plate |
 
-## Names (as attached with object name `cabinet`)
+## Names
 
-Elements are prefixed `cabinet_`: drawer bodies `cabinet_drawer1..3` (free
-bodies guided by translucent support shelves, side rails, and back stops) and
-grasp sites `cabinet_grasp1..3` at the handle centers (invisible; for pose
-queries). Drag a drawer forward in the viewer and it can leave the cabinet and
-fall.
+Drawer bodies `drawer1..3` (free bodies guided by translucent support shelves,
+side rails, and back stops) and grasp sites `grasp1..3` at the handle centers
+(invisible; for pose queries). A `SceneObject::prefix` is prepended to them when
+set. Drag a drawer forward in the viewer and it can leave the cabinet and fall.
 
 ## Use it in mj_kdl_wrapper
 
-See `python/examples/ex_cabinet.py`. In short:
+See `python/mj_kdl_wrapper/examples/ex_cabinet.py`. In short:
 
 ```python
 import mj_kdl_wrapper as mjk
@@ -39,15 +38,14 @@ obj.name, obj.mjcf_path, obj.pos, obj.fixed = "cabinet", ".../cabinet.xml", [0, 
 
 spec = mjk.SceneSpec()
 spec.timestep, spec.add_floor, spec.add_skybox, spec.objects = 0.002, True, True, [obj]
-scene = mjk.Scene.build(spec)
+with mjk.Env.build(spec) as env:
+    env.step()
+    pose = env.site_frame("grasp1")     # PyKDL.Frame at the handle center
 
-scene.step()
-pose = scene.site_frame("cabinet_grasp1")     # PyKDL.Frame at the handle center
-
-# pull drawer 1 out the +X front:
-scene.set_body_wrench("cabinet_drawer1", [40.0, 0.0, 0.0])
-for _ in range(300):
-    scene.step()
+    # pull drawer 1 out the +X front:
+    env.data.body("drawer1").xfrc_applied[:3] = [40.0, 0.0, 0.0]
+    for _ in range(300):
+        env.step()
 ```
 
 ## Standalone view

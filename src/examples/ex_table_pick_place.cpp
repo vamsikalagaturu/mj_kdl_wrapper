@@ -107,8 +107,7 @@ int main(int argc, char *argv[])
     mjData        *data  = env.data;
 
     KDL::Frame world_T_table_top;
-    const std::string table_top_site = mj_kdl::scene_object_site_name(table, "table_top");
-    if (!mj_kdl::get_site_frame(&env, table_top_site.c_str(), &world_T_table_top)) {
+    if (!mj_kdl::get_site_frame(&env, "table_top", &world_T_table_top)) {
         std::cerr << "table_top site not found\n";
         return 1;
     }

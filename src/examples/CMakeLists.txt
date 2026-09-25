@@ -4,16 +4,13 @@ set(EXAMPLES
   ex_vel_ctrl
   ex_impedance
   ex_admittance_ft
-  ex_pick
   ex_table_pick_place
   ex_rnea_pick_place
   ex_achd_table_slide
   ex_achd_pick_place
-  ex_achd_press
   ex_table_pour
   ex_table_scene
   ex_dual_arm
-  ex_record
 )
 
 foreach(ex ${EXAMPLES})

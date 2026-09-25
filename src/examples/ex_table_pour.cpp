@@ -6,7 +6,8 @@
  *   ex_table_pour [--headless] [--record output.mp4]
  *
  * Runs the full pour sequence once, prints how many balls ended in the receiver and exits;
- * --headless skips the viewer. */
+ * --headless skips the viewer; --record writes an MP4 offscreen (EGL + ffmpeg) and implies
+ * --headless. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "common.hpp"
@@ -150,9 +151,8 @@ int main(int argc, char *argv[])
     const mjModel *model = env.model;
     const mjData  *data  = env.data;
 
-    KDL::Frame        world_T_table_top;
-    const std::string table_top_site = mj_kdl::scene_object_site_name(table, "table_top");
-    if (!mj_kdl::get_site_frame(&env, table_top_site.c_str(), &world_T_table_top)) {
+    KDL::Frame world_T_table_top;
+    if (!mj_kdl::get_site_frame(&env, "table_top", &world_T_table_top)) {
         std::cerr << "table_top site not found\n";
         return 1;
     }

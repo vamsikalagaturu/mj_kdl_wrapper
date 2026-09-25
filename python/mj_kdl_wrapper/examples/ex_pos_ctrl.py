@@ -48,14 +48,14 @@ def main() -> int:
 
         def on_reset(ctx):
             robot.set_joint_pos(HOME_POSE)
-            state["t_start"] = env.time()
+            state["t_start"] = env.data.time
 
         env.on_reset = on_reset
         env.reset()
 
         def control_step():
             env.update()
-            alpha = clamp((env.time() - state["t_start"]) / MOTION_DURATION, 0.0, 1.0)
+            alpha = clamp((env.data.time - state["t_start"]) / MOTION_DURATION, 0.0, 1.0)
             robot.jnt_pos_cmd = [
                 HOME_POSE[i] + alpha * (TARGET_POSE[i] - HOME_POSE[i])
                 for i in range(robot.n_joints)
@@ -64,8 +64,8 @@ def main() -> int:
         if args.gui:
             # The UI's reset button runs env's reset, on_reset included.
             env.open_viewer("ex_pos_ctrl.py")
-        end = env.time() + MOTION_DURATION + 1.0
-        while env.time() < end:
+        end = env.data.time + MOTION_DURATION + 1.0
+        while env.data.time < end:
             control_step()
             if not env.step():
                 break

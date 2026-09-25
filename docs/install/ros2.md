@@ -135,7 +135,7 @@ source ~/ros2_ws/.venv-ros/bin/activate
 
 # build + install the wheel, then verify the combined stack imports
 pip install "git+https://github.com/vamsikalagaturu/mj_kdl_wrapper.git"
-python -c "import rclpy, PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mjk.mujoco_version())"
+python -c "import rclpy, PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mjk.__mujoco_version__)"
 ```
 
 The wheel bundles its own `PyKDL`, which takes precedence over the system

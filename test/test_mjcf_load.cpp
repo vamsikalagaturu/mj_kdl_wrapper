@@ -248,16 +248,12 @@ TEST_F(MjcfGripperTest, JointPositionByName)
     data_->qpos[model_->jnt_qposadr[rdriver]] = 0.42;
     data_->qpos[model_->jnt_qposadr[ldriver]] = 0.42;
 
-    double measured = 0.0;
-    ASSERT_TRUE(mj_kdl::get_joint_position(&env_, "g_right_driver_joint", &measured));
-    EXPECT_NEAR(measured, 0.42, 1e-9);
+    mj_kdl::SceneJointSlot *slot = mj_kdl::bind_scene_joint(&env_.scene, "g_right_driver_joint");
+    ASSERT_NE(slot, nullptr);
+    mj_kdl::update(&env_);
+    EXPECT_NEAR(slot->position, 0.42, 1e-9);
 
-    // An actuator name resolves to its transmission joint's qpos.
-    measured = 0.0;
-    ASSERT_TRUE(mj_kdl::get_joint_position(&env_, "g_fingers_actuator", &measured));
-    EXPECT_NEAR(measured, 0.42, 1e-9);
-
-    EXPECT_FALSE(mj_kdl::get_joint_position(&env_, "no_such_joint", &measured));
+    EXPECT_EQ(mj_kdl::bind_scene_joint(&env_.scene, "no_such_joint"), nullptr);
 }
 
 class JointEdgeCaseTest : public testing::Test
@@ -295,18 +291,10 @@ TEST_F(JointEdgeCaseTest, PlainHingeChainStillBuilds)
     EXPECT_EQ(robot_.n_joints, 1);
 }
 
-TEST_F(JointEdgeCaseTest, ScalarGettersRefuseWhatIsNotAScalarJoint)
+TEST_F(JointEdgeCaseTest, JointSlotRefusesWhatIsNotAScalarJoint)
 {
-    const int plain = mj_name2id(env_.model, mjOBJ_JOINT, "plain");
-
-    env_.data->qpos[env_.model->jnt_qposadr[plain]] = 0.3;
-
-    double q = 0.0;
-    ASSERT_TRUE(mj_kdl::get_joint_position(&env_, "fixed_act", &q)) << "fixed tendon -> its joint";
-    EXPECT_DOUBLE_EQ(q, 0.3);
-    EXPECT_FALSE(mj_kdl::get_joint_position(&env_, "spatial_act", &q)) << "a spatial tendon";
-    EXPECT_FALSE(mj_kdl::get_joint_position(&env_, "ball", &q));
-    EXPECT_FALSE(mj_kdl::get_joint_velocity(&env_, "ball", &q));
+    EXPECT_NE(mj_kdl::bind_scene_joint(&env_.scene, "plain"), nullptr);
+    EXPECT_EQ(mj_kdl::bind_scene_joint(&env_.scene, "ball"), nullptr);
 }
 
 TEST(MjcfPathTest, RelativeModelPathWithRelativeMeshdir)

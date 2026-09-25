@@ -87,6 +87,12 @@ def jnt(values: list[float]) -> kdl.JntArray:
     return out
 
 
+def tcp_frame(fk: kdl.ChainFkSolverPos_recursive, robot) -> kdl.Frame:
+    frame = kdl.Frame()
+    fk.JntToCart(jnt(robot.jnt_pos_msr), frame)
+    return frame
+
+
 def clamp_abs(value: float, limit: float) -> float:
     return max(-limit, min(limit, value))
 
@@ -188,8 +194,8 @@ def run_phase(ctx, phase: dict, gui, state) -> bool:
     print(f"State: {phase['name']}")
     env, robot = ctx["env"], ctx["robot"]
     env.update()
-    phase_start = robot.fk_frame()
-    t0 = env.time()
+    phase_start = tcp_frame(ctx["fk"], robot)
+    t0 = env.data.time
     pid = {"err_prev": [0.0] * 6, "err_i": [0.0] * 6, "first": True}
     prev_target = phase_start
     first_target = True
@@ -201,7 +207,7 @@ def run_phase(ctx, phase: dict, gui, state) -> bool:
         support["valid"] = True
 
     while True:
-        elapsed = env.time() - t0
+        elapsed = env.data.time - t0
         alpha_t = smoothstep(elapsed / phase["duration"]) if phase["duration"] > 0.0 else 1.0
         target = kdl.addDelta(phase_start, kdl.diff(phase_start, phase["target"]), alpha_t)
         target_twist = kdl.Twist.Zero()
@@ -218,11 +224,10 @@ def run_phase(ctx, phase: dict, gui, state) -> bool:
             support["prev_z"] = z_world
             f_ext[ctx["support_segment"]] = support_wrench(z_world, support["z_ref"], vz)
 
-        if env.has_actuator("g_fingers_actuator"):
-            env.set_actuator_ctrl("g_fingers_actuator", phase["gripper"])
+        env.data.actuator("g_fingers_actuator").ctrl[0] = phase["gripper"]
         achd_step(ctx, target, target_twist, f_ext, pid)
 
-        err = kdl.diff(robot.fk_frame(), phase["target"])
+        err = kdl.diff(tcp_frame(ctx["fk"], robot), phase["target"])
         settled = phase["pos_tol"] < 0.0 or (
             err.vel.Norm() <= phase["pos_tol"] and err.rot.Norm() <= phase["rot_tol"]
         )
@@ -234,7 +239,7 @@ def run_phase(ctx, phase: dict, gui, state) -> bool:
             return False
 
 
-def build_phases(robot, chain) -> list[dict]:
+def build_phases(robot, fk: kdl.ChainFkSolverPos_recursive) -> list[dict]:
     # The grasp orientation is the tool frame's own: the pinch axis points at the table.
     grasp_rot = robot.tip_T_tcp.M
     z_grasp = CUBE_HS
@@ -257,7 +262,7 @@ def build_phases(robot, chain) -> list[dict]:
 
     closed = GRIPPER_CLOSED
     return [
-        phase("HOME", robot.fk_frame(), 1.0, 2.5, 0.03, 0.05, 0.0),
+        phase("HOME", tcp_frame(fk, robot), 1.0, 2.5, 0.03, 0.05, 0.0),
         phase("PICK_ABOVE", at(PICK_X, PICK_Y, z_above), 8.0, 14.0, 0.04, 0.03, 0.0),
         phase("PICK", at(PICK_X, PICK_Y, z_grasp), 5.0, 12.0, 0.02, 0.03, 0.0),
         phase("CLOSE", at(PICK_X, PICK_Y, z_grasp), 1.5, 2.5, -1.0, -1.0, closed),
@@ -284,7 +289,7 @@ def main() -> int:
         ctx = {
             "env": env,
             "robot": robot,
-            "dt": env.timestep(),
+            "dt": env.model.opt.timestep,
             "n_segments": chain.getNrOfSegments(),
             "support_segment": support_seg,
             "fk": kdl.ChainFkSolverPos_recursive(chain),
@@ -303,15 +308,14 @@ def main() -> int:
         def on_reset(ctx_unused):
             robot.set_joint_pos(HOME)
             env.set_body_pose("cube", CUBE_START)
-            if env.has_actuator("g_fingers_actuator"):
-                env.set_actuator_ctrl("g_fingers_actuator", 0.0)
+            env.data.actuator("g_fingers_actuator").ctrl[0] = 0.0
             state["reset"] = True
 
         env.on_reset = on_reset
         env.reset()
         state["reset"] = False
         env.update()
-        phases = build_phases(robot, chain)
+        phases = build_phases(robot, ctx["fk"])
 
         if args.gui:
             env.open_viewer("ex_achd_pick_place.py")

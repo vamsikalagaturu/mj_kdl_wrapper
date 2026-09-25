@@ -9,6 +9,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import mujoco
+
 import mj_kdl_wrapper as mjk
 
 VIEW_TIME = 10.0  # [s] simulated
@@ -33,7 +35,7 @@ def main() -> int:
         tmp = tempfile.NamedTemporaryFile(suffix=".mjb", delete=False)
         tmp.close()
         mjb_path = Path(tmp.name)
-        env.save_binary(str(mjb_path))
+        mujoco.mj_saveModel(env.model, str(mjb_path), None)
     finally:
         env.close()
 
@@ -70,7 +72,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                     "-c",
                     viewer_code,
                     str(mjb_path),
-                    mjk.mujoco_version(),
+                    mjk.__mujoco_version__,
                     str(VIEW_TIME),
                 ],
                 check=True,

@@ -30,7 +30,7 @@ def main() -> int:
         print(f"joints: {robot.n_joints}")
         print(f"joint_names: {robot.joint_names}")
         print(f"q: {robot.jnt_pos_msr.round(6).tolist()}")
-        print(f"cameras: {env.camera_names()}")
+        print(f"cameras: {[env.model.camera(i).name for i in range(env.model.ncam)]}")
     finally:
         env.close()
 

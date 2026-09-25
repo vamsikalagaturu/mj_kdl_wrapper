@@ -38,8 +38,7 @@ foreach(test_name test_control_modes test_mjcf_load)
     MJ_KDL_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 endforeach()
 
-# The examples self-check under --headless and exit non-zero on failure. ex_record is left out:
-# it only writes a video.
+# The examples self-check under --headless and exit non-zero on failure.
 if(BUILD_EXAMPLES)
   set(HEADLESS_EXAMPLES
     ex_gravity_comp
@@ -47,12 +46,10 @@ if(BUILD_EXAMPLES)
     ex_vel_ctrl
     ex_impedance
     ex_admittance_ft
-    ex_pick
     ex_table_pick_place
     ex_rnea_pick_place
     ex_achd_table_slide
     ex_achd_pick_place
-    ex_achd_press
     ex_table_pour
     ex_table_scene
     ex_dual_arm

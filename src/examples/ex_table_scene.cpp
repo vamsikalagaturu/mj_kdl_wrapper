@@ -135,7 +135,7 @@ int main(int argc, char *argv[])
     );
 
     /* Static scene cameras.  The Kinova MJCF also contributes a "wrist" camera;
-     * all of them are enumerated by get_camera_names() after init_env(). */
+     * all of them are in env.model after init_env(). */
     sc.cameras.push_back(mj_kdl::CameraSpec{
         .name = "overview",
         .pos  = { 0.0, -0.6, 1.6 }, // in front of and above the table
@@ -159,16 +159,15 @@ int main(int argc, char *argv[])
     }
 
     KDL::Frame world_T_table_top;
-    const std::string table_top_site = mj_kdl::scene_object_site_name(table, "table_top");
-    if (!mj_kdl::get_site_frame(&env, table_top_site.c_str(), &world_T_table_top)) {
+    if (!mj_kdl::get_site_frame(&env, "table_top", &world_T_table_top)) {
         std::cerr << "table_top site not found\n";
         return 1;
     }
     std::cout << "table top z = " << world_T_table_top.p.z() << "\n";
 
     std::cout << "cameras:";
-    for (const auto &name : mj_kdl::get_camera_names(env.model))
-        std::cout << " " << name;
+    for (int i = 0; i < env.model->ncam; ++i)
+        std::cout << " " << mj_id2name(env.model, mjOBJ_CAMERA, i);
     std::cout << "\n";
 
     const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base_mount", .tcp_site = "g_pinch" };
