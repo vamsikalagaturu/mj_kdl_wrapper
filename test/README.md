@@ -105,10 +105,13 @@ converges from home to the target pose within the configured joint tolerance.
 
 Each mode is an actuator group switched with `opt.disableactuator`.
 
-- **Gen3ModesTest** (Menagerie GEN3): the `<joint>_torque` motors are added in a disabled group;
-  POSITION -> TORQUE -> POSITION holds the pose within 0.01 rad; TORQUE saturates at the
-  servo's `forcerange` (105 Nm); `update()` and mode switches never write `qfrc_applied`;
-  two arms run different modes.
+- **ArmModesTest** (GEN3 `<position>` servos, Menagerie UR5e `<general>` servos): the
+  `<joint>_torque` motors are added in a disabled group; POSITION tracks a 0.2 rad ramp within
+  0.05 rad; POSITION -> TORQUE -> POSITION holds the pose within 0.01 rad; TORQUE saturates at
+  the servo's `forcerange` (GEN3 105 Nm, UR5e 150 Nm); `update()` and mode switches never write
+  `qfrc_applied`; two arms run different modes.
+- **GripperModesTest** (GEN3 + 2F-85): the gripper gets no torque actuator and stays in group 0;
+  it closes and opens while the arm runs in TORQUE.
 - **MotorWheelModesTest** (`fixtures/motor_wheel.xml`): only the listed wheel gets a
   `<velocity>` actuator, the pivot is left alone; VELOCITY tracks 5 rad/s through `SceneState`,
   then TORQUE takes over without a jump; a motor-driven robot starts in TORQUE and
