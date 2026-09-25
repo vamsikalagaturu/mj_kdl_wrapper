@@ -338,7 +338,8 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         auto out           = std::shared_ptr<PyEnv>(new PyEnv());
         out->spec          = spec;
         SceneSpec cpp_spec = to_cpp(out->spec);
-        if (!mj_kdl::init_env(&out->env, &cpp_spec)) throw std::runtime_error("init_env failed");
+        if (mj_kdl::Status s = mj_kdl::init_env(&out->env, &cpp_spec); !s)
+            throw std::runtime_error(s.error);
         out->wire_reset_hook();
         return out;
     }
@@ -379,18 +380,16 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
     void open_viewer(const std::string &title)
     {
         ensure_open();
-        if (!mj_kdl::open_viewer(&env, title.c_str())) {
-            throw std::runtime_error("open_viewer failed (no display, or already open)");
-        }
+        if (mj_kdl::Status s = mj_kdl::open_viewer(&env, title.c_str()); !s)
+            throw std::runtime_error(s.error);
     }
 
     // env.spec points into spec's strings (and the added object's), so it is re-derived after.
     void add_object(const PySceneObject &object)
     {
         ensure_open();
-        if (!mj_kdl::scene_add_object(&env, to_cpp(object))) {
-            throw std::runtime_error("scene_add_object failed");
-        }
+        if (mj_kdl::Status s = mj_kdl::scene_add_object(&env, to_cpp(object)); !s)
+            throw std::runtime_error(s.error);
         spec.objects.push_back(object);
         env.spec = to_cpp(spec);
     }
@@ -402,9 +401,8 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
             return obj.name == name;
         });
         if (it == spec.objects.end()) throw std::runtime_error("object not found");
-        if (!mj_kdl::scene_remove_object(&env, name)) {
-            throw std::runtime_error("scene_remove_object failed");
-        }
+        if (mj_kdl::Status s = mj_kdl::scene_remove_object(&env, name); !s)
+            throw std::runtime_error(s.error);
         spec.objects.erase(it);
         env.spec = to_cpp(spec);
     }
@@ -412,8 +410,8 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
     void set_control_mode(int robot, CtrlMode mode)
     {
         ensure_open();
-        if (!mj_kdl::set_control_mode(&env, robot, mode))
-            throw std::runtime_error("robot has no actuators for this control mode");
+        if (mj_kdl::Status s = mj_kdl::set_control_mode(&env, robot, mode); !s)
+            throw std::runtime_error(s.error);
     }
 
     std::vector<std::string> camera_names() const
@@ -516,9 +514,8 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
     void save_xml(const std::string &path) const
     {
         ensure_open();
-        if (!mj_kdl::save_model_xml(env.model, path.c_str())) {
-            throw std::runtime_error("save_model_xml failed");
-        }
+        if (mj_kdl::Status s = mj_kdl::save_model_xml(env.model, path.c_str()); !s)
+            throw std::runtime_error(s.error);
     }
 
     void save_binary(const std::string &path) const
@@ -660,16 +657,15 @@ std::shared_ptr<PyRobot> PyEnv::create_robot(
     out->env_owner = shared_from_this();
     mj_kdl::ToolFrameSpec cpp_tool;
     if (tool) cpp_tool = to_cpp(*tool);
-    if (!mj_kdl::init_robot_from_mjcf(
-          &out->robot,
-          &env,
-          base_body.c_str(),
-          tip_body.c_str(),
-          prefix.c_str(),
-          tool ? &cpp_tool : nullptr
-        )) {
-        throw std::runtime_error("init_robot_from_mjcf failed");
-    }
+    const mj_kdl::Status s = mj_kdl::init_robot_from_mjcf(
+      &out->robot,
+      &env,
+      base_body.c_str(),
+      tip_body.c_str(),
+      prefix.c_str(),
+      tool ? &cpp_tool : nullptr
+    );
+    if (!s) throw std::runtime_error(s.error);
     return out;
 }
 
@@ -738,11 +734,11 @@ struct PyVideoRecorder
         mjModel *m   = env->env.model;
         auto     out = std::shared_ptr<PyVideoRecorder>(new PyVideoRecorder());
         out->owner   = env;
-        bool ok =
+        const mj_kdl::Status s =
           use_preset
             ? mj_kdl::init_video_recorder(&out->recorder, m, out_path.c_str(), resolution, fps)
             : mj_kdl::init_video_recorder(&out->recorder, m, out_path.c_str(), width, height, fps);
-        if (!ok) throw std::runtime_error("init_video_recorder failed");
+        if (!s) throw std::runtime_error(s.error);
         out->active = true;
         return out;
     }
@@ -769,13 +765,7 @@ struct PyVideoRecorder
     )
     {
         if (!active) throw std::runtime_error("recorder is closed");
-        recorder.cam.type      = mjCAMERA_FREE;
-        recorder.cam.distance  = distance;
-        recorder.cam.azimuth   = azimuth;
-        recorder.cam.elevation = elevation;
-        recorder.cam.lookat[0] = lookat[0];
-        recorder.cam.lookat[1] = lookat[1];
-        recorder.cam.lookat[2] = lookat[2];
+        mj_kdl::set_free_camera(&recorder, distance, azimuth, elevation, lookat);
     }
 
     void close()
@@ -1187,8 +1177,8 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "set_control_mode",
         [](PyRobot &self, CtrlMode mode) {
             self.ensure_active();
-            if (!mj_kdl::set_control_mode(&self.robot, mode))
-                throw std::runtime_error("robot has no actuators for this control mode");
+            if (mj_kdl::Status s = mj_kdl::set_control_mode(&self.robot, mode); !s)
+                throw std::runtime_error(s.error);
         },
         py::arg("mode"),
         "Switch mode without a jump: seeds the new mode's commands from the current state."

@@ -9,6 +9,7 @@
 #include <kdl/chain.hpp>
 #include <kdl/frames.hpp>
 #include <kdl/jntarray.hpp>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -78,6 +79,18 @@ inline LogLevel get_log_level() { return g_log_level; }
 #define LOG_ERROR(expr) MJ_LOG_(ERROR, "\033[31m", "ERROR", expr)
 
 namespace mj_kdl {
+
+/**
+ * @ingroup grp_types
+ * Result of a call that can fail on its input: empty error = success. The error is the same
+ * text the call logs.
+ */
+struct Status
+{
+    std::string error;
+
+    explicit operator bool() const { return error.empty(); }
+};
 
 /**
  * @ingroup grp_types
@@ -347,7 +360,8 @@ struct ForceTorqueSensor : ForceTorqueReading
  * Optional tool/end-effector description used while building the KDL chain.
  *
  * tool_body names the root of the attached tool subtree whose mass/inertia is
- * lumped into the arm dynamics.  tcp_site names an authored MuJoCo site that
+ * lumped into the arm dynamics, once, at the tool's pose at init (a 2F-85's
+ * finger opening then is what the chain keeps).  tcp_site names an authored MuJoCo site that
  * becomes the KDL terminal frame for FK/IK (takes priority when set).  When
  * the model has no suitable site, tcp_frame provides an equivalent manual
  * transform expressed in the tip body's local frame.
@@ -614,7 +628,7 @@ struct Env
  * @param path   Output path for the MJCF XML file.
  * @return true on success.
  */
-bool save_model_xml(const mjModel *model, const char *path);
+Status save_model_xml(const mjModel *model, const char *path);
 
 /**
  * @ingroup grp_robot
@@ -626,7 +640,7 @@ bool save_model_xml(const mjModel *model, const char *path);
  * Pass tool = nullptr (the default) for an arm with no attached tool.
  * Registers r with env, which reads, commands and resets it from then on.
  */
-bool init_robot_from_mjcf(
+Status init_robot_from_mjcf(
   Robot               *r,
   Env                 *env,
   const char          *base_body,
@@ -650,7 +664,7 @@ bool init_robot_from_mjcf(
  * prefix is applied to each as there.  tool is used only to resolve FT sensors;
  * tool->tool_body and tool->tcp_site are ignored. Registers r with env.
  */
-bool init_robot_from_chain(
+Status init_robot_from_chain(
   Robot                          *r,
   Env                            *env,
   const KDL::Chain               &chain,
@@ -687,7 +701,7 @@ std::vector<double> joint_force_limits(const Robot *r, double fallback = 1e6);
  * @param[in]     a           Attachment; a->mjcf_path must not be null.
  * @return true on success.
  */
-bool attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a);
+Status attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a);
 
 /**
  * @ingroup grp_scene
@@ -705,7 +719,7 @@ bool attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a);
  *                        objects, timestep, gravity, floor, skybox.
  * @return true on success.
  */
-bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *spec);
+Status build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *spec);
 
 /**
  * @ingroup grp_scene
@@ -719,7 +733,7 @@ void destroy_scene(mjModel *model, mjData *data);
  * @ingroup grp_env
  * Build the scene from spec into env, which owns the model/data until cleanup(Env *).
  */
-bool init_env(Env *env, const SceneSpec *spec);
+Status init_env(Env *env, const SceneSpec *spec);
 
 /**
  * @ingroup grp_env
@@ -736,7 +750,7 @@ ResetInfo reset(Env *env, const ResetOptions *options = nullptr);
  * step() then drives physics, pause, perturbation and recording. Linux (X11 / Wayland) only.
  * @return false when there is no display or the window cannot be created.
  */
-bool open_viewer(Env *env, const char *title = "MuJoCo");
+Status open_viewer(Env *env, const char *title = "MuJoCo");
 
 /**
  * @ingroup grp_viewer
@@ -814,7 +828,7 @@ void cleanup(Env *env);
  * @param fps       Playback frame rate (default 60).
  * @return true on success; false if EGL init or ffmpeg launch fails.
  */
-bool init_video_recorder(
+Status init_video_recorder(
   VideoRecorder *vr,
   mjModel       *model,
   const char    *out_path,
@@ -835,7 +849,7 @@ bool init_video_recorder(
  * @param fps        Playback frame rate (default 60).
  * @return true on success.
  */
-bool init_video_recorder(
+Status init_video_recorder(
   VideoRecorder  *vr,
   mjModel        *model,
   const char     *out_path,
@@ -865,7 +879,7 @@ bool record_frame(VideoRecorder *vr, Env *env);
  * @param height  Frame height in pixels.
  * @return true on success; false if EGL init fails.
  */
-bool init_offscreen(VideoRecorder *vr, mjModel *model, int width, int height);
+Status init_offscreen(VideoRecorder *vr, mjModel *model, int width, int height);
 
 /**
  * @ingroup grp_recorder
@@ -972,14 +986,14 @@ void update(Env *env);
  * Switch the robot to mode: seed the new actuators so nothing jumps, enable their group,
  * disable the robot's other mode groups. @return false if the robot has no actuator for mode.
  */
-bool set_control_mode(Robot *r, CtrlMode mode);
+Status set_control_mode(Robot *r, CtrlMode mode);
 
 /**
  * @ingroup grp_robot
  * The same switch for a robot driven outside a Robot chain (e.g. through env.scene):
  * robot is its index in SceneSpec::robots. @return false if it has no actuators for mode.
  */
-bool set_control_mode(Env *env, int robot, CtrlMode mode);
+Status set_control_mode(Env *env, int robot, CtrlMode mode);
 
 /**
  * @ingroup grp_scene
@@ -1042,14 +1056,14 @@ void set_body_pose(
  * new model; a slot whose name is gone is unbound and skipped.
  * @return true on success; env unchanged on failure.
  */
-bool scene_add_object(Env *env, const SceneObject &obj);
+Status scene_add_object(Env *env, const SceneObject &obj);
 
 /**
  * @ingroup grp_scene
  * Remove the named object from env->spec.objects and rebuild, as scene_add_object() does.
  * @return true on success; false if name not found or rebuild fails.
  */
-bool scene_remove_object(Env *env, const std::string &name);
+Status scene_remove_object(Env *env, const std::string &name);
 
 /**
  * @ingroup grp_scene
@@ -1076,6 +1090,7 @@ bool get_body_frame(Env *env, const char *body_name, KDL::Frame *out);
  * Read a joint's position (qpos) in physical units (rad or m), by joint name.
  * If the name is not a joint, it is treated as an actuator name and resolved to
  * its transmission joint (direct joint, or the first tendon-wrapped joint).
+ * Fails (logged) for a ball or free joint and for an actuator that drives no joint.
  */
 bool get_joint_position(Env *env, const char *name, double *out);
 
@@ -1103,6 +1118,7 @@ std::vector<std::string> get_camera_names(const mjModel *model);
 bool use_camera(Viewer *v, const mjModel *model, const char *name);
 
 /**
+ * @ingroup grp_viewer
  * Configure the viewer's free orbit camera.
  */
 void set_free_camera(
@@ -1119,6 +1135,18 @@ void set_free_camera(
  * @return true if the camera name was found; false if not found (recorder unchanged).
  */
 bool use_camera(VideoRecorder *vr, const mjModel *model, const char *name);
+
+/**
+ * @ingroup grp_recorder
+ * Configure the video recorder's free orbit camera.
+ */
+void set_free_camera(
+  VideoRecorder               *vr,
+  double                       distance,
+  double                       azimuth,
+  double                       elevation,
+  const std::array<double, 3> &lookat
+);
 
 /**
  * Internal spec-building helpers.
@@ -1150,7 +1178,7 @@ void add_floor_to_spec(mjSpec *spec, double floor_z = 0.0);
  * @param objects  List of objects to add.
  * @return false (logged) on the first object that cannot be added, e.g. a field left unset.
  */
-bool add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects);
+Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects);
 
 /**
  * @ingroup grp_advanced
@@ -1161,7 +1189,7 @@ bool add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects);
  * @param[out] out_data   Newly allocated data on success; null on failure.
  * @return true on success.
  */
-bool compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data);
+Status compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data);
 
 /**
  * @ingroup grp_advanced

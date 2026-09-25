@@ -97,9 +97,6 @@ class Simulate {
   // add state to history buffer
   void AddToHistory();
 
-  // inject control noise
-  void InjectNoise(int key);
-
   // constants
   static constexpr int kMaxFilenameLength = 1000;
 
@@ -282,10 +279,6 @@ class Simulate {
   };
   // clang-format on
 
-  // control noise
-  double ctrl_noise_std  = 0.0;
-  double ctrl_noise_rate = 0.0;
-
   // watch
   char field[mjMAXUITEXT] = "qpos";
   int  index              = 0;
@@ -379,7 +372,7 @@ class Simulate {
 
 
   // simulation section of UI
-  const mjuiDef def_simulation[24] = {
+  const mjuiDef def_simulation[22] = {
     {mjITEM_SECTION,   "Simulation",    mjPRESERVE, nullptr,     "AS"},
     {mjITEM_RADIO,     "",              5, &this->run,           "Pause\nRun"},
     {mjITEM_SLIDERINT, "Num threads",   5, &this->nthread,       "0 10"},
@@ -390,8 +383,6 @@ class Simulate {
     {mjITEM_SLIDERINT, "Key",           3, &this->key,           "0 0"},
     {mjITEM_BUTTON,    "Load key",      3},
     {mjITEM_BUTTON,    "Save key",      3},
-    {mjITEM_SLIDERNUM, "Noise scale",   5, &this->ctrl_noise_std,  "0 1"},
-    {mjITEM_SLIDERNUM, "Noise rate",    5, &this->ctrl_noise_rate, "0 4"},
     {mjITEM_SEPARATOR, "History",       1},
     {mjITEM_SLIDERINT, "",              5, &this->scrub_index,     "0 0"},
     {mjITEM_STATIC,    "RTF",           2, nullptr,                "1.00x"},

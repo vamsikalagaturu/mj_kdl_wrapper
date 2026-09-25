@@ -285,12 +285,69 @@ TEST(SceneFloor, PlacedAtFloorZ)
     mj_kdl::destroy_scene(model, data);
 }
 
+TEST(Recorder, OutputPathReachesFfmpegVerbatim)
+{
+    mj_kdl::SceneSpec sc;
+    sc.timestep   = 0.002;
+    sc.add_floor  = true;
+    sc.add_skybox = false;
+    mj_kdl::Env env;
+    ASSERT_TRUE(mj_kdl::init_env(&env, &sc));
+
+    const fs::path dir = fs::temp_directory_path() / "mj_kdl_rec_test";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path out    = dir / "a \"quoted\" $(touch injected) name.mp4";
+    const fs::path marker = dir / "injected";
+
+    mj_kdl::VideoRecorder vr;
+    if (!mj_kdl::init_video_recorder(&vr, env.model, out.c_str(), 64, 48, 10))
+        GTEST_SKIP() << "no EGL or ffmpeg";
+    for (int i = 0; i < 5; ++i) ASSERT_TRUE(mj_kdl::record_frame(&vr, &env));
+    mj_kdl::cleanup(&vr);
+
+    EXPECT_TRUE(fs::exists(out)) << out;
+    EXPECT_GT(fs::file_size(out), 0u);
+    EXPECT_FALSE(fs::exists(marker)) << "the path went through a shell";
+    EXPECT_FALSE(fs::exists(fs::current_path() / "injected"));
+    fs::remove_all(dir);
+}
+
+TEST(Recorder, FreeCameraLeavesAFixedCamera)
+{
+    mj_kdl::VideoRecorder vr;
+    vr.cam.type       = mjCAMERA_FIXED;
+    vr.cam.fixedcamid = 3;
+    mj_kdl::set_free_camera(&vr, 2.0, 90.0, -30.0, { 0.1, 0.2, 0.3 });
+    EXPECT_EQ(vr.cam.type, mjCAMERA_FREE);
+    EXPECT_EQ(vr.cam.fixedcamid, -1);
+    EXPECT_DOUBLE_EQ(vr.cam.distance, 2.0);
+    EXPECT_DOUBLE_EQ(vr.cam.lookat[2], 0.3);
+}
+
+TEST_F(InitTest, AFailureSaysWhy)
+{
+    mj_kdl::Robot  other;
+    mj_kdl::Status s = mj_kdl::init_robot_from_mjcf(&other, &env_, "no_such_body", "bracelet_link");
+    EXPECT_FALSE(s);
+    EXPECT_NE(s.error.find("no_such_body"), std::string::npos) << s.error;
+
+    mj_kdl::SceneObject cube;
+    cube.name  = "unweighed_cube";
+    cube.shape = mj_kdl::Shape::BOX;
+    s          = mj_kdl::scene_add_object(&env_, cube);
+    EXPECT_FALSE(s);
+    EXPECT_NE(s.error.find("unweighed_cube"), std::string::npos) << s.error;
+    s = mj_kdl::scene_remove_object(&env_, "no_such_object");
+    EXPECT_NE(s.error.find("no_such_object"), std::string::npos) << s.error;
+}
+
 TEST(SceneSpecRequired, AnUnsetFieldFailsTheBuild)
 {
     const auto builds = [](const mj_kdl::SceneSpec &sc) {
         mjModel   *model = nullptr;
         mjData    *data  = nullptr;
-        const bool ok    = mj_kdl::build_scene(&model, &data, &sc);
+        const bool ok    = static_cast<bool>(mj_kdl::build_scene(&model, &data, &sc));
         mj_kdl::destroy_scene(model, data);
         return ok;
     };

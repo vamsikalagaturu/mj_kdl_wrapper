@@ -27,7 +27,7 @@ cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON
 | `test_init` | `init_env`, `init_robot_from_mjcf`, `reset`, two independent `Env`s |
 | `test_dual_arm` | multi-robot scene, independent KDL chains |
 | `test_table_scene` | MJCF table asset, `SceneObject`, runtime add/remove |
-| `test_mjcf_load` | arm-only model (nv=7) + arm+gripper model (nq>=13) |
+| `test_mjcf_load` | arm-only model (nv=7) + arm+gripper model (nq>=13), joint edge cases |
 | `test_mjcf_pos_ctrl` | position trajectory tracking |
 | `test_mjcf_vel_ctrl` | velocity-style convergence control |
 | `test_mjcf_trq_ctrl` | gravity accuracy with gripper mass, impedance drift |
@@ -53,6 +53,16 @@ cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON
 - **EnvResetInvokesHookAndSyncsRobot** -- `reset(Env*)` invokes the environment hook and syncs registered robot ports/forces.
 - **CleanupRobotUnregistersIt** -- `cleanup(Robot*)` removes the robot from its `Env`.
 - **TwoEnvs.StepIndependently** -- two `Env`s in one process keep their own frames and time.
+- **ResetKeepsARequestedControlMode**, **OnResetPrimesCommandsAndMovesAreReadBack** -- reset keeps
+  a pending `ctrl_mode`; `on_reset` runs after the re-seed and what it moves is read back.
+- **Recorder.OutputPathReachesFfmpegVerbatim** -- a path with `"` and `$(...)` is written as named
+  and runs nothing (skips without EGL or ffmpeg).
+- **Recorder.FreeCameraLeavesAFixedCamera** -- `set_free_camera(VideoRecorder*)` switches a fixed
+  camera back to a free one.
+- **AFailureSaysWhy** -- a failed call returns a `Status` whose `error` names the cause (unknown
+  body, object with unset fields, unknown object on remove).
+- **SceneSpecRequired.AnUnsetFieldFailsTheBuild** -- unset mass, friction, camera `fovy` or
+  timestep fails `build_scene()`.
 
 ### test_dual_arm
 
@@ -79,6 +89,9 @@ Two fixtures:
   EE workspace, gripper driver range `[~0, ~0.8]` rad.
 - **MjcfPathTest** (`fixtures/meshdir/`): a relative model path to an MJCF with a relative
   `meshdir` builds.
+- **JointEdgeCaseTest** (`fixtures/joint_edge_cases.xml`): a chain refuses a body with two joints
+  and a ball joint on its path; a plain hinge chain builds; the scalar joint getters resolve a
+  fixed-tendon actuator to its joint and refuse a spatial-tendon actuator and a ball joint.
 
 ### test_mjcf_pos_ctrl
 

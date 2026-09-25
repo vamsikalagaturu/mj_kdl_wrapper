@@ -1,0 +1,59 @@
+<!-- Joints and transmissions a KDL chain or a scalar joint getter must refuse, beside two that
+     must still work (a plain hinge chain and a fixed tendon). One root: a robot MJCF is attached
+     by its first root body. -->
+<mujoco model="joint_edge_cases">
+  <option timestep="0.002" gravity="0 0 0"/>
+  <default>
+    <geom type="sphere" size="0.02" mass="0.1"/>
+  </default>
+  <worldbody>
+    <body name="root">
+      <geom/>
+      <body name="two_base">
+        <body name="two_link" pos="0 0 0.1">
+          <joint name="two_a" type="hinge" axis="0 0 1"/>
+          <joint name="two_b" type="hinge" axis="0 1 0"/>
+          <geom/>
+          <body name="two_tip" pos="0 0 0.1">
+            <geom/>
+          </body>
+        </body>
+      </body>
+      <body name="ball_base" pos="1 0 0">
+        <body name="ball_l1" pos="0 0 0.1">
+          <joint name="ball_h1" type="hinge" axis="0 0 1"/>
+          <geom/>
+          <body name="ball_l2" pos="0 0 0.1">
+            <joint name="ball" type="ball"/>
+            <geom/>
+            <body name="ball_tip" pos="0 0 0.1">
+              <joint name="ball_h2" type="hinge" axis="0 1 0"/>
+              <geom/>
+              <site name="s_tip"/>
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="plain_base" pos="2 0 0">
+        <site name="s_base"/>
+        <body name="plain_tip" pos="0 0 0.1">
+          <joint name="plain" type="hinge" axis="0 0 1"/>
+          <geom/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <tendon>
+    <spatial name="spatial">
+      <site site="s_base"/>
+      <site site="s_tip"/>
+    </spatial>
+    <fixed name="fixed">
+      <joint joint="plain" coef="1"/>
+    </fixed>
+  </tendon>
+  <actuator>
+    <motor name="spatial_act" tendon="spatial"/>
+    <motor name="fixed_act" tendon="fixed"/>
+  </actuator>
+</mujoco>

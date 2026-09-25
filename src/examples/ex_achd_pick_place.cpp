@@ -401,11 +401,11 @@ int main(int argc, char *argv[])
     mj_kdl::VideoRecorder recorder;
     bool recorder_ok = false;
     if (do_record) {
-        recorder_ok = mj_kdl::init_video_recorder(
+        const mj_kdl::Status rec = mj_kdl::init_video_recorder(
           &recorder, model, record_path.c_str(), mj_kdl::VideoResolution::R720p, kRecordFps
         );
-        if (!recorder_ok)
-            std::cerr << "init_video_recorder() failed -- is EGL available and ffmpeg installed?\n";
+        recorder_ok = static_cast<bool>(rec);
+        if (!rec) std::cerr << "recording disabled: " << rec.error << "\n";
         else {
             recorder.cam.azimuth   = 145.0;
             recorder.cam.elevation = -22.0;

@@ -260,6 +260,55 @@ TEST_F(MjcfGripperTest, JointPositionByName)
     EXPECT_FALSE(mj_kdl::get_joint_position(&env_, "no_such_joint", &measured));
 }
 
+class JointEdgeCaseTest : public testing::Test
+{
+  protected:
+    const std::string fixture_ = std::string(MJ_KDL_TEST_FIXTURES) + "/joint_edge_cases.xml";
+    mj_kdl::Env       env_;
+    mj_kdl::Robot     robot_;
+
+    void SetUp() override
+    {
+        mj_kdl::SceneSpec spec;
+        spec.timestep   = 0.002;
+        spec.add_floor  = false;
+        spec.add_skybox = false;
+        spec.robots.push_back(mj_kdl::RobotSpec{ .path = fixture_.c_str(), .modes = {} });
+        ASSERT_TRUE(mj_kdl::init_env(&env_, &spec));
+    }
+};
+
+TEST_F(JointEdgeCaseTest, ChainRefusesABodyWithTwoJoints)
+{
+    EXPECT_FALSE(mj_kdl::init_robot_from_mjcf(&robot_, &env_, "two_base", "two_tip"));
+    EXPECT_TRUE(env_.robots.empty());
+}
+
+TEST_F(JointEdgeCaseTest, ChainRefusesABallJointOnThePath)
+{
+    EXPECT_FALSE(mj_kdl::init_robot_from_mjcf(&robot_, &env_, "ball_base", "ball_tip"));
+}
+
+TEST_F(JointEdgeCaseTest, PlainHingeChainStillBuilds)
+{
+    ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&robot_, &env_, "plain_base", "plain_tip"));
+    EXPECT_EQ(robot_.n_joints, 1);
+}
+
+TEST_F(JointEdgeCaseTest, ScalarGettersRefuseWhatIsNotAScalarJoint)
+{
+    const int plain = mj_name2id(env_.model, mjOBJ_JOINT, "plain");
+
+    env_.data->qpos[env_.model->jnt_qposadr[plain]] = 0.3;
+
+    double q = 0.0;
+    ASSERT_TRUE(mj_kdl::get_joint_position(&env_, "fixed_act", &q)) << "fixed tendon -> its joint";
+    EXPECT_DOUBLE_EQ(q, 0.3);
+    EXPECT_FALSE(mj_kdl::get_joint_position(&env_, "spatial_act", &q)) << "a spatial tendon";
+    EXPECT_FALSE(mj_kdl::get_joint_position(&env_, "ball", &q));
+    EXPECT_FALSE(mj_kdl::get_joint_velocity(&env_, "ball", &q));
+}
+
 TEST(MjcfPathTest, RelativeModelPathWithRelativeMeshdir)
 {
     const fs::path    model    = fs::path(MJ_KDL_TEST_FIXTURES) / "meshdir/mjcf/mesh_link.xml";

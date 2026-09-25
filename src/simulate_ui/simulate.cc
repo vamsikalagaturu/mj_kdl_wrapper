@@ -197,11 +197,12 @@ static constexpr int kFrameNameItem = 1;
 static constexpr int kFrameFirstToggle = 4;
 
 // Wrapper items in the Simulation section, counted in def_simulation after its section header.
-static constexpr int kSimRtfItem       = 13;
-static constexpr int kSimRecCameraItem = 16;
-static constexpr int kSimRecStartItem  = 19;
-static constexpr int kSimRecStopItem   = 20;
-static constexpr int kSimRecStateItem  = 21;
+static constexpr int kSimHistoryItem   = 10;
+static constexpr int kSimRtfItem       = 11;
+static constexpr int kSimRecCameraItem = 14;
+static constexpr int kSimRecStartItem  = 17;
+static constexpr int kSimRecStopItem   = 18;
+static constexpr int kSimRecStateItem  = 19;
 
 // init profiler figures
 void InitializeProfiler(mj::Simulate* sim) {
@@ -1998,7 +1999,7 @@ void UiEvent(mjuiState* state) {
           sim->pending_.save_key = true;
           break;
 
-        case 12:  // History scrubber
+        case kSimHistoryItem:
           sim->run = 0;
 
           sim->pending_.load_from_history = true;
@@ -2763,6 +2764,8 @@ int Simulate::ConsumeWrapperRecordRequest(
     return 0;
   }
 
+  // The UI edits these fields on the render thread, under the same lock.
+  MutexLock lock(this->mtx);
   if (path && path_size > 0) {
     std::snprintf(path, path_size, "%s", this->wrapper_record_path);
   }
@@ -2972,8 +2975,8 @@ void Simulate::LoadOnRenderThread() {
   this->ui0.sect[SECT_SIMULATION].item[6].slider.divisions = mjMAX(1, this->m_->nkey - 1);
 
   // set scrubber range and divisions
-  this->ui0.sect[SECT_SIMULATION].item[12].slider.range[0]  = 1 - nhistory_;
-  this->ui0.sect[SECT_SIMULATION].item[12].slider.divisions = nhistory_;
+  this->ui0.sect[SECT_SIMULATION].item[kSimHistoryItem].slider.range[0]  = 1 - nhistory_;
+  this->ui0.sect[SECT_SIMULATION].item[kSimHistoryItem].slider.divisions = nhistory_;
   UpdateWrapperRecordCameraList(this, this->m_);
 
   // detect image sensors for visualization
@@ -3306,7 +3309,8 @@ void Simulate::Render() {
     const std::string path = GetSavePath("screenshot.png");
     if (!path.empty()) {
       if (!mj_kdl::write_png_rgb(path, rgb.get(), w, h)) {
-        mju_error("could not save screenshot");
+        // A failed save is not worth ending the run over; mju_error would abort it.
+        mju_warning("could not save screenshot to %s", path.c_str());
       } else {
         std::printf("saved screenshot: %s\n", path.c_str());
       }
@@ -3521,38 +3525,6 @@ void Simulate::AddToHistory() {
   // add state at cursor
   mjtNum* state = &history_[state_size_ * history_cursor_];
   mj_getState(m_, d_, state, mjSTATE_INTEGRATION);
-}
-
-// inject Brownian noise
-void Simulate::InjectNoise(int key) {
-  // no noise, return
-  if (ctrl_noise_std <= 0) { return; }
-
-  // convert rate and scale to discrete time (Ornstein–Uhlenbeck)
-  mjtNum rate  = mju_exp(-m_->opt.timestep / ctrl_noise_rate);
-  mjtNum scale = ctrl_noise_std * mju_sqrt(1 - rate * rate);
-
-  for (int i = 0; i < m_->nu; i++) {
-    mjtNum bottom = 0, top = 0, midpoint = 0, halfrange = 1;
-    if (m_->actuator_ctrllimited[i]) {
-      bottom    = m_->actuator_ctrlrange[2 * i];
-      top       = m_->actuator_ctrlrange[2 * i + 1];
-      midpoint  = 0.5 * (top + bottom);  // target of exponential decay
-      halfrange = 0.5 * (top - bottom);  // scales noise
-    }
-
-    // overwrite midpoint with keyframe, if given
-    if (key >= 0) { midpoint = m_->key_ctrl[key * m_->nu + i]; }
-
-    // exponential convergence to midpoint at ctrl_noise_rate
-    d_->ctrl[i] = rate * d_->ctrl[i] + (1 - rate) * midpoint;
-
-    // add noise
-    d_->ctrl[i] += scale * halfrange * mju_standardNormal(nullptr);
-
-    // clip to range if limited
-    if (m_->actuator_ctrllimited[i]) { d_->ctrl[i] = mju_clip(d_->ctrl[i], bottom, top); }
-  }
 }
 
 void Simulate::UpdateHField(int hfieldid) {

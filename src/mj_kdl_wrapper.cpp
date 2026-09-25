@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <csignal>
 #include <cstring>
@@ -41,6 +42,22 @@
 #include <sstream>
 #include <thread>
 #include <unordered_map>
+
+#include <fcntl.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+extern char **environ;
+
+// Log a failure, then return it as the Status of the function that failed.
+#define MJ_FAIL(expr)                    \
+    do {                                 \
+        std::ostringstream mj_fail_;     \
+        mj_fail_ << expr; /* NOLINT */   \
+        LOG_ERROR(mj_fail_.str());       \
+        return Status{ mj_fail_.str() }; \
+    } while (0)
 
 namespace mj_kdl {
 
@@ -204,6 +221,7 @@ static constexpr int kRecorderDefaultFps      = 30;
 struct FfmpegSink
 {
     FILE       *pipe = nullptr;
+    pid_t       pid  = -1;
     std::string path;
     int         width  = 0;
     int         height = 0;
@@ -216,7 +234,7 @@ struct FfmpegSink
    `flip` is for frames straight out of mjr_readPixels, which MuJoCo fills bottom-to-top: the
    filter chain turns them over, as the record sample in the MuJoCo docs does, rather than the
    caller walking every frame to swap its rows. */
-static bool sink_open(
+static Status sink_open(
   FfmpegSink *sink,
   const char *out_path,
   int         in_w,
@@ -234,51 +252,64 @@ static bool sink_open(
        width for an odd height can be odd, so drop the stray row or column here. */
     const int target_w = ((out_w > 0 ? out_w : in_w) / 2) * 2;
     const int target_h = ((out_h > 0 ? out_h : in_h) / 2) * 2;
-    if (target_w <= 0 || target_h <= 0) {
-        LOG_ERROR("recording: frame is " << in_w << "x" << in_h << ", too small to encode");
-        return false;
+    if (target_w <= 0 || target_h <= 0)
+        MJ_FAIL("recording: frame is " << in_w << "x" << in_h << ", too small to encode");
+
+    const bool  scaling = target_w != in_w || target_h != in_h;
+    std::string chain   = flip ? "vflip" : "";
+    if (scaling) {
+        if (!chain.empty()) chain += ",";
+        chain += "scale=" + std::to_string(target_w) + ":" + std::to_string(target_h);
     }
 
-    const bool scaling    = target_w != in_w || target_h != in_h;
-    char       chain[160] = "";
-    if (flip && scaling) {
-        snprintf(chain, sizeof(chain), "vflip,scale=%d:%d", target_w, target_h);
-    } else if (flip) {
-        snprintf(chain, sizeof(chain), "vflip");
-    } else if (scaling) {
-        snprintf(chain, sizeof(chain), "scale=%d:%d", target_w, target_h);
-    }
-    char filters[192] = "";
-    if (chain[0]) snprintf(filters, sizeof(filters), "-vf \"%s\" ", chain);
+    // An argument list, no shell: the path reaches ffmpeg as written, quotes and $(...) included.
+    std::vector<std::string> args = {
+        "ffmpeg",    "-hide_banner",
+        "-loglevel", "error",
+        "-nostats",  "-y",
+        "-f",        "rawvideo",
+        "-vcodec",   "rawvideo",
+        "-pix_fmt",  "rgb24",
+        "-s",        std::to_string(in_w) + "x" + std::to_string(in_h),
+        "-r",        std::to_string(fps),
+        "-i",        "pipe:0",
+        "-an"
+    };
+    if (!chain.empty()) args.insert(args.end(), { "-vf", chain });
+    const std::vector<std::string> encode = {
+        "-vcodec", "libx264", "-pix_fmt", "yuv420p",           "-preset", "medium",
+        "-crf",    "18",      "-g",       std::to_string(gop), out_path
+    };
+    args.insert(args.end(), encode.begin(), encode.end());
+    std::vector<char *> argv;
+    argv.reserve(args.size() + 1);
+    for (auto &arg : args) argv.push_back(arg.data());
+    argv.push_back(nullptr);
 
-    char cmd[2048];
-    snprintf(
-      cmd,
-      sizeof(cmd),
-      "ffmpeg -hide_banner -loglevel error -nostats -y "
-      "-f rawvideo -vcodec rawvideo -pix_fmt rgb24 -s %dx%d -r %d "
-      "-i pipe:0 -an %s-vcodec libx264 -pix_fmt yuv420p -preset medium -crf 18 -g %d \"%s\"",
-      in_w,
-      in_h,
-      fps,
-      filters,
-      gop,
-      out_path
-    );
     /* An ffmpeg that dies mid-recording must not take the simulation down with it: without this
        the next write raises SIGPIPE, whose default is to kill the process. */
     std::signal(SIGPIPE, SIG_IGN);
 
-    sink->pipe   = popen(cmd, "w");
+    int fds[2];
+    if (pipe2(fds, O_CLOEXEC) != 0) MJ_FAIL("pipe for ffmpeg failed: " << std::strerror(errno));
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_adddup2(&actions, fds[0], STDIN_FILENO);
+    const int err = posix_spawnp(&sink->pid, "ffmpeg", &actions, nullptr, argv.data(), environ);
+    posix_spawn_file_actions_destroy(&actions);
+    close(fds[0]);
+    if (err != 0) {
+        close(fds[1]);
+        MJ_FAIL("starting ffmpeg failed (" << std::strerror(err) << ") - is it in PATH?");
+    }
+
+    sink->pipe   = fdopen(fds[1], "w");
     sink->path   = out_path;
     sink->width  = in_w;
     sink->height = in_h;
     sink->frames = 0;
-    if (!sink->pipe) {
-        LOG_ERROR("popen(ffmpeg) failed - is ffmpeg installed and in PATH?");
-        return false;
-    }
-    return true;
+    if (!sink->pipe) MJ_FAIL("opening the ffmpeg pipe failed: " << std::strerror(errno));
+    return {};
 }
 
 static bool sink_write(FfmpegSink *sink, const std::uint8_t *rgb, std::size_t bytes)
@@ -295,8 +326,12 @@ static bool sink_write(FfmpegSink *sink, const std::uint8_t *rgb, std::size_t by
 static void sink_close(FfmpegSink *sink)
 {
     if (!sink->pipe) return;
-    const int status = pclose(sink->pipe);
-    sink->pipe       = nullptr;
+    std::fclose(sink->pipe);
+    sink->pipe  = nullptr;
+    int wstatus = 0;
+    waitpid(sink->pid, &wstatus, 0);
+    sink->pid        = -1;
+    const int status = WIFEXITED(wstatus) ? WEXITSTATUS(wstatus) : -1;
     if (status == 0 && sink->frames > 0) {
         std::fprintf(stderr, "[mj_kdl] recording saved to %s\n", sink->path.c_str());
     } else if (status != 0) {
@@ -365,43 +400,31 @@ static void absolutize_asset_files(mjSpec *spec)
 }
 
 // Resolve an AttachTarget to its element in the accumulated spec.
-// Returns nullptr (and logs) when a non-World name is missing.
-static mjsElement *resolve_parent(mjSpec *spec, const AttachTarget &t)
+static Status resolve_parent(mjSpec *spec, const AttachTarget &t, mjsElement **out)
 {
+    *out = nullptr;
     switch (t.kind) {
-    case AttachKind::World: {
-        mjsBody *wb = world_body(spec);
-        return wb ? wb->element : nullptr;
+    case AttachKind::World:
+        if (mjsBody *wb = world_body(spec)) *out = wb->element;
+        break;
+    case AttachKind::Body:
+        if (!t.name) MJ_FAIL("AttachTarget kind=Body has null name");
+        if (mjsBody *b = mjs_findBody(spec, t.name)) *out = b->element;
+        if (!*out) MJ_FAIL("attach parent body '" << t.name << "' not found");
+        break;
+    case AttachKind::Site:
+        if (!t.name) MJ_FAIL("AttachTarget kind=Site has null name");
+        *out = mjs_findElement(spec, mjOBJ_SITE, t.name);
+        if (!*out) MJ_FAIL("attach parent site '" << t.name << "' not found");
+        break;
+    case AttachKind::Frame:
+        if (!t.name) MJ_FAIL("AttachTarget kind=Frame has null name");
+        if (mjsFrame *f = mjs_findFrame(spec, t.name)) *out = f->element;
+        if (!*out) MJ_FAIL("attach parent frame '" << t.name << "' not found");
+        break;
     }
-    case AttachKind::Body: {
-        if (!t.name) {
-            LOG_ERROR("AttachTarget kind=Body has null name");
-            return nullptr;
-        }
-        mjsBody *b = mjs_findBody(spec, t.name);
-        if (!b) LOG_ERROR("attach parent body '" << t.name << "' not found");
-        return b ? b->element : nullptr;
-    }
-    case AttachKind::Site: {
-        if (!t.name) {
-            LOG_ERROR("AttachTarget kind=Site has null name");
-            return nullptr;
-        }
-        mjsElement *e = mjs_findElement(spec, mjOBJ_SITE, t.name);
-        if (!e) LOG_ERROR("attach parent site '" << t.name << "' not found");
-        return e;
-    }
-    case AttachKind::Frame: {
-        if (!t.name) {
-            LOG_ERROR("AttachTarget kind=Frame has null name");
-            return nullptr;
-        }
-        mjsFrame *f = mjs_findFrame(spec, t.name);
-        if (!f) LOG_ERROR("attach parent frame '" << t.name << "' not found");
-        return f ? f->element : nullptr;
-    }
-    }
-    return nullptr;
+    if (!*out) MJ_FAIL("the scene has no worldbody to attach to");
+    return {};
 }
 
 // Reorder a [x, y, z, w] quaternion into MuJoCo's [w, x, y, z].
@@ -417,20 +440,21 @@ static void quat_xyzw_to_mj_quat(const double q[4], double out_quat[4])
 // For body parents, an intermediate mjsFrame carries the offset so the child's
 // authored pos/quat is preserved. For site/frame parents (which do not accept
 // mjs_addFrame), the offset is written into the child root's pos/quat.
-// Returns the attached body element in the scene spec on success (so callers
-// can rename it or inspect it), or nullptr on failure.
-static mjsBody *attach_child(
+// On success *attached is the attached body in the scene spec (so callers can rename or inspect
+// it).
+static Status attach_child(
   mjSpec             *spec,
   const AttachTarget &target,
   const double        pos[3],
   const double        quat[4],
   mjsBody            *child_root,
-  const char         *prefix
+  const char         *prefix,
+  mjsBody           **attached_out = nullptr
 )
 {
-    if (!spec || !child_root) return nullptr;
-    mjsElement *parent = resolve_parent(spec, target);
-    if (!parent) return nullptr;
+    if (!spec || !child_root) MJ_FAIL("attach: null spec or child body");
+    mjsElement *parent = nullptr;
+    if (Status s = resolve_parent(spec, target, &parent); !s) return s;
 
     double mj_quat[4];
     quat_xyzw_to_mj_quat(quat, mj_quat);
@@ -469,11 +493,9 @@ static mjsBody *attach_child(
         mjs_setName(child_def->element, (std::string(pfx) + mjs_getString(child->modelname)).c_str());
     }
     mjsElement *attached = mjs_attach(attach_parent, child_root->element, pfx, "");
-    if (!attached) {
-        LOG_ERROR("mjs_attach failed: " << mjs_getError(spec));
-        return nullptr;
-    }
-    return mjs_asBody(attached);
+    if (!attached) MJ_FAIL("mjs_attach failed: " << mjs_getError(spec));
+    if (attached_out) *attached_out = mjs_asBody(attached);
+    return {};
 }
 
 // Extract the first root body from a freshly parsed or built mjSpec
@@ -554,21 +576,17 @@ template<std::size_t N, class T> static bool all_set(const T (&values)[N])
     return std::none_of(values, values + N, [](T v) { return std::isnan(v); });
 }
 
-bool add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
+Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
 {
     for (const auto &obj : objects) {
         if (!obj.mjcf_path.empty()) {
-            if (obj.has_rgba && !all_set(obj.rgba)) {
-                LOG_ERROR("SceneObject '" << obj.name << "' sets has_rgba but not .rgba");
-                return false;
-            }
+            if (obj.has_rgba && !all_set(obj.rgba))
+                MJ_FAIL("SceneObject '" << obj.name << "' sets has_rgba but not .rgba");
             char      err[kMjErrBuf] = {};
             MjSpecPtr asset =
               make_spec_ptr(mj_parseXML(obj.mjcf_path.c_str(), nullptr, err, sizeof(err)));
-            if (!asset) {
-                LOG_ERROR("mj_parseXML failed for object asset '" << obj.mjcf_path << "': " << err);
-                return false;
-            }
+            if (!asset)
+                MJ_FAIL("mj_parseXML failed for object asset '" << obj.mjcf_path << "': " << err);
             absolutize_asset_files(asset.get());
 
             // Compile now so mesh files load while this spec's meshdir is alive:
@@ -577,22 +595,22 @@ bool add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
             if (mjModel *compiled = mj_compile(asset.get(), nullptr)) {
                 mj_deleteModel(compiled);
             } else {
-                LOG_ERROR(
+                MJ_FAIL(
                   "failed to compile object asset '" << obj.mjcf_path
                                                      << "': " << mjs_getError(asset.get())
                 );
-                return false;
             }
 
             mjsBody *root = first_root_body(asset.get());
-            if (!root) {
-                LOG_ERROR("no root body found in object asset '" << obj.mjcf_path << "'");
-                return false;
-            }
+            if (!root) MJ_FAIL("no root body found in object asset '" << obj.mjcf_path << "'");
 
-            std::string prefix = obj.name.empty() ? "" : obj.name + "_";
-            mjsBody    *attached =
-              attach_child(spec, obj.attach_to, obj.pos, obj.quat, root, prefix.c_str());
+            std::string prefix   = obj.name.empty() ? "" : obj.name + "_";
+            mjsBody    *attached = nullptr;
+            if (Status s = attach_child(
+                  spec, obj.attach_to, obj.pos, obj.quat, root, prefix.c_str(), &attached
+                );
+                !s)
+                return s;
             // Rename the asset's root body to obj.name so callers can write
             // attach_to = { Body, obj.name } without knowing the MJCF-internal
             // root body name. Other elements keep the obj.name + "_" prefix.
@@ -633,33 +651,29 @@ bool add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
         }
 
         if (obj.shape == Shape::Unspecified) {
-            LOG_ERROR(
+            MJ_FAIL(
               "primitive SceneObject '"
               << obj.name << "' has Shape::Unspecified; set .shape explicitly (BOX/SPHERE/CYLINDER)"
             );
-            return false;
         }
         // Validate fields the user must set on a primitive (unset is NaN, which fails every > 0).
         // Free-jointed bodies also need mass > 0; a fixed body may leave it unset.
         const int n_size = obj.shape == Shape::BOX ? 3 : obj.shape == Shape::CYLINDER ? 2 : 1;
         if (!std::all_of(obj.size, obj.size + n_size, [](double s) { return s > 0.0; })) {
-            LOG_ERROR(
+            MJ_FAIL(
               "primitive SceneObject '"
-              << obj.name << "' has an unset or non-positive .size for its shape; set its dimensions"
+              << obj.name
+              << "' has an unset or non-positive .size for its shape; set its dimensions"
             );
-            return false;
         }
         if (!obj.fixed && !(obj.mass > 0.0)) {
-            LOG_ERROR(
+            MJ_FAIL(
               "primitive SceneObject '" << obj.name << "' has .mass=" << obj.mass
                                         << "; non-fixed bodies require mass > 0"
             );
-            return false;
         }
-        if (!all_set(obj.rgba) || !all_set(obj.friction)) {
-            LOG_ERROR("primitive SceneObject '" << obj.name << "' leaves .rgba or .friction unset");
-            return false;
-        }
+        if (!all_set(obj.rgba) || !all_set(obj.friction))
+            MJ_FAIL("primitive SceneObject '" << obj.name << "' leaves .rgba or .friction unset");
 
         // Build the primitive body inside a throwaway spec so it can be attached
         // under any parent kind (body, site, frame, world) via the same helper.
@@ -697,19 +711,17 @@ bool add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
         g->conaffinity = kContactCategoryAll;
         g->condim      = static_cast<int>(obj.condim);
 
-        attach_child(spec, obj.attach_to, obj.pos, obj.quat, ob, "");
+        if (Status s = attach_child(spec, obj.attach_to, obj.pos, obj.quat, ob, ""); !s) return s;
     }
-    return true;
+    return {};
 }
 
-static bool add_cameras_to_spec(mjSpec *spec, const std::vector<CameraSpec> &cameras)
+static Status add_cameras_to_spec(mjSpec *spec, const std::vector<CameraSpec> &cameras)
 {
     mjsBody *wb = world_body(spec);
     for (const auto &cs : cameras) {
-        if (!all_set(cs.pos) || std::isnan(cs.fovy)) {
-            LOG_ERROR("camera '" << cs.name << "' leaves .pos or .fovy unset");
-            return false;
-        }
+        if (!all_set(cs.pos) || std::isnan(cs.fovy))
+            MJ_FAIL("camera '" << cs.name << "' leaves .pos or .fovy unset");
         // The asset's own camera wins: it is the one its author placed, and re-adding the
         // name would fail the compile on a duplicate.
         if (mjs_findElement(spec, mjOBJ_CAMERA, cs.name.c_str())) continue;
@@ -726,7 +738,7 @@ static bool add_cameras_to_spec(mjSpec *spec, const std::vector<CameraSpec> &cam
         cam->fovy   = cs.fovy;
         quat_xyzw_to_mj_quat(cs.quat, cam->quat);
     }
-    return true;
+    return {};
 }
 
 static void add_site_to_spec(mjSpec *spec, mjsBody *body, const SiteSpec &ss)
@@ -783,14 +795,11 @@ static void add_sites_to_spec(mjSpec *spec, const std::vector<SiteSpec> &sites)
 // A compiled model cannot be written back to XML on its own; mj_saveXML needs its spec.
 static std::unordered_map<const mjModel *, MjSpecPtr> g_model_specs;
 
-bool compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data)
+Status compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data)
 {
     MjSpecPtr owned = make_spec_ptr(spec);
     *out_model      = mj_compile(spec, nullptr);
-    if (!*out_model) {
-        LOG_ERROR("mj_compile failed: " << mjs_getError(spec));
-        return false;
-    }
+    if (!*out_model) MJ_FAIL("mj_compile failed: " << mjs_getError(spec));
     LOG_INFO(
       "scene compiled: nq=" << (*out_model)->nq << " nv=" << (*out_model)->nv
                             << " nbody=" << (*out_model)->nbody
@@ -799,10 +808,10 @@ bool compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data)
     if (!*out_data) {
         mj_deleteModel(*out_model);
         *out_model = nullptr;
-        return false;
+        MJ_FAIL("mj_makeData failed: out of memory for the compiled model");
     }
     g_model_specs.insert_or_assign(*out_model, std::move(owned));
-    return true;
+    return {};
 }
 
 // KDL helpers
@@ -983,7 +992,7 @@ static int native_mode(int gaintype, const double *gainprm, int biastype, const 
 
 static int mode_group(int robot, int mode) { return 1 + 3 * robot + mode; }
 
-static bool build_index_map(Robot *s, const std::string &pfx = "")
+static Status build_index_map(Robot *s, const std::string &pfx = "")
 {
     RobotInternals &in = *s->_impl;
     in.kdl_to_mj_qpos.clear();
@@ -993,17 +1002,16 @@ static bool build_index_map(Robot *s, const std::string &pfx = "")
     in.robot_index  = -1;
     in.mode_applied = false;
     in.mj_prefix    = pfx;
-    if (!s->model) return false;
+    if (!s->model) MJ_FAIL("robot has no model");
     const mjModel *m = s->model;
     for (size_t j = 0; j < s->joint_names.size(); ++j) {
         const std::string &name = s->joint_names[j];
         int                id   = mj_name2id(m, mjOBJ_JOINT, (pfx + name).c_str());
         if (id < 0) {
-            LOG_ERROR(
+            MJ_FAIL(
               "joint '" << pfx << name
                         << "' not found in MuJoCo model - check robot prefix or URDF joint names"
             );
-            return false;
         }
         in.kdl_to_mj_qpos.push_back(m->jnt_qposadr[id]);
         in.kdl_to_mj_dof.push_back(m->jnt_dofadr[id]);
@@ -1048,7 +1056,7 @@ static bool build_index_map(Robot *s, const std::string &pfx = "")
             break;
         }
     }
-    return true;
+    return {};
 }
 
 // A joint the model leaves unlimited (a continuous wrist) is unlimited here too, not +-pi.
@@ -1065,28 +1073,21 @@ static std::pair<double, double> joint_range(const mjModel *model, int jid)
 
 // Build KDL chain from compiled mjModel (no URDF needed)
 
-static bool
+static Status
   build_kdl_from_model(Robot *s, mjModel *model, const char *base_body, const char *tip_body)
 {
     int base_bid = mj_name2id(model, mjOBJ_BODY, base_body);
     int tip_bid  = mj_name2id(model, mjOBJ_BODY, tip_body);
-    if (base_bid < 0) {
-        LOG_ERROR("base body '" << base_body << "' not found in compiled model");
-        return false;
-    }
-    if (tip_bid < 0) {
-        LOG_ERROR("tip body '" << tip_body << "' not found in compiled model");
-        return false;
-    }
+    if (base_bid < 0) MJ_FAIL("base body '" << base_body << "' not found in compiled model");
+    if (tip_bid < 0) MJ_FAIL("tip body '" << tip_body << "' not found in compiled model");
 
     std::vector<int> bids;
     for (int b = tip_bid; b != base_bid; b = model->body_parentid[b]) {
         if (b == 0) {
-            LOG_ERROR(
+            MJ_FAIL(
               "'" << tip_body << "' is not a descendant of '" << base_body
                   << "'  - check body hierarchy in the model"
             );
-            return false;
         }
         bids.push_back(b);
     }
@@ -1104,13 +1105,25 @@ static bool
         );
         KDL::Frame F(bR, bv);
 
+        // A KDL segment carries at most one scalar joint; anything else would be dropped silently.
+        const char *body = bname ? bname : "(unnamed)";
+        if (model->body_jntnum[bid] > 1) {
+            MJ_FAIL(
+              "body '" << body << "' has " << model->body_jntnum[bid]
+                       << " joints; a chain body carries at most one"
+            );
+        }
         KDL::Joint jnt(KDL::Joint::None);
-        for (int jid = model->body_jntadr[bid];
-             jid < model->body_jntadr[bid] + model->body_jntnum[bid];
-             ++jid) {
-            if (model->jnt_type[jid] != mjJNT_HINGE && model->jnt_type[jid] != mjJNT_SLIDE)
-                continue;
+        if (model->body_jntnum[bid] == 1) {
+            const int jid = model->body_jntadr[bid];
+            if (model->jnt_type[jid] != mjJNT_HINGE && model->jnt_type[jid] != mjJNT_SLIDE) {
+                MJ_FAIL(
+                  "body '" << body << "' has a ball or free joint; a chain takes hinges and slides"
+                );
+            }
             const char *jname = mj_id2name(model, mjOBJ_JOINT, jid);
+            if (!jname)
+                MJ_FAIL("the joint of body '" << body << "' is unnamed, so it cannot be mapped");
             KDL::Vector jp(
               model->jnt_pos[3 * jid], model->jnt_pos[3 * jid + 1], model->jnt_pos[3 * jid + 2]
             );
@@ -1124,12 +1137,9 @@ static bool
             // Rotor inertia (armature) is part of what the joint must drive; KDL's dynamics
             // solvers add it, so the chain matches the simulated model.
             const double armature = model->dof_armature[model->jnt_dofadr[jid]];
-            jnt = KDL::Joint(jname ? jname : "", origin, axis, jtype, 1.0, 0.0, armature);
-            if (jname) {
-                s->joint_names.push_back(jname);
-                s->joint_limits.push_back(joint_range(model, jid));
-            }
-            break;
+            jnt                   = KDL::Joint(jname, origin, axis, jtype, 1.0, 0.0, armature);
+            s->joint_names.push_back(jname);
+            s->joint_limits.push_back(joint_range(model, jid));
         }
 
         KDL::RigidBodyInertia inertia = mj_body_inertia(model, bid);
@@ -1137,12 +1147,12 @@ static bool
         s->chain.addSegment(KDL::Segment(bname ? bname : "", jnt, F, inertia));
     }
     s->n_joints = (int)s->chain.getNrOfJoints();
-    return true;
+    return {};
 }
 
 // Scene API
 
-bool save_model_xml(const mjModel *model, const char *path)
+Status save_model_xml(const mjModel *model, const char *path)
 {
     char       err[kMjErrBuf] = {};
     int        ok             = 0;
@@ -1153,12 +1163,9 @@ bool save_model_xml(const mjModel *model, const char *path)
     } else {
         ok = mj_saveLastXML(path, model, err, sizeof(err));
     }
-    if (!ok) {
-        LOG_ERROR("mj_saveLastXML failed for '" << path << "': " << err);
-    } else {
-        LOG_INFO("model saved to '" << path << "'");
-    }
-    return ok != 0;
+    if (!ok) MJ_FAIL("saving the model to '" << path << "' failed: " << err);
+    LOG_INFO("model saved to '" << path << "'");
+    return {};
 }
 
 void destroy_scene(mjModel *model, mjData *data)
@@ -1177,20 +1184,20 @@ static void forget_model(Env *env)
     for (auto &names : env->_impl->names) names.clear();
 }
 
-bool init_env(Env *env, const SceneSpec *spec)
+Status init_env(Env *env, const SceneSpec *spec)
 {
-    if (!env || !spec) return false;
+    if (!env || !spec) MJ_FAIL("init_env: null env or spec");
 
     cleanup(env);
     env->spec = *spec;
-    if (!build_scene(&env->model, &env->data, &env->spec)) {
+    if (Status built = build_scene(&env->model, &env->data, &env->spec); !built) {
         env->model = nullptr;
         env->data  = nullptr;
-        return false;
+        return built;
     }
     env->scene       = SceneState{};
     env->scene.model = env->model;
-    return true;
+    return {};
 }
 
 void cleanup(Env *env)
@@ -1211,9 +1218,9 @@ void cleanup(Env *env)
     env->on_reset = nullptr;
 }
 
-bool attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
+Status attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
 {
-    if (!robot_spec || !a || !a->mjcf_path) return false;
+    if (!robot_spec || !a || !a->mjcf_path) MJ_FAIL("attach_to_spec: null spec or mjcf_path");
     ensure_plugins_loaded();
     LOG_INFO(
       "attach_to_spec: parent='" << (a->attach_to.name ? a->attach_to.name : "(world)")
@@ -1222,21 +1229,14 @@ bool attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
 
     char      err[kMjErrBuf] = {};
     MjSpecPtr att            = make_spec_ptr(mj_parseXML(a->mjcf_path, nullptr, err, sizeof(err)));
-    if (!att) {
-        LOG_ERROR("mj_parseXML failed for attachment '" << a->mjcf_path << "': " << err);
-        return false;
-    }
+    if (!att) MJ_FAIL("mj_parseXML failed for attachment '" << a->mjcf_path << "': " << err);
     absolutize_asset_files(att.get());
 
     mjsBody *att_root = first_root_body(att.get());
-    if (!att_root) {
-        LOG_ERROR("no root body found in attachment spec '" << a->mjcf_path << "'");
-        return false;
-    }
+    if (!att_root) MJ_FAIL("no root body found in attachment spec '" << a->mjcf_path << "'");
 
-    if (!attach_child(robot_spec, a->attach_to, a->pos, a->quat, att_root, a->prefix)) {
-        return false;
-    }
+    if (Status s = attach_child(robot_spec, a->attach_to, a->pos, a->quat, att_root, a->prefix); !s)
+        return s;
     // att (deep-copied into robot_spec) is freed by MjSpecPtr at scope exit.
 
     // Register contact exclusions.
@@ -1245,7 +1245,7 @@ bool attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
         mjs_setString(exc->bodyname1, ex.first.c_str());
         mjs_setString(exc->bodyname2, ex.second.c_str());
     }
-    return true;
+    return {};
 }
 
 static bool range_limited(mjtLimited flag, const double *range)
@@ -1256,13 +1256,11 @@ static bool range_limited(mjtLimited flag, const double *range)
 /* Give each listed joint one actuator per requested mode, each mode in its own group of this
  * robot; the joint's own actuator joins the group of the mode it gives natively. Collects the
  * groups to start disabled. */
-static bool add_mode_actuators(mjSpec *arm, const RobotSpec &rs, int robot, int *disable_bits)
+static Status add_mode_actuators(mjSpec *arm, const RobotSpec &rs, int robot, int *disable_bits)
 {
-    if (rs.modes.empty()) return true;
-    if (mode_group(robot, static_cast<int>(CtrlMode::VELOCITY)) > 30) {
-        LOG_ERROR("robots[" << robot << "]: control-mode groups only reach robot index 9");
-        return false;
-    }
+    if (rs.modes.empty()) return {};
+    if (mode_group(robot, static_cast<int>(CtrlMode::VELOCITY)) > 30)
+        MJ_FAIL("robots[" << robot << "]: control-mode groups only reach robot index 9");
 
     std::map<std::string, std::vector<mjsActuator *>> by_joint;
     for (mjsElement *e = mjs_firstElement(arm, mjOBJ_ACTUATOR); e; e = mjs_nextElement(arm, e)) {
@@ -1290,11 +1288,10 @@ static bool add_mode_actuators(mjSpec *arm, const RobotSpec &rs, int robot, int 
                     LOG_INFO("robots[" << robot << "]: joint '" << joint << "' takes no control modes");
                     continue;
                 }
-                LOG_ERROR(
+                MJ_FAIL(
                   "robots[" << robot << "]: joint '" << joint
                             << "' needs exactly one position-servo or motor actuator"
                 );
-                return false;
             }
             own->group = mode_group(robot, native);
             enabled |= 1 << own->group;
@@ -1303,15 +1300,12 @@ static bool add_mode_actuators(mjSpec *arm, const RobotSpec &rs, int robot, int 
             const int mode = static_cast<int>(ms.mode);
             if (mode == native) continue;
             if (ms.mode == CtrlMode::POSITION) {
-                LOG_ERROR(
+                MJ_FAIL(
                   "robots[" << robot << "]: joint '" << joint << "' is motor-driven; POSITION is not supported"
                 );
-                return false;
             }
-            if (ms.mode == CtrlMode::VELOCITY && ms.kv <= 0.0) {
-                LOG_ERROR("robots[" << robot << "]: VELOCITY needs kv > 0");
-                return false;
-            }
+            if (ms.mode == CtrlMode::VELOCITY && ms.kv <= 0.0)
+                MJ_FAIL("robots[" << robot << "]: VELOCITY needs kv > 0");
 
             // Both limits below are in actuator-force units: a servo's forcerange, a motor's ctrl.
             const bool    servo   = native == static_cast<int>(CtrlMode::POSITION);
@@ -1354,18 +1348,17 @@ static bool add_mode_actuators(mjSpec *arm, const RobotSpec &rs, int robot, int 
         padded.resize(nu, 0.0);
         mjs_setDouble(key->ctrl, padded.data(), nu);
     }
-    return true;
+    return {};
 }
 
-bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
+Status build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
 {
-    if (!sc) return false;
+    if (!sc) MJ_FAIL("build_scene: null spec");
     if (!(sc->timestep > 0.0)) {
-        LOG_ERROR(
+        MJ_FAIL(
           "SceneSpec::timestep must be > 0 (got "
           << sc->timestep << "); the field has no default, set it explicitly (suggested 0.002 s)"
         );
-        return false;
     }
     ensure_plugins_loaded();
     LOG_INFO(
@@ -1373,10 +1366,7 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     );
 
     MjSpecPtr scene = make_spec_ptr(mj_makeSpec());
-    if (!scene) {
-        LOG_ERROR("mj_makeSpec() failed");
-        return false;
-    }
+    if (!scene) MJ_FAIL("mj_makeSpec() failed");
 
     scene->compiler.balanceinertia = true; // mjsCompiler stores as int 0/1
     scene->compiler.discardvisual  = false;
@@ -1389,7 +1379,7 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     // Objects come before robots so a robot can attach to a SceneObject (e.g.
     // {AttachKind::Site, "table_mount"}). A child object that references
     // another object must appear after its parent in SceneSpec::objects.
-    if (!add_objects_to_spec(scene.get(), sc->objects)) return false;
+    if (Status s = add_objects_to_spec(scene.get(), sc->objects); !s) return s;
 
     // Sites land as their bodies arrive, so a later attach can name one -- see add_ready_sites.
     std::vector<SiteSpec> pending_sites = sc->sites;
@@ -1400,19 +1390,13 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     char err[kMjErrBuf] = {};
     for (int ai = 0; ai < (int)sc->robots.size(); ++ai) {
         const RobotSpec &rs = sc->robots[ai];
-        if (!rs.path) {
-            LOG_ERROR("robots[" << ai << "].path is null");
-            return false;
-        }
+        if (!rs.path) MJ_FAIL("robots[" << ai << "].path is null");
 
         MjSpecPtr arm = make_spec_ptr(mj_parseXML(rs.path, nullptr, err, sizeof(err)));
-        if (!arm) {
-            LOG_ERROR("mj_parseXML failed for '" << rs.path << "': " << err);
-            return false;
-        }
+        if (!arm) MJ_FAIL("mj_parseXML failed for '" << rs.path << "': " << err);
         absolutize_asset_files(arm.get());
         // Before the attachments are merged in, so only the robot's own joints take modes.
-        if (!add_mode_actuators(arm.get(), rs, ai, &disable_bits)) return false;
+        if (Status s = add_mode_actuators(arm.get(), rs, ai, &disable_bits); !s) return s;
 
         // Inherit physics options (integrator, solver, etc.) from the first
         // arm, then apply the SceneSpec's user-controlled fields on top.
@@ -1425,19 +1409,16 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
 
         // Apply attachment chain in order (mount, sensor, gripper, etc.).
         for (const auto &att : rs.attachments) {
-            if (!attach_to_spec(arm.get(), &att)) return false;
+            if (Status s = attach_to_spec(arm.get(), &att); !s) return s;
         }
 
         mjsBody *arm_root = first_root_body(arm.get());
-        if (!arm_root) {
-            LOG_ERROR("no root body found in arm spec '" << rs.path << "'");
-            return false;
-        }
+        if (!arm_root) MJ_FAIL("no root body found in arm spec '" << rs.path << "'");
 
-        if (!attach_child(scene.get(), rs.attach_to, rs.pos, rs.quat, arm_root, rs.prefix)) {
-            LOG_ERROR("attach failed for arm " << ai);
-            return false;
-        }
+        if (Status s =
+              attach_child(scene.get(), rs.attach_to, rs.pos, rs.quat, arm_root, rs.prefix);
+            !s)
+            return s;
         add_ready_sites(scene.get(), pending_sites);
         // arm (deep-copied into scene) is freed by MjSpecPtr at scope exit.
     }
@@ -1450,7 +1431,7 @@ bool build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     // Every robot starts in its native mode: its other mode groups are off.
     scene->option.disableactuator |= disable_bits;
 
-    if (!add_cameras_to_spec(scene.get(), sc->cameras)) return false;
+    if (Status s = add_cameras_to_spec(scene.get(), sc->cameras); !s) return s;
     // Whatever is still pending: a site whose body no robot or object ever brought in, reported
     // here rather than dropped in silence.
     if (!pending_sites.empty()) add_sites_to_spec(scene.get(), pending_sites);
@@ -1513,38 +1494,38 @@ static void swap_scene(Env *env, mjModel *m, mjData *d)
     rebind_scene(env);
 }
 
-bool scene_add_object(Env *env, const SceneObject &obj)
+Status scene_add_object(Env *env, const SceneObject &obj)
 {
-    if (!env) return false;
+    if (!env) MJ_FAIL("scene_add_object: null env");
     env->spec.objects.push_back(obj);
     mjModel *m = nullptr;
     mjData  *d = nullptr;
-    if (!build_scene(&m, &d, &env->spec)) {
+    if (Status built = build_scene(&m, &d, &env->spec); !built) {
         env->spec.objects.pop_back();
-        return false;
+        return built;
     }
     swap_scene(env, m, d);
-    return true;
+    return {};
 }
 
-bool scene_remove_object(Env *env, const std::string &name)
+Status scene_remove_object(Env *env, const std::string &name)
 {
-    if (!env) return false;
+    if (!env) MJ_FAIL("scene_remove_object: null env");
     auto &objects = env->spec.objects;
     auto  it      = std::find_if(objects.begin(), objects.end(), [&](const SceneObject &o) {
         return o.name == name;
     });
-    if (it == objects.end()) return false;
+    if (it == objects.end()) MJ_FAIL("scene_remove_object: no object named '" << name << "'");
     SceneObject removed = std::move(*it);
     objects.erase(it);
     mjModel *m = nullptr;
     mjData  *d = nullptr;
-    if (!build_scene(&m, &d, &env->spec)) {
+    if (Status built = build_scene(&m, &d, &env->spec); !built) {
         objects.push_back(removed);
-        return false;
+        return built;
     }
     swap_scene(env, m, d);
-    return true;
+    return {};
 }
 
 std::string scene_object_site_name(const SceneObject &obj, const char *site_name)
@@ -1583,19 +1564,29 @@ bool get_body_frame(Env *env, const char *body_name, KDL::Frame *out)
     return true;
 }
 
-// A joint by name, or the transmission joint of an actuator by that name; -1 when neither.
+// A scalar joint by name, or the transmission joint of an actuator by that name; -1 when neither.
 static int resolve_joint_id(Env *env, const char *name)
 {
     const mjModel *model = env->model;
     int            jid   = cached_name2id(env, mjOBJ_JOINT, name);
-    if (jid >= 0) return jid;
-    const int aid = cached_name2id(env, mjOBJ_ACTUATOR, name);
-    if (aid < 0) return -1;
-    if (model->actuator_trntype[aid] == mjTRN_JOINT) {
-        jid = model->actuator_trnid[2 * aid];
-    } else if (model->actuator_trntype[aid] == mjTRN_TENDON) {
-        const int tid = model->actuator_trnid[2 * aid];
-        jid           = model->wrap_objid[model->tendon_adr[tid]];
+    if (jid < 0) {
+        const int aid = cached_name2id(env, mjOBJ_ACTUATOR, name);
+        if (aid < 0) return -1;
+        if (model->actuator_trntype[aid] == mjTRN_JOINT) {
+            jid = model->actuator_trnid[2 * aid];
+        } else if (model->actuator_trntype[aid] == mjTRN_TENDON) {
+            // A spatial tendon wraps sites and geoms; only a joint wrap names a joint.
+            const int adr = model->tendon_adr[model->actuator_trnid[2 * aid]];
+            if (model->wrap_type[adr] == mjWRAP_JOINT) jid = model->wrap_objid[adr];
+        }
+        if (jid < 0) {
+            LOG_ERROR("actuator '" << name << "' does not drive a joint");
+            return -1;
+        }
+    }
+    if (model->jnt_type[jid] == mjJNT_BALL || model->jnt_type[jid] == mjJNT_FREE) {
+        LOG_ERROR("joint of '" << name << "' is a ball or free joint, not a scalar one");
+        return -1;
     }
     return jid;
 }
@@ -1656,16 +1647,13 @@ bool use_camera(VideoRecorder *vr, const mjModel *model, const char *name)
 
 // Robot API
 
-static bool resolve_ft_sensors(Robot *r, const ToolFrameSpec *tool)
+static Status resolve_ft_sensors(Robot *r, const ToolFrameSpec *tool)
 {
     r->ft_sensors.clear();
-    if (!tool) return true;
+    if (!tool) return {};
 
     for (const ForceTorqueSensorSpec &spec : tool->ft_sensors) {
-        if (!spec.name || spec.name[0] == '\0') {
-            LOG_ERROR("ForceTorqueSensorSpec.name is required");
-            return false;
-        }
+        if (!spec.name || spec.name[0] == '\0') MJ_FAIL("ForceTorqueSensorSpec.name is required");
 
         const std::string name = spec.name;
         const std::string force_name =
@@ -1676,27 +1664,21 @@ static bool resolve_ft_sensors(Robot *r, const ToolFrameSpec *tool)
 
         const int force_id = mj_name2id(r->model, mjOBJ_SENSOR, force_name.c_str());
         if (force_id < 0) {
-            LOG_ERROR(
-              "force sensor '" << force_name << "' not found for FT sensor '" << name << "'"
-            );
-            return false;
+            MJ_FAIL("force sensor '" << force_name << "' not found for FT sensor '" << name << "'");
         }
         const int torque_id = mj_name2id(r->model, mjOBJ_SENSOR, torque_name.c_str());
         if (torque_id < 0) {
-            LOG_ERROR(
+            MJ_FAIL(
               "torque sensor '" << torque_name << "' not found for FT sensor '" << name << "'"
             );
-            return false;
         }
         if (r->model->sensor_type[force_id] != mjSENS_FORCE
             || r->model->sensor_dim[force_id] != 3) {
-            LOG_ERROR("sensor '" << force_name << "' must be a 3D MuJoCo force sensor");
-            return false;
+            MJ_FAIL("sensor '" << force_name << "' must be a 3D MuJoCo force sensor");
         }
         if (r->model->sensor_type[torque_id] != mjSENS_TORQUE
             || r->model->sensor_dim[torque_id] != 3) {
-            LOG_ERROR("sensor '" << torque_name << "' must be a 3D MuJoCo torque sensor");
-            return false;
+            MJ_FAIL("sensor '" << torque_name << "' must be a 3D MuJoCo torque sensor");
         }
 
         ForceTorqueSensor sensor;
@@ -1709,15 +1691,14 @@ static bool resolve_ft_sensors(Robot *r, const ToolFrameSpec *tool)
             sensor.frame_site    = spec.frame_site;
             sensor.frame_site_id = mj_name2id(r->model, mjOBJ_SITE, spec.frame_site);
             if (sensor.frame_site_id < 0) {
-                LOG_ERROR(
+                MJ_FAIL(
                   "frame_site '" << spec.frame_site << "' not found for FT sensor '" << name << "'"
                 );
-                return false;
             }
         }
         r->ft_sensors.push_back(std::move(sensor));
     }
-    return true;
+    return {};
 }
 
 // Ports that hold the robot where it is, in the mode its model is in.
@@ -1753,7 +1734,7 @@ static void register_robot(Robot *r, Env *env)
     static_cast<RobotPorts &>(*r) = seeded_ports(*r);
 }
 
-bool init_robot_from_mjcf(
+Status init_robot_from_mjcf(
   Robot               *r,
   Env                 *env,
   const char          *base_body,
@@ -1762,7 +1743,7 @@ bool init_robot_from_mjcf(
   const ToolFrameSpec *tool
 )
 {
-    if (!r || !env || !env->model) return false;
+    if (!r || !env || !env->model) MJ_FAIL("init_robot_from_mjcf: null robot or empty env");
     LOG_INFO(
       "init_robot_from_mjcf: '"
       << base_body << "' -> '" << tip_body << "' prefix='" << (prefix ? prefix : "") << "'"
@@ -1778,19 +1759,18 @@ bool init_robot_from_mjcf(
     r->has_tcp_frame = false;
     r->tcp_site.clear();
     r->ft_sensors.clear();
-    if (!build_kdl_from_model(r, model, base_body, tip_body)) return false;
-    if (!build_index_map(r, prefix ? prefix : "")) return false;
-    if (!resolve_ft_sensors(r, tool)) return false;
+    if (Status s = build_kdl_from_model(r, model, base_body, tip_body); !s) return s;
+    if (Status s = build_index_map(r, prefix ? prefix : ""); !s) return s;
+    if (Status s = resolve_ft_sensors(r, tool); !s) return s;
 
     KDL::Frame tip_T_tcp = KDL::Frame::Identity();
     bool       has_tcp   = false;
     if (tool && tool->tcp_site) {
         if (!get_site_frame_in_body(env, tip_body, tool->tcp_site, &tip_T_tcp)) {
-            LOG_ERROR(
+            MJ_FAIL(
               "tcp_site '" << tool->tcp_site << "' or tip body '" << tip_body
                            << "' not found in model"
             );
-            return false;
         }
         has_tcp          = true;
         r->tip_T_tcp     = tip_T_tcp;
@@ -1805,10 +1785,7 @@ bool init_robot_from_mjcf(
 
     if (tool && tool->tool_body) {
         int tool_bid = mj_name2id(model, mjOBJ_BODY, tool->tool_body);
-        if (tool_bid < 0) {
-            LOG_ERROR("tool_body '" << tool->tool_body << "' not found in model");
-            return false;
-        }
+        if (tool_bid < 0) MJ_FAIL("tool_body '" << tool->tool_body << "' not found in model");
         int tip_bid = mj_name2id(model, mjOBJ_BODY, tip_body);
         ensure_kinematics(env);
         std::vector<int>      subtree      = collect_subtree(model, tool_bid);
@@ -1838,10 +1815,10 @@ bool init_robot_from_mjcf(
                                   : "")
     );
     register_robot(r, env);
-    return true;
+    return {};
 }
 
-bool init_robot_from_chain(
+Status init_robot_from_chain(
   Robot                          *r,
   Env                            *env,
   const KDL::Chain               &chain,
@@ -1850,7 +1827,7 @@ bool init_robot_from_chain(
   const ToolFrameSpec            *tool
 )
 {
-    if (!r || !env || !env->model) return false;
+    if (!r || !env || !env->model) MJ_FAIL("init_robot_from_chain: null robot or empty env");
     const auto lock  = lock_env(env);
     mjModel   *model = env->model;
     LOG_INFO(
@@ -1858,11 +1835,10 @@ bool init_robot_from_chain(
                                 << " joints, prefix='" << (prefix ? prefix : "") << "'"
     );
     if (joint_names.size() != chain.getNrOfJoints()) {
-        LOG_ERROR(
+        MJ_FAIL(
           "joint_names has " << joint_names.size() << " entries but the chain has "
                              << chain.getNrOfJoints() << " joints"
         );
-        return false;
     }
 
     r->model         = model;
@@ -1886,14 +1862,14 @@ bool init_robot_from_chain(
         );
     }
 
-    if (!build_index_map(r, pfx)) return false;
-    if (!resolve_ft_sensors(r, tool)) return false;
+    if (Status s = build_index_map(r, pfx); !s) return s;
+    if (Status s = resolve_ft_sensors(r, tool); !s) return s;
 
     LOG_INFO(
       "chain adopted: " << r->n_joints << " joints, " << r->chain.getNrOfSegments() << " segments"
     );
     register_robot(r, env);
-    return true;
+    return {};
 }
 
 const ForceTorqueSensor *find_ft_sensor(const Robot *r, const char *name)
@@ -2184,7 +2160,7 @@ ResetInfo reset(Env *env, const ResetOptions *options)
     return reset_env(env, options, true);
 }
 
-static bool switch_group(Env *env, int robot, CtrlMode mode)
+static Status switch_group(Env *env, int robot, CtrlMode mode)
 {
     mjModel  *m      = env->model;
     mjData   *d      = env->data;
@@ -2200,38 +2176,37 @@ static bool switch_group(Env *env, int robot, CtrlMode mode)
         case CtrlMode::TORQUE: d->ctrl[a] = 0.0; break;
         }
     }
-    if (!found) {
-        LOG_ERROR("robot " << robot << " has no actuators for this control mode");
-        return false;
-    }
+    if (!found) MJ_FAIL("robot " << robot << " has no actuators for this control mode");
     for (int k = 0; k < 3; ++k) m->opt.disableactuator |= 1 << mode_group(robot, k);
     m->opt.disableactuator &= ~(1 << target);
-    return true;
+    return {};
 }
 
-bool set_control_mode(Env *env, int robot, CtrlMode mode)
+Status set_control_mode(Env *env, int robot, CtrlMode mode)
 {
-    if (!env || !env->model || robot < 0 || robot > 9) return false;
+    if (!env || !env->model) MJ_FAIL("set_control_mode: empty env");
+    if (robot < 0 || robot > 9) MJ_FAIL("set_control_mode: robot index " << robot << " not 0..9");
     const auto lock = lock_env(env);
     return switch_group(env, robot, mode);
 }
 
 // seed_ports: an explicit switch starts the new mode from where the joints are; a switch the
 // caller asked for by setting ctrl_mode keeps the commands it set alongside.
-static bool switch_control_mode(Robot *r, CtrlMode mode, bool seed_ports)
+static Status switch_control_mode(Robot *r, CtrlMode mode, bool seed_ports)
 {
     RobotInternals &in  = *r->_impl;
     const int       idx = static_cast<int>(mode);
     for (int i = 0; i < r->n_joints; ++i) {
         if (in.mode_ctrl[idx][i] < 0) {
-            LOG_ERROR(
+            MJ_FAIL(
               "joint '" << r->joint_names[i] << "' has no actuator for this control mode"
-              << " (add it to RobotSpec::modes)"
+                        << " (add it to RobotSpec::modes)"
             );
-            return false;
         }
     }
-    if (in.robot_index >= 0 && !switch_group(in.env, in.robot_index, mode)) return false;
+    if (in.robot_index >= 0) {
+        if (Status s = switch_group(in.env, in.robot_index, mode); !s) return s;
+    }
     const mjData *d = r->data;
     for (int i = 0; seed_ports && i < r->n_joints; ++i) {
         r->jnt_pos_cmd[i] = d->qpos[in.kdl_to_mj_qpos[i]];
@@ -2241,12 +2216,12 @@ static bool switch_control_mode(Robot *r, CtrlMode mode, bool seed_ports)
     r->ctrl_mode    = mode;
     in.applied_mode = mode;
     in.mode_applied = true;
-    return true;
+    return {};
 }
 
-bool set_control_mode(Robot *r, CtrlMode mode)
+Status set_control_mode(Robot *r, CtrlMode mode)
 {
-    if (!r || !r->_impl->env) return false;
+    if (!r || !r->_impl->env) MJ_FAIL("set_control_mode: robot is not registered with an Env");
     const auto lock = lock_env(r->_impl->env);
     return switch_control_mode(r, mode, true);
 }
@@ -2739,6 +2714,17 @@ void set_free_camera(
     set_free_camera_impl(&v->cam, distance, azimuth, elevation, lookat);
 }
 
+void set_free_camera(
+  VideoRecorder               *vr,
+  double                       distance,
+  double                       azimuth,
+  double                       elevation,
+  const std::array<double, 3> &lookat
+)
+{
+    if (vr) set_free_camera_impl(&vr->cam, distance, azimuth, elevation, lookat);
+}
+
 static void close_viewer(Env *env)
 {
     Viewer *v = &env->viewer;
@@ -2829,10 +2815,12 @@ bool key_pressed(const Viewer *v, int glfw_key)
     return ss->keys[glfw_key].load(std::memory_order_relaxed);
 }
 
-bool open_viewer(Env *env, const char *title)
+Status open_viewer(Env *env, const char *title)
 {
-    if (!env || !env->model || env->viewer._sim_ui) return false;
-    if (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY")) return false;
+    if (!env || !env->model) MJ_FAIL("open_viewer: empty env");
+    if (env->viewer._sim_ui) MJ_FAIL("open_viewer: the viewer is already open");
+    if (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY"))
+        MJ_FAIL("open_viewer: no display (neither DISPLAY nor WAYLAND_DISPLAY is set)");
     Viewer  *v = &env->viewer;
     mjModel *m = env->model;
     mjData  *d = env->data;
@@ -2911,7 +2899,7 @@ bool open_viewer(Env *env, const char *title)
     ss->sim->user_scn  = &ss->user_scn;
 
     v->_sim_ui = ss;
-    return true;
+    return {};
 }
 
 // Show a rebuilt pair; call before the old one is freed.
@@ -3052,7 +3040,7 @@ static EGLDisplay vr_egl_display(EGLint *major, EGLint *minor)
     return EGL_NO_DISPLAY;
 }
 
-static bool vr_egl_init(VideoRecorderImpl *impl)
+static Status vr_egl_init(VideoRecorderImpl *impl)
 {
     const EGLint attrs[] = {
         EGL_RED_SIZE,          kEglChannelBits, EGL_GREEN_SIZE,   kEglChannelBits,
@@ -3064,36 +3052,25 @@ static bool vr_egl_init(VideoRecorderImpl *impl)
 
     EGLint major = 0, minor = 0;
     impl->egl_dpy = vr_egl_display(&major, &minor);
-    if (impl->egl_dpy == EGL_NO_DISPLAY) {
-        LOG_ERROR("EGL: no device display and no default display could be initialized");
-        return false;
-    }
+    if (impl->egl_dpy == EGL_NO_DISPLAY)
+        MJ_FAIL("EGL: no device display and no default display could be initialized");
 
     EGLConfig cfg;
     EGLint    n = 0;
-    if (!eglChooseConfig(impl->egl_dpy, attrs, &cfg, 1, &n) || n == 0) {
-        LOG_ERROR("EGL: no suitable config");
-        return false;
-    }
+    if (!eglChooseConfig(impl->egl_dpy, attrs, &cfg, 1, &n) || n == 0)
+        MJ_FAIL("EGL: no suitable config");
 
-    if (!eglBindAPI(EGL_OPENGL_API)) {
-        LOG_ERROR("EGL: bind OpenGL API failed");
-        return false;
-    }
+    if (!eglBindAPI(EGL_OPENGL_API)) MJ_FAIL("EGL: bind OpenGL API failed");
 
     impl->egl_ctx = eglCreateContext(impl->egl_dpy, cfg, EGL_NO_CONTEXT, nullptr);
-    if (impl->egl_ctx == EGL_NO_CONTEXT) {
-        LOG_ERROR("EGL: context creation failed (error 0x" << std::hex << eglGetError() << ")");
-        return false;
-    }
+    if (impl->egl_ctx == EGL_NO_CONTEXT)
+        MJ_FAIL("EGL: context creation failed (error 0x" << std::hex << eglGetError() << ")");
 
-    if (!eglMakeCurrent(impl->egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, impl->egl_ctx)) {
-        LOG_ERROR("EGL: make current failed (error 0x" << std::hex << eglGetError() << ")");
-        return false;
-    }
+    if (!eglMakeCurrent(impl->egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, impl->egl_ctx))
+        MJ_FAIL("EGL: make current failed (error 0x" << std::hex << eglGetError() << ")");
 
     LOG_INFO("EGL " << major << "." << minor << " headless context ready");
-    return true;
+    return {};
 }
 
 static void vr_egl_done(VideoRecorderImpl *impl)
@@ -3108,9 +3085,9 @@ static void vr_egl_done(VideoRecorderImpl *impl)
     impl->egl_dpy = EGL_NO_DISPLAY;
 }
 
-bool init_offscreen(VideoRecorder *vr, mjModel *model, int width, int height)
+Status init_offscreen(VideoRecorder *vr, mjModel *model, int width, int height)
 {
-    if (!vr || !model) return false;
+    if (!vr || !model) MJ_FAIL("init_offscreen: null recorder or model");
 
     // Set up default camera and options on the user-visible struct.
     mjv_defaultCamera(&vr->cam);
@@ -3121,9 +3098,9 @@ bool init_offscreen(VideoRecorder *vr, mjModel *model, int width, int height)
     impl->width  = width;
     impl->height = height;
 
-    if (!vr_egl_init(impl)) {
+    if (Status s = vr_egl_init(impl); !s) {
         delete impl;
-        return false;
+        return s;
     }
 
     // MuJoCo rendering contexts.
@@ -3135,10 +3112,10 @@ bool init_offscreen(VideoRecorder *vr, mjModel *model, int width, int height)
     mjr_resizeOffscreen(width, height, &impl->con);
 
     vr->_impl = impl;
-    return true;
+    return {};
 }
 
-bool init_video_recorder(
+Status init_video_recorder(
   VideoRecorder *vr,
   mjModel       *model,
   const char    *out_path,
@@ -3147,21 +3124,21 @@ bool init_video_recorder(
   int            fps
 )
 {
-    if (!out_path) return false;
-    if (!init_offscreen(vr, model, width, height)) return false;
+    if (!out_path) MJ_FAIL("init_video_recorder: null output path");
+    if (Status s = init_offscreen(vr, model, width, height); !s) return s;
 
     auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
     impl->rgb_buf.resize(
       static_cast<size_t>(width) * static_cast<size_t>(height) * kRgbBytesPerPixel
     );
 
-    if (!sink_open(&impl->sink, out_path, width, height, width, height, fps, true)) {
+    if (Status s = sink_open(&impl->sink, out_path, width, height, width, height, fps, true); !s) {
         cleanup(vr);
-        return false;
+        return s;
     }
 
     LOG_INFO("VideoRecorder: " << width << "x" << height << " @ " << fps << " fps -> " << out_path);
-    return true;
+    return {};
 }
 
 // Renders into `out` the way MuJoCo fills it: bottom row first.
@@ -3225,7 +3202,7 @@ bool record_frame(VideoRecorder *vr, Env *env)
     return sink_write(&impl->sink, impl->rgb_buf.data(), impl->rgb_buf.size());
 }
 
-bool init_video_recorder(
+Status init_video_recorder(
   VideoRecorder  *vr,
   mjModel        *model,
   const char     *out_path,
@@ -3254,16 +3231,14 @@ void cleanup(VideoRecorder *vr)
 
 #else // MJ_KDL_HAS_EGL not defined
 
-bool init_video_recorder(VideoRecorder *, mjModel *, const char *, int, int, int)
+Status init_video_recorder(VideoRecorder *, mjModel *, const char *, int, int, int)
 {
-    LOG_ERROR("VideoRecorder requires EGL; rebuild with -DBUILD_RECORDER=ON");
-    return false;
+    MJ_FAIL("VideoRecorder requires EGL; rebuild with -DBUILD_RECORDER=ON");
 }
-bool record_frame(VideoRecorder *, Env *) { return false; }
-bool init_offscreen(VideoRecorder *, mjModel *, int, int)
+bool   record_frame(VideoRecorder *, Env *) { return false; }
+Status init_offscreen(VideoRecorder *, mjModel *, int, int)
 {
-    LOG_ERROR("offscreen rendering requires EGL; rebuild with -DBUILD_RECORDER=ON");
-    return false;
+    MJ_FAIL("offscreen rendering requires EGL; rebuild with -DBUILD_RECORDER=ON");
 }
 bool render_rgb(VideoRecorder *, Env *, std::uint8_t *) { return false; }
 void cleanup(VideoRecorder *vr)
