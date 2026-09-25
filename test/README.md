@@ -114,6 +114,9 @@ converges from home to the target pose within the configured joint tolerance.
 - **StepHonoursAQposWrittenBetweenSteps** -- a direct `qpos` write before `step()` is integrated
   as `mj_step` would, and the frame follows it.
 - Slot binding, read/apply matching `update()`, wrench clearing.
+- **DISABLED_ViewerKeepsUserWrenchesWhileAnotherThreadReads** -- opens a Simulate window, so it
+  runs only with `--gtest_also_run_disabled_tests`: a user wrench survives 1000 steps while the
+  render thread runs and a second thread reads frames.
 
 ### test_control_modes
 

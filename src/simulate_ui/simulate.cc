@@ -2717,10 +2717,8 @@ void Simulate::Sync(bool state_only) {
   }
 
   if (this->run || this->is_passive_) {
-    // clear old perturbations, apply new
-    mju_zero(d_->xfrc_applied, 6 * m_->nbody);
+    // The wrapper's step() applies the drag force and clears only that body, not user wrenches.
     mjv_applyPerturbPose(m_, d_, &this->pert, 0);  // mocap bodies only
-    mjv_applyPerturbForce(m_, d_, &this->pert);
   } else {
     mjv_applyPerturbPose(m_, d_, &this->pert, 1);  // mocap and dynamic bodies
   }

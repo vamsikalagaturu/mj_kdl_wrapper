@@ -8,9 +8,12 @@
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "example_paths.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -122,6 +125,37 @@ TEST_F(SceneStateTest, StepHonoursAQposWrittenBetweenSteps)
     ASSERT_TRUE(mj_kdl::get_body_frame(model_, data_, "cube", &cube));
     EXPECT_NEAR(cube.p.z(), data_->qpos[adr + 2], 1e-12);
     mj_deleteData(reference);
+}
+
+// Opens a Simulate window, so it is opt-in: --gtest_also_run_disabled_tests.
+TEST_F(SceneStateTest, DISABLED_ViewerKeepsUserWrenchesWhileAnotherThreadReads)
+{
+    if (!model_) return;
+    mj_kdl::Viewer viewer;
+    ASSERT_TRUE(mj_kdl::init_window_sim(&viewer, &robot_, "viewer lock test"));
+
+    mj_kdl::SceneWrenchSlot *push = mj_kdl::bind_scene_wrench(&scene_, "cube");
+    ASSERT_NE(push, nullptr);
+    push->wrench = KDL::Wrench(KDL::Vector(0.0, 0.0, 5.0), KDL::Vector::Zero());
+    const int fz = 6 * push->body_id + 2;
+
+    std::atomic<bool> stop{ false };
+    std::thread       reader([&] {
+        KDL::Frame frame;
+        while (!stop) mj_kdl::get_body_frame(model_, data_, "cube", &frame);
+    });
+
+    int lost = 0;
+    for (int i = 0; i < 1000; ++i) {
+        mj_kdl::apply_scene_state(&scene_, data_);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1)); // let the render thread run
+        if (data_->xfrc_applied[fz] != 5.0) ++lost;
+        ASSERT_TRUE(mj_kdl::step(&robot_));
+    }
+    stop = true;
+    reader.join();
+    mj_kdl::cleanup(&viewer);
+    EXPECT_EQ(lost, 0) << "the render thread cleared a user wrench";
 }
 
 TEST_F(SceneStateTest, BindFreeBodyRejectsFixedUnknownAndDuplicate)

@@ -77,6 +77,9 @@ void ensure_plugins_loaded()
 static Robot  *g_robot  = nullptr;
 static Viewer *g_viewer = nullptr;
 
+// Held while touching an mjData the Simulate render thread also reads; unlocked otherwise.
+static std::unique_lock<std::recursive_mutex> lock_data(const mjData *d);
+
 
 // Spec-API helpers
 
@@ -1566,6 +1569,7 @@ bool get_site_frame(const mjModel *model, mjData *data, const char *site_name, K
     int sid = cached_name2id(model, mjOBJ_SITE, site_name);
     if (sid < 0) return false;
 
+    const auto lock = lock_data(data);
     ensure_kinematics(model, data);
     const double *p = data->site_xpos + 3 * sid;
     const double *R = data->site_xmat + 9 * sid;
@@ -1580,6 +1584,7 @@ bool get_body_frame(const mjModel *model, mjData *data, const char *body_name, K
     int bid = cached_name2id(model, mjOBJ_BODY, body_name);
     if (bid < 0) return false;
 
+    const auto lock = lock_data(data);
     ensure_kinematics(model, data);
     const double *p = data->xpos + 3 * bid;
     const double *R = data->xmat + 9 * bid;
@@ -1610,7 +1615,8 @@ bool get_joint_position(const mjModel *model, mjData *data, const char *name, do
     const int jid = resolve_joint_id(model, name);
     if (jid < 0) return false;
 
-    *out = data->qpos[model->jnt_qposadr[jid]];
+    const auto lock = lock_data(data);
+    *out            = data->qpos[model->jnt_qposadr[jid]];
     return true;
 }
 
@@ -1621,7 +1627,8 @@ bool get_joint_velocity(const mjModel *model, mjData *data, const char *name, do
     const int jid = resolve_joint_id(model, name);
     if (jid < 0) return false;
 
-    *out = data->qvel[model->jnt_dofadr[jid]];
+    const auto lock = lock_data(data);
+    *out            = data->qvel[model->jnt_dofadr[jid]];
     return true;
 }
 
@@ -1919,7 +1926,8 @@ void cleanup(Robot *r)
 void set_joint_pos(Robot *r, const KDL::JntArray &q, bool call_forward)
 {
     if (!r->model || !r->data) return;
-    int n = std::min((int)q.rows(), r->n_joints);
+    const auto lock = lock_data(r->data);
+    int        n    = std::min((int)q.rows(), r->n_joints);
     for (int i = 0; i < n; ++i) r->data->qpos[r->kdl_to_mj_qpos[i]] = q(i);
     if (call_forward) {
         mj_forward(r->model, r->data);
@@ -1950,8 +1958,9 @@ void set_body_pose(
         }
     }
     if (jid < 0) return;
-    int qadr             = model->jnt_qposadr[jid];
-    int dadr             = model->jnt_dofadr[jid];
+    const auto lock      = lock_data(data);
+    int        qadr      = model->jnt_qposadr[jid];
+    int        dadr      = model->jnt_dofadr[jid];
     data->qpos[qadr]     = pos[0];
     data->qpos[qadr + 1] = pos[1];
     data->qpos[qadr + 2] = pos[2];
@@ -2104,6 +2113,7 @@ static ResetInfo reset_runtime(
 {
     ResetInfo info{};
     if (!model || !data) return info;
+    const auto lock = lock_data(data);
 
     ResetOptions default_options;
     if (!options) options = &default_options;
@@ -2150,7 +2160,8 @@ void read_measurements(Robot *r)
 {
     if (!r || !r->model || !r->data) return;
 
-    const mjData *d = r->data;
+    const mjData *d    = r->data;
+    const auto    lock = lock_data(d);
 
     for (int i = 0; i < r->n_joints; ++i) {
         r->jnt_pos_msr[i] = d->qpos[r->kdl_to_mj_qpos[i]];
@@ -2168,7 +2179,8 @@ void read_measurements(Robot *r)
 bool set_control_mode(mjModel *m, mjData *d, int robot, CtrlMode mode)
 {
     if (!m || !d || robot < 0 || robot > 9) return false;
-    const int target = mode_group(robot, static_cast<int>(mode));
+    const auto lock   = lock_data(d);
+    const int  target = mode_group(robot, static_cast<int>(mode));
     bool      found  = false;
     for (int a = 0; a < m->nu; ++a) {
         if (m->actuator_group[a] != target) continue;
@@ -2194,7 +2206,8 @@ bool set_control_mode(mjModel *m, mjData *d, int robot, CtrlMode mode)
 static bool switch_control_mode(Robot *r, CtrlMode mode, bool seed_ports)
 {
     if (!r || !r->model || !r->data) return false;
-    const int idx = static_cast<int>(mode);
+    const auto lock = lock_data(r->data);
+    const int  idx  = static_cast<int>(mode);
     for (int i = 0; i < r->n_joints; ++i) {
         if (r->mode_ctrl[idx][i] < 0) {
             LOG_ERROR(
@@ -2223,6 +2236,7 @@ bool set_control_mode(Robot *r, CtrlMode mode) { return switch_control_mode(r, m
 void apply_commands(Robot *r)
 {
     if (!r || !r->model || !r->data) return;
+    const auto lock = lock_data(r->data);
 
     // ctrl_mode may have been set directly; switch before commanding the new mode's actuators.
     if (!r->mode_applied) return;
@@ -2249,6 +2263,7 @@ void apply_commands(Robot *r)
 
 void update(Robot *r)
 {
+    const auto lock = lock_data(r ? r->data : nullptr);
     read_measurements(r);
     apply_commands(r);
 }
@@ -2391,6 +2406,7 @@ SceneActuatorSlot *bind_scene_actuator(SceneState *s, const char *name)
 void read_scene_state(SceneState *s, const mjData *data)
 {
     if (!s || !data) return;
+    const auto lock = lock_data(data);
 
     for (auto &slot : s->joints) {
         if (slot.qpos_adr < 0) continue;
@@ -2412,6 +2428,7 @@ void read_scene_state(SceneState *s, const mjData *data)
 void apply_scene_state(SceneState *s, mjData *data)
 {
     if (!s || !data) return;
+    const auto lock = lock_data(data);
 
     for (const auto &slot : s->wrenches) {
         if (slot.body_id < 0) continue;
@@ -2703,6 +2720,7 @@ struct SimUiState
     std::mutex                        sim_ready_mtx;
     std::condition_variable           sim_ready_cv;
     double                            prev_sim_time = 0.0;
+    int                               pert_body     = -1; // body tick_impl last pushed; -1 none
     std::atomic<int>                  rtf_step{ 0 }; // + faster, - slower (render thread)
     GLFWwindow                       *glfw_window = nullptr;
     VideoRecorder                     recorder;
@@ -2723,6 +2741,13 @@ struct SimUiState
      * own handler so that its bindings do not fight the caller's. */
     std::atomic<bool> captured[GLFW_KEY_LAST + 1]{};
 };
+
+static std::unique_lock<std::recursive_mutex> lock_data(const mjData *d)
+{
+    const auto *ss = g_viewer ? static_cast<SimUiState *>(g_viewer->_sim_ui) : nullptr;
+    if (!d || !ss || !ss->sim || ss->sim->d_ != d) return {};
+    return std::unique_lock<std::recursive_mutex>(ss->sim->mtx);
+}
 
 static VideoResolution recorder_resolution_from_index(int index)
 {
@@ -3196,8 +3221,13 @@ static bool tick_impl(Viewer *v, mjModel *m, mjData *d, bool paused)
             }
             ss->prev_sim_time = d->time;
 
-            if (sim->run) {
-                if (sim->pert.active) mjv_applyPerturbForce(m, d, &sim->pert);
+            if (sim->run && !paused) {
+                // Only the dragged body's xfrc_applied is ours: user wrenches elsewhere survive.
+                const int dragged = (sim->pert.active | sim->pert.active2) ? sim->pert.select : -1;
+                if (ss->pert_body >= 0 && ss->pert_body != dragged)
+                    mju_zero(d->xfrc_applied + 6 * ss->pert_body, 6);
+                ss->pert_body = dragged;
+                mjv_applyPerturbForce(m, d, &sim->pert);
                 end_step(m, d);
                 begin_step(m, d);
                 sim->AddToHistory();
@@ -3395,7 +3425,10 @@ static bool render_bottom_up(VideoRecorder *vr, mjModel *model, mjData *data, st
     // One EGL context per recorder: make this one current before rendering.
     eglMakeCurrent(impl->egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, impl->egl_ctx);
 
-    mjv_updateScene(model, data, &vr->opt, nullptr, &vr->cam, mjCAT_ALL, &impl->scn);
+    {
+        const auto lock = lock_data(data);
+        mjv_updateScene(model, data, &vr->opt, nullptr, &vr->cam, mjCAT_ALL, &impl->scn);
+    }
 
     // The overlay geoms a window shows live on the viewer's user scene, and this offscreen
     // scene is rebuilt from the model every frame -- so append them the same way the UI thread
