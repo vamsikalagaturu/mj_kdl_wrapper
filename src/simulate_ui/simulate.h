@@ -16,7 +16,6 @@
 #define MUJOCO_SIMULATE_SIMULATE_H_
 
 #include <atomic>
-#include <functional>
 #include <chrono>
 #include <condition_variable>
 #include <memory>
@@ -119,10 +118,7 @@ class Simulate {
 
   std::vector<int> body_parentid_;
 
-  // Frames UI panel: per-body/per-site frame toggles + axis length (fraction of
-  // model extent). frame_sect_ is the section, so the name of a clicked toggle can be
-  // written into its first item -- a checkbox only ever gets half the panel, and element
-  // names are longer than that.
+  // Frames panel; frame_scale_ is the axis length as a fraction of the model extent.
   std::vector<int> body_show_frame_;
   std::vector<int> site_show_frame_;
   int frame_sect_ = -1;
@@ -210,7 +206,7 @@ class Simulate {
   // options
   int spacing      = 0;
   int color        = 0;
-  int font         = 0;
+  int font         = -1;  // -1: RenderLoop picks it from the display scale
   int ui0_enable   = 1;
   int ui1_enable   = 1;
   int help         = 0;
@@ -237,7 +233,6 @@ class Simulate {
 
   // atomics for cross-thread messages
   std::atomic_int exitrequest       = 0;
-  std::atomic_int droploadrequest   = 0;
   std::atomic_int screenshotrequest = 0;
   std::atomic_int uiloadrequest     = 0;
   std::atomic_int newfigurerequest  = 0;
@@ -253,7 +248,6 @@ class Simulate {
 
   // strings
   char load_error[kMaxFilenameLength]        = "";
-  char dropfilename[kMaxFilenameLength]      = "";
   char filename[kMaxFilenameLength]          = "";
   char previous_filename[kMaxFilenameLength] = "";
   char wrapper_record_path[kMaxFilenameLength] = "recording.mp4";
@@ -262,8 +256,11 @@ class Simulate {
   int   real_time_index   = 0;
   bool  speed_changed     = true;
   std::atomic<double> wrapper_realtime_factor = 1.0;
+  double wrapper_realtime_factor_shown = -1.0;
+  bool wrapper_reset_request = false;          // set by Reset, consumed by the wrapper; under mtx
   std::atomic_int wrapper_record_request = 0;  // 0 none, 1 start, 2 stop
   std::atomic_int wrapper_record_state = 0;    // 0 idle, 1 recording, 2 failed
+  int wrapper_record_state_shown = -1;
   int wrapper_record_camera = 0;               // 0=current, 1=free, 2=tracking, 3+=fixed cam
   int wrapper_record_resolution = 2;           // 0=360p, 1=480p, 2=720p, 3=1080p
   int wrapper_record_fps = 30;
@@ -389,7 +386,8 @@ class Simulate {
     {mjITEM_SEPARATOR, "Recorder",      1},
     {mjITEM_EDITTXT,   "Path",          2, this->wrapper_record_path, "recording.mp4"},
     {mjITEM_SELECT,    "Camera",        2, &this->wrapper_record_camera, "Current\nFree\nTracking"},
-    {mjITEM_SELECT,    "Resolution",    2, &this->wrapper_record_resolution, "360p\n480p\n720p\n1080p"},
+    {mjITEM_SELECT,    "Resolution",    2, &this->wrapper_record_resolution,
+                                                                   "360p\n480p\n720p\n1080p"},
     {mjITEM_EDITINT,   "FPS",           2, &this->wrapper_record_fps, "1 1 240"},
     {mjITEM_BUTTON,    "Start rec",     2},
     {mjITEM_BUTTON,    "Stop rec",      2},

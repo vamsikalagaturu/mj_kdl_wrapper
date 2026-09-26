@@ -1,3 +1,4 @@
+from . import menagerie as menagerie
 from ._mj_kdl_wrapper import *
 
 __version__: str

@@ -4,9 +4,10 @@ This page collects the C++ wrapper usage notes that are too detailed for the
 README. For complete function signatures, see the generated Doxygen API pages
 for `include/mj_kdl_wrapper/mj_kdl_wrapper.hpp`.
 
-Coming from 0.2.x? Placement orientation moved from `euler` to `quat`
-`[x, y, z, w]`; see [Migrating from 0.2.x](@ref sec_migrate_quat). Units, frames and what
-persists between calls: [Conventions](@ref page_conventions).
+Coming from 0.3.x? The `Env` now owns the loop; see [Migrating to 0.4](@ref sec_migrate_env).
+From 0.2.x, placement orientation also moved from `euler` to `quat` `[x, y, z, w]`; see
+[Migrating from 0.2.x](@ref sec_migrate_quat). Units, frames and what persists between
+calls: [Conventions](@ref page_conventions).
 
 ## Errors
 
@@ -30,10 +31,11 @@ helper under `src/examples/`) so no checkout location is hard-coded. It mirrors
 the Python `menagerie` resolver:
 
 - `mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml")` returns a MuJoCo
-  Menagerie model. It checks `$MJ_KDL_MENAGERIE` first, then the user cache
-  `~/.cache/mj_kdl_wrapper/menagerie`. It throws
-  with a fetch hint when absent; `find_menagerie_model(...)` returns `""`
-  instead, which is how tests self-skip.
+  Menagerie model. It checks `$MJ_KDL_MENAGERIE` first, then the bundled assets in the user
+  cache `~/.cache/mj_kdl_wrapper/assets` (the bundled `kinova_gen3/gen3.xml`, with Kinova's
+  joint armature, replaces Menagerie's), then the Menagerie checkout
+  `~/.cache/mj_kdl_wrapper/menagerie`. It throws with a fetch hint when absent;
+  `find_menagerie_model(...)` returns `""` instead, which is how tests self-skip.
 - `mj_kdl_examples::asset("table.xml")` returns a bundled asset from the user
   cache `~/.cache/mj_kdl_wrapper/assets`; `find_asset(...)` returns `""`.
 
@@ -85,20 +87,15 @@ sc.objects.push_back(cabinet);
 mj_kdl::init_env(&env, &sc);
 ```
 
-`save_model_xml(model, path)` writes the most recently compiled model back to
-MJCF. Use it when you want to build a combined scene once and reload the merged
-model later through MuJoCo. `build_scene(&model, &data, &sc)` compiles a raw pair
-without an `Env` (for such tools); `destroy_scene(model, data)` frees it.
+`save_model_xml(model, path)` writes a live model from `build_scene()` or `init_env()` back to
+MJCF, including runtime changes to its real-valued fields. Use it when you want to build a
+combined scene once and reload the merged model later through MuJoCo.
+`build_scene(&model, &data, &sc)` compiles a raw pair without an `Env` (for such tools);
+`destroy_scene(model, data)` frees it.
 
 ```cpp
 mj_kdl::save_model_xml(env.model, "combined_scene.xml");
 mj_saveModel(env.model, "combined_scene.mjb", nullptr, 0);
-```
-
-Set wrapper log verbosity globally when debugging scene construction:
-
-```cpp
-mj_kdl::set_log_level(mj_kdl::LogLevel::INFO);
 ```
 
 `SceneSpec` and `build_scene()` are the only way in: plugins, decorations, objects, robots,
@@ -109,6 +106,24 @@ directly. To run the `Env` on a pair of your own, set `env.adopt` before `init_e
 receives each compiled `(mjModel*, mjData*)` (at init and at every `scene_add_object()` /
 `scene_remove_object()` rebuild) and returns the pair the `Env` runs on, which the `Env` then
 never frees; freeing it, and the compiled pair when you return a different one, is yours.
+
+## Logging
+
+`LogLevel` is a severity threshold, `INFO` < `WARN` < `ERROR` < `NONE`: a message prints when
+its level is at or above the threshold. The default, `INFO`, prints everything; `WARN` prints
+warnings and errors, `ERROR` errors only, `NONE` nothing. It is one library-wide setting:
+
+```cpp
+mj_kdl::set_log_level(mj_kdl::LogLevel::WARN);   // quiet the scene-construction INFO lines
+```
+
+Your own code can log through the same threshold with `MJ_LOG_INFO()`, `MJ_LOG_WARN()` and
+`MJ_LOG_ERROR()`, which print to stderr with the file, line and function; the argument may
+stream:
+
+```cpp
+MJ_LOG_WARN("joint " << i << " saturated");
+```
 
 ## Init A KDL Chain
 
@@ -350,7 +365,7 @@ free camera. A recorder's camera is its `vr.cam`, written directly:
 
 ```cpp
 for (int i = 0; i < env.model->ncam; ++i) {
-    LOG_INFO("camera: " << mj_id2name(env.model, mjOBJ_CAMERA, i));
+    MJ_LOG_INFO("camera: " << mj_id2name(env.model, mjOBJ_CAMERA, i));
 }
 mj_kdl::use_camera(&env.viewer, env.model, "overview");
 vr.cam.type       = mjCAMERA_FIXED;
@@ -457,7 +472,7 @@ Each part's runtime state is one struct (`RobotPorts`, `ForceTorqueReading`, and
 the `Scene*Reading` / `Scene*Command` bases of the slots) that reset assigns afresh,
 so a field added to one is reset without further code; a part without a reset
 overload does not compile. The Simulate UI's reset button runs the same path,
-hook included.
+hook included. `on_reset` may be set before or after `init_env()`.
 
 `cleanup(&env)` closes the viewer, frees the model/data and forgets the robots,
 which are not deleted.
@@ -528,15 +543,19 @@ mj_kdl::scene_remove_object(&env, "red_cube");
 ```
 
 Both append to or erase from `env.spec.objects` and rebuild. The model/data are
-replaced, and registered robots, scene slots and the viewer follow the new model;
-a slot whose name is gone is unbound and skipped. MuJoCo ids you cached yourself
-must be recomputed. In Python, `Env.add_object()` and `Env.remove_object()` do the
+replaced; the time, `qpos`/`qvel` (by joint name and type) and `act`/`ctrl` (by actuator
+name) carry over, and the port commands are kept. Registered robots, scene slots, the viewer
+and `VideoRecorder`s follow the new model; a slot whose name is gone is unbound and skipped.
+If a robot or F/T sensor cannot be rebound, the call returns the error and the `Env` is left
+as it was. Both fail when called from `on_reset`. MuJoCo ids you cached yourself must be
+recomputed. In Python, `Env.add_object()` and `Env.remove_object()` do the
 same. See [Python API guide](python.md) for Python ownership rules.
 
 ## Viewer Loop
 
 `open_viewer(&env, "title")` opens the full Simulate UI in a background render
-thread; `step(&env)` then also handles its pause, perturbation and recording.
+thread, or returns an error `Status` when no window can be created; `step(&env)` then also
+handles its pause, perturbation and recording.
 It works the same for object-only scenes. The viewer is `env.viewer`; pass it to
 `key_pressed()`, `capture_key()`, `use_camera()`, `set_free_camera()` and the
 overlay helpers. `pace_realtime(&env)` paces a loop to the viewer's real-time

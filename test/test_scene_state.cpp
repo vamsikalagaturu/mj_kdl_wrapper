@@ -20,6 +20,24 @@ namespace fs = std::filesystem;
 
 static constexpr int kFillerBodies = 50;
 
+static mj_kdl::SceneObject fixed_box(const std::string &name, double half, double x, double y)
+{
+    mj_kdl::SceneObject box;
+    box.name   = name;
+    box.shape  = mj_kdl::Shape::BOX;
+    box.pos[0] = x;
+    box.pos[1] = y;
+    box.pos[2] = 0.5;
+    box.fixed  = true;
+    for (int k = 0; k < 3; ++k) box.size[k] = half;
+    for (int k = 0; k < 3; ++k) box.rgba[k] = 0.5f;
+    box.rgba[3]     = 1.0f;
+    box.friction[0] = 1.0;
+    box.friction[1] = 0.005;
+    box.friction[2] = 0.0001;
+    return box;
+}
+
 class SceneStateTest : public testing::Test
 {
   protected:
@@ -41,25 +59,18 @@ class SceneStateTest : public testing::Test
         spec_.timestep   = 0.002;
         spec_.add_floor  = true;
         spec_.add_skybox = true;
-        spec_.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf, .attachments = {} });
-        spec_.objects.push_back(mj_kdl::SceneObject{
-          .name = "cube", .mjcf_path = cube, .pos = { 0.6, 0.0, 1.0 }, .fixed = false });
-        spec_.objects.push_back(mj_kdl::SceneObject{ .name     = "block",
-                                                     .shape    = mj_kdl::Shape::BOX,
-                                                     .size     = { 0.02, 0.02, 0.02 },
-                                                     .pos      = { -0.6, 0.0, 0.5 },
-                                                     .rgba     = { 0.5f, 0.5f, 0.5f, 1.0f },
-                                                     .fixed    = true,
-                                                     .friction = { 1.0, 0.005, 0.0001 } });
-        for (int i = 0; i < kFillerBodies; ++i) {
-            spec_.objects.push_back(mj_kdl::SceneObject{ .name     = "filler_" + std::to_string(i),
-                                                         .shape    = mj_kdl::Shape::BOX,
-                                                         .size     = { 0.01, 0.01, 0.01 },
-                                                         .pos      = { -1.0, 0.05 * i, 0.5 },
-                                                         .rgba     = { 0.5f, 0.5f, 0.5f, 1.0f },
-                                                         .fixed    = true,
-                                                         .friction = { 1.0, 0.005, 0.0001 } });
-        }
+        mj_kdl::RobotSpec rs;
+        rs.path = mjcf;
+        spec_.robots.push_back(rs);
+        mj_kdl::SceneObject falling;
+        falling.name      = "cube";
+        falling.mjcf_path = cube;
+        falling.pos[0]    = 0.6;
+        falling.pos[2]    = 1.0;
+        spec_.objects.push_back(falling);
+        spec_.objects.push_back(fixed_box("block", 0.02, -0.6, 0.0));
+        for (int i = 0; i < kFillerBodies; ++i)
+            spec_.objects.push_back(fixed_box("filler_" + std::to_string(i), 0.01, -1.0, 0.05 * i));
 
         ASSERT_TRUE(mj_kdl::init_env(&env_, &spec_));
         model_ = env_.model;
@@ -102,8 +113,9 @@ TEST_F(SceneStateTest, FreeBodyPoseAndDerivedFrameAgreeAfterAStep)
 
 TEST_F(SceneStateTest, AFrameFollowsAQposWrittenDirectly)
 {
-    if (!model_) return;
-    const int  adr = mj_kdl::bind_scene_free_body(&env_.scene, "cube")->qpos_adr;
+    const mj_kdl::SceneFreeBodySlot *slot = mj_kdl::bind_scene_free_body(&env_.scene, "cube");
+    ASSERT_NE(slot, nullptr);
+    const int  adr = slot->qpos_adr;
     KDL::Frame cube;
     ASSERT_TRUE(mj_kdl::get_body_frame(&env_, "cube", &cube));
 
@@ -114,7 +126,6 @@ TEST_F(SceneStateTest, AFrameFollowsAQposWrittenDirectly)
 
 TEST_F(SceneStateTest, StepMatchesMjStepBitwise)
 {
-    if (!model_) return;
     mjData *reference = mj_makeData(model_);
     mj_copyData(reference, model_, data_);
     for (int i = 0; i < 200; ++i) {
@@ -128,8 +139,9 @@ TEST_F(SceneStateTest, StepMatchesMjStepBitwise)
 
 TEST_F(SceneStateTest, StepHonoursAQposWrittenBetweenSteps)
 {
-    if (!model_) return;
-    const int adr = mj_kdl::bind_scene_free_body(&env_.scene, "cube")->qpos_adr;
+    const mj_kdl::SceneFreeBodySlot *slot = mj_kdl::bind_scene_free_body(&env_.scene, "cube");
+    ASSERT_NE(slot, nullptr);
+    const int adr = slot->qpos_adr;
     mj_kdl::step(&env_);
     mjData *reference = mj_makeData(model_);
     mj_copyData(reference, model_, data_);
@@ -148,7 +160,6 @@ TEST_F(SceneStateTest, StepHonoursAQposWrittenBetweenSteps)
 // Opens a Simulate window, so it is opt-in: --gtest_also_run_disabled_tests.
 TEST_F(SceneStateTest, DISABLED_ViewerKeepsUserWrenchesWhileAnotherThreadReads)
 {
-    if (!model_) return;
     ASSERT_TRUE(mj_kdl::open_viewer(&env_, "viewer lock test"));
 
     mj_kdl::SceneWrenchSlot *push = mj_kdl::bind_scene_wrench(&env_.scene, "cube");
@@ -176,7 +187,6 @@ TEST_F(SceneStateTest, DISABLED_ViewerKeepsUserWrenchesWhileAnotherThreadReads)
 
 TEST_F(SceneStateTest, BindFreeBodyRejectsFixedUnknownAndDuplicate)
 {
-    if (!model_) return;
     const auto level = mj_kdl::get_log_level();
     mj_kdl::set_log_level(mj_kdl::LogLevel::NONE);
 
@@ -225,7 +235,6 @@ TEST_F(SceneStateTest, ASlotAddressSurvivesFurtherBinds)
 
 TEST_F(SceneStateTest, UpdateReadsThenAppliesRobotsAndSlots)
 {
-    if (!model_) return;
     mj_kdl::SceneWrenchSlot *push = mj_kdl::bind_scene_wrench(&env_.scene, "cube");
     ASSERT_NE(push, nullptr);
     push->wrench = KDL::Wrench(KDL::Vector(0.0, 0.0, 2.0), KDL::Vector::Zero());
@@ -264,7 +273,6 @@ TEST_F(SceneStateTest, ApplyClearsAWrenchThatIsNoLongerPushed)
 
 TEST_F(SceneStateTest, ResetRestoresEverySlot)
 {
-    if (!model_) return;
     mj_kdl::SceneJointSlot    *joint = mj_kdl::bind_scene_joint(&env_.scene, "joint_4");
     mj_kdl::SceneFreeBodySlot *cube  = mj_kdl::bind_scene_free_body(&env_.scene, "cube");
     mj_kdl::SceneWrenchSlot   *push  = mj_kdl::bind_scene_wrench(&env_.scene, "cube");

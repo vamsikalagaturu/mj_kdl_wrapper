@@ -50,9 +50,9 @@ static std::string GetSavePath(const char* filename) {
 }
 #endif
 
-// Declared here rather than via mj_kdl_wrapper.hpp, which would pull KDL into this target.
+// Defined in mj_kdl_wrapper.cpp; its header would pull KDL into this target.
 namespace mj_kdl {
-bool save_model_xml(const mjModel* model, const char* path);
+bool save_model_xml_from_ui(const mjModel* model, const char* path);
 }
 
 namespace {
@@ -191,10 +191,9 @@ static constexpr int kCostNum       = 3;
 
 // How many characters of an element name fit in a Frames checkbox before the UI clips it.
 static constexpr int kFrameLabelChars = 16;
-// Frames section layout: the static that spells out a name, and the first per-element toggle
-// (after the scale slider, that static, and the "Bodies" separator).
+// Frames section items: scale slider, name static, "Bodies" separator, then the toggles.
 static constexpr int kFrameNameItem = 1;
-static constexpr int kFrameFirstToggle = 4;
+static constexpr int kFrameFirstToggle = 3;
 
 // Wrapper items in the Simulation section, counted in def_simulation after its section header.
 static constexpr int kSimHistoryItem   = 10;
@@ -794,6 +793,10 @@ void PrintField(char (&str)[mjMAXUINAME], void* ptr) {
 void UpdateWrapperRealtimeFactor(mj::Simulate* sim) {
   char label[mjMAXUINAME] = {};
   double rtf = sim->wrapper_realtime_factor.load();
+  if (rtf == sim->wrapper_realtime_factor_shown) {
+    return;
+  }
+  sim->wrapper_realtime_factor_shown = rtf;
   if (rtf == 0.0) {
     mju::strcpy_arr(label, "MAX");
   } else {
@@ -808,6 +811,10 @@ void UpdateWrapperRealtimeFactor(mj::Simulate* sim) {
 
 void UpdateWrapperRecorderState(mj::Simulate* sim) {
   const int state = sim->wrapper_record_state.load();
+  if (state == sim->wrapper_record_state_shown) {
+    return;
+  }
+  sim->wrapper_record_state_shown = state;
   const char* label = state == 1 ? "recording" : state == 2 ? "failed" : "idle";
   mjuiItem& item = sim->ui0.sect[SECT_SIMULATION].item[kSimRecStateItem];
   item.multi.nelem = 1;
@@ -1286,9 +1293,7 @@ void MakeLoggingSection(mj::Simulate* sim) {
   }
 }
 
-// Fit an element name into a checkbox label by dropping the middle, not the tail: names
-// here share long prefixes (robot-table-body_) and long suffixes (_com), so either end
-// alone identifies nothing. The full name is drawn on the frame itself in the scene.
+// Drops the middle: names share long prefixes and suffixes, so neither end alone identifies one.
 void ElideMiddle(const char* name, char* out, int out_size) {
   const int len = static_cast<int>(std::strlen(name));
   if (len < out_size) {
@@ -1357,8 +1362,7 @@ void MakeFrameSection(mj::Simulate* sim) {
   mjuiDef defFrame[] = {
     {mjITEM_SECTION,   "Frames",   mjPRESERVE, nullptr, "AF"},
     {mjITEM_SLIDERNUM, "Scale",    2, &sim->frame_scale_, "0 0.3"},
-    // A checkbox only ever gets half the panel, and mjUI has no way to widen it. This is a
-    // static, which spans the row: click a toggle and its name is spelled out here in full.
+    // a checkbox gets half the panel; this static spans the row and shows the clicked name
     {mjITEM_STATIC,    "Name",     2, nullptr, "(click a frame)"},
     {mjITEM_SEPARATOR, "Bodies",   1},
     {mjITEM_END}
@@ -1416,8 +1420,7 @@ void AddTriad(mjvScene* scn, const mjtNum* pos, const mjtNum* mat,
     g->category = mjCAT_DECOR;
     g->objtype = mjOBJ_UNKNOWN;
     g->objid = -1;
-    // On the z axis only, so a frame is named once. The name is drawn in the scene rather
-    // than in the element list, where a long one is cut off at whatever the panel is wide.
+    // z axis only, so each frame is named once
     if (label && axis == 2) {
       mju::strcpy_arr(g->label, label);
     }
@@ -2086,9 +2089,10 @@ void UiEvent(mjuiState* state) {
     else if (it && it->sectionid == SECT_GROUP) {
       // remake joint section if joint group changed
       if (it->name[0] == 'J' && it->name[1] == 'o') {
-        sim->ui1.nsect = SECT_JOINT;
+        const int nsect = sim->ui1.nsect;
+        sim->ui1.nsect  = SECT_JOINT;
         MakeJointSection(sim);
-        sim->ui1.nsect = NSECT1;
+        sim->ui1.nsect = nsect;
         UiModify(&sim->ui1, state, &sim->platform_ui->mjr_context());
       }
 
@@ -2149,19 +2153,12 @@ void UiEvent(mjuiState* state) {
         }
         break;
 
-      case mjKEY_RIGHT:  // step forward
+      case mjKEY_RIGHT:  // scrub forward; stepping belongs to the wrapper's step()
         if (!sim->is_passive_ && sim->m_ && !sim->run) {
-          // currently in scrubber: increment scrub, load state, update slider UI
           if (sim->scrub_index < 0) {
             sim->scrub_index++;
             sim->pending_.load_from_history = true;
             mjui0_update_section(sim, SECT_SIMULATION);
-          }
-
-          // not in scrubber: step, add to history buffer
-          else {
-            mj_step(sim->m_, sim->d_);
-            sim->AddToHistory();
           }
 
           UpdateProfiler(sim, sim->m_, sim->d_);
@@ -2363,14 +2360,6 @@ void UiEvent(mjuiState* state) {
     return;
   }
 
-  // Dropped files
-  if (state->type == mjEVENT_FILESDROP && state->dropcount > 0 && !sim->is_passive_) {
-    while (sim->droploadrequest.load()) {}
-    mju::strcpy_arr(sim->dropfilename, state->droppaths[0]);
-    sim->droploadrequest.store(true);
-    return;
-  }
-
   // Redraw
   if (state->type == mjEVENT_REDRAW) {
     sim->Render();
@@ -2493,7 +2482,9 @@ void Simulate::Sync(bool state_only) {
 
   // mj_saveLastXML only knows models loaded by mj_loadXML; the wrapper saves the ones it built too
   if (pending_.save_xml) {
-    if (!pending_.save_xml->empty()) { mj_kdl::save_model_xml(m_, pending_.save_xml->c_str()); }
+    if (!pending_.save_xml->empty()) {
+      mj_kdl::save_model_xml_from_ui(m_, pending_.save_xml->c_str());
+    }
     pending_.save_xml = std::nullopt;
   }
 
@@ -2519,6 +2510,7 @@ void Simulate::Sync(bool state_only) {
 
   if (pending_.reset) {
     mj_resetData(m_, d_);
+    wrapper_reset_request = true;
     memset(timer_prev_, 0, sizeof(timer_prev_));
     mj_forward(m_, d_);
     load_error[0]   = '\0';
@@ -2646,10 +2638,7 @@ void Simulate::Sync(bool state_only) {
     // draw frames from the Frames UI panel
     AddFrameGeoms(this);
 
-    // Managed mode upstream ignores user_scn; append its overlay geoms (the wrapper's
-    // add_trace_segment polylines) here so they survive into Render(). The buffer is
-    // bounded by user_scn->maxgeom, so a torn read across the wrapper's append is at
-    // worst a one-frame visual glitch, never out of bounds.
+    // upstream managed mode ignores user_scn; the wrapper writes it under mtx
     if (user_scn) {
       int nusergeom = user_scn->ngeom;
       int ngeom = std::min(nusergeom, this->scn.maxgeom - this->scn.ngeom);
@@ -2749,7 +2738,9 @@ void Simulate::Load(mjModel* m, mjData* d, const char* displayed_filename) {
     // Wait for the render thread to be done loading
     // so that we know the old model and data's memory can
     // be free'd by the other thread (sometimes python)
-    cond_loadrequest.wait(lock, [this]() { return this->loadrequest == 0; });
+    cond_loadrequest.wait(lock, [this]() {
+      return this->loadrequest == 0 || this->exitrequest.load() == 2;
+    });
   }
 }
 
@@ -2804,10 +2795,6 @@ void Simulate::LoadOnRenderThread() {
   std::memcpy(body_parentid_.data(),
               this->m_->body_parentid,
               sizeof(this->m_->body_parentid[0]) * this->m_->nbody);
-
-  // reset Frames panel toggles to match the new model
-  body_show_frame_.assign(this->m_->nbody, 0);
-  site_show_frame_.assign(this->m_->nsite, 0);
 
   jnt_type_.resize(this->m_->njnt);
   std::memcpy(jnt_type_.data(), this->m_->jnt_type, sizeof(this->m_->jnt_type[0]) * this->m_->njnt);
@@ -2982,6 +2969,10 @@ void Simulate::LoadOnRenderThread() {
   // detect image sensors for visualization
   DetectImageSensors(this, this->m_);
 
+  // just before the rebuild: ui1 checkboxes point into these until then
+  body_show_frame_.assign(this->m_->nbody, 0);
+  site_show_frame_.assign(this->m_->nsite, 0);
+
   // rebuild UI sections
   MakeUiSections(this, this->m_, this->d_);
 
@@ -3042,7 +3033,7 @@ void Simulate::Render() {
     } else {
       char intro_message[Simulate::kMaxFilenameLength];
       mju::sprintf_arr(intro_message,
-                       "MuJoCo version %s\nDrag-and-drop model file here",
+                       "MuJoCo version %s",
                        mj_versionString());
       mjr_overlay(mjFONT_NORMAL,
                   mjGRID_TOPLEFT,
@@ -3155,9 +3146,10 @@ void Simulate::Render() {
 
   if (pending_.ui_remake_ctrl) {
     if (this->ui1_enable && this->ui1.sect[SECT_CONTROL].state) {
+      const int nsect = this->ui1.nsect;
       this->ui1.nsect = SECT_CONTROL;
       MakeControlSection(this);
-      this->ui1.nsect = NSECT1;
+      this->ui1.nsect = nsect;
       UiModify(&this->ui1, &this->uistate, &this->platform_ui->mjr_context());
     }
     pending_.ui_remake_ctrl = false;
@@ -3170,14 +3162,14 @@ void Simulate::Render() {
     pending_.ui_update_ctrl = false;
   }
 
-#ifdef MJ_KDL_SHOW_EQUALITY
   if (pending_.ui_update_equality) {
+#ifdef MJ_KDL_SHOW_EQUALITY
     if (this->ui1_enable && this->ui1.sect[SECT_EQUALITY].state) {
       mjui_update(SECT_EQUALITY, -1, &this->ui1, &this->uistate, &this->platform_ui->mjr_context());
     }
+#endif
     pending_.ui_update_equality = false;
   }
-#endif
 
   // render scene
   mjr_render(rect, &this->scn, &this->platform_ui->mjr_context());
@@ -3210,27 +3202,13 @@ void Simulate::Render() {
                 &this->platform_ui->mjr_context());
   }
 
-  // get desired and actual percent-of-real-time
-  float desiredRealtime = this->percentRealTime[this->real_time_index];
-  float actualRealtime  = 100 / this->measured_slowdown;
-
-  // if running, check for misalignment of more than 10%
-  float realtime_offset = mju_abs(actualRealtime - desiredRealtime);
-  bool  misaligned      = this->run && realtime_offset > 0.1 * desiredRealtime;
-
-  // make realtime overlay label
+  // the wrapper paces the simulation, so show its factor rather than upstream's slowdown
+  const double wrapper_rtf = this->wrapper_realtime_factor.load();
   char rtlabel[30] = {'\0'};
-  if (desiredRealtime != 100.0 || misaligned) {
-    // print desired realtime
-    int labelsize = std::snprintf(rtlabel, sizeof(rtlabel), "%g%%", desiredRealtime);
-
-    // if misaligned, append to label
-    if (misaligned) {
-      std::snprintf(rtlabel + labelsize,
-                    sizeof(rtlabel) - labelsize,
-                    " (%-4.1f%%)",
-                    actualRealtime);
-    }
+  if (wrapper_rtf == 0.0) {
+    std::snprintf(rtlabel, sizeof(rtlabel), "MAX");
+  } else if (wrapper_rtf != 1.0) {
+    std::snprintf(rtlabel, sizeof(rtlabel), "%.0f%%", 100 * wrapper_rtf);
   }
 
   // show real-time overlay
@@ -3372,9 +3350,9 @@ void Simulate::RenderLoop() {
     this->scn.flags[mjRND_REFLECTION] = 0;
   }
 
-  // select default font
-  int fontscale = ComputeFontScale(*this->platform_ui);
-  this->font    = fontscale / 50 - 1;
+  // select default font, unless the owner chose one
+  if (this->font < 0) { this->font = ComputeFontScale(*this->platform_ui) / 50 - 1; }
+  int fontscale = 50 * (this->font + 1);
 
   // make empty context
   this->platform_ui->RefreshMjrContext(nullptr, fontscale);
@@ -3513,6 +3491,7 @@ void Simulate::RenderLoop() {
   }
 
   this->exitrequest.store(2);
+  cond_loadrequest.notify_all();  // a pending Load() must not wait for a loop that has ended
 }
 
 // add state to history buffer

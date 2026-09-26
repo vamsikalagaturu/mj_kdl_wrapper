@@ -34,10 +34,10 @@ Most applications follow this flow:
 
 ## Complete Runnable Script
 
-The code below is a complete interactive script. If you save it as
-`python_tutorial_demo.py` in the repository root and run it from an environment
-where `mj_kdl_wrapper` is installed, it builds a table scene, initializes a
-tool-aware KDL robot, opens the Simulate UI, and runs gravity compensation.
+The code below is a complete interactive script. Saved as `python_tutorial_demo.py` and run
+from any directory in an environment where `mj_kdl_wrapper` is installed, it builds a table
+scene, initializes a tool-aware KDL robot, opens the Simulate UI, and runs gravity
+compensation.
 Pass `--headless` to run the same controller without a window for CI or remote
 machines without a display.
 
@@ -48,7 +48,6 @@ from __future__ import annotations
 
 import math
 import argparse
-from pathlib import Path
 
 import PyKDL as kdl
 
@@ -56,7 +55,6 @@ import mj_kdl_wrapper as mjk
 
 
 HOME_POSE = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
-TABLE_PATH = Path("assets/table.xml")
 SURFACE_Z = 0.7
 CUBE_HALF = 0.025
 
@@ -68,16 +66,9 @@ def joints(values) -> kdl.JntArray:
     return q
 
 
-def require_path(path: str | Path, label: str) -> str:
-    resolved = Path(path)
-    if not resolved.exists():
-        raise FileNotFoundError(f"{label} not found: {resolved}")
-    return str(resolved)
-
-
 def make_gripper() -> mjk.AttachmentSpec:
     gripper = mjk.AttachmentSpec()
-    gripper.mjcf_path = require_path("assets/robotiq_2f85/2f85.xml", "gripper model")
+    gripper.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml")
     gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
     gripper.prefix = "g_"
     return gripper
@@ -86,7 +77,7 @@ def make_gripper() -> mjk.AttachmentSpec:
 def make_table() -> mjk.SceneObject:
     table = mjk.SceneObject()
     table.name = "table"
-    table.mjcf_path = require_path(TABLE_PATH, "table asset")
+    table.mjcf_path = mjk.menagerie.asset_path("table.xml")
     table.pos = [0.0, 0.0, SURFACE_Z]
     table.fixed = True
     return table
@@ -115,7 +106,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     spec.objects = [table, make_cube()]
 
     arm = mjk.RobotSpec()
-    arm.path = require_path(mjk.menagerie.model_path("kinova_gen3"), "arm model")
+    arm.path = mjk.menagerie.model_path("kinova_gen3")
     arm.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "table_top")
     arm.attachments = [make_gripper()]
     spec.robots = [arm]
@@ -323,7 +314,7 @@ accumulated robot spec. They are applied in order.
 
 ```python
 gripper = mjk.AttachmentSpec()
-gripper.mjcf_path = "assets/robotiq_2f85/2f85.xml"
+gripper.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml")
 gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
 gripper.prefix = "g_"
 
@@ -365,13 +356,13 @@ to `tool.ft_sensors`; `robot.ft_sensor(name)` returns a `PyKDL.Wrench`.
 ## 6. Add Tables, Objects, And Asset Sites
 
 `SceneObject` supports primitive objects and MJCF-backed assets. MJCF assets use
-`mjcf_path`; primitive objects require `shape`, `size`, `rgba`, `mass`, and
-`friction`.
+`mjcf_path`; primitive objects require `shape`, `size`, `rgba` and `friction`, and `mass`
+unless `fixed`.
 
 ```python
 table = mjk.SceneObject()
 table.name = "table"
-table.mjcf_path = "assets/table.xml"
+table.mjcf_path = mjk.menagerie.asset_path("table.xml")
 table.pos = [0.0, 0.0, 0.7]
 table.fixed = True
 
@@ -440,11 +431,12 @@ Pass `""` to return to the free camera.
 
 ## 8. Write Reset Hooks
 
-`Env.reset()` resets MuJoCo, re-seeds every registered robot's ports and every scene slot
-from the reset state (so stale commands do not hit the first post-reset step), runs your
-hook, then reads the measurements back. A command the hook primes is kept; a POSITION robot
-the hook moves needs its `jnt_pos_cmd` set there too. The Simulate UI's reset button does
-the same.
+`Env.reset()` resets MuJoCo, re-seeds every registered robot's ports from the reset state (so
+stale commands do not hit the first post-reset step), runs your hook, then reads the
+measurements back. A command the hook primes is kept; a POSITION robot the hook moves needs
+its `jnt_pos_cmd` set there too. The Simulate UI's reset button does the same. The hook gets a
+`ResetContext` copy it may keep; an exception it raises comes out of `reset()` (or the
+`step()` that ran a UI reset) once the measurements are read back.
 
 ```python
 home = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
@@ -561,7 +553,7 @@ spec.add_skybox = True
 
 table = mjk.SceneObject()
 table.name = "table"
-table.mjcf_path = "assets/table.xml"
+table.mjcf_path = mjk.menagerie.asset_path("table.xml")
 table.pos = [0.0, 0.0, 0.7]
 table.fixed = True
 
@@ -577,7 +569,7 @@ cube.friction = [0.8, 0.02, 0.001]
 spec.objects = [table, cube]
 
 gripper = mjk.AttachmentSpec()
-gripper.mjcf_path = "assets/robotiq_2f85/2f85.xml"
+gripper.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml")
 gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
 gripper.prefix = "g_"
 
@@ -704,8 +696,8 @@ right_robot = env.create_robot("r2_base_link", "r2_bracelet_link", tool=right_to
 
 Each robot gets its own KDL chain and command ports while sharing the same
 `Env`; one `env.update()` reads and commands both. `prefix` is prepended to every name the
-call resolves (bodies, tool body, TCP site, F/T sensors); passing already-prefixed names with
-no prefix, as `ex_dual_arm.py` does, is the same.
+call resolves (bodies, tool body, TCP site, F/T sensors), as `ex_rnea_pick_place.py` does
+with `"r2_"`; passing already-prefixed names with no prefix, as above, is the same.
 
 ## 13. Modify A Running Scene
 
@@ -726,22 +718,23 @@ env.update()
 env.remove_object("obstacle")
 ```
 
-Existing Python `Robot` handles and the viewer are rebound automatically. A
+Existing Python `Robot` handles, the viewer and open recorders follow the new model. A
 closed `Env` or `Robot` raises `RuntimeError` instead of leaving dangling native
 pointers.
 
 ## 14. Grow Into The Examples
 
-Most Python examples mirror the C++ ones:
+The Python examples mirror the C++ ones:
 
 - `ex_gravity_comp`: single-arm gravity compensation.
-- `ex_table_scene`: table asset, primitive objects, cameras, reset hook.
-- `ex_table_pick_place`: IK waypoints, gripper command, phase table, table asset sites.
+- `ex_joint_ctrl`: a POSITION mode motion, then a VELOCITY mode motion back.
+- `ex_table_pick_place`: IK waypoints, gripper command, phase table, table asset sites, a push
+  on the arm mid-carry through `xfrc_applied`.
 - `ex_table_pour`: gripper-held bottle asset and receiver; `--record` writes an MP4.
-- `ex_rnea_pick_place`, `ex_achd_pick_place`, `ex_achd_table_slide`: RNEA and ACHD torque control.
+- `ex_rnea_pick_place`: two prefixed arms at one table with RNEA computed torque, free objects,
+  scene cameras.
+- `ex_achd_pick_place`, `ex_achd_table_slide`: ACHD torque control.
 - `ex_admittance_ft`: F/T admittance around an RNEA task-space inner loop.
-- `ex_dual_arm`: two prefixed robots in one scene.
-- `ex_cabinet`, `basic_scene`, `custom_ui_scene`, `viewer_scene`: Python only.
 
 They live in `python/mj_kdl_wrapper/examples/` (or run `mj-kdl-fetch-examples` to copy them
-out), run headless by default, accept `--gui`, and end by themselves either way.
+out) and end by themselves. They run headless by default and accept `--gui`.

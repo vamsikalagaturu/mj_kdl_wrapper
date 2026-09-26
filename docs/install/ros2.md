@@ -17,19 +17,15 @@ for both C++ and Python. For non-ROS builds, see the
 
 ## How colcon builds this package
 
-This is a plain CMake project, not `ament_cmake`, and it ships no `package.xml`.
-colcon still builds it: the `colcon-cmake` extension (part of
-`python3-colcon-common-extensions`) discovers any directory with a
-`CMakeLists.txt` and builds it as a `cmake`-type package named after the
-`project()` call (`mj_kdl_wrapper`).
+This is a plain CMake project, not `ament_cmake`. Its `package.xml` declares build type
+`cmake` and the dependencies (`orocos_kdl`, Eigen, GLFW, OpenGL, ffmpeg), so colcon orders
+it after the `orocos_kdl` package and `rosdep install --from-paths src` resolves the system
+packages; `libegl-dev` has no rosdep key, install it with apt.
 
 It is not registered in the ament index, so `ros2 pkg list` / `ros2 pkg prefix`
 will not show it - expected, and it does not affect linking: dependent packages
 consume it with `find_package(mj_kdl_wrapper)`, and a downstream
-`<depend>mj_kdl_wrapper</depend>` still orders the build correctly (colcon matches
-the discovered package name). Without a `package.xml`, `rosdep` cannot resolve this
-package's system dependencies, so install the [system packages](#system-packages)
-yourself.
+`<depend>mj_kdl_wrapper</depend>` orders the build correctly.
 
 ## KDL must be shared
 
@@ -56,7 +52,8 @@ sudo apt install \
 
 ROS 2 (**Jazzy** or **Lyrical**) and `colcon` (via
 `python3-colcon-common-extensions`) are assumed present and sourced. CI builds
-both distros.
+both distros and runs the `camera_ros` test there; the rest of the test suite runs in the
+non-ROS CI.
 
 ## ROS 2 C++
 
@@ -103,20 +100,28 @@ target_link_libraries(my_node orocos-kdl)
 target_link_libraries(my_node mujoco::mujoco)
 ```
 
+With `rclcpp` and `sensor_msgs` sourced at configure time, the wrapper also builds
+`mj_kdl_wrapper::camera_ros` (`MJ_KDL_WITH_ROS=AUTO`; `ON` requires ROS, `OFF` skips it). It
+publishes a frame rendered with `render_rgb()` as `sensor_msgs/Image` plus `CameraInfo`
+(`include/mj_kdl_wrapper/camera_ros.hpp`); it creates no node or thread of its own.
+
+```cmake
+if(TARGET mj_kdl_wrapper::camera_ros)
+  target_link_libraries(my_node mj_kdl_wrapper::camera_ros)
+endif()
+```
+
 ### Build ordering
 
 Step 1 must precede step 2 so the `orocos_kdl` package is on `CMAKE_PREFIX_PATH`
-when the wrapper configures. Run the two `colcon build` steps in order as shown.
-For automatic single-command ordering, declare the dependencies in a consuming
-package's own `package.xml`:
+when the wrapper configures. The wrapper's `package.xml` depends on `orocos_kdl`, so a
+single `colcon build` also orders them; the flag `MJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON` is
+still needed. A consuming package declares the dependencies in its own `package.xml`:
 
 ```xml
 <depend>orocos_kdl</depend>
 <depend>mj_kdl_wrapper</depend>
 ```
-
-(`mj_kdl_wrapper` itself ships no `package.xml`; colcon discovers it from
-`CMakeLists.txt` and matches the name for ordering.)
 
 ## ROS 2 Python
 

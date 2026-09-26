@@ -13,10 +13,6 @@ A C++ library bridging [MuJoCo](https://github.com/google-deepmind/mujoco) physi
 <table>
 <tr>
   <td align="center"><img src="docs/screenshots/ex_gravity_comp.png" width="380"/><br/><b>ex_gravity_comp</b> &mdash; Single arm, KDL gravity compensation</td>
-  <td align="center"><img src="docs/screenshots/ex_table_scene.png" width="380"/><br/><b>ex_table_scene</b> &mdash; Arm + table + scene objects</td>
-</tr>
-<tr>
-  <td align="center"><img src="docs/screenshots/ex_dual_arm.png" width="380"/><br/><b>ex_dual_arm</b> &mdash; Dual arm + grippers</td>
 </tr>
 </table>
 
@@ -69,7 +65,8 @@ cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMJ_KDL_FETCH_MENAGERIE=ON
 # compile
 cmake --build build --parallel $(nproc)
 
-# optional install; self-contained, bundles KDL into the prefix
+# optional install; self-contained, bundles KDL into the prefix; consumers use
+# find_package(mj_kdl_wrapper) or pkg-config (lib/pkgconfig/mj_kdl_wrapper.pc)
 cmake --install build
 
 # check: run the pick-and-place example
@@ -140,7 +137,8 @@ python examples/ex_table_pick_place.py --gui
 
 ### ROS 2 (colcon)
 
-Tested on ROS 2 **Jazzy** and **Lyrical**. Build the secorolab KDL as its own
+CI builds it on ROS 2 **Jazzy** and **Lyrical** and runs its ROS camera test there (the full
+test suite runs in the non-ROS CI). Build the secorolab KDL as its own
 workspace package, then the wrapper against it so the overlay shares one
 `liborocos-kdl`:
 
@@ -174,13 +172,18 @@ rationale, build ordering, and consuming it from your own nodes.
 - [Python Bindings API Guide](docs/api/python.md)
 - Generated C++ and Python API reference: `build/docs/html/index.html` (build with
   `cmake -B build -DBUILD_DOCS=ON && cmake --build build --target docs`)
+- Upgrading from 0.3.x: "Migrating to 0.4" in [docs/index.md](docs/index.md)
+
+Logging: `mj_kdl::set_log_level()` takes a severity threshold, `INFO` < `WARN` < `ERROR` <
+`NONE` (default `INFO`, everything); your code can log through it with `MJ_LOG_INFO()`,
+`MJ_LOG_WARN()` and `MJ_LOG_ERROR()`. See the [C++ API guide](docs/api/cpp.md#logging).
 
 ## Examples
 
 The example catalog lives in [docs/examples.md](docs/examples.md). C++ examples are in
-`src/examples/`, Python ones in `python/mj_kdl_wrapper/examples/`; most exist in both
-(`ex_cabinet`, `basic_scene`, `custom_ui_scene` and `viewer_scene` are Python only). Every example ends by itself: headless by default, and with
-the viewer (`--gui` in Python, no `--headless` in C++) it runs the same sequence.
+`src/examples/`, Python ones in `python/mj_kdl_wrapper/examples/`; each exists in both. Every
+example ends by itself. The C++ ones open the viewer unless given `--headless`; the Python
+ones run headless unless given `--gui`, and run the same sequence either way.
 
 ## Tests
 
@@ -217,6 +220,6 @@ These ship in the repo and the wheel, and are copied into the user cache
 | `assets/ft_sensor.xml` | Local 6-axis force-torque sensor asset used by FT examples/tests |
 | `assets/table.xml` | Table asset with authored `table_top` site |
 | `assets/mug.xml`, `assets/mug_table.xml` | Pouring example assets |
-| `assets/cabinet/cabinet.xml` | Three-drawer cabinet (`ex_cabinet.py`) |
+| `assets/cabinet/cabinet.xml` | Three-drawer cabinet (robot-less scene tests) |
 | `assets/cube.xml` | Free cube (`test_scene_state`) |
-| `assets/door_latch/door_latch.xml` | Latched cupboard door fixture (not used by the examples or tests) |
+| `assets/door_latch/door_latch.xml` | Latched cupboard door fixture (not used here; motion-spec-dsl's `door_open` model loads it) |

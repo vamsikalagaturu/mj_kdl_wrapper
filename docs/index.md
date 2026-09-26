@@ -57,6 +57,30 @@ Also changed in 0.4:
 | Python: `Robot.ft_sensor_frame(name)` removed | `env.site_frame(<the sensor's frame_site>)` |
 | `find_ft_sensor()` removed | search `robot.ft_sensors` (in `ToolFrameSpec::ft_sensors` order) by `.name` |
 | MJCF `SceneObject`s are no longer prefixed with `name + "_"` | use the asset's own element names; set `SceneObject::prefix` when an asset is used twice |
+| `LogLevel` is a threshold, `INFO` < `WARN` < `ERROR` < `NONE`, default `INFO` (it was a verbosity where `ERROR` printed everything) | `set_log_level(WARN)` now prints warnings and errors; the default prints what it did before |
+| `LOG_INFO()` / `LOG_WARN()` / `LOG_ERROR()` | `MJ_LOG_INFO()` / `MJ_LOG_WARN()` / `MJ_LOG_ERROR()` |
+| The header no longer includes `<GLFW/glfw3.h>` | include it yourself for the `GLFW_KEY_*` codes of `key_pressed()` / `capture_key()` |
+| `init_env()` dropped an `on_reset` set before it | it keeps it, like `adopt` |
+| `scene_add_object()` / `scene_remove_object()` started from a fresh `mjData` at `qpos0` | the time, `qpos`/`qvel` (by joint name and type) and `act`/`ctrl` (by actuator name) carry over into the new model; call `reset(&env)` for the old behaviour |
+| A rebuild whose robot or F/T sensor rebinding failed left the `Env` half rebound | it is left unchanged and the call returns the error |
+| `scene_add_object()` / `scene_remove_object()` could be called from `on_reset` | they fail there; change the scene outside the hook |
+| A `VideoRecorder` kept rendering the old model after a rebuild | it builds its render context at the first frame and follows rebuilds |
+| `init_offscreen()` / `init_video_recorder()` on an open recorder leaked it | they free it first |
+| `open_viewer()` without a usable display could abort on the render thread | it returns an error `Status` when no window can be created |
+| Simulate UI: a reset was detected from time jumping back (also on API reset, rebuild, history scrub, the Load key) | only an explicit UI Reset runs the reset path and `on_reset`; scrubbing and the Load key no longer reset |
+| Simulate UI: the right arrow single-stepped MuJoCo behind the wrapper; a dropped model file was loaded | the right arrow no longer single-steps; drag-and-drop loading is gone (build scenes with `SceneSpec`) |
+| CMake: `find_package(mj_kdl_wrapper 0.3)` accepted any 0.x (`SameMajorVersion`) | the minor version must match (`SameMinorVersion`); ask for `0.4` |
+| Install: licenses went to `lib/`, `image_io.hpp` and `camera_ros.hpp` were always installed | licenses in `share/doc/mj_kdl_wrapper`; only the headers of what was built |
+| New: pkg-config file `mj_kdl_wrapper.pc` | `pkg-config --cflags --libs mj_kdl_wrapper`; see the [Standalone Installation Guide](install/standalone.md) |
+| Python: `Scene` removed | `Env.build(spec)`; its frame, pose, object and save calls are on `Env` |
+| Python: `Robot.from_scene(scene, ...)` | `env.create_robot(...)` or `env.create_robot_from_chain(...)` |
+| Python: `Robot.update()`, `step()`, `pace()`, `step_n()`, `Scene.step()`, `step_n()` | `env.update()`, `env.step()`, `env.pace()`; loop for several steps |
+| Python: `SimulateViewer.open(robot_or_scene, title)`, `.close()`, `.step()`, `.pace()`, `.step_n()` | `env.open_viewer(title)`; `env.viewer` has `is_running()` and the trace, camera and key calls; `env.close()` closes it |
+| Python: `Robot.set_joint_pos(q, call_forward)` | `set_joint_pos(q)` |
+| Python: `VideoRecorder.open(scene, ...)` / `open_preset(scene, ...)` | pass the `Env`: `open(env, ...)` |
+| Python: `Env.spec` was a writable copy whose changes did nothing | it is read-only; change the scene with `add_object()` / `remove_object()` |
+| Python: `Env.on_reset` got a `ResetContext` that dangled once the call returned | it gets a copy, safe to keep |
+| Python: `menagerie.model_path()` knew only `kinova_gen3` and `robotiq_2f85` | also `universal_robots_ur5e` and `universal_robots_ur10e` |
 
 ## Migrating from 0.3.1 {#sec_migrate_pacing}
 

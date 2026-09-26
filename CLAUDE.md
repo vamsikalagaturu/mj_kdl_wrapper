@@ -47,12 +47,12 @@ pytest -q python/tests
 ```
 
 - `python/mj_kdl_wrapper/` -- the bindings package (`menagerie.py`, `fetch_examples.py`, type stubs).
-- `python/mj_kdl_wrapper/examples/ex_*.py` -- Python counterparts of most C++ `src/examples/ex_*.cpp`. They run headless by default and accept `--gui`; `custom_ui_scene.py` and `viewer_scene.py` always open a window. Every example ends by itself: `--gui` runs the headless sequence with the viewer open.
+- `python/mj_kdl_wrapper/examples/ex_*.py` -- Python counterparts of the C++ `src/examples/ex_*.cpp`, one each. They run headless by default and accept `--gui`. Every example ends by itself: `--gui` runs the headless sequence with the viewer open.
 
 **Packaging (examples + assets ship in the wheel):** the examples live inside the package, so `tool.scikit-build.wheel.packages` maps only `mj_kdl_wrapper` -> `python/mj_kdl_wrapper`. The repo-root `assets/` is installed into the wheel by CMake (`install(DIRECTORY assets/ DESTINATION mj_kdl_wrapper/assets)`), never mapped: a wheel mapping to a directory outside the package makes the editable install add every parent it needs to reach it, and for `assets/` that reached the workspace `src/`, putting every sibling repository on `sys.path`. Two console scripts populate a user's working directory:
 
 - `mj-kdl-fetch-menagerie` (`menagerie:main`) -- clones the MuJoCo Menagerie into cache and copies bundled assets to `~/.cache/mj_kdl_wrapper/assets`.
-- `mj-kdl-fetch-examples` (`fetch_examples:main`) -- copies the bundled `examples/` and `assets/` out as sibling dirs (default `./mj_kdl_wrapper_examples`).
+- `mj-kdl-fetch-examples` (`fetch_examples:main`) -- copies the bundled `examples/` out (default `./mj_kdl_wrapper_examples/examples`); the examples read assets from the user cache.
 
 **Asset resolution in examples:** Python and C++ helpers resolve Menagerie models and bundled assets from env overrides or the user cache. `mj-kdl-fetch-menagerie` populates both `menagerie/` and `assets/` under the cache.
 
@@ -122,7 +122,7 @@ Development happens on `dev` (or feature branches off it). **`main` is protected
 
 To land work: branch off `dev`, open a PR into `dev`; squash is fine there. To cut a release, follow the ordered checklist in [AGENTS.md](AGENTS.md) -- the release PR is merged with a merge commit, which is what lets `dev` fast-forward to `main` afterwards instead of diverging from it.
 
-**Versioning.** The version lives in three manual places that must stay in sync and read the same numeric string: `cmake/Versions.cmake` (`MJ_KDL_VERSION`), `pyproject.toml` (`version`) and `package.xml` (`<version>`); `scripts/check_versions.py` checks them. `dev` always carries the *next* version, never the last released tag's number -- e.g. after releasing `0.1.0`, bump both files on `dev` to `0.1.1`. When cutting that release the files already read `0.1.1`, so just merge `dev` -> `main` and tag `v0.1.1`; then bump `dev` to the following version. The C++ build exposes the version via the `MJ_KDL_WRAPPER_VERSION` compile define (CMakeLists.txt), surfaced in Python as `mj_kdl_wrapper.__version__`.
+**Versioning.** The version lives in three manual places that must stay in sync and read the same numeric string: `cmake/Versions.cmake` (`MJ_KDL_VERSION`), `pyproject.toml` (`version`) and `package.xml` (`<version>`); `scripts/check_versions.py` checks that they agree. `dev` always carries the *next* version, never the last released tag's number -- e.g. after releasing `0.1.0`, bump all three files on `dev` to `0.1.1`. When cutting that release the files already read `0.1.1`, so just merge `dev` -> `main` and tag `v0.1.1`; then bump `dev` to the following version. `project(VERSION)` takes it from `cmake/Versions.cmake`, so the CMake package config and `mj_kdl_wrapper.pc` carry it; only the Python extension gets it as a compile define (`MJ_KDL_WRAPPER_VERSION`, surfaced as `mj_kdl_wrapper.__version__`). The C++ library has no version define or call. The CMake package matches only within a minor version (`SameMinorVersion`): 0.x minors are breaking.
 
 **Docs/GitHub Pages deploy only on releases.** `docs.yml` builds docs on every push/PR (CI check) but only uploads the Pages artifact and deploys when `github.event_name == 'release'`. The `github-pages` environment allows deployments from the `main` branch and from `v*` tags. Publishing a release is what refreshes <https://mj-kdl-wrapper.vamsi.sh/>.
 

@@ -42,6 +42,8 @@ EXCLUDE_PATTERNS       = */third_party/* */build/* */__pycache__/*
 
 # Use README.md as the main page
 USE_MDFILE_AS_MAINPAGE = @CMAKE_CURRENT_SOURCE_DIR@/README.md
+# Heading anchors as GitHub makes them, so one [link](#heading) works in both (Doxygen >= 1.10).
+MARKDOWN_ID_STYLE      = GITHUB
 
 # --- Extraction ---
 EXTRACT_ALL            = YES

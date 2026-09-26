@@ -12,13 +12,18 @@ permissions:
 jobs:
   bump:
     runs-on: ubuntu-24.04
+    env:
+      # A PR opened with GITHUB_TOKEN triggers no workflows, so its required checks never run.
+      GH_TOKEN: ${{ secrets.BUMP_MUJOCO_TOKEN || github.token }}
     steps:
+      # dev carries the next release; main only moves at releases.
       - uses: actions/checkout@v4
+        with:
+          ref: dev
+          token: ${{ secrets.BUMP_MUJOCO_TOKEN || github.token }}
 
       - name: Get latest MuJoCo release
         id: latest
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           version="$(gh api repos/google-deepmind/mujoco/releases/latest --jq '.tag_name' | sed 's/^v//')"
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
@@ -38,7 +43,6 @@ jobs:
       - name: Open bump pull request
         if: steps.diff.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.latest.outputs.version }}
         run: |
           branch="bot/bump-mujoco-${VERSION}"
@@ -53,5 +57,5 @@ jobs:
               --title "Bump MuJoCo to ${VERSION}" \
               --body "Automated MuJoCo version bump from google-deepmind/mujoco releases." \
               --head "${branch}" \
-              --base "${GITHUB_REF_NAME}"
+              --base dev
           fi

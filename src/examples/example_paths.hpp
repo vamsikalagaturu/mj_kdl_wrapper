@@ -38,9 +38,10 @@ inline std::string menagerie_model(const fs::path &relative)
 {
     if (std::string path = find_menagerie_model(relative); !path.empty()) return path;
     throw std::runtime_error(
-        relative.string() + " not found. Searched $MJ_KDL_MENAGERIE and "
-        + (cache_root() / "menagerie").string()
-        + ". Run 'mj-kdl-fetch-menagerie' or set MJ_KDL_MENAGERIE.");
+      relative.string() + " not found. Searched $MJ_KDL_MENAGERIE and "
+      + (cache_root() / "menagerie").string()
+      + ". Run 'mj-kdl-fetch-menagerie' or set MJ_KDL_MENAGERIE."
+    );
 }
 
 inline std::string find_asset(const fs::path &relative)
@@ -53,7 +54,8 @@ inline std::string asset(const fs::path &relative)
 {
     if (std::string path = find_asset(relative); !path.empty()) return path;
     throw std::runtime_error(
-        relative.string() + " not found in " + (cache_root() / "assets").string()
-        + ". Run 'mj-kdl-fetch-menagerie' to populate bundled assets.");
+      relative.string() + " not found in " + (cache_root() / "assets").string()
+      + ". Run 'mj-kdl-fetch-menagerie' to populate bundled assets."
+    );
 }
 } // namespace mj_kdl_examples

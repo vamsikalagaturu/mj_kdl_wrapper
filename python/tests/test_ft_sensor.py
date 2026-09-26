@@ -10,23 +10,15 @@ def _model_path() -> str:
         pytest.skip(str(exc))
 
 
-def _asset_path(name: str) -> str:
-    try:
-        return mjk.menagerie.asset_path(name)
-    except RuntimeError:
-        mjk.menagerie.fetch_assets()
-        return mjk.menagerie.asset_path(name)
-
-
 def test_ft_sensor_returns_pykdl_wrench():
     kdl = pytest.importorskip("PyKDL")
 
     ft = mjk.AttachmentSpec()
-    ft.mjcf_path = _asset_path("ft_sensor.xml")
+    ft.mjcf_path = mjk.menagerie.asset_path("ft_sensor.xml")
     ft.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
 
     gripper = mjk.AttachmentSpec()
-    gripper.mjcf_path = _asset_path("robotiq_2f85/2f85.xml")
+    gripper.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml")
     gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "wrist_ft_site")
     gripper.prefix = "g_"
 

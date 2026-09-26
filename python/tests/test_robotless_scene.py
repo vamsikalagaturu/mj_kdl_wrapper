@@ -9,6 +9,8 @@ Regression tests for two fixes in build_scene:
 
 from pathlib import Path
 
+import pytest
+
 import mj_kdl_wrapper as mjk
 
 CABINET = Path(mjk.menagerie.asset_path("cabinet/cabinet.xml"))
@@ -29,6 +31,44 @@ def _cube() -> mjk.SceneObject:
     obj.mass = 0.2
     obj.friction = [1.0, 0.005, 0.0001]
     return obj
+
+
+def _spec(objects) -> mjk.SceneSpec:
+    spec = mjk.SceneSpec()
+    spec.timestep = 0.002
+    spec.add_floor = True
+    spec.add_skybox = False
+    spec.objects = objects
+    return spec
+
+
+def test_fixed_primitive_needs_no_mass():
+    obj = _cube()
+    obj.fixed = True
+    obj.mass = None
+    with mjk.Env.build(_spec([obj])) as env:
+        assert env.step()
+
+
+@pytest.mark.parametrize("field", ["size", "rgba", "mass", "friction"])
+def test_primitive_without_a_required_field_is_refused(field):
+    obj = _cube()
+    setattr(obj, field, None)
+    with pytest.raises(RuntimeError, match=f"SceneObject.{field}"):
+        mjk.Env.build(_spec([obj]))
+
+
+@pytest.mark.parametrize("field", ["pos", "fovy"])
+def test_camera_without_a_required_field_is_refused(field):
+    cam = mjk.CameraSpec()
+    cam.name = "top"
+    cam.pos = [0.0, 0.0, 2.0]
+    cam.fovy = 45.0
+    setattr(cam, field, None)
+    spec = _spec([_cube()])
+    spec.cameras = [cam]
+    with pytest.raises(RuntimeError, match=f"CameraSpec.{field}"):
+        mjk.Env.build(spec)
 
 
 def test_robotless_scene_applies_timestep():

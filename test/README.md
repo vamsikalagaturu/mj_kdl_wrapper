@@ -16,25 +16,30 @@ ctest --test-dir build --output-on-failure
 ./build/test/test_init
 ```
 
-All tests self-skip if Menagerie is absent. Fetch it into the user cache with:
+Tests on a Menagerie model or a bundled asset self-skip when the user cache lacks it; the
+fixture tests (`test/fixtures/`) always run. Fetch the models into the user cache with:
 
 ```bash
 cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON
 ```
 
+The Python examples run headless under pytest (`python/tests/test_examples.py`), each checked
+for exit code 0; the two that always open a window are left out.
+
 | Test | What it covers |
 |------|----------------|
-| `test_init` | `init_env`, `init_robot_from_mjcf`, `reset`, two independent `Env`s |
-| `test_dual_arm` | multi-robot scene, independent KDL chains |
-| `test_table_scene` | MJCF table asset, `SceneObject`, runtime add/remove |
-| `test_mjcf_load` | arm-only model (nv=7) + arm+gripper model (nq>=13), joint edge cases |
-| `test_mjcf_pos_ctrl` | position trajectory tracking |
-| `test_mjcf_vel_ctrl` | velocity-style convergence control |
-| `test_mjcf_trq_ctrl` | gravity accuracy with gripper mass, impedance drift |
+| `test_init` | `Env`/`Robot` lifecycle: init, `reset` (hook, ports, options), cleanup, adoption, a chain from outside, offscreen rendering |
+| `test_dual_arm` | two prefixed arms, independent KDL chains, gravity per arm |
+| `test_table_scene` | MJCF table asset, `SceneObject` quat and prefix, runtime add/remove |
+| `test_mjcf_load` | chains vs model frames, joint limits, cameras, sites, contact exclusions, attach targets, joint edge cases |
+| `test_mjcf_pos_ctrl` | POSITION trajectory tracking, ctrlrange clamping |
+| `test_mjcf_vel_ctrl` | VELOCITY convergence on the arm |
+| `test_mjcf_trq_ctrl` | gravity with the gripper's mass, impedance drift, `jnt_trq_msr` |
 | `test_mjcf_ft_sensor` | named force-torque sensor: resolve, read, reset, reject |
-| `test_mjcf_pick` | full pick-and-place with gripper: cube lifted > 0.20 m |
-| `test_control_modes` | control modes as actuator groups: added actuators, switching, limits |
+| `test_mjcf_pick` | pick with the gripper: IK waypoints, cube lifted |
+| `test_control_modes` | control modes as actuator groups: added actuators, switching, limits, VELOCITY |
 | `test_scene_state` | `Env` scene slots, what `step()` leaves current, what `reset()` restores |
+| `test_regressions` | fixes from the 0.4.0 audit: rebuilds, re-init, log levels, recorders, screenshot, viewer failure |
 | `test_camera_ros` | ROS camera publisher (built only when configured with ROS) |
 | `ex_*_headless` | each C++ example runs `--headless` and passes its own self-check |
 
@@ -48,104 +53,116 @@ The opt-in viewer test (`DISABLED_` prefix, see test_scene_state) opens a Simula
 
 ### test_init
 
-**Scene:** single Kinova GEN3 arm from Menagerie MJCF.
+**Scene:** single Kinova GEN3 arm from the bundled `kinova_gen3/gen3.xml`.
 
-- DOF count is 7; `init_robot_from_mjcf()` registers the robot with the `Env`.
-- 100 physics steps advance time.
-- **ResetRestoresDefaultPose** -- `reset()` returns joints to the model's default keyframe pose.
-- **ResetSyncsCmdPorts** -- `reset()` re-seeds `jnt_pos_cmd` / `jnt_trq_cmd` from measured state.
-- **ResetRestoresEveryPort** -- every port is re-seeded: msr from the state, pos cmd = pose,
-  vel/trq cmd 0, saturated 0.
-- **ResetInvokesOnResetCallback** -- `Env::on_reset` is called exactly once per `reset(Env*)` invocation.
-- **ResetWithoutOnResetCallbackIsNoOp** -- `reset(Env*)` with no hook set does not crash.
-- **EnvResetInvokesHookAndSyncsRobot** -- `reset(Env*)` invokes the environment hook and syncs registered robot ports/forces.
-- **CleanupRobotUnregistersIt** -- `cleanup(Robot*)` removes the robot from its `Env`.
-- **TwoEnvs.StepIndependently** -- two `Env`s in one process keep their own frames and time.
+- **BasicDOF**, **SimulationAdvance** -- 7 joints, the robot is registered; 100 steps advance
+  time by 100 timesteps.
+- **ResetRestoresTheKeyframePose** -- `reset()` puts the joints on keyframe 0 and time at 0.
+- **ResetOptionsPickTheKeyframeOrTheModelDefault** -- `ResetOptions::keyframe` = 1 resets to the
+  second keyframe; `use_keyframe = false` resets to `qpos0`; `ResetInfo` says which.
+- **ResetSyncsCmdPorts**, **ResetRestoresEveryPort** -- every port is re-seeded: msr from the
+  state, pos cmd = pose, vel/trq cmd 0, saturated 0.
+- **ResetInvokesOnResetCallback**, **EnvResetInvokesHookAndSyncsRobot** -- `Env::on_reset` runs
+  once per `reset()` with the Env's context; `qfrc_applied` is cleared.
+- **ResetWithoutAHookStillReseedsTheRobot** -- no hook set: the robot is still re-seeded.
 - **ResetKeepsARequestedControlMode**, **OnResetPrimesCommandsAndMovesAreReadBack** -- reset keeps
   a pending `ctrl_mode`; `on_reset` runs after the re-seed and what it moves is read back.
-- **Recorder.OutputPathReachesFfmpegVerbatim** -- a path with `"` and `$(...)` is written as named
-  and runs nothing (skips without EGL or ffmpeg).
+- **CleanupRobotUnregistersIt** -- after `cleanup(Robot *)` `update()` no longer commands it.
+- **ChainFromOutsideDrivesTheSameJoints** -- `init_robot_from_chain()` reads the same joints as the
+  derived chain; a joint list of the wrong length is refused.
+- **TwoEnvs.StepIndependently** -- two `Env`s in one process keep their own frames and time.
 - **EnvSpec.OwnsItsStringsAcrossARebuild** -- `scene_add_object()` rebuilds after the caller's
   path and prefix strings are gone.
-- **AFailureSaysWhy** -- a failed call returns a `Status` whose `error` names the cause (unknown
-  body, object with unset fields, unknown object on remove).
+- **EnvAdopt.RunsOnTheCallersPairAndNeverFreesIt** -- `Env::adopt` runs the Env on the caller's
+  model/data, rebuilds included, and never frees them.
+- **SceneFloor.PlacedAtFloorZ** -- the ground plane sits at `SceneSpec::floor_z`.
+- **Recorder.OutputPathReachesFfmpegVerbatim** -- a path with `"` and `$(...)` is written as named
+  and runs nothing (skips without EGL or ffmpeg).
+- **Offscreen.RendersTheSceneIntoABuffer** -- `init_offscreen()` + `render_rgb()` fill the buffer
+  (skips without EGL).
+- **AFailureSaysWhy** -- a failed call returns a `Status` whose `error` names the cause.
 - **SceneSpecRequired.AnUnsetFieldFailsTheBuild** -- unset mass, friction, camera `fovy` or
   timestep fails `build_scene()`.
-- **SceneFloor.PlacedAtFloorZ** -- the ground plane sits at `SceneSpec::floor_z`.
 - **ExamplePaths.StaleMenagerieEnvFallsBackToCache** -- a Menagerie env override pointing
   nowhere falls back to the user cache.
 
 ### test_dual_arm
 
-**Scene:** two Kinova GEN3 arms in a shared `SceneSpec`.
+**Scene:** two Kinova GEN3 arms facing each other, the second prefixed `r2_`.
 
-- Both arms initialised with independent `Robot` handles and KDL chains.
-- **DualArmDrift** -- each arm runs gravity compensation for 500 steps; EE drift <= 1 mm per arm.
-- **GravityInformational** -- computes KDL vs MuJoCo gravity per arm; asserts nothing.
+- **PrefixNamesTheWholeChain** -- a prefix names every joint of the chain.
+- **KdlGravityMatchesMujocoForBothArms** -- KDL gravity equals `qfrc_bias` at rest to 1e-9 Nm.
+- **DualArmDrift** -- 500 steps of gravity compensation; EE drift <= 1 um per arm.
 
 ### test_table_scene
 
 **Scene:** Kinova GEN3 arm on a table with box and sphere objects.
 
-- **GravityCompDrift** -- gravity compensation drift <= 1 mm after 500 steps.
+- **GravityCompDrift** -- gravity compensation drift <= 1 um after 500 steps.
 - **EnvAddRemoveReinitsRobot** -- runtime `scene_add_object` / `scene_remove_object` on the
   `Env`: robots and scene slots follow the rebuilt model; a slot whose body is removed is unbound.
 - **SceneObjectTransform.PathBackedObjectAppliesQuat** -- an MJCF-backed object's `[x, y, z, w]`
   `quat` turns its authored site as expected.
+- **SceneObjectPrefix.NamesStayAsAuthoredUnlessAPrefixIsSet** -- the same asset twice needs
+  distinct prefixes.
 
 ### test_mjcf_load
 
-Two fixtures:
-
-- **MjcfLoadTest** (arm from `scene.xml`): `nv==7`, `nbody>=9`, KDL chain has 7
-  joints, EE within workspace at home; `joint_limits` follow the model (+-inf for a continuous
-  joint); `save_model_xml()` output loads back with the same `nq`/`nbody`.
-- **MjcfGripperTest** (arm + 2F-85): `nq>=13`, `nu>=8`, KDL chain 7 joints,
-  EE workspace, gripper driver range `[~0, ~0.8]` rad; `bind_scene_joint()` by joint name.
+- **MjcfLoadTest** (arm from Menagerie's `scene.xml`): KDL FK equals the MuJoCo frame of
+  `bracelet_link`; `joint_limits` follow the model (+-inf for a continuous joint);
+  `save_model_xml()` output loads back with the same `nq`/`nbody` and a runtime mass change.
+- **MjcfGripperTest** (arm + 2F-85): the TCP chain equals the `g_pinch` site; the driver joint
+  range is 0..0.8 rad and the actuator's ctrlrange tops out at 0.82; `bind_scene_joint()` by
+  name; `AttachmentSpec::contact_exclusions` adds the pair; attaching to a body with an offset;
+  `CameraSpec` on the world and on a body; `SiteSpec` adds a site and leaves an authored one.
+- **AttachToFrame** (`fixtures/joint_edge_cases.xml` as an object): a robot stands on an object's
+  named `<frame>`.
 - **MjcfPathTest** (`fixtures/meshdir/`): a relative model path to an MJCF with a relative
   `meshdir` builds.
 - **JointEdgeCaseTest** (`fixtures/joint_edge_cases.xml`): a chain refuses a body with two joints
-  and a ball joint on its path; a plain hinge chain builds; the scalar joint getters resolve a
-  fixed-tendon actuator to its joint and refuse a spatial-tendon actuator and a ball joint.
+  and a ball joint on its path; a plain hinge chain builds; a joint slot refuses a ball joint.
 
 ### test_mjcf_pos_ctrl
 
-`CtrlMode::POSITION`.  Linearly interpolates from home to a target pose over 5 s,
-settles 1 s.  Max joint error < 0.05 rad.
+`CtrlMode::POSITION`.  Linearly interpolates from home to a target pose over 1.5 s, settles
+0.5 s.  Max joint error < 0.01 rad.
 
-- **ClampCtrlrange** -- position commands are clamped to the actuator `ctrlrange` and flagged in `jnt_saturated`.
+- **ClampCtrlrange** -- position commands are clamped to the actuator `ctrlrange` and flagged in
+  `jnt_saturated` (Gen3 joints 2, 4 and 6).
 
 ### test_mjcf_vel_ctrl
 
-Velocity-style control implemented by integrating a proportional velocity command
-into the position command accepted by the Menagerie actuator model.  The arm
-converges from home to the target pose within the configured joint tolerance.
+`CtrlMode::VELOCITY` through the `<joint>_velocity` actuators added by `RobotSpec::modes`: a
+clamped proportional velocity command brings the arm to the target within 0.01 rad in under 2.5 s.
 
 ### test_mjcf_trq_ctrl
 
 `CtrlMode::TORQUE`, arm + 2F-85 gripper attached.
 
-- **GravityAccuracy** -- KDL gravity vs `qfrc_bias` at q=0: max error < 5e-2 Nm.
-- **ImpedanceDrift** -- PD + gravity for 500 steps: EE drift < 5 mm.
-- **TrqMsrReadsQfrcActuator** -- `jnt_trq_msr` reflects `qfrc_actuator` (not `qfrc_bias`) after `update()`.
+- **GravityIncludesTheGripperMass** -- at home, KDL gravity with the lumped tool equals
+  `qfrc_bias` to 1e-9 Nm, and a chain without the tool is off by more than 1 Nm.
+- **ImpedanceDrift** -- PD + gravity for 500 steps: EE drift < 10 um.
+- **TrqMsrReadsQfrcActuator** -- nonzero torque commands come back in `jnt_trq_msr` as
+  `qfrc_actuator`.
 
 ### test_mjcf_ft_sensor
 
 **Scene:** GEN3 + `assets/ft_sensor.xml` + 2F-85, sensor named through `ToolFrameSpec::ft_sensors`.
 
 - **ReadsNamedWrench** -- the logical sensor resolves its `<force>`/`<torque>` sensors and frame
-  site, and `update()` reads a finite wrench.
+  site; `update()` reads their `sensordata`; at rest it carries the weight below it.
 - **ResetReReadsTheWrench** -- after `reset()` the wrench equals the sensors' `sensordata`.
 - **RejectsMissingTorqueSensor** -- a sensor naming a missing `<torque>` sensor fails
   `init_robot_from_mjcf()`, and the robot is not registered.
 
 ### test_mjcf_pick
 
-**Scene:** GEN3 (MJCF) + Robotiq 2F-85 + 4 cm cube.
+**Scene:** GEN3 + Robotiq 2F-85 + 4 cm cube on the floor, driven by the examples' helpers
+(`src/examples/common.hpp`).
 
-- KDL chain has 7 joints.
-- IK error < 2 mm for each waypoint.
-- Full pick sequence: cube lifted > 0.20 m.
+- **TcpLiesBeyondTheWrist** -- the TCP chain ends at the pinch site, 21.7 cm out of the bracelet.
+- **IkStaysOnTheSeedBranch** -- consecutive IK waypoints stay within 1.5 rad of each other.
+- **CubeLifted** -- the pick sequence lifts the cube above 0.28 m.
 
 ### test_scene_state
 
@@ -177,14 +194,28 @@ Each mode is an actuator group switched with `opt.disableactuator`.
 - **ArmModesTest** (GEN3 `<position>` servos, Menagerie UR5e `<general>` servos): the
   `<joint>_torque` motors are added in a disabled group; POSITION tracks a 0.2 rad ramp within
   0.05 rad; POSITION -> TORQUE -> POSITION holds the pose within 0.01 rad; TORQUE saturates at
-  the servo's `forcerange` (GEN3 105 Nm, UR5e 150 Nm); `update()` and mode switches never write
-  `qfrc_applied`; two arms run different modes.
+  the servo's `forcerange` (GEN3 105 Nm, UR5e 150 Nm); VELOCITY tracks `jnt_vel_cmd` within
+  2e-3 rad/s; `update()` and mode switches never write `qfrc_applied`; two arms run different
+  modes.
 - **GripperModesTest** (GEN3 + 2F-85): the gripper gets no torque actuator and stays in group 0;
   it closes and opens while the arm runs in TORQUE.
 - **MotorWheelModesTest** (`fixtures/motor_wheel.xml`): only the listed wheel gets a
   `<velocity>` actuator, the pivot is left alone; VELOCITY tracks 5 rad/s through `env.scene`,
-  then TORQUE takes over without a jump; a motor-driven robot starts in TORQUE and
-  `joint_force_limits()` follows the active mode.
+  then TORQUE takes over without a jump; a scene actuator slot flags a clamped command; a
+  motor-driven robot starts in TORQUE and `joint_force_limits()` follows the active mode.
+
+### test_regressions
+
+Fixes from the 0.4.0 audit; headless, self-skips without the bundled Gen3.
+
+- **RebuildTest** -- `scene_add_object()` keeps the physics state and the commands; a failed
+  `scene_remove_object()` keeps the object order; removing a robot's joint fails and leaves the
+  Env; a failed re-init leaves the robot as it was; an `on_reset` set before `init_env()` is
+  kept; recorders follow a rebuild and outlive each other; a viewer that cannot open returns an
+  error.
+- **LogLevel.IsASeverityThreshold** -- each level shows its own and more severe messages.
+- **Screenshot.PathReachesFfmpegVerbatimAndAMissingFfmpegIsAFailure** -- the screenshot writer
+  takes its path verbatim and reports a missing ffmpeg.
 
 ### test_camera_ros
 

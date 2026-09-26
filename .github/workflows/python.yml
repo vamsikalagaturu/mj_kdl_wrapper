@@ -65,15 +65,13 @@ jobs:
           tar xzf "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz" -C /tmp
           rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
 
-      # Models + bundled assets in the user cache the resolvers read;
-      # mj-kdl-fetch-menagerie (run below) populates it on a cache miss.
-      - name: Cache MuJoCo Menagerie + assets
+      # Keyed on the pins, no fallback: a kept checkout is never moved to a new pin.
+      # mj-kdl-fetch-menagerie (run below) fetches it on a miss and copies the bundled assets.
+      - name: Cache MuJoCo Menagerie
         uses: actions/cache@v4
         with:
-          path: ~/.cache/mj_kdl_wrapper
-          key: menagerie-${{ runner.os }}-v2
-          restore-keys: |
-            menagerie-${{ runner.os }}-
+          path: ~/.cache/mj_kdl_wrapper/menagerie
+          key: menagerie-${{ runner.os }}-${{ hashFiles('cmake/Versions.cmake') }}
 
       - name: Build and test the Python bindings
         run: |
@@ -86,5 +84,9 @@ jobs:
             --config-settings=cmake.define.CMAKE_C_COMPILER_LAUNCHER=ccache
           uv pip install pytest
           mj-kdl-fetch-menagerie
-          python -c "import PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mujoco.mj_versionString(), mjk.mujoco_version())"
-          pytest -q python/tests
+          test -f ~/.cache/mj_kdl_wrapper/menagerie/kinova_gen3/gen3.xml
+          python -c "import PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mujoco.mj_versionString(), mjk.__mujoco_version__)"
+          set -o pipefail
+          pytest -q -rs python/tests | tee pytest.log
+          # A skipped test fails the job, except where the runner has no offscreen rendering.
+          ! grep '^SKIPPED' pytest.log | grep -v 'no offscreen rendering'

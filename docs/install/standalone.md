@@ -76,11 +76,12 @@ What happens during configure/build:
   `MJ_KDL_OROCOS_KDL_DIR` (default `third_party/orocos_kinematics_dynamics`) and
   built via `ExternalProject` into `build/orocos_kdl_install`. The checkout
   persists across builds and is reused (no re-clone) on later configures.
-- **Menagerie** robot models and the bundled `assets/` (Robotiq gripper, table,
-  mug) are fetched/copied into the user cache `~/.cache/mj_kdl_wrapper` only with
-  `-DMJ_KDL_FETCH_MENAGERIE=ON`. The C++ examples and tests resolve both from
-  that cache via `example_paths.hpp` (`$MJ_KDL_MENAGERIE` overrides the model
-  location); they self-skip when it is empty.
+- **Menagerie** robot models (at configure) and the bundled `assets/` (Gen3, Robotiq
+  gripper, table, mug, ...; copied on every build) go into the user cache
+  `~/.cache/mj_kdl_wrapper` only with `-DMJ_KDL_FETCH_MENAGERIE=ON`. The C++ examples and
+  tests resolve both from that cache via `example_paths.hpp`; for a model the bundled copy
+  wins over Menagerie's, and `$MJ_KDL_MENAGERIE` overrides both. Tests self-skip when the
+  cache is empty.
 
 ### Install
 
@@ -101,11 +102,15 @@ into the same prefix:
 <prefix>/include/mj_kdl_wrapper/...
 <prefix>/include/kdl/...
 <prefix>/lib/cmake/mj_kdl_wrapper/...
+<prefix>/lib/pkgconfig/mj_kdl_wrapper.pc
+<prefix>/lib/pkgconfig/orocos-kdl.pc
 <prefix>/share/orocos_kdl/cmake/...
+<prefix>/share/doc/mj_kdl_wrapper/...        # LICENSE, NOTICE and third-party licenses
 ```
 
-The wrapper is rpath'd to `$ORIGIN`, so it loads the co-installed KDL without a
-build tree or `LD_LIBRARY_PATH`. Consumers:
+The wrapper is rpath'd to `$ORIGIN` as a `DT_RPATH`, not a `DT_RUNPATH`, so it loads the
+co-installed KDL without a build tree, and an `LD_LIBRARY_PATH` holding a system
+`liborocos-kdl` cannot swap it out. Consumers:
 
 ```cmake
 find_package(mj_kdl_wrapper REQUIRED)              # pulls KDL in transitively
@@ -114,6 +119,24 @@ target_link_libraries(my_app mj_kdl_wrapper::mj_kdl_wrapper)
 find_package(orocos_kdl REQUIRED)
 target_link_libraries(my_app orocos-kdl)
 ```
+
+A requested version matches only within its minor version: `find_package(mj_kdl_wrapper 0.3)`
+does not accept `0.4.x`. The exported target carries `-Wl,--disable-new-dtags`, so a consumer
+executable gets a `DT_RPATH` too.
+
+Without CMake, use pkg-config. `mj_kdl_wrapper.pc` requires `orocos-kdl`, which the bundled
+fork installs next to it, and carries MuJoCo's include and library paths and the rpaths
+(`DT_RPATH`) to the wrapper's and MuJoCo's library directories:
+
+```bash
+export PKG_CONFIG_PATH="$HOME/ws/lib/pkgconfig"
+g++ -std=c++20 my_app.cpp -o my_app $(pkg-config --cflags --libs mj_kdl_wrapper)
+```
+
+With a KDL consumed from elsewhere (`MJ_KDL_OROCOS_KDL_INSTALL_DIR` or
+`MJ_KDL_OROCOS_KDL_FROM_PACKAGE`), that KDL's `lib/pkgconfig` must be on `PKG_CONFIG_PATH`
+as well (a colcon overlay puts it there); the rpath to its library directory is in
+`mj_kdl_wrapper.pc`.
 
 A consumer wanting MuJoCo without KDL, glfw and OpenGL links `mujoco::mujoco`, which the config
 recreates for the exact copy this wrapper was built against:
@@ -130,7 +153,9 @@ MuJoCo is intentionally not bundled into the prefix; consumers resolve it from
 `MJ_KDL_MUJOCO_DIR` (or the `mujoco` pip package). Set
 `-DMJ_KDL_INSTALL_BUNDLED_KDL=OFF` to keep KDL out of a shared prefix such as
 `/usr/local`, where it could shadow a distro KDL - but then the install is no
-longer self-contained and KDL must be provided some other way.
+longer self-contained: the library has no rpath to any KDL, so the loader takes the first
+`liborocos-kdl` it finds, possibly a system one without the fork's solvers. Configure warns.
+To share one KDL, prefer [One shared KDL across several projects](#one-shared-kdl-across-several-projects).
 
 ### Where the dependencies come from
 
@@ -180,9 +205,9 @@ the [ROS 2 workflow](ros2.md) shares one KDL across a colcon overlay.
 
 ## Python
 
-`pip install` builds the extension, bundles MuJoCo's matching shared library
-dependency, the secorolab Orocos KDL fork, and PyKDL, and pins `mujoco==3.14.0`.
-The build is isolated and self-contained - it does not reuse any C++ build tree.
+`pip install` builds the extension and bundles the secorolab Orocos KDL fork, PyKDL and the
+MuJoCo plugins. MuJoCo itself is not bundled: the wheel pins `mujoco==3.14.0` and loads that
+package's shared library. The build is isolated - it does not reuse any C++ build tree.
 
 PyKDL is bundled inside the wheel as a top-level extension module. It imports as
 `PyKDL` but does not appear as a separate package in `pip list` / `uv pip list`.
@@ -242,7 +267,8 @@ cmake --build build --target docs
 
 Open `build/docs/html/index.html`. The docs include the C++ headers, C++
 examples, Markdown guides, Python stubs, and Python examples, and link KDL types
-locally via a generated `kdl.tag`. Requires `doxygen`.
+locally via a `kdl.tag` generated from the KDL the wrapper uses (the docs target builds
+the fork first when it is the bundled one). Requires `doxygen` 1.9.8 or newer.
 
 ## All CMake options
 
@@ -259,7 +285,7 @@ Paths / sources:
 | `MJ_KDL_OROCOS_KDL_DIR` | `third_party/orocos_kinematics_dynamics` | Fork source/clone destination; built in place if present, else cloned here when fetch is ON |
 | `MJ_KDL_OROCOS_KDL_INSTALL_DIR` | (empty) | Pre-installed Orocos KDL prefix to consume (skips building and bundling the fork) |
 | `MJ_KDL_OROCOS_KDL_FROM_PACKAGE` | `OFF` | Consume Orocos KDL via `find_package(orocos_kdl)` on `CMAKE_PREFIX_PATH`; skips building and bundling the fork |
-| `MJ_KDL_FETCH_MENAGERIE` | `OFF` | Download MuJoCo Menagerie models |
+| `MJ_KDL_FETCH_MENAGERIE` | `OFF` | Download MuJoCo Menagerie models at configure; copy the bundled `assets/` into the cache on every build |
 | `MJ_KDL_MENAGERIE_DIR` | `~/.cache/mj_kdl_wrapper/menagerie` | Menagerie location / `MJ_KDL_FETCH_MENAGERIE` destination |
 
 Build toggles:
@@ -271,7 +297,8 @@ Build toggles:
 | `BUILD_TESTS` | `ON` | Build and register GoogleTest tests with CTest |
 | `BUILD_DOCS` | `OFF` | Generate Doxygen HTML docs (`cmake --build build --target docs`) |
 | `BUILD_PYTHON_BINDINGS` | `OFF` | Build the pybind11 extension (driven by the Python build) |
-| `MJ_KDL_INSTALL_CPP_PACKAGE` | `ON` (`OFF` under scikit-build) | Install the C++ library, headers, and CMake package config |
-| `MJ_KDL_INSTALL_BUNDLED_KDL` | `ON` | Install the built Orocos KDL fork into the prefix so the install is self-contained. No effect with `MJ_KDL_OROCOS_KDL_INSTALL_DIR` / `MJ_KDL_OROCOS_KDL_FROM_PACKAGE` |
+| `MJ_KDL_INSTALL_CPP_PACKAGE` | `ON` (`OFF` under scikit-build) | Install the C++ library, headers, CMake package config and `mj_kdl_wrapper.pc` |
+| `MJ_KDL_INSTALL_BUNDLED_KDL` | `ON` | Install the built Orocos KDL fork into the prefix so the install is self-contained; `OFF` leaves the library without a path to KDL (configure warns). No effect with `MJ_KDL_OROCOS_KDL_INSTALL_DIR` / `MJ_KDL_OROCOS_KDL_FROM_PACKAGE` |
+| `MJ_KDL_WITH_ROS` | `AUTO` | Build `mj_kdl_wrapper::camera_ros` (publishes a rendered camera as `sensor_msgs/Image` + `CameraInfo`): `AUTO` when `rclcpp` and `sensor_msgs` are found, `ON` requires them, `OFF` never |
 | `SHOW_EQUALITY_PANEL` | `OFF` | Show the Simulate UI `Equality` section |
 | `SHOW_GROUP_PANEL` | `OFF` | Show the Simulate UI `Group enable` section |

@@ -1,7 +1,7 @@
 include(FetchContent)
 FetchContent_Declare(googletest
   GIT_REPOSITORY https://github.com/google/googletest.git
-  GIT_TAG        v1.15.2)
+  GIT_TAG        ${MJ_KDL_GOOGLETEST_GIT_TAG})
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 set(BUILD_GMOCK   OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
@@ -9,8 +9,7 @@ FetchContent_MakeAvailable(googletest)
 enable_testing()
 include(GoogleTest)
 
-# All tests use the MuJoCo Menagerie MJCF (kinova_gen3/gen3.xml).
-# Each test self-skips via GTEST_SKIP() when Menagerie is absent.
+# Tests on Menagerie or bundled models self-skip via GTEST_SKIP() when the cache lacks them.
 set(ALL_TESTS
   test_init
   test_dual_arm
@@ -23,6 +22,7 @@ set(ALL_TESTS
   test_mjcf_pick
   test_scene_state
   test_control_modes
+  test_regressions
 )
 
 foreach(test_name ${ALL_TESTS})
@@ -32,6 +32,9 @@ foreach(test_name ${ALL_TESTS})
   target_compile_options(${test_name} PRIVATE -Wall -Wextra)
   # RUN_SERIAL avoids conflicts over shared temp files and MuJoCo global XML state.
   gtest_discover_tests(${test_name} DISCOVERY_TIMEOUT 60 PROPERTIES RUN_SERIAL TRUE)
+  if(TARGET mj_kdl_cache_assets)
+    add_dependencies(${test_name} mj_kdl_cache_assets)
+  endif()
 endforeach()
 foreach(test_name test_control_modes test_mjcf_load)
   target_compile_definitions(${test_name} PRIVATE
@@ -40,21 +43,7 @@ endforeach()
 
 # The examples self-check under --headless and exit non-zero on failure.
 if(BUILD_EXAMPLES)
-  set(HEADLESS_EXAMPLES
-    ex_gravity_comp
-    ex_pos_ctrl
-    ex_vel_ctrl
-    ex_impedance
-    ex_admittance_ft
-    ex_table_pick_place
-    ex_rnea_pick_place
-    ex_achd_table_slide
-    ex_achd_pick_place
-    ex_table_pour
-    ex_table_scene
-    ex_dual_arm
-  )
-  foreach(ex ${HEADLESS_EXAMPLES})
+  foreach(ex ${MJ_KDL_EXAMPLES})
     add_test(NAME ${ex}_headless COMMAND ${ex} --headless)
     set_tests_properties(${ex}_headless PROPERTIES RUN_SERIAL TRUE TIMEOUT 300)
   endforeach()

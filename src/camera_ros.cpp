@@ -31,7 +31,7 @@ CameraRosPublisher::CameraRosPublisher(rclcpp::Node &node, const mjModel *model,
 
     const int cam_id = mj_name2id(model, mjOBJ_CAMERA, conf_.camera.c_str());
     if (cam_id < 0) {
-        LOG_ERROR(
+        MJ_LOG_ERROR(
           "camera '" << conf_.camera << "': no such camera in the model; "
                      << "CameraInfo carries MuJoCo's default fovy, not this camera's"
         );
@@ -54,7 +54,9 @@ CameraRosPublisher::CameraRosPublisher(rclcpp::Node &node, const mjModel *model,
 
 bool CameraRosPublisher::wants_frame(double sim_t) const
 {
-    if (sim_t < next_due_s_) return false;
+    // A clock that jumped back (a reset) is due now, so publish() can re-base on it.
+    const bool jumped_back = next_due_s_ > sim_t + 2.0 * period_s_;
+    if (sim_t < next_due_s_ && !jumped_back) return false;
     return image_pub_->get_subscription_count() > 0;
 }
 

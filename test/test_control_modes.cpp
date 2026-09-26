@@ -1,12 +1,14 @@
 /* test_control_modes.cpp
  * Control modes through actuator groups: the actuators build_scene adds, switching without a
- * jump, torque limits, two robots in different modes, a gripper that stays in POSITION while its
- * arm switches, and a motor-driven wheel in VELOCITY and TORQUE (the Eddie case) driven through
- * the Env's scene slots. Arm tests (Gen3, UR5e) self-skip without Menagerie. */
+ * jump, torque limits, an arm tracking jnt_vel_cmd in VELOCITY, two robots in different modes, a
+ * gripper that stays in POSITION while its arm switches, and a motor-driven wheel in VELOCITY and
+ * TORQUE (the Eddie case) driven through the Env's scene slots. Arm tests (Gen3, UR5e) self-skip
+ * without Menagerie. */
 
 #include <gtest/gtest.h>
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "common.hpp"
 #include "example_paths.hpp"
 
 #include <kdl/chaindynparam.hpp>
@@ -86,7 +88,9 @@ class ArmModesTest : public testing::TestWithParam<ArmCase>
         spec_.timestep   = 0.002;
         spec_.add_floor  = true;
         spec_.add_skybox = false;
-        spec_.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf_ });
+        mj_kdl::RobotSpec rs;
+        rs.path = mjcf_;
+        spec_.robots.push_back(rs);
         ASSERT_TRUE(mj_kdl::init_env(&env_, &spec_));
         model_ = env_.model;
         data_  = env_.data;
@@ -227,10 +231,45 @@ TEST_P(ArmModesTest, QfrcAppliedIsLeftToTheUser)
     expect_untouched("switch back through ctrl_mode");
 }
 
+TEST_P(ArmModesTest, VelocityModeTracksTheJointVelocityCommand)
+{
+    // No gravity, so the velocity actuators track with no steady-state error.
+    mj_kdl::SceneSpec spec = spec_;
+    spec.gravity_z         = 0.0;
+    spec.robots[0].modes   = { {},
+                               { .mode = mj_kdl::CtrlMode::VELOCITY, .joints = {}, .kv = 100.0 } };
+    mj_kdl::Env   env;
+    mj_kdl::Robot arm;
+    ASSERT_TRUE(mj_kdl::init_env(&env, &spec));
+    ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&arm, &env, GetParam().base, GetParam().tip));
+    KDL::JntArray q(n_);
+    for (int i = 0; i < n_; ++i) q(i) = GetParam().home[i];
+    mj_kdl::set_joint_pos(&arm, q);
+    ASSERT_TRUE(mj_kdl::set_control_mode(&arm, mj_kdl::CtrlMode::VELOCITY));
+    EXPECT_FALSE(group_enabled(env.model, kPosGroup));
+    EXPECT_TRUE(group_enabled(env.model, 3)) << "robot 0's VELOCITY group";
+
+    for (int i = 0; i < n_; ++i) arm.jnt_vel_cmd[i] = i % 2 ? 0.2 : -0.2;
+    for (int k = 0; k < 250; ++k) {
+        mj_kdl::update(&env);
+        mj_kdl::step(&env);
+    }
+    mj_kdl::update(&env);
+    for (int i = 0; i < n_; ++i) {
+        const int a = actuator_of(env.model, arm.joint_names[i], 3);
+        ASSERT_GE(a, 0) << arm.joint_names[i] << "_velocity";
+        EXPECT_DOUBLE_EQ(env.data->ctrl[a], arm.jnt_vel_cmd[i]);
+        EXPECT_NEAR(arm.jnt_vel_msr[i], arm.jnt_vel_cmd[i], 2e-3) << "joint " << i; // max 6e-4
+    }
+}
+
 TEST_P(ArmModesTest, TwoArmsRunDifferentModes)
 {
-    const ArmCase &c = GetParam();
-    spec_.robots.push_back(mj_kdl::RobotSpec{ .path = mjcf_, .prefix = "r2_", .pos = { 1.0, 0, 0 } });
+    const ArmCase    &c      = GetParam();
+    mj_kdl::RobotSpec second = spec_.robots.front();
+    second.prefix            = "r2_";
+    second.pos[0]            = 1.0;
+    spec_.robots.push_back(second);
     mj_kdl::Env two;
     ASSERT_TRUE(mj_kdl::init_env(&two, &spec_));
 
@@ -260,13 +299,9 @@ TEST(GripperModesTest, GripperStaysInPositionWhileTheArmSwitches)
     if (!fs::exists(arm_mjcf)) GTEST_SKIP() << "kinova_gen3/gen3.xml not found";
     if (!fs::exists(grp_mjcf)) GTEST_SKIP() << "robotiq_2f85/2f85.xml not found";
 
-    mj_kdl::RobotSpec rs{ .path = arm_mjcf };
-    rs.attachments.push_back(mj_kdl::AttachmentSpec{
-      .mjcf_path          = grp_mjcf,
-      .attach_to          = { mj_kdl::AttachKind::Site, "pinch_site" },
-      .prefix             = "g_",
-      .contact_exclusions = {},
-    });
+    mj_kdl::RobotSpec rs;
+    rs.path = arm_mjcf;
+    rs.attachments.push_back(mj_kdl_examples::gripper_attachment(grp_mjcf));
     mj_kdl::SceneSpec spec;
     spec.timestep   = 0.002;
     spec.add_floor  = true;
@@ -328,10 +363,10 @@ class MotorWheelModesTest : public testing::Test
         spec_.timestep   = 0.002;
         spec_.add_floor  = false;
         spec_.add_skybox = false;
-        spec_.robots.push_back(mj_kdl::RobotSpec{
-          .path  = fixture_,
-          .modes = { { .mode = mj_kdl::CtrlMode::VELOCITY, .joints = { "wheel" }, .kv = 2.0 } },
-        });
+        mj_kdl::RobotSpec rs;
+        rs.path  = fixture_;
+        rs.modes = { { .mode = mj_kdl::CtrlMode::VELOCITY, .joints = { "wheel" }, .kv = 2.0 } };
+        spec_.robots.push_back(rs);
         ASSERT_TRUE(mj_kdl::init_env(&env_, &spec_));
         model_ = env_.model;
         data_  = env_.data;

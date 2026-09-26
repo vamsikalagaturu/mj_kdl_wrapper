@@ -5,7 +5,6 @@
 #pragma once
 
 #include <mujoco/mujoco.h>
-#include <GLFW/glfw3.h>
 #include <kdl/chain.hpp>
 #include <kdl/frames.hpp>
 #include <kdl/jntarray.hpp>
@@ -27,17 +26,14 @@ namespace mj_kdl {
 
 /**
  * @ingroup grp_logging
- * Log verbosity level.  Each level includes all levels below it:
- *   NONE   - nothing printed.
- *   INFO   - informational messages only (scene/chain construction progress).
- *   WARN   - INFO + recoverable warnings (e.g. fallback to headless mode).
- *   ERROR  - all messages, including errors that cause functions to fail.  Default.
+ * Least severe message printed: INFO prints everything (default), WARN warnings and errors,
+ * ERROR errors only, NONE nothing.
  */
-enum class LogLevel { NONE = 0, INFO = 1, WARN = 2, ERROR = 3 };
+enum class LogLevel { INFO = 0, WARN = 1, ERROR = 2, NONE = 3 };
 
 /** @ingroup grp_logging
- *  Library-wide log verbosity (inline so one shared instance across all TUs). */
-inline LogLevel g_log_level = LogLevel::ERROR;
+ *  Library-wide log threshold (inline so one shared instance across all TUs). */
+inline LogLevel g_log_level = LogLevel::INFO;
 
 /** @ingroup grp_logging
  *  Set the library-wide log verbosity. */
@@ -48,20 +44,12 @@ inline LogLevel get_log_level() { return g_log_level; }
 
 } // namespace mj_kdl
 
-/* @ingroup grp_logging
- * Internal logging macros, exposed so wrapper users (examples, tests, and
- * downstream code) can emit messages through the same stream/level filter.
- * MJ_LOG_ is the primitive; LOG_INFO/LOG_WARN/LOG_ERROR are the entry points.
- * `expr` may use << to build the message: LOG_INFO("count=" << n).
- *
- * Defined at file scope (not inside the mj_kdl namespace) because macros are
- * not namespaced; the MJ_ prefix avoids collisions.
- */
+// Log through the library's threshold; expr may stream: MJ_LOG_INFO("count=" << n).
 #define MJ_FILENAME_ (::strrchr(__FILE__, '/') ? ::strrchr(__FILE__, '/') + 1 : __FILE__)
 
 #define MJ_LOG_(lvl_enum, color, label, expr)                         \
     do {                                                              \
-        if (::mj_kdl::g_log_level >= ::mj_kdl::LogLevel::lvl_enum) {  \
+        if (::mj_kdl::LogLevel::lvl_enum >= ::mj_kdl::g_log_level) {  \
             std::ostringstream _mj_oss;                               \
             _mj_oss << expr; /* NOLINT(bugprone-macro-parentheses) */ \
             std::fprintf(                                             \
@@ -75,9 +63,9 @@ inline LogLevel get_log_level() { return g_log_level; }
         }                                                             \
     } while (0)
 
-#define LOG_INFO(expr) MJ_LOG_(INFO, "", "INFO ", expr)
-#define LOG_WARN(expr) MJ_LOG_(WARN, "\033[33m", "WARN ", expr)
-#define LOG_ERROR(expr) MJ_LOG_(ERROR, "\033[31m", "ERROR", expr)
+#define MJ_LOG_INFO(expr) MJ_LOG_(INFO, "", "INFO ", expr)
+#define MJ_LOG_WARN(expr) MJ_LOG_(WARN, "\033[33m", "WARN ", expr)
+#define MJ_LOG_ERROR(expr) MJ_LOG_(ERROR, "\033[31m", "ERROR", expr)
 
 namespace mj_kdl {
 
@@ -175,7 +163,7 @@ struct CtrlModeSpec
  * in multi-robot scenes.
  *
  * modes lists the control modes the robot offers beyond the one its own actuators give
- * (a <position> servo gives POSITION, a <motor> gives TORQUE); by default every robot also gets
+ * (a `<position>` servo gives POSITION, a `<motor>` gives TORQUE); by default every robot also gets
  * TORQUE. build_scene() adds one actuator per extra mode on each listed joint and puts each mode
  * in its own actuator group, switched with set_control_mode(). Only the robot's own joints take
  * modes, never its attachments. With no joint list, joints that cannot take modes are skipped.
@@ -190,7 +178,7 @@ struct RobotSpec
     double                      pos[3]  = { 0, 0, 0 };    // offset in parent frame [m]
     double                      quat[4] = { 0, 0, 0, 1 }; // orientation offset [x, y, z, w]
     std::vector<AttachmentSpec> attachments;              // ordered attachment chain; empty = none
-    std::vector<CtrlModeSpec>   modes = { CtrlModeSpec{} };  // TORQUE; {} = native mode only
+    std::vector<CtrlModeSpec>   modes = { CtrlModeSpec{} }; // TORQUE; {} = native mode only
 };
 
 /** @ingroup grp_types
@@ -327,7 +315,7 @@ struct SceneSpec
 
 /**
  * @ingroup grp_types
- * Logical force-torque sensor backed by MuJoCo's separate <force> and <torque>
+ * Logical force-torque sensor backed by MuJoCo's separate `<force>` and `<torque>`
  * sensors. If force_sensor/torque_sensor are omitted, init_robot_from_mjcf()
  * resolves "{name}_force" and "{name}_torque".
  */
@@ -470,12 +458,12 @@ enum class VideoResolution {
  * Typical usage:
  *
  *   VideoRecorder vr;
- *   init_video_recorder(&vr, model, "sim.mp4", VideoResolution::R1080p);
+ *   init_video_recorder(&vr, env.model, "sim.mp4", VideoResolution::R1080p);
  *   vr.cam.azimuth = 135;  vr.cam.elevation = -20;  vr.cam.distance = 2.5;
  *
  *   for (int i = 0; i < steps; ++i) {
- *       mj_step(model, data);
- *       record_frame(&vr, model, data);
+ *       step(&env);
+ *       record_frame(&vr, &env);
  *   }
  *
  *   cleanup(&vr);
@@ -486,8 +474,6 @@ struct VideoRecorder
     mjvOption opt{};           // rendering options; modify freely between frames
     void     *_impl = nullptr; // opaque EGL + ffmpeg state
 };
-
-struct Env;
 
 /** @ingroup grp_env
  * Options controlling an environment reset. */
@@ -651,7 +637,8 @@ Status save_model_xml(const mjModel *model, const char *path);
  * Pass tool = nullptr (the default) for an arm with no attached tool.
  * prefix is prepended to every name the call resolves: base_body, tip_body, the tool body,
  * TCP site and F/T sensor names, e.g. ("base_link", "bracelet_link", "r2_") is the second arm.
- * Registers r with env, which reads, commands and resets it from then on.
+ * Registers r with env, which reads, commands and resets it from then on; on failure r is left
+ * as it was.
  */
 Status init_robot_from_mjcf(
   Robot               *r,
@@ -675,7 +662,7 @@ Status init_robot_from_mjcf(
  * joint_names lists the MuJoCo joint names in KDL chain order, one per chain joint;
  * they drive the same qpos/dof/ctrl index maps init_robot_from_mjcf() builds.  prefix is
  * prepended to each joint name and F/T sensor name.  tool is used only to resolve FT sensors;
- * tool->tool_body and tool->tcp_site are ignored. Registers r with env.
+ * tool->tool_body and tool->tcp_site are ignored. Registers r with env, as init_robot_from_mjcf().
  */
 Status init_robot_from_chain(
   Robot                          *r,
@@ -712,8 +699,8 @@ std::vector<double> joint_force_limits(const Robot *r, double fallback = 1e6);
  *
  * @param[out] out_model  Newly allocated MuJoCo model; caller frees via destroy_scene().
  * @param[out] out_data   Newly allocated MuJoCo data; caller frees via destroy_scene().
- * @param[in]  spec       Scene description: robots (with attachment chains), table,
- *                        objects, timestep, gravity, floor, skybox.
+ * @param[in]  spec       Scene description: robots (with attachment chains), objects,
+ *                        sites, cameras, timestep, gravity, floor, skybox.
  * @return an empty Status on success, else the error.
  */
 Status build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *spec);
@@ -729,6 +716,7 @@ void destroy_scene(mjModel *model, mjData *data);
 /**
  * @ingroup grp_env
  * Build the scene from spec into env, which owns the model/data until cleanup(Env *).
+ * Env::on_reset and Env::adopt set beforehand are kept.
  */
 Status init_env(Env *env, const SceneSpec *spec);
 
@@ -813,12 +801,11 @@ void cleanup(Env *env);
 /**
  * @ingroup grp_recorder
  * Initialise a headless EGL video recorder.
- * Creates an EGL context, an offscreen render target, and launches an ffmpeg
- * process (H.264/MP4) via a pipe.  The MuJoCo model is used to size the scene
- * and initialise the rendering context; it must remain valid until cleanup().
+ * Creates an EGL context and launches an ffmpeg process (H.264/MP4) via a pipe. The render
+ * context is made from the Env at its first frame and remade after the Env's model is rebuilt.
  *
  * @param vr        VideoRecorder to initialise; freed by cleanup(VideoRecorder*).
- * @param model     MuJoCo model for the rendering context.
+ * @param model     MuJoCo model whose default free camera vr->cam starts from.
  * @param out_path  Output MP4 path (e.g. "sim.mp4").
  * @param width     Frame width in pixels (default 1280).
  * @param height    Frame height in pixels (default 720).
@@ -866,12 +853,12 @@ bool record_frame(VideoRecorder *vr, Env *env);
 
 /**
  * @ingroup grp_recorder
- * Initialise offscreen rendering only: EGL context and MuJoCo render buffers,
- * no ffmpeg process and no output file. Use with render_rgb() to grab frames;
- * the camera is vr->cam, as for a recording, and cleanup(VideoRecorder*) frees it.
+ * Initialise offscreen rendering only: EGL context, no ffmpeg process and no output file.
+ * Use with render_rgb() to grab frames; the camera is vr->cam, as for a recording, and
+ * cleanup(VideoRecorder*) frees it. An open vr is freed first.
  *
  * @param vr      VideoRecorder to initialise; freed by cleanup(VideoRecorder*).
- * @param model   MuJoCo model for the rendering context.
+ * @param model   MuJoCo model whose default free camera vr->cam starts from.
  * @param width   Frame width in pixels.
  * @param height  Frame height in pixels.
  * @return an error if EGL init fails.
@@ -946,8 +933,8 @@ bool key_pressed(const Viewer *v, int glfw_key);
  * @ingroup grp_viewer
  * Claim a key for the caller, so the simulate UI never acts on it.
  *
- * The UI binds keys of its own: the left and right arrows scrub the history
- * and single-step, escape restores the free camera, space pauses. A caller
+ * The UI binds keys of its own: the left and right arrows scrub the history,
+ * escape restores the free camera, space pauses. A caller
  * that drives a robot with those keys would otherwise fight the UI for them.
  * A captured key is still reported by key_pressed(); it is only withheld from
  * the UI's own handler.
@@ -1041,16 +1028,17 @@ void set_body_pose(
 
 /**
  * @ingroup grp_scene
- * Append obj to env->spec.objects and rebuild. Robots, scene slots and the viewer follow the
- * new model; a slot whose name is gone is unbound and skipped.
- * @return an error on failure, with env unchanged.
+ * Append obj to env->spec.objects and rebuild. Time, and qpos/qvel/act/ctrl of every joint and
+ * actuator whose name survives, carry over; robots, scene slots, recorders and the viewer follow
+ * the new model; a slot whose name is gone is unbound and skipped.
+ * @return an error on failure (a robot or F/T sensor that no longer resolves), env unchanged.
  */
 Status scene_add_object(Env *env, const SceneObject &obj);
 
 /**
  * @ingroup grp_scene
  * Remove the named object from env->spec.objects and rebuild, as scene_add_object() does.
- * @return an error if name is not found or the rebuild fails.
+ * @return an error if name is not found or the rebuild fails, env unchanged.
  */
 Status scene_remove_object(Env *env, const std::string &name);
 

@@ -28,7 +28,7 @@ set. Drag a drawer forward in the viewer and it can leave the cabinet and fall.
 
 ## Use it in mj_kdl_wrapper
 
-See `python/mj_kdl_wrapper/examples/ex_cabinet.py`. In short:
+In short:
 
 ```python
 import mj_kdl_wrapper as mjk

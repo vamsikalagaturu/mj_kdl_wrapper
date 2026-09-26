@@ -87,6 +87,8 @@ def main() -> int:
         ROOT / "README.md",
         ROOT / "CLAUDE.md",
         ROOT / "docs/howto/urdf_to_mjcf.md",
+        ROOT / "docs/install/standalone.md",
+        ROOT / "docs/install/ros2.md",
         ROOT / "pyproject.toml",
     ]
     # Globbed: the hardcoded ci.yml went stale when it was split into five workflows.

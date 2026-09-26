@@ -24,24 +24,28 @@ as a separate Python distribution with its own `.dist-info`.
 
 ## Model Paths
 
-`mj_kdl_wrapper.menagerie.model_path(name)` resolves bundled-example model
-paths without hard-coding a checkout location. It checks overrides first, then
-known local or cached MuJoCo Menagerie checkouts:
+`mj_kdl_wrapper.menagerie.model_path(name)` resolves the models the examples use
+(`kinova_gen3`, `robotiq_2f85`, `universal_robots_ur5e`, `universal_robots_ur10e`)
+without hard-coding a checkout location, in this order:
 
-1. `MJ_KDL_MODEL` / `MJ_KDL_GRIPPER` - per-model file overrides.
+1. The file named by `env_var`, when the caller passes one (`model_path("kinova_gen3",
+   env_var="MJ_KDL_MODEL")`) and that variable is set.
 2. `MJ_KDL_MENAGERIE` - a MuJoCo Menagerie checkout root.
-3. The user cache `~/.cache/mj_kdl_wrapper/menagerie`, populated by
+3. The bundled assets in `~/.cache/mj_kdl_wrapper/assets`: a bundled model derived from
+   Menagerie's (`kinova_gen3/gen3.xml`, with armature) replaces the upstream copy.
+4. The Menagerie checkout in `~/.cache/mj_kdl_wrapper/menagerie`, populated by
    `mj-kdl-fetch-menagerie`.
 
-`menagerie.asset_path(rel)` resolves bundled assets (gripper, table, mug) the
-same way: an optional per-asset env override, otherwise the user cache
-`~/.cache/mj_kdl_wrapper/assets`. `mj-kdl-fetch-menagerie` populates both, and
-the same cache backs the C++ examples (see the C++ guide).
+`menagerie.asset_path(rel)` resolves bundled assets (gripper, table, mug, cabinet, F/T
+sensor): an optional per-asset `env_var` override, otherwise the user cache
+`~/.cache/mj_kdl_wrapper/assets`, which it refreshes from the installed package when it is
+missing or out of date. `mj-kdl-fetch-menagerie` populates both caches, and the same cache
+backs the C++ examples (see the C++ guide). It refuses a `--dest` that is neither empty nor a
+Menagerie checkout, and a failed fetch leaves nothing behind.
 
-**Overrides:** the example scripts wire these per-file env vars -- `MJ_KDL_MODEL`
-(arm), `MJ_KDL_GRIPPER`, `MJ_KDL_TABLE`, `MJ_KDL_BOTTLE`, `MJ_KDL_RECEIVER`. Each
-must point at an existing file or resolution raises a clear error.
-`MJ_KDL_MENAGERIE` overrides the Menagerie checkout root.
+**Overrides:** the example scripts pass these per-file env vars -- `MJ_KDL_MODEL`
+(arm), `MJ_KDL_GRIPPER`, `MJ_KDL_TABLE`, `MJ_KDL_BOTTLE`, `MJ_KDL_RECEIVER`, `MJ_KDL_CABINET`,
+`MJ_KDL_FT`. Each must point at an existing file or resolution raises a clear error.
 
 For other MJCF sources, set the relevant environment variable or assign
 `RobotSpec.path` directly.
@@ -83,7 +87,9 @@ env = mjk.Env.build(spec)
 `Env` owns the compiled MuJoCo model/data. Call `close()`, or use it as a context manager,
 to release native resources deterministically. `step()` advances it whether or not it has
 robots; `env.data.time` and `env.model.opt.timestep` report where it is. `build()`, `step()`, `pace()`,
-`reset()`, `add_object()` and `remove_object()` release the GIL while they run.
+`reset()`, `add_object()`, `remove_object()` and a recorder's `record_frame()` and `render_rgb()`
+release the GIL while they run. `env.spec` is a read-only copy of the scene the `Env` runs,
+objects added or removed since `build()` included; changing the copy changes nothing.
 
 ```python
 with mjk.Env.build(spec) as env:
@@ -100,11 +106,12 @@ env.save_model_xml("combined_scene.xml")
 mujoco.mj_saveModel(env.model, "combined_scene.mjb", None)
 ```
 
-Set wrapper log verbosity globally when debugging scene construction:
+The log level is a threshold: messages at that level and above print. `INFO` (the default)
+prints everything, `WARN` warnings and errors, `ERROR` errors only, `NONE` nothing:
 
 ```python
-mjk.set_log_level(mjk.LogLevel.INFO)
-assert mjk.get_log_level() == mjk.LogLevel.INFO
+mjk.set_log_level(mjk.LogLevel.WARN)   # quiet the scene-construction progress
+assert mjk.get_log_level() == mjk.LogLevel.WARN
 print(mjk.__mujoco_version__)
 ```
 
@@ -204,7 +211,7 @@ without manual pose offsets:
 
 ```python
 gripper = mjk.AttachmentSpec()
-gripper.mjcf_path = "assets/robotiq_2f85/2f85.xml"
+gripper.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml")
 gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
 gripper.prefix = "g_"
 
@@ -259,14 +266,14 @@ robot2 = env.create_robot("r2_base_link", "r2_bracelet_link")
 objects can be mounted to sites or bodies created earlier in the scene spec.
 Build order is decorations, objects in declaration order, robots, then cameras.
 
-For primitive objects, `shape`, `size`, `rgba`, `mass`, and `friction` are
-required. For MJCF-backed objects, `mjcf_path` takes precedence and primitive
-geometry fields are ignored at runtime.
+For primitive objects, `shape`, `size`, `rgba` and `friction` are required, and `mass`
+unless the object is `fixed`. For MJCF-backed objects, `mjcf_path` takes precedence and
+primitive geometry fields are ignored at runtime.
 
 ```python
 table = mjk.SceneObject()
 table.name = "table"
-table.mjcf_path = "assets/table.xml"
+table.mjcf_path = mjk.menagerie.asset_path("table.xml")
 table.pos = [0.0, 0.0, 0.7]
 table.fixed = True
 
@@ -328,8 +335,8 @@ For named actuators that are not part of a `Robot` joint mapping, write `env.dat
 `KeyError` when the actuator is missing:
 
 ```python
-env.data.actuator("finger").ctrl[0] = 0.25
-print(env.data.actuator("finger").ctrl[0])
+env.data.actuator("g_fingers_actuator").ctrl[0] = 0.25   # the "g_"-prefixed 2F-85's drive
+print(env.data.actuator("g_fingers_actuator").ctrl[0])
 ```
 
 ## PyKDL Interop
@@ -412,13 +419,15 @@ info = env.reset(opts)
 ```
 
 `Env.reset()` restores MuJoCo state, re-seeds every registered robot's ports and F/T
-readings from the reset state (so the first command holds the pose) and every scene slot,
-then calls the optional reset hook, then reads the measurements back. A command the hook
-primes is kept; a POSITION robot the hook moves needs its `jnt_pos_cmd` set there too. The
-Simulate UI's reset button does the same.
-`ResetContext.options` and `ResetContext.info` expose the active reset request
-inside the hook. `ResetOptions.use_keyframe = False` forces a default MuJoCo
-reset instead of loading a keyframe.
+readings from the reset state (so the first command holds the pose), then calls the optional
+reset hook, then reads the measurements back. A command the hook primes is kept; a POSITION
+robot the hook moves needs its `jnt_pos_cmd` set there too. The Simulate UI's reset button
+does the same. An exception the hook raises comes out of `reset()` (or of the `step()` that
+ran a UI reset) after the measurements have been read back; `env.on_reset` reads `None` until
+set, and `close()` drops it.
+`ResetContext.options` and `ResetContext.info` are a copy of the reset request and its result,
+safe to keep after the hook returns. `ResetOptions.use_keyframe = False` forces a default
+MuJoCo reset instead of loading a keyframe.
 
 `Env` also carries the runtime-state helpers:
 
@@ -445,7 +454,8 @@ env.remove_object("cube")
 ```
 
 `Env.add_object()` and `Env.remove_object()` rebuild the native MuJoCo
-model/data and rebind existing Python `Robot` handles and the viewer. Calling
+model/data and rebind existing Python `Robot` handles, the viewer and open recorders.
+`remove_object()` of a name the scene does not hold raises `RuntimeError` naming it. Calling
 `Env.close()` invalidates dependent robot handles; using one raises
 `RuntimeError("robot is closed")`.
 
@@ -462,7 +472,7 @@ import mujoco
 import numpy as np
 
 print(env.data.time, env.model.opt.timestep)
-env.data.actuator("finger").ctrl[0] = 0.25       # env.model.actuator(name): KeyError if missing
+env.data.actuator("g_fingers_actuator").ctrl[0] = 0.25   # KeyError if missing
 env.data.body("red_cube").xfrc_applied[:] = [0.0, 0.0, 5.0, 0.0, 0.0, 0.0]   # force, torque
 
 f = np.zeros(6)
@@ -495,22 +505,20 @@ captures the current state; step the `Env` before each call. A recorder is also 
 manager.
 
 For frames in memory instead of a file, open an offscreen renderer; `render_rgb()` returns a
-`(height, width, 3)` uint8 array, top row first (it needs a known size, so it works on
-`open_offscreen()` and explicit-size `open()` recorders):
+`(height, width, 3)` uint8 array, top row first, on any recorder:
 
 ```python
 with mjk.VideoRecorder.open_offscreen(env, 640, 480) as rec:
     rgb = rec.render_rgb()
 ```
 
-The recorder camera list includes `Current`, `Free`, `Tracking`, robot MJCF
-cameras, and cameras added through `SceneSpec.cameras`.
+A recorder's `use_camera(name)` takes any fixed camera of the model (robot MJCF cameras and
+`SceneSpec.cameras`); `""` returns to the free camera.
 
 Recording is offscreen-only: a `VideoRecorder` renders on its own EGL context,
 so the interactive window never pays for it. To record the view a fresh window
-opens with, leave the recorder on its default free camera (`use_camera` with an
-empty name); the simulate UI's record panel offers the same choices, all
-rendered offscreen.
+opens with, leave the recorder on its default free camera. The Simulate UI's Recorder panel
+also offers its `Current` and `Tracking` views, all rendered offscreen.
 
 ## Viewer Controls
 

@@ -44,30 +44,33 @@ jobs:
           tar xzf "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz" -C /tmp
           rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
 
-      # Models + bundled assets the tests load, in the user cache the resolvers
-      # read; Configure (MJ_KDL_FETCH_MENAGERIE=ON below) populates it on a miss.
-      - name: Cache MuJoCo Menagerie + assets
+      # Keyed on the pins, no fallback: a kept checkout is never moved to a new pin. The bundled
+      # assets are not cached; the build copies them.
+      - name: Cache MuJoCo Menagerie
         uses: actions/cache@v4
         with:
-          path: ~/.cache/mj_kdl_wrapper
-          key: menagerie-${{ runner.os }}-v2
-          restore-keys: |
-            menagerie-${{ runner.os }}-
+          path: ~/.cache/mj_kdl_wrapper/menagerie
+          key: menagerie-${{ runner.os }}-${{ hashFiles('cmake/Versions.cmake') }}
 
-      # Compiler cache, shared with the build workflow via the common prefix.
+      - name: Cache the Orocos KDL checkout
+        uses: actions/cache@v4
+        with:
+          path: third_party/orocos_kinematics_dynamics
+          key: orocos-kdl-${{ hashFiles('cmake/Versions.cmake') }}
+
       - name: Cache ccache
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-${{ github.sha }}
+          key: ccache-tests-${{ runner.os }}-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.os }}-
+            ccache-tests-${{ runner.os }}-
 
       - name: Cache FetchContent deps
         uses: actions/cache@v4
         with:
           path: ${{ env.FETCHCONTENT_BASE_DIR }}
-          key: fetchcontent-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          key: fetchcontent-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'test/CMakeLists.txt', 'cmake/Versions.cmake') }}
 
       - name: Configure
         run: |
@@ -85,7 +88,7 @@ jobs:
       - name: Build
         run: cmake --build build
 
-      # A partial cache restore can leave the models out; the tests would then skip, not fail.
+      # Without the models the tests would skip, not fail.
       - name: Check Menagerie
         run: test -f ~/.cache/mj_kdl_wrapper/menagerie/kinova_gen3/gen3.xml
 

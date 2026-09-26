@@ -11,11 +11,12 @@ This project depends on and/or vendors the following third-party components.
 | Kinova Gen3 Menagerie asset | `assets/kinova_gen3/` is derived from MuJoCo Menagerie's Kinova Gen3 model and modified for this project. | BSD 3-Clause License, copyright Kinova inc. | https://github.com/google-deepmind/mujoco_menagerie/tree/main/kinova_gen3 |
 | MuJoCo Menagerie | Optional robot model assets used by examples and tests; fetched into the user cache (`~/.cache/mj_kdl_wrapper/menagerie/`) when requested. | Varies by model; see the upstream aggregate and per-model `LICENSE` files. | https://github.com/google-deepmind/mujoco_menagerie |
 
-The packaged wheel and CMake install copy the applicable license texts next to bundled shared libraries:
+The wheel copies the applicable license texts next to its bundled shared libraries; the CMake
+install puts them, with `LICENSE`, `NOTICE` and this file, in `share/doc/mj_kdl_wrapper/`:
 
 - `LGPL-2.1.txt` and `KDL_SOURCE.txt` accompany bundled `liborocos-kdl.so*` and `PyKDL*.so`.
 - `Apache-2.0.txt` accompanies binaries that include the vendored and modified MuJoCo simulate code.
-- `Robotiq-2F85-BSD-2-Clause.txt` covers the bundled Robotiq 2F-85 asset.
-- `Kinova-Gen3-BSD-3-Clause.txt` covers the bundled Kinova Gen3 asset.
+- `Robotiq-2F85-BSD-2-Clause.txt` and `Kinova-Gen3-BSD-3-Clause.txt` cover the bundled Robotiq
+  2F-85 and Kinova Gen3 assets; only the wheel ships assets, so only the wheel ships these.
 
 See `NOTICE` for attribution notes.

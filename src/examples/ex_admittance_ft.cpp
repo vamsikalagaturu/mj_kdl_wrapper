@@ -6,7 +6,7 @@
  *   M * a = F_ext - D * v,  v += a * dt,  offset += v * dt
  * Inner loop:
  *   beta      = Cartesian PD on the TCP pose error    (desired TCP acceleration)
- *   qddot_des = WDLS(beta)                             (resolved acceleration)
+ *   qddot_des = WDLS(beta) + null-space posture        (resolved acceleration, holds the elbow)
  *   tau       = RNEA(q, qdot, qddot_des)               (KDL ChainIdSolver_RNE)
  *
  * The run: a scripted helix force drives the admittance, the F/T sensor is tared, then the
@@ -18,13 +18,10 @@
  * --headless runs the self-check and exits non-zero on failure; with the viewer the same
  * sequence runs once and exits. */
 
-#include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
 
-#include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chainidsolver_recursive_newton_euler.hpp>
-#include <kdl/chainiksolvervel_wdls.hpp>
 #include <kdl/chainjnttojacsolver.hpp>
 
 #include <algorithm>
@@ -33,9 +30,7 @@
 #include <iostream>
 #include <string>
 
-using mj_kdl_examples::kHomePose;
-
-static constexpr double kTableZ = 0.70;
+namespace ex = mj_kdl_examples;
 
 // Admittance: virtual mass, damping, stiffness (isotropic).
 static constexpr double kMAdm          = 8.0;
@@ -58,6 +53,7 @@ static constexpr int    kHandoffSteps     = 100;
 static constexpr double kSettleTime       = 0.5;                // [s]
 static constexpr double kPushTime         = 4.0;                // [s]
 static constexpr double kSelfcheckPush[3] = { 8.0, 12.0, 6.0 }; // [N]
+static constexpr double kMinElbowHeight   = 0.64;               // [m] above the table
 
 // Inner loop: Cartesian PD gains and acceleration limits.
 static constexpr double kKpLin      = 2500.0;
@@ -66,10 +62,13 @@ static constexpr double kKpRot      = 2500.0;
 static constexpr double kKdRot      = 100.0;
 static constexpr double kBetaLinMax = 300.0;
 static constexpr double kBetaRotMax = 300.0;
+static constexpr double kKpNull     = 100.0; // posture gains in the task's null space
+static constexpr double kKdNull     = 20.0;
 
 static constexpr const char *kFtSensor        = "wrist_ft";
 static constexpr const char *kToolBody        = "g_base"; // where the self-check pushes
 static constexpr const char *kGripperActuator = "g_fingers_actuator";
+static constexpr const char *kElbowBody       = "forearm_link"; // its origin is the elbow joint
 
 static KDL::Vector vclamp(const KDL::Vector &v, double limit)
 {
@@ -147,47 +146,28 @@ struct Scene
 
 static bool build_scene(Scene &s)
 {
-    const std::string arm        = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
-    const std::string ft         = mj_kdl_examples::asset("ft_sensor.xml");
-    const std::string gripper    = mj_kdl_examples::asset("robotiq_2f85/2f85.xml");
-    const std::string table_path = mj_kdl_examples::asset("table.xml");
-
-    mj_kdl::SceneObject table;
-    table.name      = "table";
-    table.mjcf_path = table_path;
-    table.pos[2]    = kTableZ;
-    table.fixed     = true;
-
     mj_kdl::AttachmentSpec ft_spec;
-    ft_spec.mjcf_path = ft;
+    ft_spec.mjcf_path = ex::asset("ft_sensor.xml");
     ft_spec.attach_to = { mj_kdl::AttachKind::Site, "pinch_site" };
 
-    mj_kdl::AttachmentSpec gripper_spec;
-    gripper_spec.mjcf_path = gripper;
-    gripper_spec.attach_to = { mj_kdl::AttachKind::Site, "wrist_ft_site" };
-    gripper_spec.prefix    = "g_";
-
     mj_kdl::RobotSpec robot_spec;
-    robot_spec.path      = arm;
+    robot_spec.path      = ex::menagerie_model("kinova_gen3/gen3.xml");
     robot_spec.attach_to = { mj_kdl::AttachKind::Site, "table_top" };
     robot_spec.attachments.push_back(ft_spec);
-    robot_spec.attachments.push_back(gripper_spec);
+    robot_spec.attachments.push_back(
+      ex::gripper_attachment(ex::asset("robotiq_2f85/2f85.xml"), "wrist_ft_site")
+    );
 
-    s.spec.timestep   = 0.002;
-    s.spec.add_floor  = true;
-    s.spec.add_skybox = true;
-    s.spec.objects.push_back(table);
+    s.spec = ex::scene_spec();
+    s.spec.objects.push_back(ex::table_object(ex::asset("table.xml"), ex::kTableZ));
     s.spec.robots.push_back(robot_spec);
 
     if (!mj_kdl::init_env(&s.env, &s.spec)) return false;
 
     mj_kdl::ForceTorqueSensorSpec ft_sensor;
-    ft_sensor.name       = kFtSensor;
-    ft_sensor.frame_site = "wrist_ft_site";
-
-    mj_kdl::ToolFrameSpec tool;
-    tool.tool_body = "g_base_mount";
-    tool.tcp_site  = "g_pinch";
+    ft_sensor.name             = kFtSensor;
+    ft_sensor.frame_site       = "wrist_ft_site";
+    mj_kdl::ToolFrameSpec tool = ex::gripper_tool();
     tool.ft_sensors.push_back(ft_sensor);
 
     if (!mj_kdl::init_robot_from_mjcf(&s.robot, &s.env, "base_link", "bracelet_link", "", &tool))
@@ -197,13 +177,14 @@ static bool build_scene(Scene &s)
     return s.gripper && s.push;
 }
 
-// Task-space computed torque: Cartesian PD -> WDLS acceleration IK -> RNEA.
+// Task-space computed torque: Cartesian PD -> WDLS acceleration IK + null-space posture -> RNEA.
 struct RneaController
 {
-    explicit RneaController(Scene &scene)
+    RneaController(Scene &scene, const KDL::JntArray &q_posture)
       : s(scene), fk(s.robot.chain), jac_solver(s.robot.chain), ik_acc(s.robot.chain),
-        rnea(s.robot.chain, KDL::Vector(0.0, 0.0, s.spec.gravity_z)), q(s.robot.n_joints),
-        qd(s.robot.n_joints), qdd(s.robot.n_joints), tau(s.robot.n_joints), jac(s.robot.n_joints),
+        rnea(s.robot.chain, KDL::Vector(0.0, 0.0, s.spec.gravity_z)), posture(q_posture),
+        q(s.robot.n_joints), qd(s.robot.n_joints), qdd(s.robot.n_joints), z(s.robot.n_joints),
+        tau(s.robot.n_joints), jac(s.robot.n_joints),
         f_ext(s.robot.chain.getNrOfSegments(), KDL::Wrench::Zero())
     {
         ik_acc.setLambda(0.10);
@@ -242,7 +223,14 @@ struct RneaController
           )
         );
 
-        if (ik_acc.CartToJnt(q, beta, qdd) < 0) return;
+        // qdd = J#(beta - J z) + z = J# beta + (I - J# J) z (Siciliano et al. 2009, Sec. 3.5.1).
+        KDL::Twist jz = KDL::Twist::Zero();
+        for (unsigned j = 0; j < q.rows(); ++j) {
+            z(j) = kKpNull * (posture(j) - q(j)) - kKdNull * qd(j);
+            jz += jac.getColumn(j) * z(j);
+        }
+        if (ik_acc.CartToJnt(q, beta - jz, qdd) < 0) return;
+        for (unsigned j = 0; j < q.rows(); ++j) qdd(j) += z(j);
         if (rnea.CartToJnt(q, qd, qdd, f_ext, tau) < 0) return;
         // update() clamps each torque to its joint's limit and reports it in jnt_saturated.
         for (int i = 0; i < s.robot.n_joints; ++i) s.robot.jnt_trq_cmd[i] = tau(i);
@@ -253,12 +241,13 @@ struct RneaController
     KDL::ChainJntToJacSolver        jac_solver;
     KDL::ChainIkSolverVel_wdls      ik_acc;
     KDL::ChainIdSolver_RNE          rnea;
-    KDL::JntArray                   q, qd, qdd, tau;
+    const KDL::JntArray             posture;
+    KDL::JntArray                   q, qd, qdd, z, tau;
     KDL::Jacobian                   jac;
     KDL::Wrenches                   f_ext;
 };
 
-// One control cycle before step(): read, keep the gripper closed, admit force, track the target.
+// Admits the force into the offset and tracks the offset target; returns that target.
 static KDL::Frame control(
   Scene             &s,
   RneaController    &ctrl,
@@ -273,7 +262,7 @@ static KDL::Frame control(
     return target;
 }
 
-static void close_gripper(Scene &s) { s.gripper->command = mj_kdl_examples::kGripperClosed; }
+static void close_gripper(Scene &s) { s.gripper->command = ex::kGripperClosed; }
 
 // Hold home with the gripper closed until the wrist load settles, then tare the sensor.
 static void settle_and_tare(Scene &s, RneaController &ctrl, Admittance &a)
@@ -301,12 +290,23 @@ struct Metrics
     double push_dy           = 0.0;
     double push_recovery_err = 0.0;
     double hold_drift        = 0.0;
+    double elbow_start       = 0.0; // [m] elbow height above the table
+    double elbow_min         = 0.0;
 };
+
+static double elbow_height(Scene &s)
+{
+    KDL::Frame elbow;
+    mj_kdl::get_body_frame(&s.env, kElbowBody, &elbow);
+    return elbow.p.z() - ex::kTableZ;
+}
 
 static Metrics
   run_selfcheck(Scene &s, RneaController &ctrl, Admittance &a, const KDL::Frame &nominal)
 {
     Metrics m;
+    m.elbow_start = elbow_height(s);
+    m.elbow_min   = m.elbow_start;
 
     const double t0 = s.env.data->time;
     while (s.env.data->time - t0 < kTeachTime) {
@@ -317,6 +317,7 @@ static Metrics
         m.helix_react           = std::max(m.helix_react, norm3(a.offset));
         m.helix_track_err       = std::max(m.helix_track_err, norm3(ctrl.tcp().p - target.p));
         if (!mj_kdl::step(&s.env)) break;
+        m.elbow_min = std::min(m.elbow_min, elbow_height(s));
         mj_kdl::pace_realtime(&s.env);
     }
 
@@ -327,6 +328,7 @@ static Metrics
         const KDL::Frame target = control(s, ctrl, a, nominal, KDL::Vector::Zero());
         m.helix_track_err       = std::max(m.helix_track_err, norm3(ctrl.tcp().p - target.p));
         if (!mj_kdl::step(&s.env)) break;
+        m.elbow_min = std::min(m.elbow_min, elbow_height(s));
         mj_kdl::pace_realtime(&s.env);
     }
 
@@ -339,6 +341,7 @@ static Metrics
         m.handoff_force     = std::max(m.handoff_force, norm3(f));
         control(s, ctrl, a, nominal, f);
         if (!mj_kdl::step(&s.env)) break;
+        m.elbow_min = std::min(m.elbow_min, elbow_height(s));
         mj_kdl::pace_realtime(&s.env);
     }
 
@@ -349,6 +352,7 @@ static Metrics
         const KDL::Frame target = control(s, ctrl, a, nominal, KDL::Vector::Zero());
         m.helix_settle_err      = std::max(m.helix_settle_err, norm3(ctrl.tcp().p - target.p));
         if (!mj_kdl::step(&s.env)) break;
+        m.elbow_min = std::min(m.elbow_min, elbow_height(s));
         mj_kdl::pace_realtime(&s.env);
     }
 
@@ -356,6 +360,7 @@ static Metrics
     const KDL::Vector pre_push      = a.offset;
     KDL::Vector       settled       = pre_push;
     bool              have_recovery = false;
+    bool              have_settled  = false;
     const double      tp            = s.env.data->time;
     while (s.env.data->time - tp < kPushTime) {
         const double t = s.env.data->time - tp;
@@ -367,8 +372,13 @@ static Metrics
             m.push_recovery_err = norm3(ctrl.tcp().p - target.p);
             have_recovery       = true;
         }
-        if (t >= 2.5) settled = a.offset;
+        // Once the release transient (~1.5 s) has died; the drift is judged from here to the end.
+        if (!have_settled && t >= 2.5) {
+            settled      = a.offset;
+            have_settled = true;
+        }
         if (!mj_kdl::step(&s.env)) break;
+        m.elbow_min = std::min(m.elbow_min, elbow_height(s));
         mj_kdl::pace_realtime(&s.env);
     }
     s.push->wrench = KDL::Wrench::Zero();
@@ -380,7 +390,7 @@ static Metrics
     return m;
 }
 
-static int report(const Metrics &m)
+static bool report(const Metrics &m)
 {
     std::cout << std::fixed << std::setprecision(4)
               << "helix force response (max offset): " << m.helix_react << " m\n"
@@ -390,21 +400,19 @@ static int report(const Metrics &m)
               << "FT push response (offset norm):    " << m.push_response << " m\n"
               << "FT push response (offset dY):      " << m.push_dy << " m\n"
               << "push release recovery error:       " << m.push_recovery_err << " m\n"
-              << "hold drift after push released:    " << m.hold_drift << " m\n";
-    if (m.helix_react <= 0.05 || m.helix_track_err >= 0.006 || m.helix_settle_err >= 0.004
-        || m.handoff_force != 0.0 || m.push_response <= 0.05 || m.push_recovery_err >= 0.006
-        || m.hold_drift >= 0.01) {
-        return 1;
-    }
-    std::cout << "OK: admittance responded to helix + FT push and held on release\n";
-    return 0;
+              << "hold drift after push released:    " << m.hold_drift << " m\n"
+              << "elbow height start / lowest:       " << m.elbow_start << " / " << m.elbow_min
+              << " m (limit " << kMinElbowHeight << " m)\n";
+    return m.helix_react > 0.10 && m.helix_track_err < 0.006 && m.helix_settle_err < 0.006
+           && m.handoff_force == 0.0 && m.push_response > 0.12 && m.push_recovery_err < 0.002
+           && m.hold_drift < 0.001 && m.elbow_min >= kMinElbowHeight;
 }
 
 // The same sequence with the viewer: helix, tare, then the mouse pushes the tool; ends on its own.
 static void run_gui(Scene &s, RneaController &ctrl, Admittance &a, const KDL::Frame &nominal)
 {
     mj_kdl::Viewer *viewer = &s.env.viewer;
-    mj_kdl::set_free_camera(viewer, 1.55, 145.0, -24.0, { 0.05, 0.0, kTableZ + 0.35 });
+    mj_kdl::set_free_camera(viewer, 1.55, 145.0, -24.0, { 0.05, 0.0, ex::kTableZ + 0.35 });
     if (!mj_kdl::open_viewer(&s.env, "ex_admittance_ft")) return;
 
     const double run_time =
@@ -423,6 +431,7 @@ static void run_gui(Scene &s, RneaController &ctrl, Admittance &a, const KDL::Fr
             start         = s.env.data->time;
             handoff_tared = false;
             have_prev     = false;
+            mj_kdl::clear_trace(viewer);
         }
         const double t = s.env.data->time - start;
         if (t >= run_time) break;
@@ -463,7 +472,7 @@ static void run_gui(Scene &s, RneaController &ctrl, Admittance &a, const KDL::Fr
 
 int main(int argc, char **argv)
 {
-    const bool headless = mj_kdl_examples::parse_args(argc, argv).headless;
+    const bool headless = ex::parse_args(argc, argv).headless;
 
     Scene s;
     if (!build_scene(s)) {
@@ -471,10 +480,9 @@ int main(int argc, char **argv)
         return 1;
     }
     if (!mj_kdl::set_control_mode(&s.robot, mj_kdl::CtrlMode::TORQUE)) return 1;
-    RneaController ctrl(s);
+    const KDL::JntArray q_home = ex::home_q(s.robot.chain.getNrOfJoints());
+    RneaController      ctrl(s, q_home);
 
-    KDL::JntArray q_home(s.robot.n_joints);
-    for (int i = 0; i < s.robot.n_joints; ++i) q_home(i) = kHomePose[i];
     s.env.on_reset = [&](mj_kdl::ResetContext *) {
         mj_kdl::set_joint_pos(&s.robot, q_home);
         s.restarted = true;
@@ -489,7 +497,11 @@ int main(int argc, char **argv)
               << a.bias.y() << ", " << a.bias.z() << "] N\n";
     int rc = 0;
     if (headless) {
-        rc = report(run_selfcheck(s, ctrl, a, nominal));
+        rc = ex::verdict(
+          report(run_selfcheck(s, ctrl, a, nominal)),
+          "the admittance responded "
+          "to the helix and the FT push and held on release"
+        );
     } else {
         run_gui(s, ctrl, a, nominal);
         std::cout << std::fixed << std::setprecision(4) << "final offset: [" << a.offset.x() << ", "

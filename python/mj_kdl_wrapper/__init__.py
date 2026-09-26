@@ -1,4 +1,4 @@
-import mujoco  # noqa: F401  # registers its plugins first; after the wrapper's it aborts
+import mujoco as _mujoco  # noqa: F401  # registers its plugins first; after the wrapper's it aborts
 
 from . import _mj_kdl_wrapper
 from . import menagerie

@@ -339,11 +339,11 @@ subtract `G(q)` from the RNEA torque; the rest of the pipeline is unchanged.
 - A. Shakhimardanov, *Composable Robot Motion Stack*, PhD thesis, KU Leuven, 2015, ch. 3
 - `test_control_modes.cpp` -- actuator groups, mode switches, torque limits, wheel modes
 - `test_mjcf_trq_ctrl.cpp` -- gravity accuracy and impedance drift tests
-- `src/examples/ex_impedance.cpp` -- single arm + gripper torque control (PD + gravity)
-- `src/examples/ex_table_pick_place.cpp` -- tabletop pick and place (gravity-comp)
-- `src/examples/ex_rnea_pick_place.cpp` -- tabletop pick and place (full RNEA)
+- `src/examples/ex_table_pick_place.cpp` -- tabletop pick and place with joint impedance
+  (PD + gravity), pushed mid-carry
+- `src/examples/ex_rnea_pick_place.cpp` -- two arms, each with gripper, tabletop pick and place
+  (full RNEA)
 - `src/examples/ex_achd_table_slide.cpp` -- ACHD sliding task pressing on the table with a
   commanded wrench
 - `src/examples/ex_achd_pick_place.cpp` -- ACHD -> RNEA pick and place
 - `src/examples/ex_admittance_ft.cpp` -- F/T admittance around an RNEA task-space inner loop
-- `src/examples/ex_dual_arm.cpp` -- two arms, each with gripper

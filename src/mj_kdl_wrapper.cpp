@@ -14,6 +14,8 @@
 #endif
 #include "glfw_adapter.h"
 
+#include <GLFW/glfw3.h>
+
 #ifdef MJ_KDL_HAS_EGL
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -32,12 +34,12 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
-#include <iostream>
 #include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <sstream>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 
@@ -53,7 +55,7 @@ extern char **environ;
     do {                                 \
         std::ostringstream mj_fail_;     \
         mj_fail_ << expr; /* NOLINT */   \
-        LOG_ERROR(mj_fail_.str());       \
+        MJ_LOG_ERROR(mj_fail_.str());    \
         return Status{ mj_fail_.str() }; \
     } while (0)
 
@@ -93,7 +95,6 @@ struct RobotInternals
     Env             *env = nullptr;
     std::vector<int> kdl_to_mj_qpos;
     std::vector<int> kdl_to_mj_dof;
-    std::vector<int> kdl_to_mj_ctrl;    // -1 if none
     std::vector<int> mode_ctrl[3];      // per CtrlMode: the joint's actuator, -1 if none
     int              robot_index  = -1; // SceneSpec::robots index owning mode groups; -1 none
     CtrlMode         applied_mode = CtrlMode::POSITION; // mode whose group is enabled
@@ -101,14 +102,28 @@ struct RobotInternals
     std::string      mj_prefix;                         // re-resolves the joints after a rebuild
 };
 
+struct NameHash
+{
+    using is_transparent = void;
+    std::size_t operator()(std::string_view s) const { return std::hash<std::string_view>{}(s); }
+};
+
+using NameMap = std::unordered_map<std::string, int, NameHash, std::equal_to<>>;
+
 struct EnvInternals
 {
     // What the last mj_step1/mj_forward read; its results stay current while the state matches.
-    std::vector<mjtNum>                  computed_from;
-    bool                                 computed = false;
-    std::unordered_map<std::string, int> names[mjNOBJECT]; // mj_name2id per object type
-    bool                                 adopted = false;  // model/data came from Env::adopt
+    std::vector<mjtNum> computed_from;
+    std::vector<mjtNum> state_now; // kinematics_current's buffer
+    bool                computed = false;
+    NameMap             names[mjNOBJECT];      // mj_name2id per object type
+    bool                adopted       = false; // model/data came from Env::adopt
+    std::uint64_t       model_gen     = 0; // unique per compiled model, so recorders see a rebuild
+    bool                in_reset_hook = false; // a rebuild would swap the model under the hook
 };
+
+// Source of EnvInternals::model_gen: process-wide, so no two models ever share a value.
+static std::atomic<std::uint64_t> g_model_gen{ 0 };
 
 Robot::Robot() : _impl(std::make_unique<RobotInternals>()) {}
 Robot::~Robot() { cleanup(this); }
@@ -126,12 +141,11 @@ static constexpr int kKinematicsInputs =
 
 static bool kinematics_current(const Env *env)
 {
-    const EnvInternals &in = *env->_impl;
+    EnvInternals &in = *env->_impl;
     if (!in.computed) return false;
-    static std::vector<mjtNum> now;
-    now.resize(mj_stateSize(env->model, kKinematicsInputs));
-    mj_getState(env->model, env->data, now.data(), kKinematicsInputs);
-    return now == in.computed_from;
+    in.state_now.resize(mj_stateSize(env->model, kKinematicsInputs));
+    mj_getState(env->model, env->data, in.state_now.data(), kKinematicsInputs);
+    return in.state_now == in.computed_from;
 }
 
 static void record_kinematics(Env *env)
@@ -168,7 +182,7 @@ static void end_step(Env *env)
 static int cached_name2id(Env *env, mjtObj type, const char *name)
 {
     auto      &names = env->_impl->names[type];
-    const auto found = names.find(name);
+    const auto found = names.find(std::string_view(name));
     if (found != names.end()) return found->second;
     const int id = mj_name2id(env->model, type, name);
     names.emplace(name, id);
@@ -195,11 +209,8 @@ static constexpr double kSunHeight        = 4.0;  // overhead directional light 
 static constexpr double kFrameSiteSize  = 0.005; // frame-site marker radius [m]
 static constexpr int    kFrameSiteGroup = 4;     // viewer group for frame sites
 
-// Numerical tolerances. Frame-equality test treats relative deviations below
-// kIdentityTol as zero; sim-time guard rejects steps shorter than kSimTimeEps
-// caused by floating-point round-trip through MuJoCo.
+// A manual TCP frame this close to identity is no TCP.
 static constexpr double kIdentityTol = 1e-12;
-static constexpr double kSimTimeEps  = 1e-9;
 
 // Default MuJoCo collision category bitmask for wrapper-authored geoms (sets
 // category bit 0, matching MuJoCo's MJCF compiler defaults for contype and
@@ -208,6 +219,9 @@ static constexpr int kContactCategoryAll = 1;
 
 // Pixel layout for the offscreen recorder (RGB24 / ffmpeg rgb24 input).
 static constexpr int kRgbBytesPerPixel = 3;
+
+// Overlay geoms (trace segments, arrows) the viewer holds per frame.
+static constexpr int kUserSceneMaxGeom = 8192;
 
 // Defaults applied when the Simulate UI omits recorder fields.
 static constexpr int kRecorderDefaultResIndex = 2; // 720p (see recorder_resolution_from_index)
@@ -220,8 +234,6 @@ struct FfmpegSink
     FILE       *pipe = nullptr;
     pid_t       pid  = -1;
     std::string path;
-    int         width  = 0;
-    int         height = 0;
     int         frames = 0;
 };
 
@@ -302,8 +314,6 @@ static Status sink_open(
 
     sink->pipe   = fdopen(fds[1], "w");
     sink->path   = out_path;
-    sink->width  = in_w;
-    sink->height = in_h;
     sink->frames = 0;
     if (!sink->pipe) MJ_FAIL("opening the ffmpeg pipe failed: " << std::strerror(errno));
     return {};
@@ -313,7 +323,7 @@ static bool sink_write(FfmpegSink *sink, const std::uint8_t *rgb, std::size_t by
 {
     if (!sink->pipe) return false;
     if (fwrite(rgb, 1, bytes, sink->pipe) != bytes) {
-        LOG_ERROR("fwrite to ffmpeg pipe failed");
+        MJ_LOG_ERROR("fwrite to ffmpeg pipe failed");
         return false;
     }
     ++sink->frames;
@@ -330,9 +340,9 @@ static void sink_close(FfmpegSink *sink)
     sink->pid        = -1;
     const int status = WIFEXITED(wstatus) ? WEXITSTATUS(wstatus) : -1;
     if (status == 0 && sink->frames > 0) {
-        std::fprintf(stderr, "[mj_kdl] recording saved to %s\n", sink->path.c_str());
+        MJ_LOG_INFO("recording saved to " << sink->path);
     } else if (status != 0) {
-        LOG_ERROR("ffmpeg failed while saving recording to '" << sink->path << "'");
+        MJ_LOG_ERROR("ffmpeg failed while saving recording to '" << sink->path << "'");
     }
 }
 
@@ -382,7 +392,7 @@ static void absolutize_asset_files(mjSpec *spec)
 {
     // Relative when the model path was, and a relative file does not resolve from the scene.
     const std::filesystem::path base = std::filesystem::absolute(mjs_getString(spec->modelfiledir));
-    const auto resolve = [&base](mjString *file, const mjString *dir) {
+    const auto                  resolve = [&base](mjString *file, const mjString *dir) {
         const std::filesystem::path f = mjs_getString(file);
         if (f.empty() || f.is_absolute()) return;
         const std::filesystem::path d = mjs_getString(dir);
@@ -585,9 +595,7 @@ static Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &
                 MJ_FAIL("mj_parseXML failed for object asset '" << obj.mjcf_path << "': " << err);
             absolutize_asset_files(asset.get());
 
-            // Compile now so mesh files load while this spec's meshdir is alive:
-            // mjs_attach defers file loading to the parent compile, but `asset`
-            // is freed before then.
+            // Compiled alone first: the scene's compile error would not name the asset.
             if (mjModel *compiled = mj_compile(asset.get(), nullptr)) {
                 mj_deleteModel(compiled);
             } else {
@@ -719,7 +727,7 @@ static Status add_cameras_to_spec(mjSpec *spec, const std::vector<CameraSpec> &c
         if (mjs_findElement(spec, mjOBJ_CAMERA, cs.name.c_str())) continue;
         mjsBody *anchor = cs.body.empty() ? wb : mjs_findBody(spec, cs.body.c_str());
         if (!anchor) {
-            LOG_WARN("camera '" << cs.name << "': no body '" << cs.body << "' in the scene");
+            MJ_LOG_WARN("camera '" << cs.name << "': no body '" << cs.body << "' in the scene");
             continue;
         }
         mjsCamera *cam = mjs_addCamera(anchor, nullptr);
@@ -776,7 +784,7 @@ static void add_sites_to_spec(mjSpec *spec, const std::vector<SiteSpec> &sites)
     for (const auto &ss : sites) {
         mjsBody *body = mjs_findBody(spec, ss.body.c_str());
         if (!body) {
-            LOG_WARN("site '" << ss.name << "': no body '" << ss.body << "' in the scene");
+            MJ_LOG_WARN("site '" << ss.name << "': no body '" << ss.body << "' in the scene");
             continue;
         }
         add_site_to_spec(spec, body, ss);
@@ -786,6 +794,7 @@ static void add_sites_to_spec(mjSpec *spec, const std::vector<SiteSpec> &sites)
 // Compile spec into a model and data; spec is always deleted.
 // A compiled model cannot be written back to XML on its own; mj_saveXML needs its spec.
 static std::unordered_map<const mjModel *, MjSpecPtr> g_model_specs;
+static std::mutex                                     g_model_specs_mtx; // Envs on many threads
 
 static Status compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **out_data)
 {
@@ -802,7 +811,7 @@ static Status compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **
                                       : "")
         );
     }
-    LOG_INFO(
+    MJ_LOG_INFO(
       "scene compiled: nq=" << (*out_model)->nq << " nv=" << (*out_model)->nv
                             << " nbody=" << (*out_model)->nbody
     );
@@ -812,6 +821,7 @@ static Status compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **
         *out_model = nullptr;
         MJ_FAIL("mj_makeData failed: out of memory for the compiled model");
     }
+    const std::lock_guard<std::mutex> lock(g_model_specs_mtx);
     g_model_specs.insert_or_assign(*out_model, std::move(owned));
     return {};
 }
@@ -982,8 +992,8 @@ static KDL::RigidBodyInertia mj_body_inertia(const mjModel *model, int bid)
 
 // The mode an actuator gives on its own: a position servo (fixed gain kp, affine bias
 // [0, -kp, -kv]) is POSITION, a motor (fixed gain, no bias) is TORQUE; -1 for anything else.
-static int native_mode(int gaintype, const double *gainprm, int biastype, const double *biasprm,
-                       int dyntype)
+static int
+  native_mode(int gaintype, const double *gainprm, int biastype, const double *biasprm, int dyntype)
 {
     if (dyntype != mjDYN_NONE || gaintype != mjGAIN_FIXED || gainprm[0] == 0.0) return -1;
     if (biastype == mjBIAS_NONE) return static_cast<int>(CtrlMode::TORQUE);
@@ -994,20 +1004,20 @@ static int native_mode(int gaintype, const double *gainprm, int biastype, const 
 
 static int mode_group(int robot, int mode) { return 1 + 3 * robot + mode; }
 
-static Status build_index_map(Robot *s, const std::string &pfx = "")
+// joint_names' MuJoCo addresses and the mode m is in; *out (env aside) changes only on success.
+static Status resolve_joints(
+  const mjModel                  *m,
+  const std::vector<std::string> &joint_names,
+  const std::string              &pfx,
+  RobotInternals                 *out
+)
 {
-    RobotInternals &in = *s->_impl;
-    in.kdl_to_mj_qpos.clear();
-    in.kdl_to_mj_dof.clear();
-    in.kdl_to_mj_ctrl.clear();
-    for (auto &ctrl : in.mode_ctrl) ctrl.assign(s->joint_names.size(), -1);
-    in.robot_index  = -1;
-    in.mode_applied = false;
-    in.mj_prefix    = pfx;
-    if (!s->model) MJ_FAIL("robot has no model");
-    const mjModel *m = s->model;
-    for (size_t j = 0; j < s->joint_names.size(); ++j) {
-        const std::string &name = s->joint_names[j];
+    RobotInternals in;
+    in.env       = out->env;
+    in.mj_prefix = pfx;
+    for (auto &ctrl : in.mode_ctrl) ctrl.assign(joint_names.size(), -1);
+    for (size_t j = 0; j < joint_names.size(); ++j) {
+        const std::string &name = joint_names[j];
         int                id   = mj_name2id(m, mjOBJ_JOINT, (pfx + name).c_str());
         if (id < 0) {
             MJ_FAIL(
@@ -1018,10 +1028,8 @@ static Status build_index_map(Robot *s, const std::string &pfx = "")
         in.kdl_to_mj_qpos.push_back(m->jnt_qposadr[id]);
         in.kdl_to_mj_dof.push_back(m->jnt_dofadr[id]);
         // A mode group says which mode an actuator serves; ungrouped ones serve their native mode.
-        int first = -1;
         for (int ai = 0; ai < m->nu; ++ai) {
             if (m->actuator_trntype[ai] != mjTRN_JOINT || m->actuator_trnid[2 * ai] != id) continue;
-            if (first < 0) first = ai;
             const int group = m->actuator_group[ai];
             int       mode  = -1;
             if (group >= 1 && group <= 30) {
@@ -1038,26 +1046,23 @@ static Status build_index_map(Robot *s, const std::string &pfx = "")
             }
             if (mode >= 0 && in.mode_ctrl[mode][j] < 0) in.mode_ctrl[mode][j] = ai;
         }
-        const int pos = in.mode_ctrl[static_cast<int>(CtrlMode::POSITION)][j];
-        in.kdl_to_mj_ctrl.push_back(pos >= 0 ? pos : first);
     }
 
     // The mode the model is in now: every joint has its actuator and its group is enabled.
-    const int n = s->n_joints;
-    for (int mode = 0; mode < 3; ++mode) {
+    for (int mode = 0; mode < 3 && !joint_names.empty(); ++mode) {
         const bool driven =
           std::all_of(in.mode_ctrl[mode].begin(), in.mode_ctrl[mode].end(), [](int a) {
               return a >= 0;
           });
         const bool enabled =
           in.robot_index < 0 || !(m->opt.disableactuator & (1 << mode_group(in.robot_index, mode)));
-        if (driven && enabled && n > 0) {
-            s->ctrl_mode    = static_cast<CtrlMode>(mode);
-            in.applied_mode = s->ctrl_mode;
+        if (driven && enabled) {
+            in.applied_mode = static_cast<CtrlMode>(mode);
             in.mode_applied = true;
             break;
         }
     }
+    *out = std::move(in);
     return {};
 }
 
@@ -1066,7 +1071,7 @@ static std::pair<double, double> joint_range(const mjModel *model, int jid)
 {
     if (jid >= 0 && model->jnt_limited[jid])
         return { model->jnt_range[2 * jid], model->jnt_range[2 * jid + 1] };
-    LOG_INFO(
+    MJ_LOG_INFO(
       "joint '" << (jid >= 0 ? mj_id2name(model, mjOBJ_JOINT, jid) : "?") << "' is unlimited"
     );
     const double inf = std::numeric_limits<double>::infinity();
@@ -1156,9 +1161,10 @@ static Status
 
 Status save_model_xml(const mjModel *model, const char *path)
 {
-    char       err[kMjErrBuf] = {};
-    int        ok             = 0;
-    const auto spec           = g_model_specs.find(model);
+    char                              err[kMjErrBuf] = {};
+    int                               ok             = 0;
+    const std::lock_guard<std::mutex> lock(g_model_specs_mtx);
+    const auto                        spec = g_model_specs.find(model);
     if (spec != g_model_specs.end()) {
         ok = mj_copyBack(spec->second.get(), model)
              && mj_saveXML(spec->second.get(), path, err, sizeof(err)) == 0;
@@ -1166,13 +1172,25 @@ Status save_model_xml(const mjModel *model, const char *path)
         ok = mj_saveLastXML(path, model, err, sizeof(err));
     }
     if (!ok) MJ_FAIL("saving the model to '" << path << "' failed: " << err);
-    LOG_INFO("model saved to '" << path << "'");
+    MJ_LOG_INFO("model saved to '" << path << "'");
     return {};
+}
+
+// The Simulate UI's Save-xml button; declared in simulate.cc, which cannot see Status.
+bool save_model_xml_from_ui(const mjModel *model, const char *path)
+{
+    return static_cast<bool>(save_model_xml(model, path));
+}
+
+static void forget_spec(const mjModel *model)
+{
+    const std::lock_guard<std::mutex> lock(g_model_specs_mtx);
+    g_model_specs.erase(model);
 }
 
 void destroy_scene(mjModel *model, mjData *data)
 {
-    if (model) g_model_specs.erase(model);
+    if (model) forget_spec(model);
     if (data) mj_deleteData(data);
     if (model) mj_deleteModel(model);
 }
@@ -1182,11 +1200,16 @@ static Status adopt_pair(Env *env, mjModel **m, mjData **d, bool *adopted)
 {
     *adopted = static_cast<bool>(env->adopt);
     if (!*adopted) return {};
-    auto spec     = g_model_specs.extract(*m);
+    decltype(g_model_specs)::node_type spec;
+    {
+        const std::lock_guard<std::mutex> lock(g_model_specs_mtx);
+        spec = g_model_specs.extract(*m);
+    }
     auto [am, ad] = env->adopt(*m, *d);
     if (!am || !ad) MJ_FAIL("Env::adopt returned no model or data");
     if (spec) {
         spec.key() = am;
+        const std::lock_guard<std::mutex> lock(g_model_specs_mtx);
         g_model_specs.insert(std::move(spec));
     }
     *m = am;
@@ -1194,14 +1217,13 @@ static Status adopt_pair(Env *env, mjModel **m, mjData **d, bool *adopted)
     return {};
 }
 
-// Free env's pair, unless adopt gave it: then its owner frees it.
-static void release_pair(Env *env)
+// Free a pair, unless adopt gave it: then its owner frees it.
+static void release_pair(mjModel *m, mjData *d, bool adopted)
 {
-    if (env->_impl->adopted)
-        g_model_specs.erase(env->model);
+    if (adopted)
+        forget_spec(m);
     else
-        destroy_scene(env->model, env->data);
-    env->_impl->adopted = false;
+        destroy_scene(m, d);
 }
 
 static void close_viewer(Env *env);
@@ -1209,7 +1231,8 @@ static void close_viewer(Env *env);
 // Every cache is tied to the model it was taken from.
 static void forget_model(Env *env)
 {
-    env->_impl->computed = false;
+    env->_impl->computed  = false;
+    env->_impl->model_gen = ++g_model_gen;
     for (auto &names : env->_impl->names) names.clear();
 }
 
@@ -1217,10 +1240,12 @@ Status init_env(Env *env, const SceneSpec *spec)
 {
     if (!env || !spec) MJ_FAIL("init_env: null env or spec");
 
+    ResetHook on_reset = std::move(env->on_reset);
     cleanup(env);
-    env->spec  = *spec;
-    mjModel *m = nullptr;
-    mjData  *d = nullptr;
+    env->on_reset = std::move(on_reset);
+    env->spec     = *spec;
+    mjModel *m    = nullptr;
+    mjData  *d    = nullptr;
     if (Status built = build_scene(&m, &d, &env->spec); !built) return built;
     bool adopted = false;
     if (Status s = adopt_pair(env, &m, &d, &adopted); !s) return s;
@@ -1229,6 +1254,7 @@ Status init_env(Env *env, const SceneSpec *spec)
     env->_impl->adopted = adopted;
     env->scene          = SceneState{};
     env->scene.model    = env->model;
+    forget_model(env);
     return {};
 }
 
@@ -1242,10 +1268,11 @@ void cleanup(Env *env)
         r->data       = nullptr;
     }
     env->robots.clear();
-    release_pair(env);
-    env->model = nullptr;
-    env->data  = nullptr;
-    env->scene = SceneState{};
+    release_pair(env->model, env->data, env->_impl->adopted);
+    env->_impl->adopted = false;
+    env->model          = nullptr;
+    env->data           = nullptr;
+    env->scene          = SceneState{};
     forget_model(env);
     env->on_reset = nullptr;
 }
@@ -1255,7 +1282,7 @@ static Status attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
     if (!robot_spec || !a || a->mjcf_path.empty())
         MJ_FAIL("attach_to_spec: null spec or empty mjcf_path");
     ensure_plugins_loaded();
-    LOG_INFO(
+    MJ_LOG_INFO(
       "attach_to_spec: parent='" << (a->attach_to.name.empty() ? "(world)" : a->attach_to.name)
                                  << "' prefix='" << a->prefix << "'"
     );
@@ -1310,15 +1337,19 @@ static Status add_mode_actuators(mjSpec *arm, const RobotSpec &rs, int robot, in
             for (const auto &entry : by_joint) joints.push_back(entry.first);
 
         for (const std::string &joint : joints) {
-            const auto   it     = by_joint.find(joint);
-            mjsActuator *own    = (it != by_joint.end() && it->second.size() == 1) ? it->second.front() : nullptr;
-            const int    native = own ? native_mode(
-                                          own->gaintype, own->gainprm, own->biastype, own->biasprm, own->dyntype
-                                        )
-                                      : -1;
+            const auto   it = by_joint.find(joint);
+            mjsActuator *own =
+              (it != by_joint.end() && it->second.size() == 1) ? it->second.front() : nullptr;
+            const int native =
+              own ? native_mode(
+                      own->gaintype, own->gainprm, own->biastype, own->biasprm, own->dyntype
+                    )
+                  : -1;
             if (native < 0) {
                 if (all) {
-                    LOG_INFO("robots[" << robot << "]: joint '" << joint << "' takes no control modes");
+                    MJ_LOG_INFO(
+                      "robots[" << robot << "]: joint '" << joint << "' takes no control modes"
+                    );
                     continue;
                 }
                 MJ_FAIL(
@@ -1334,16 +1365,17 @@ static Status add_mode_actuators(mjSpec *arm, const RobotSpec &rs, int robot, in
             if (mode == native) continue;
             if (ms.mode == CtrlMode::POSITION) {
                 MJ_FAIL(
-                  "robots[" << robot << "]: joint '" << joint << "' is motor-driven; POSITION is not supported"
+                  "robots[" << robot << "]: joint '" << joint
+                            << "' is motor-driven; POSITION is not supported"
                 );
             }
             if (ms.mode == CtrlMode::VELOCITY && ms.kv <= 0.0)
                 MJ_FAIL("robots[" << robot << "]: VELOCITY needs kv > 0");
 
             // Both limits below are in actuator-force units: a servo's forcerange, a motor's ctrl.
-            const bool    servo   = native == static_cast<int>(CtrlMode::POSITION);
-            const double *range   = servo ? own->forcerange : own->ctrlrange;
-            const bool    limited = range_limited(servo ? own->forcelimited : own->ctrllimited, range);
+            const bool    servo = native == static_cast<int>(CtrlMode::POSITION);
+            const double *range = servo ? own->forcerange : own->ctrlrange;
+            const bool limited = range_limited(servo ? own->forcelimited : own->ctrllimited, range);
 
             mjsActuator *added = mjs_addActuator(arm, nullptr);
             added->trntype     = mjTRN_JOINT;
@@ -1394,7 +1426,7 @@ Status build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
         );
     }
     ensure_plugins_loaded();
-    LOG_INFO(
+    MJ_LOG_INFO(
       "build_scene: " << sc->robots.size() << " robot(s)" << ", objects=" << sc->objects.size()
     );
 
@@ -1475,65 +1507,123 @@ Status build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
 static void reload_viewer(Env *env, mjModel *m, mjData *d);
 static bool rebind_scene(Env *env);
 
-// Every MuJoCo address a Robot holds is only valid for the model it was resolved on.
-static bool rebind_robots(Env *env)
+static Status resolve_ft(const mjModel *m, ForceTorqueSensor *sensor);
+static Status switch_control_mode(Robot *r, CtrlMode mode, bool seed_ports);
+
+// What a registered robot becomes on a rebuilt model.
+struct RobotRebind
 {
-    const mjModel *m  = env->model;
-    bool           ok = true;
-    for (Robot *r : env->robots) {
-        const std::vector<double> pos_cmd = r->jnt_pos_cmd;
-        const std::vector<double> vel_cmd = r->jnt_vel_cmd;
-        const std::vector<double> trq_cmd = r->jnt_trq_cmd;
-        const CtrlMode            mode    = r->ctrl_mode;
-        r->model                          = env->model;
-        r->data                           = env->data;
-        if (!build_index_map(r, r->_impl->mj_prefix)) {
-            ok = false;
-            continue;
-        }
-        // The rebuilt model starts in the native mode; carry on in the one the robot was in.
-        if (mode != r->ctrl_mode && !set_control_mode(r, mode)) ok = false;
-        r->jnt_pos_cmd = pos_cmd;
-        r->jnt_vel_cmd = vel_cmd;
-        r->jnt_trq_cmd = trq_cmd;
-        for (ForceTorqueSensor &sensor : r->ft_sensors) {
-            const int force_id  = mj_name2id(m, mjOBJ_SENSOR, sensor.force_sensor.c_str());
-            const int torque_id = mj_name2id(m, mjOBJ_SENSOR, sensor.torque_sensor.c_str());
-            const int site_id =
-              sensor.frame_site.empty() ? -1 : mj_name2id(m, mjOBJ_SITE, sensor.frame_site.c_str());
-            if (force_id < 0 || torque_id < 0 || (!sensor.frame_site.empty() && site_id < 0)) {
-                LOG_ERROR("FT sensor '" << sensor.name << "' is gone from the rebuilt model");
-                ok = false;
-                continue;
-            }
-            sensor.force_adr     = m->sensor_adr[force_id];
-            sensor.torque_adr    = m->sensor_adr[torque_id];
-            sensor.frame_site_id = site_id;
-        }
+    RobotInternals                 in;
+    std::vector<ForceTorqueSensor> ft_sensors;
+};
+
+// Every MuJoCo address a Robot holds is only valid for the model it was resolved on.
+static Status resolve_robots(const Env *env, const mjModel *m, std::vector<RobotRebind> *out)
+{
+    out->clear();
+    for (const Robot *r : env->robots) {
+        const RobotInternals &was = *r->_impl;
+        RobotRebind           rb;
+        rb.in.env = was.env;
+        if (Status s = resolve_joints(m, r->joint_names, was.mj_prefix, &rb.in); !s) return s;
+        const auto &ctrl = rb.in.mode_ctrl[static_cast<int>(was.applied_mode)];
+        if (was.mode_applied && std::any_of(ctrl.begin(), ctrl.end(), [](int a) { return a < 0; }))
+            MJ_FAIL("a robot's control mode lost its actuators in the rebuilt model");
+        rb.ft_sensors = r->ft_sensors;
+        for (ForceTorqueSensor &sensor : rb.ft_sensors)
+            if (Status s = resolve_ft(m, &sensor); !s) return s;
+        out->push_back(std::move(rb));
     }
-    return ok;
+    return {};
 }
 
-// Swap in a rebuilt pair; the old one lives until the viewer has let go of it. Whatever no
-// longer resolves is logged and skipped from then on.
+static void rebind_robots(Env *env, std::vector<RobotRebind> *rebinds)
+{
+    for (size_t k = 0; k < env->robots.size(); ++k) {
+        Robot           *r           = env->robots[k];
+        const RobotPorts ports       = *r;
+        const bool       was_applied = r->_impl->mode_applied;
+        const CtrlMode   was         = r->_impl->applied_mode;
+        r->model                     = env->model;
+        r->data                      = env->data;
+        *r->_impl                    = std::move((*rebinds)[k].in);
+        r->ft_sensors                = std::move((*rebinds)[k].ft_sensors);
+        // The rebuilt model starts in the native mode; carry on in the one the robot was in.
+        if (was_applied && was != r->_impl->applied_mode) (void)switch_control_mode(r, was, false);
+        static_cast<RobotPorts &>(*r) = ports;
+    }
+}
+
+static int joint_nq(int type) { return type == mjJNT_FREE ? 7 : type == mjJNT_BALL ? 4 : 1; }
+static int joint_nv(int type) { return type == mjJNT_FREE ? 6 : type == mjJNT_BALL ? 3 : 1; }
+
+// Time, and qpos/qvel/act of every joint and actuator the old model names too.
+static void carry_state(const mjModel *om, const mjData *od, const mjModel *nm, mjData *nd)
+{
+    nd->time = od->time;
+    for (int j = 0; j < nm->njnt; ++j) {
+        const char *name = mj_id2name(nm, mjOBJ_JOINT, j);
+        const int   oj   = name ? mj_name2id(om, mjOBJ_JOINT, name) : -1;
+        if (oj < 0 || om->jnt_type[oj] != nm->jnt_type[j]) continue;
+        const int type = nm->jnt_type[j];
+        mju_copy(nd->qpos + nm->jnt_qposadr[j], od->qpos + om->jnt_qposadr[oj], joint_nq(type));
+        mju_copy(nd->qvel + nm->jnt_dofadr[j], od->qvel + om->jnt_dofadr[oj], joint_nv(type));
+    }
+    for (int a = 0; a < nm->nu; ++a) {
+        const char *name = mj_id2name(nm, mjOBJ_ACTUATOR, a);
+        const int   oa   = name ? mj_name2id(om, mjOBJ_ACTUATOR, name) : -1;
+        const int   n    = nm->actuator_actnum[a];
+        if (oa < 0 || n == 0 || om->actuator_actnum[oa] != n) continue;
+        mju_copy(nd->act + nm->actuator_actadr[a], od->act + om->actuator_actadr[oa], n);
+    }
+}
+
+// After the mode switches, which seed ctrl from the joints: the commands as they were.
+static void carry_ctrl(const mjModel *om, const mjData *od, const mjModel *nm, mjData *nd)
+{
+    for (int a = 0; a < nm->nu; ++a) {
+        const char *name = mj_id2name(nm, mjOBJ_ACTUATOR, a);
+        const int   oa   = name ? mj_name2id(om, mjOBJ_ACTUATOR, name) : -1;
+        if (oa >= 0) nd->ctrl[a] = od->ctrl[oa];
+    }
+}
+
+// Swap in a rebuilt pair, or leave env as it was when a robot no longer resolves.
 static Status swap_scene(Env *env, mjModel *m, mjData *d)
 {
+    // Before adopt, whose copy keeps the structure, so a failure has nothing to undo.
+    std::vector<RobotRebind> rebinds;
+    if (Status s = resolve_robots(env, m, &rebinds); !s) {
+        destroy_scene(m, d);
+        return s;
+    }
     bool adopted = false;
     if (Status s = adopt_pair(env, &m, &d, &adopted); !s) return s;
+    carry_state(env->model, env->data, m, d);
+    mj_forward(m, d);
+    // The old pair lives until the viewer has let go of it and its ctrl is carried over.
     reload_viewer(env, m, d);
-    release_pair(env);
-    env->model          = m;
-    env->data           = d;
-    env->_impl->adopted = adopted;
-    forget_model(env);
-    rebind_robots(env);
-    rebind_scene(env);
+    mjModel   *old_m       = env->model;
+    mjData    *old_d       = env->data;
+    const bool old_adopted = env->_impl->adopted;
+    {
+        const auto lock     = lock_env(env);
+        env->model          = m;
+        env->data           = d;
+        env->_impl->adopted = adopted;
+        forget_model(env);
+        rebind_robots(env, &rebinds);
+        carry_ctrl(old_m, old_d, m, d);
+        rebind_scene(env);
+    }
+    release_pair(old_m, old_d, old_adopted);
     return {};
 }
 
 Status scene_add_object(Env *env, const SceneObject &obj)
 {
     if (!env) MJ_FAIL("scene_add_object: null env");
+    if (env->_impl->in_reset_hook) MJ_FAIL("scene_add_object: not allowed inside on_reset");
     env->spec.objects.push_back(obj);
     mjModel *m = nullptr;
     mjData  *d = nullptr;
@@ -1546,18 +1636,21 @@ Status scene_add_object(Env *env, const SceneObject &obj)
 Status scene_remove_object(Env *env, const std::string &name)
 {
     if (!env) MJ_FAIL("scene_remove_object: null env");
+    if (env->_impl->in_reset_hook) MJ_FAIL("scene_remove_object: not allowed inside on_reset");
     auto &objects = env->spec.objects;
     auto  it      = std::find_if(objects.begin(), objects.end(), [&](const SceneObject &o) {
         return o.name == name;
     });
     if (it == objects.end()) MJ_FAIL("scene_remove_object: no object named '" << name << "'");
+    const auto  index   = it - objects.begin();
     SceneObject removed = std::move(*it);
     objects.erase(it);
     mjModel *m = nullptr;
     mjData  *d = nullptr;
     Status   s = build_scene(&m, &d, &env->spec);
     if (s) s = swap_scene(env, m, d);
-    if (!s) objects.push_back(removed);
+    // Back where it was: a later object may attach to it.
+    if (!s) objects.insert(objects.begin() + index, std::move(removed));
     return s;
 }
 
@@ -1606,6 +1699,41 @@ static bool use_camera_impl(mjvCamera *cam, const mjModel *model, const char *na
 
 // Robot API
 
+// The sensor's addresses in m, from its MuJoCo names.
+static Status resolve_ft(const mjModel *m, ForceTorqueSensor *sensor)
+{
+    const std::string &name     = sensor->name;
+    const int          force_id = mj_name2id(m, mjOBJ_SENSOR, sensor->force_sensor.c_str());
+    if (force_id < 0) {
+        MJ_FAIL(
+          "force sensor '" << sensor->force_sensor << "' not found for FT sensor '" << name << "'"
+        );
+    }
+    const int torque_id = mj_name2id(m, mjOBJ_SENSOR, sensor->torque_sensor.c_str());
+    if (torque_id < 0) {
+        MJ_FAIL(
+          "torque sensor '" << sensor->torque_sensor << "' not found for FT sensor '" << name << "'"
+        );
+    }
+    if (m->sensor_type[force_id] != mjSENS_FORCE || m->sensor_dim[force_id] != 3)
+        MJ_FAIL("sensor '" << sensor->force_sensor << "' must be a 3D MuJoCo force sensor");
+    if (m->sensor_type[torque_id] != mjSENS_TORQUE || m->sensor_dim[torque_id] != 3)
+        MJ_FAIL("sensor '" << sensor->torque_sensor << "' must be a 3D MuJoCo torque sensor");
+    int site_id = -1;
+    if (!sensor->frame_site.empty()) {
+        site_id = mj_name2id(m, mjOBJ_SITE, sensor->frame_site.c_str());
+        if (site_id < 0) {
+            MJ_FAIL(
+              "frame_site '" << sensor->frame_site << "' not found for FT sensor '" << name << "'"
+            );
+        }
+    }
+    sensor->force_adr     = m->sensor_adr[force_id];
+    sensor->torque_adr    = m->sensor_adr[torque_id];
+    sensor->frame_site_id = site_id;
+    return {};
+}
+
 static Status resolve_ft_sensors(Robot *r, const ToolFrameSpec *tool, const std::string &pfx)
 {
     r->ft_sensors.clear();
@@ -1613,48 +1741,14 @@ static Status resolve_ft_sensors(Robot *r, const ToolFrameSpec *tool, const std:
 
     for (const ForceTorqueSensorSpec &spec : tool->ft_sensors) {
         if (spec.name.empty()) MJ_FAIL("ForceTorqueSensorSpec.name is required");
-
-        const std::string &name = spec.name;
-        const std::string  force_name =
-          pfx + (spec.force_sensor.empty() ? name + "_force" : spec.force_sensor);
-        const std::string torque_name =
-          pfx + (spec.torque_sensor.empty() ? name + "_torque" : spec.torque_sensor);
-
-        const int force_id = mj_name2id(r->model, mjOBJ_SENSOR, force_name.c_str());
-        if (force_id < 0) {
-            MJ_FAIL("force sensor '" << force_name << "' not found for FT sensor '" << name << "'");
-        }
-        const int torque_id = mj_name2id(r->model, mjOBJ_SENSOR, torque_name.c_str());
-        if (torque_id < 0) {
-            MJ_FAIL(
-              "torque sensor '" << torque_name << "' not found for FT sensor '" << name << "'"
-            );
-        }
-        if (r->model->sensor_type[force_id] != mjSENS_FORCE
-            || r->model->sensor_dim[force_id] != 3) {
-            MJ_FAIL("sensor '" << force_name << "' must be a 3D MuJoCo force sensor");
-        }
-        if (r->model->sensor_type[torque_id] != mjSENS_TORQUE
-            || r->model->sensor_dim[torque_id] != 3) {
-            MJ_FAIL("sensor '" << torque_name << "' must be a 3D MuJoCo torque sensor");
-        }
-
         ForceTorqueSensor sensor;
-        sensor.name          = name;
-        sensor.force_sensor  = force_name;
-        sensor.torque_sensor = torque_name;
-        sensor.force_adr     = r->model->sensor_adr[force_id];
-        sensor.torque_adr    = r->model->sensor_adr[torque_id];
-        if (!spec.frame_site.empty()) {
-            sensor.frame_site    = pfx + spec.frame_site;
-            sensor.frame_site_id = mj_name2id(r->model, mjOBJ_SITE, sensor.frame_site.c_str());
-            if (sensor.frame_site_id < 0) {
-                MJ_FAIL(
-                  "frame_site '" << sensor.frame_site << "' not found for FT sensor '" << name
-                                 << "'"
-                );
-            }
-        }
+        sensor.name = spec.name;
+        sensor.force_sensor =
+          pfx + (spec.force_sensor.empty() ? spec.name + "_force" : spec.force_sensor);
+        sensor.torque_sensor =
+          pfx + (spec.torque_sensor.empty() ? spec.name + "_torque" : spec.torque_sensor);
+        if (!spec.frame_site.empty()) sensor.frame_site = pfx + spec.frame_site;
+        if (Status s = resolve_ft(r->model, &sensor); !s) return s;
         r->ft_sensors.push_back(std::move(sensor));
     }
     return {};
@@ -1685,15 +1779,45 @@ static RobotPorts seeded_ports(const Robot &r)
     return p;
 }
 
-static void register_robot(Robot *r, Env *env)
+static void unregister_robot(Robot *r)
 {
+    if (Env *env = r->_impl->env) {
+        auto &robots = env->robots;
+        robots.erase(std::remove(robots.begin(), robots.end(), r), robots.end());
+    }
+}
+
+// r takes the configuration built into `built` and registers with env; r is untouched before.
+static void take_robot(Robot *r, Robot *built, Env *env)
+{
+    if (r->_impl->env != env) unregister_robot(r);
+    r->model          = built->model;
+    r->data           = built->data;
+    r->chain          = built->chain;
+    r->tip_T_tcp      = built->tip_T_tcp;
+    r->has_tcp_frame  = built->has_tcp_frame;
+    r->tcp_site       = std::move(built->tcp_site);
+    r->n_joints       = built->n_joints;
+    r->joint_names    = std::move(built->joint_names);
+    r->joint_limits   = std::move(built->joint_limits);
+    r->ft_sensors     = std::move(built->ft_sensors);
+    r->ctrl_mode      = built->ctrl_mode;
+    built->_impl->env = nullptr;
+    std::swap(r->_impl, built->_impl);
     if (std::find(env->robots.begin(), env->robots.end(), r) == env->robots.end())
         env->robots.push_back(r);
     r->_impl->env                 = env;
     static_cast<RobotPorts &>(*r) = seeded_ports(*r);
 }
 
-Status init_robot_from_mjcf(
+static Status resolve_robot_joints(Robot *r, const std::string &pfx)
+{
+    if (Status s = resolve_joints(r->model, r->joint_names, pfx, r->_impl.get()); !s) return s;
+    if (r->_impl->mode_applied) r->ctrl_mode = r->_impl->applied_mode;
+    return {};
+}
+
+static Status configure_from_mjcf(
   Robot               *r,
   Env                 *env,
   const char          *base_body,
@@ -1702,7 +1826,6 @@ Status init_robot_from_mjcf(
   const ToolFrameSpec *tool
 )
 {
-    if (!r || !env || !env->model) MJ_FAIL("init_robot_from_mjcf: null robot or empty env");
     if (!base_body || !tip_body) MJ_FAIL("init_robot_from_mjcf: null base or tip body");
     const std::string pfx           = prefix ? prefix : "";
     const std::string base          = pfx + base_body;
@@ -1711,23 +1834,18 @@ Status init_robot_from_mjcf(
     const bool        has_tcp_site  = tool && !tool->tcp_site.empty();
     const std::string tool_body     = has_tool_body ? pfx + tool->tool_body : "";
     const std::string tcp_site      = has_tcp_site ? pfx + tool->tcp_site : "";
-    LOG_INFO(
+    MJ_LOG_INFO(
       "init_robot_from_mjcf: '" << base << "' -> '" << tip << "'"
                                 << (has_tool_body ? " tool='" + tool_body + "'" : "")
                                 << (has_tcp_site ? " tcp='" + tcp_site + "'" : "")
     );
-    const auto lock  = lock_env(env);
-    mjModel   *model = env->model;
-    mjData    *data  = env->data;
-    r->model         = model;
-    r->data          = data;
-    r->tip_T_tcp     = KDL::Frame::Identity();
-    r->has_tcp_frame = false;
-    r->tcp_site.clear();
-    r->ft_sensors.clear();
+    mjModel *model = env->model;
+    mjData  *data  = env->data;
+    r->model       = model;
+    r->data        = data;
     if (Status s = build_kdl_from_model(r, model, base.c_str(), tip.c_str()); !s) return s;
     // The chain's joint names come from the model, so they already carry the prefix.
-    if (Status s = build_index_map(r); !s) return s;
+    if (Status s = resolve_robot_joints(r, ""); !s) return s;
     if (Status s = resolve_ft_sensors(r, tool, pfx); !s) return s;
 
     KDL::Frame tip_T_tcp = KDL::Frame::Identity();
@@ -1754,7 +1872,7 @@ Status init_robot_from_mjcf(
         ensure_kinematics(env);
         std::vector<int>      subtree      = collect_subtree(model, tool_bid);
         KDL::RigidBodyInertia tool_inertia = compute_tool_inertia(model, data, tip_bid, subtree);
-        LOG_INFO(
+        MJ_LOG_INFO(
           "appending lumped tool inertia: " << subtree.size() << " bodies under '" << tool_body
                                             << "'"
         );
@@ -1769,18 +1887,17 @@ Status init_robot_from_mjcf(
         r->chain.addSegment(KDL::Segment(seg_name, KDL::Joint(KDL::Joint::None), tip_T_tcp));
     }
 
-    LOG_INFO(
+    MJ_LOG_INFO(
       "chain ready: " << r->n_joints << " joints [" << base << " -> " << tip << "]"
                       << (has_tool_body ? " + tool '" + tool_body + "'" : "")
                       << (has_tcp ? (has_tcp_site ? " tcp site '" + tcp_site + "'"
                                                   : std::string(" tcp frame (manual)"))
                                   : "")
     );
-    register_robot(r, env);
     return {};
 }
 
-Status init_robot_from_chain(
+static Status configure_from_chain(
   Robot                          *r,
   Env                            *env,
   const KDL::Chain               &chain,
@@ -1789,10 +1906,8 @@ Status init_robot_from_chain(
   const ToolFrameSpec            *tool
 )
 {
-    if (!r || !env || !env->model) MJ_FAIL("init_robot_from_chain: null robot or empty env");
-    const auto lock  = lock_env(env);
-    mjModel   *model = env->model;
-    LOG_INFO(
+    mjModel *model = env->model;
+    MJ_LOG_INFO(
       "init_robot_from_chain: " << chain.getNrOfSegments() << " segments, " << chain.getNrOfJoints()
                                 << " joints, prefix='" << (prefix ? prefix : "") << "'"
     );
@@ -1803,12 +1918,8 @@ Status init_robot_from_chain(
         );
     }
 
-    r->model         = model;
-    r->data          = env->data;
-    r->tip_T_tcp     = KDL::Frame::Identity();
-    r->has_tcp_frame = false;
-    r->tcp_site.clear();
-    r->ft_sensors.clear();
+    r->model = model;
+    r->data  = env->data;
 
     // The chain is authored, not derived: take it as given, tool segments included.
     r->chain       = chain;
@@ -1824,13 +1935,48 @@ Status init_robot_from_chain(
         );
     }
 
-    if (Status s = build_index_map(r, pfx); !s) return s;
+    if (Status s = resolve_robot_joints(r, pfx); !s) return s;
     if (Status s = resolve_ft_sensors(r, tool, pfx); !s) return s;
 
-    LOG_INFO(
+    MJ_LOG_INFO(
       "chain adopted: " << r->n_joints << " joints, " << r->chain.getNrOfSegments() << " segments"
     );
-    register_robot(r, env);
+    return {};
+}
+
+Status init_robot_from_mjcf(
+  Robot               *r,
+  Env                 *env,
+  const char          *base_body,
+  const char          *tip_body,
+  const char          *prefix,
+  const ToolFrameSpec *tool
+)
+{
+    if (!r || !env || !env->model) MJ_FAIL("init_robot_from_mjcf: null robot or empty env");
+    const auto lock = lock_env(env);
+    Robot      built;
+    if (Status s = configure_from_mjcf(&built, env, base_body, tip_body, prefix, tool); !s)
+        return s;
+    take_robot(r, &built, env);
+    return {};
+}
+
+Status init_robot_from_chain(
+  Robot                          *r,
+  Env                            *env,
+  const KDL::Chain               &chain,
+  const std::vector<std::string> &joint_names,
+  const char                     *prefix,
+  const ToolFrameSpec            *tool
+)
+{
+    if (!r || !env || !env->model) MJ_FAIL("init_robot_from_chain: null robot or empty env");
+    const auto lock = lock_env(env);
+    Robot      built;
+    if (Status s = configure_from_chain(&built, env, chain, joint_names, prefix, tool); !s)
+        return s;
+    take_robot(r, &built, env);
     return {};
 }
 
@@ -1860,10 +2006,7 @@ std::vector<double> joint_force_limits(const Robot *r, double fallback)
 void cleanup(Robot *r)
 {
     if (!r) return;
-    if (Env *env = r->_impl->env) {
-        auto &robots = env->robots;
-        robots.erase(std::remove(robots.begin(), robots.end(), r), robots.end());
-    }
+    unregister_robot(r);
     r->model         = nullptr;
     r->data          = nullptr;
     r->chain         = KDL::Chain();
@@ -2093,7 +2236,14 @@ static ResetInfo reset_env(Env *env, const ResetOptions *options, bool reset_muj
     ctx.data    = data;
     ctx.options = options;
     ctx.info    = &info;
-    if (env->on_reset) env->on_reset(&ctx);
+    if (env->on_reset) {
+        struct Leave
+        {
+            bool &flag;
+            ~Leave() { flag = false; }
+        } leave{ env->_impl->in_reset_hook = true };
+        env->on_reset(&ctx);
+    }
 
     ensure_kinematics(env);
     for (Robot *r : env->robots) read_robot(r);
@@ -2119,9 +2269,15 @@ static Status switch_group(Env *env, int robot, CtrlMode mode)
         found = true;
         // Seed the new actuator where the joint already is, so switching does not jump.
         switch (mode) {
-        case CtrlMode::POSITION: d->ctrl[a] = d->actuator_length[a]; break;
-        case CtrlMode::VELOCITY: d->ctrl[a] = d->actuator_velocity[a]; break;
-        case CtrlMode::TORQUE: d->ctrl[a] = 0.0; break;
+        case CtrlMode::POSITION:
+            d->ctrl[a] = d->actuator_length[a];
+            break;
+        case CtrlMode::VELOCITY:
+            d->ctrl[a] = d->actuator_velocity[a];
+            break;
+        case CtrlMode::TORQUE:
+            d->ctrl[a] = 0.0;
+            break;
         }
     }
     if (!found) MJ_FAIL("robot " << robot << " has no actuators for this control mode");
@@ -2191,9 +2347,15 @@ static void apply_robot(Robot *r)
         const double gear = m->actuator_gear[6 * a];
         double       u    = 0.0;
         switch (r->ctrl_mode) {
-        case CtrlMode::POSITION: u = gear * r->jnt_pos_cmd[i]; break;
-        case CtrlMode::VELOCITY: u = gear * r->jnt_vel_cmd[i]; break;
-        case CtrlMode::TORQUE: u = r->jnt_trq_cmd[i] / gear; break;
+        case CtrlMode::POSITION:
+            u = gear * r->jnt_pos_cmd[i];
+            break;
+        case CtrlMode::VELOCITY:
+            u = gear * r->jnt_vel_cmd[i];
+            break;
+        case CtrlMode::TORQUE:
+            u = r->jnt_trq_cmd[i] / gear;
+            break;
         }
         d->ctrl[a]          = clamp_ctrlrange(m, a, u);
         r->jnt_saturated[i] = d->ctrl[a] != u;
@@ -2244,22 +2406,22 @@ static int free_joint_of_body(const mjModel *model, int bid)
 SceneJointSlot *bind_scene_joint(SceneState *s, const char *joint_name)
 {
     if (!s || !s->model || !joint_name) {
-        LOG_ERROR("bind_scene_joint: null scene state or name");
+        MJ_LOG_ERROR("bind_scene_joint: null scene state or name");
         return nullptr;
     }
     const int jid = mj_name2id(s->model, mjOBJ_JOINT, joint_name);
     if (jid < 0) {
-        LOG_ERROR("bind_scene_joint: no joint named '" << joint_name << "'");
+        MJ_LOG_ERROR("bind_scene_joint: no joint named '" << joint_name << "'");
         return nullptr;
     }
     const int type = s->model->jnt_type[jid];
     if (type == mjJNT_FREE || type == mjJNT_BALL) {
-        LOG_ERROR("bind_scene_joint: joint '" << joint_name << "' is not a scalar joint");
+        MJ_LOG_ERROR("bind_scene_joint: joint '" << joint_name << "' is not a scalar joint");
         return nullptr;
     }
     for (const auto &slot : s->joints) {
         if (slot.name == joint_name) {
-            LOG_ERROR("bind_scene_joint: joint '" << joint_name << "' is already bound");
+            MJ_LOG_ERROR("bind_scene_joint: joint '" << joint_name << "' is already bound");
             return nullptr;
         }
     }
@@ -2271,22 +2433,22 @@ SceneJointSlot *bind_scene_joint(SceneState *s, const char *joint_name)
 SceneFreeBodySlot *bind_scene_free_body(SceneState *s, const char *body_name)
 {
     if (!s || !s->model || !body_name) {
-        LOG_ERROR("bind_scene_free_body: null scene state or name");
+        MJ_LOG_ERROR("bind_scene_free_body: null scene state or name");
         return nullptr;
     }
     const int bid = mj_name2id(s->model, mjOBJ_BODY, body_name);
     if (bid < 0) {
-        LOG_ERROR("bind_scene_free_body: no body named '" << body_name << "'");
+        MJ_LOG_ERROR("bind_scene_free_body: no body named '" << body_name << "'");
         return nullptr;
     }
     const int jid = free_joint_of_body(s->model, bid);
     if (jid < 0) {
-        LOG_ERROR("bind_scene_free_body: body '" << body_name << "' owns no free joint");
+        MJ_LOG_ERROR("bind_scene_free_body: body '" << body_name << "' owns no free joint");
         return nullptr;
     }
     for (const auto &slot : s->free_bodies) {
         if (slot.name == body_name) {
-            LOG_ERROR("bind_scene_free_body: body '" << body_name << "' is already bound");
+            MJ_LOG_ERROR("bind_scene_free_body: body '" << body_name << "' is already bound");
             return nullptr;
         }
     }
@@ -2297,17 +2459,17 @@ SceneFreeBodySlot *bind_scene_free_body(SceneState *s, const char *body_name)
 SceneWrenchSlot *bind_scene_wrench(SceneState *s, const char *body_name)
 {
     if (!s || !s->model || !body_name) {
-        LOG_ERROR("bind_scene_wrench: null scene state or name");
+        MJ_LOG_ERROR("bind_scene_wrench: null scene state or name");
         return nullptr;
     }
     const int bid = mj_name2id(s->model, mjOBJ_BODY, body_name);
     if (bid < 0) {
-        LOG_ERROR("bind_scene_wrench: no body named '" << body_name << "'");
+        MJ_LOG_ERROR("bind_scene_wrench: no body named '" << body_name << "'");
         return nullptr;
     }
     for (const auto &slot : s->wrenches) {
         if (slot.name == body_name) {
-            LOG_ERROR("bind_scene_wrench: body '" << body_name << "' is already bound");
+            MJ_LOG_ERROR("bind_scene_wrench: body '" << body_name << "' is already bound");
             return nullptr;
         }
     }
@@ -2332,17 +2494,17 @@ static int actuator_for_name(const mjModel *m, const char *name)
 SceneActuatorSlot *bind_scene_actuator(SceneState *s, const char *name)
 {
     if (!s || !s->model || !name) {
-        LOG_ERROR("bind_scene_actuator: null scene state or name");
+        MJ_LOG_ERROR("bind_scene_actuator: null scene state or name");
         return nullptr;
     }
     const int aid = actuator_for_name(s->model, name);
     if (aid < 0) {
-        LOG_ERROR("bind_scene_actuator: nothing actuates '" << name << "'");
+        MJ_LOG_ERROR("bind_scene_actuator: nothing actuates '" << name << "'");
         return nullptr;
     }
     for (const auto &slot : s->actuators) {
         if (slot.name == name) {
-            LOG_ERROR("bind_scene_actuator: '" << name << "' is already bound");
+            MJ_LOG_ERROR("bind_scene_actuator: '" << name << "' is already bound");
             return nullptr;
         }
     }
@@ -2379,7 +2541,8 @@ static bool rebind_scene(Env *env)
         slot.ctrl_id = actuator_for_name(model, slot.name.c_str());
         if (slot.ctrl_id < 0) unbound += " actuator '" + slot.name + "'";
     }
-    if (!unbound.empty()) LOG_ERROR("scene slots gone from the rebuilt model, unbound:" << unbound);
+    if (!unbound.empty())
+        MJ_LOG_ERROR("scene slots gone from the rebuilt model, unbound:" << unbound);
     return unbound.empty();
 }
 
@@ -2415,7 +2578,7 @@ static void adjust_realtime_factor(Viewer *v, int direction)
     }
 
     v->_tick_t = {};
-    LOG_INFO(realtime_factor_label(v->realtime_factor));
+    MJ_LOG_INFO(realtime_factor_label(v->realtime_factor));
 }
 
 /* Hint GLFW to use the Wayland backend on pure Wayland sessions.
@@ -2451,18 +2614,16 @@ struct SimUiState
     bool                              sim_ready = false;
     std::mutex                        sim_ready_mtx;
     std::condition_variable           sim_ready_cv;
-    double                            prev_sim_time = 0.0;
-    int                               pert_body     = -1; // body step() last pushed; -1 none
-    std::atomic<int>                  rtf_step{ 0 };      // + faster, - slower (render thread)
+    std::string                       start_error;    // why the render thread gave up, if it did
+    int                               pert_body = -1; // body step() last pushed; -1 none
+    std::atomic<int>                  rtf_step{ 0 };  // + faster, - slower (render thread)
     GLFWwindow                       *glfw_window = nullptr;
     VideoRecorder                     recorder;
     bool                              recorder_active = false;
     int record_camera        = 0; // 0=current, 1=free, 2=tracking, 3+=fixed cam
     int record_frame_stride  = 1;
     int record_frame_counter = 0;
-    /* User scene merged into each render frame by Simulate (overlay polylines,
-     * e.g. the EE trajectory trace). Guarded by user_scn_mtx because the control
-     * thread appends to it while the render thread reads it. */
+    // Overlay geoms; written under sim->mtx (Simulate's reader) and user_scn_mtx (recorders').
     mjvScene   user_scn{};
     std::mutex user_scn_mtx;
     /* Key state as the render thread's key callback sees it, so that a caller
@@ -2669,10 +2830,6 @@ static void close_viewer(Env *env)
     auto *ss             = static_cast<SimUiState *>(v->_sim_ui);
     ss->sim->exitrequest = 1;
     if (ss->render_thread.joinable()) ss->render_thread.join();
-    {
-        std::lock_guard<std::mutex> lk(g_windows_mtx);
-        g_windows.erase(ss->glfw_window);
-    }
     if (ss->recorder_active) cleanup(&ss->recorder);
     /* Render thread has stopped, so no one is reading user_scn now. */
     mjv_freeScene(&ss->user_scn);
@@ -2683,16 +2840,16 @@ static void close_viewer(Env *env)
 void clear_trace(Viewer *v)
 {
     if (!v || !v->_sim_ui) return; // headless / no window
-    auto                       *ss = static_cast<SimUiState *>(v->_sim_ui);
-    std::lock_guard<std::mutex> lk(ss->user_scn_mtx);
+    auto            *ss = static_cast<SimUiState *>(v->_sim_ui);
+    std::scoped_lock lk(ss->sim->mtx, ss->user_scn_mtx);
     ss->user_scn.ngeom = 0;
 }
 
 void add_trace_segment(Viewer *v, const KDL::Vector &a, const KDL::Vector &b, const float rgba[4])
 {
     if (!v || !v->_sim_ui) return; // headless / no window
-    auto                       *ss = static_cast<SimUiState *>(v->_sim_ui);
-    std::lock_guard<std::mutex> lk(ss->user_scn_mtx);
+    auto            *ss = static_cast<SimUiState *>(v->_sim_ui);
+    std::scoped_lock lk(ss->sim->mtx, ss->user_scn_mtx);
     if (ss->user_scn.ngeom >= ss->user_scn.maxgeom) return;
     mjvGeom *g = &ss->user_scn.geoms[ss->user_scn.ngeom++];
 
@@ -2716,8 +2873,8 @@ void add_overlay_arrow(
     if (!v || !v->_sim_ui) return; // headless / no window
     KDL::Vector unit = dir;
     if (unit.Normalize() < 1e-9 || length <= 0.0) return; // nothing to point at
-    auto                       *ss = static_cast<SimUiState *>(v->_sim_ui);
-    std::lock_guard<std::mutex> lk(ss->user_scn_mtx);
+    auto            *ss = static_cast<SimUiState *>(v->_sim_ui);
+    std::scoped_lock lk(ss->sim->mtx, ss->user_scn_mtx);
     if (ss->user_scn.ngeom >= ss->user_scn.maxgeom) return;
     mjvGeom *g = &ss->user_scn.geoms[ss->user_scn.ngeom++];
 
@@ -2752,6 +2909,22 @@ bool key_pressed(const Viewer *v, int glfw_key)
     return ss->keys[glfw_key].load(std::memory_order_relaxed);
 }
 
+// GlfwAdapter mju_errors, ending the process, when GLFW or its window fails: find out first.
+static std::string glfw_window_error()
+{
+    if (glfwInit() != GLFW_TRUE) return "GLFW could not be initialised";
+    GLFWmonitor *monitor = glfwGetPrimaryMonitor();
+    if (!monitor || !glfwGetVideoMode(monitor)) return "no monitor to size the window by";
+    glfwDefaultWindowHints();
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_SAMPLES, 4);
+    GLFWwindow *probe = glfwCreateWindow(64, 64, "probe", nullptr, nullptr);
+    glfwDefaultWindowHints();
+    if (!probe) return "the window could not be created";
+    glfwDestroyWindow(probe);
+    return {};
+}
+
 Status open_viewer(Env *env, const char *title)
 {
     if (!env || !env->model) MJ_FAIL("open_viewer: empty env");
@@ -2769,9 +2942,6 @@ Status open_viewer(Env *env, const char *title)
     mjv_defaultCamera(&ss->cam);
     mjv_defaultOption(&ss->opt);
     mjv_defaultPerturb(&ss->pert);
-    /* If the caller configured Viewer.cam before open_viewer (e.g. set a
-     * named camera via use_camera() or a free-camera distance > 0), apply it. */
-    if (v->cam.type != mjCAMERA_FREE || v->cam.distance > 0.0) ss->cam = v->cam;
 
     /* Create GlfwAdapter INSIDE the render thread so glfwMakeContextCurrent() is
      * called there and the GL context is owned by that thread.  RenderLoop() then
@@ -2779,10 +2949,18 @@ Status open_viewer(Env *env, const char *title)
      * the same thread as the context). */
     ss->render_thread = std::thread([ss]() {
         namespace mj = mujoco;
-        ss->sim      = std::make_unique<mj::Simulate>(
+        if (ss->start_error = glfw_window_error(); !ss->start_error.empty()) {
+            {
+                std::lock_guard<std::mutex> lk(ss->sim_ready_mtx);
+                ss->sim_ready = true;
+            }
+            ss->sim_ready_cv.notify_one();
+            return;
+        }
+        ss->sim = std::make_unique<mj::Simulate>(
           std::make_unique<mj::GlfwAdapter>(), &ss->cam, &ss->opt, &ss->pert, false
         );
-        ss->sim->font = 2; // preferred 150%; overwritten by RenderLoop HiDPI detection
+        ss->sim->font = 2; // 150% rather than RenderLoop's display-scale default
         /* GlfwAdapter constructor calls glfwMakeContextCurrent, so
          * glfwGetCurrentContext() returns the SimUI window on this thread.
          * Install a chained key callback so ,/. speed keys reach sim_ui_key_cb. */
@@ -2800,6 +2978,11 @@ Status open_viewer(Env *env, const char *title)
         }
         ss->sim_ready_cv.notify_one();
         ss->sim->RenderLoop(); // blocks; GL context lives here
+        {
+            std::lock_guard<std::mutex> lk(g_windows_mtx);
+            g_windows.erase(ss->glfw_window);
+        }
+        ss->sim->platform_ui.reset(); // frees the GL context and window on the thread owning them
     });
 
     // Wait for render thread to construct the Simulate object.
@@ -2807,33 +2990,27 @@ Status open_viewer(Env *env, const char *title)
         std::unique_lock<std::mutex> lk(ss->sim_ready_mtx);
         ss->sim_ready_cv.wait(lk, [ss] { return ss->sim_ready; });
     }
+    if (!ss->start_error.empty()) {
+        ss->render_thread.join();
+        const std::string error = ss->start_error;
+        delete ss;
+        MJ_FAIL("open_viewer: " << error);
+    }
 
-    /* Send load request from this thread; the render loop processes it.
-     * RenderLoop() runs ComputeFontScale() on HiDPI displays (200% on 2x),
-     * overriding the font we set above.  Load() calls RefreshMjrContext with
-     * the current font value, so we correct it here after the first load. */
     ss->sim->LoadMessage(title);
     ss->sim->Load(m, d, title);
     ss->sim->SetWrapperRealtimeFactor(v->realtime_factor);
-    if (ss->sim->font != 2) {
-        ss->sim->font = 2; // 150%: 0=50% 1=100% 2=150% 3=200%
-        ss->sim->Load(m, d, title);
-        ss->sim->SetWrapperRealtimeFactor(v->realtime_factor);
-    }
+
+    mjv_defaultScene(&ss->user_scn);
+    mjv_makeScene(m, &ss->user_scn, kUserSceneMaxGeom);
+    ss->user_scn.ngeom = 0;
     {
         std::unique_lock<std::recursive_mutex> lock(ss->sim->mtx);
+        // After the load, which aligns the view: a camera set before open_viewer wins.
+        if (v->cam.type != mjCAMERA_FREE || v->cam.distance > 0.0) ss->cam = v->cam;
+        ss->sim->user_scn = &ss->user_scn;
         ensure_kinematics(env);
     }
-
-    /* Allocate the overlay user scene and hand it to Simulate, which merges it
-     * into every rendered frame (simulate.h: Simulate::user_scn). add_trace_segment()
-     * appends geoms here from the control thread. */
-    mjv_defaultScene(&ss->user_scn);
-    // Overlay geom budget for add_trace_segment(); caps the DSL trace-length
-    // (mj:trace-length maxInclusive in simulation/mujoco.shacl.ttl).
-    mjv_makeScene(m, &ss->user_scn, /*maxgeom=*/8192);
-    ss->user_scn.ngeom = 0;
-    ss->sim->user_scn  = &ss->user_scn;
 
     v->_sim_ui = ss;
     return {};
@@ -2847,7 +3024,7 @@ static void reload_viewer(Env *env, mjModel *m, mjData *d)
     auto *ss = static_cast<SimUiState *>(v->_sim_ui);
     // Camera, geom and site ids move with a recompile, so a recording cannot carry on.
     if (ss->recorder_active) {
-        LOG_WARN("scene rebuilt, recording stopped");
+        MJ_LOG_WARN("scene rebuilt, recording stopped");
         cleanup(&ss->recorder);
         ss->recorder_active      = false;
         ss->record_frame_counter = 0;
@@ -2855,12 +3032,11 @@ static void reload_viewer(Env *env, mjModel *m, mjData *d)
     }
     ss->sim->Load(m, d, ss->sim->filename);
     {
-        // Sync() copies user_scn under sim->mtx; the control thread appends under user_scn_mtx.
-        std::unique_lock<std::recursive_mutex> lock(ss->sim->mtx);
-        std::lock_guard<std::mutex>            lk(ss->user_scn_mtx);
+        std::scoped_lock lk(ss->sim->mtx, ss->user_scn_mtx);
         mjv_freeScene(&ss->user_scn);
-        mjv_makeScene(m, &ss->user_scn, /*maxgeom=*/8192);
+        mjv_makeScene(m, &ss->user_scn, kUserSceneMaxGeom);
         ss->user_scn.ngeom = 0;
+        ss->pert_body      = -1; // a body id of the old model
         mj_forward(m, d);
     }
 }
@@ -2892,21 +3068,15 @@ static bool step_viewer(Env *env)
         if (rtf_changed) sim->SetWrapperRealtimeFactor(v->realtime_factor);
         handle_recorder_request(ss, m);
 
-
         {
             /* step() is the sole physics driver; the render thread only renders.
              * Honour sim->run as the pause flag so the Simulate UI Space-bar
              * and Pause/Run radio button work correctly. */
             std::unique_lock<std::recursive_mutex> lock(sim->mtx);
 
-            // Detect a UI-driven reset: time jumped back (or to zero) while the
-            // simulation had already advanced.  Guard with prev_sim_time > timestep
-            // to avoid false triggers on the very first tick or when the user
-            // scrubs to t=0 from a paused state before any physics has run.
-            const bool time_jumped_back =
-              ss->prev_sim_time > m->opt.timestep && d->time < ss->prev_sim_time - kSimTimeEps;
-            if (time_jumped_back) (void)reset_env(env, nullptr, false);
-            ss->prev_sim_time = d->time;
+            // The UI's Reset has already reset the data; the Env re-seeds its parts.
+            if (std::exchange(sim->wrapper_reset_request, false))
+                (void)reset_env(env, nullptr, false);
 
             if (sim->run && !all_paused(env)) {
                 // Only the dragged body's xfrc_applied is ours: user wrenches elsewhere survive.
@@ -2944,9 +3114,15 @@ struct VideoRecorderImpl
     int                  width  = 0;
     int                  height = 0;
     std::vector<uint8_t> rgb_buf;
+    bool                 made      = false; // scn and con hold the model of model_gen
+    std::uint64_t        model_gen = 0;
 };
 
 static constexpr EGLint kEglMaxDevices = 8;
+
+// A device's display is one per process and eglTerminate ends every context on it.
+static std::mutex                          g_egl_mtx;
+static std::unordered_map<EGLDisplay, int> g_egl_users;
 
 /* An initialized EGL display for offscreen rendering, or EGL_NO_DISPLAY.
 
@@ -2991,6 +3167,10 @@ static Status vr_egl_init(VideoRecorderImpl *impl)
     impl->egl_dpy = vr_egl_display(&major, &minor);
     if (impl->egl_dpy == EGL_NO_DISPLAY)
         MJ_FAIL("EGL: no device display and no default display could be initialized");
+    {
+        const std::lock_guard<std::mutex> lock(g_egl_mtx);
+        ++g_egl_users[impl->egl_dpy];
+    }
 
     EGLConfig cfg;
     EGLint    n = 0;
@@ -3006,7 +3186,7 @@ static Status vr_egl_init(VideoRecorderImpl *impl)
     if (!eglMakeCurrent(impl->egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, impl->egl_ctx))
         MJ_FAIL("EGL: make current failed (error 0x" << std::hex << eglGetError() << ")");
 
-    LOG_INFO("EGL " << major << "." << minor << " headless context ready");
+    MJ_LOG_INFO("EGL " << major << "." << minor << " headless context ready");
     return {};
 }
 
@@ -3018,13 +3198,23 @@ static void vr_egl_done(VideoRecorderImpl *impl)
         eglDestroyContext(impl->egl_dpy, impl->egl_ctx);
         impl->egl_ctx = EGL_NO_CONTEXT;
     }
-    eglTerminate(impl->egl_dpy);
+    bool last = false;
+    {
+        const std::lock_guard<std::mutex> lock(g_egl_mtx);
+        const auto                        it = g_egl_users.find(impl->egl_dpy);
+        if (it != g_egl_users.end() && --it->second == 0) {
+            g_egl_users.erase(it);
+            last = true;
+        }
+    }
+    if (last) eglTerminate(impl->egl_dpy);
     impl->egl_dpy = EGL_NO_DISPLAY;
 }
 
 Status init_offscreen(VideoRecorder *vr, mjModel *model, int width, int height)
 {
     if (!vr || !model) MJ_FAIL("init_offscreen: null recorder or model");
+    cleanup(vr);
 
     // Set up default camera and options on the user-visible struct.
     mjv_defaultCamera(&vr->cam);
@@ -3036,20 +3226,30 @@ Status init_offscreen(VideoRecorder *vr, mjModel *model, int width, int height)
     impl->height = height;
 
     if (Status s = vr_egl_init(impl); !s) {
+        vr_egl_done(impl);
         delete impl;
         return s;
     }
-
-    // MuJoCo rendering contexts.
-    mjv_defaultScene(&impl->scn);
-    mjr_defaultContext(&impl->con);
-    mjv_makeScene(model, &impl->scn, 4000);
-    mjr_makeContext(model, &impl->con, mjFONTSCALE_150);
-    mjr_setBuffer(mjFB_OFFSCREEN, &impl->con);
-    mjr_resizeOffscreen(width, height, &impl->con);
-
     vr->_impl = impl;
     return {};
+}
+
+// The scene and render context belong to a model: made at the first frame, remade on a rebuild.
+static void vr_follow_model(VideoRecorderImpl *impl, const Env *env)
+{
+    if (impl->made && impl->model_gen == env->_impl->model_gen) return;
+    if (impl->made) {
+        mjr_freeContext(&impl->con);
+        mjv_freeScene(&impl->scn);
+    }
+    mjv_defaultScene(&impl->scn);
+    mjr_defaultContext(&impl->con);
+    mjv_makeScene(env->model, &impl->scn, 4000);
+    mjr_makeContext(env->model, &impl->con, mjFONTSCALE_150);
+    mjr_setBuffer(mjFB_OFFSCREEN, &impl->con);
+    mjr_resizeOffscreen(impl->width, impl->height, &impl->con);
+    impl->made      = true;
+    impl->model_gen = env->_impl->model_gen;
 }
 
 Status init_video_recorder(
@@ -3074,7 +3274,9 @@ Status init_video_recorder(
         return s;
     }
 
-    LOG_INFO("VideoRecorder: " << width << "x" << height << " @ " << fps << " fps -> " << out_path);
+    MJ_LOG_INFO(
+      "VideoRecorder: " << width << "x" << height << " @ " << fps << " fps -> " << out_path
+    );
     return {};
 }
 
@@ -3085,10 +3287,15 @@ static bool render_bottom_up(VideoRecorder *vr, Env *env, std::uint8_t *out)
     auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
 
     // One EGL context per recorder: make this one current before rendering.
-    eglMakeCurrent(impl->egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, impl->egl_ctx);
+    if (!eglMakeCurrent(impl->egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, impl->egl_ctx)) {
+        MJ_LOG_ERROR("EGL: make current failed (error 0x" << std::hex << eglGetError() << ")");
+        return false;
+    }
+    vr_follow_model(impl, env);
 
     {
         const auto lock = lock_env(env);
+        ensure_kinematics(env);
         mjv_updateScene(env->model, env->data, &vr->opt, nullptr, &vr->cam, mjCAT_ALL, &impl->scn);
     }
 
@@ -3119,12 +3326,10 @@ bool render_rgb(VideoRecorder *vr, Env *env, std::uint8_t *out)
     auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
 
     // Callers of the public API get the image top-down, as every image format wants it.
-    const int            row_bytes = kRgbBytesPerPixel * impl->width;
-    std::vector<uint8_t> tmp(static_cast<size_t>(row_bytes));
+    const std::size_t row_bytes = static_cast<std::size_t>(kRgbBytesPerPixel) * impl->width;
     for (int top = 0, bot = impl->height - 1; top < bot; ++top, --bot) {
-        memcpy(tmp.data(), out + top * row_bytes, row_bytes);
-        memcpy(out + top * row_bytes, out + bot * row_bytes, row_bytes);
-        memcpy(out + bot * row_bytes, tmp.data(), row_bytes);
+        std::uint8_t *top_row = out + top * row_bytes;
+        std::swap_ranges(top_row, top_row + row_bytes, out + bot * row_bytes);
     }
     return true;
 }
@@ -3139,28 +3344,17 @@ bool record_frame(VideoRecorder *vr, Env *env)
     return sink_write(&impl->sink, impl->rgb_buf.data(), impl->rgb_buf.size());
 }
 
-Status init_video_recorder(
-  VideoRecorder  *vr,
-  mjModel        *model,
-  const char     *out_path,
-  VideoResolution resolution,
-  int             fps
-)
-{
-    /* 16:9 width for each named height, rounded up to even: 480p is 853.3 wide, and the encoder
-       takes no odd dimension. */
-    int h = static_cast<int>(resolution);
-    int w = ((h * 16 / 9) + 1) / 2 * 2;
-    return init_video_recorder(vr, model, out_path, w, h, fps);
-}
-
 void cleanup(VideoRecorder *vr)
 {
     if (!vr || !vr->_impl) return;
     auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
     sink_close(&impl->sink);
-    mjr_freeContext(&impl->con);
-    mjv_freeScene(&impl->scn);
+    if (impl->made) {
+        // Its GL objects live in its own context, which another recorder may have replaced.
+        if (eglMakeCurrent(impl->egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, impl->egl_ctx))
+            mjr_freeContext(&impl->con);
+        mjv_freeScene(&impl->scn);
+    }
     vr_egl_done(impl);
     delete impl;
     vr->_impl = nullptr;
@@ -3184,5 +3378,19 @@ void cleanup(VideoRecorder *vr)
 }
 
 #endif // MJ_KDL_HAS_EGL
+
+Status init_video_recorder(
+  VideoRecorder  *vr,
+  mjModel        *model,
+  const char     *out_path,
+  VideoResolution resolution,
+  int             fps
+)
+{
+    // 16:9 at the named height, rounded to even (480p is 853.3 wide; the encoder takes no odd).
+    const int h = static_cast<int>(resolution);
+    const int w = ((h * 16 / 9) + 1) / 2 * 2;
+    return init_video_recorder(vr, model, out_path, w, h, fps);
+}
 
 } // namespace mj_kdl

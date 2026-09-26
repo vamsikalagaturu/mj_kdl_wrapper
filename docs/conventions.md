@@ -1,7 +1,7 @@
 # Conventions {#page_conventions}
 
 What the numbers in the API mean, and what persists between calls. The same holds in C++ and
-Python.
+Python, except the scene slots (`bind_scene_*()`), which only C++ has.
 
 ## Units
 
@@ -50,6 +50,14 @@ ports read as read-only numpy copies; assign a whole vector to write one.
 ctrl is its driver joint angle (0 open, 0.82 rad closed), and a motor with gear 4 turns
 command 1 into 4 N m. `update()` clamps it to `ctrlrange` and sets `saturated`.
 
+## Physics options
+
+`<option>` is global to a scene, so it comes from one place: the first robot's own MJCF, with
+`SceneSpec::timestep` and `gravity_z` on top. MuJoCo drops the `<option>` of every attachment
+and later robot with an "Attach conflict" warning; the 2F-85's `cone="elliptic"
+impratio="10"` is one of them. `env.model->opt` can be changed after `init_env()`; a rebuild
+recompiles the model and drops that change.
+
 ## Stepping
 
 `step()` is MuJoCo's `mj_step()` split as `mj_step2()` then `mj_step1()`. Afterwards `qpos`,
@@ -72,3 +80,7 @@ wrapper writes only what it owns:
 `reset()` resets MuJoCo, re-seeds every robot port and scene slot (commands hold the reset pose,
 wrench slots zero), runs `Env::on_reset`, then reads the measurements back. A command the hook
 primes is kept.
+
+A rebuild (`scene_add_object()` / `scene_remove_object()`) is not a reset: the time,
+`qpos`/`qvel` (by joint name and type) and `act`/`ctrl` (by actuator name) carry over, and every
+port command is kept.

@@ -66,4 +66,14 @@ jobs:
           colcon build --packages-select mj_kdl_wrapper \
             --cmake-args -DMJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON \
                          -DMJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}" \
-                         -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF
+                         -DMJ_KDL_WITH_ROS=ON \
+                         -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF
+
+      # The ROS camera publisher's test needs no Menagerie; tests.yml runs the rest.
+      - name: Test the ROS camera publisher
+        shell: bash
+        run: |
+          source /opt/ros/${{ matrix.ros_distro }}/setup.bash
+          source ws/install/setup.bash
+          ctest --test-dir ws/build/mj_kdl_wrapper -R '^CameraRosTest\.' \
+            --no-tests=error --output-on-failure

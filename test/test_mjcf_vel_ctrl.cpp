@@ -1,17 +1,10 @@
 /* test_mjcf_vel_ctrl.cpp
- * Joint velocity control on the Kinova GEN3 (MJCF).
- *
- * gen3.xml has high-gain position actuators (kp=2000, kv=100).
- * Velocity control is implemented in POSITION mode by integrating the
- * desired velocity into a position setpoint each step:
- *
- *   vel_des[i] = clamp(Kv * (target[i] - q[i]), -maxVel, maxVel)
- *   pos_cmd[i] += vel_des[i] * dt
- *
- * The position servo tracks the advancing setpoint, making the joint
- * follow the commanded velocity profile. */
+ * VELOCITY mode on the Kinova GEN3: the <joint>_velocity actuators added through
+ * RobotSpec::modes drive the arm from home to a target under a clamped proportional velocity
+ * command, as ex_joint_ctrl's second motion does. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "common.hpp"
 #include "example_paths.hpp"
 
 #include <gtest/gtest.h>
@@ -21,87 +14,51 @@
 #include <filesystem>
 #include <string>
 
-static constexpr double kHomePose[7]   = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
-static constexpr double kTargetPose[7] = { 0.3, 0.5, 2.9, -2.0, 0.3, 1.2, 1.3 };
-static constexpr double kKv            = 2.0;  // P gain [rad/s per rad error]
-static constexpr double kMaxVel        = 0.6;  // velocity clamp [rad/s]
-static constexpr double kTol           = 0.02; // convergence tolerance [rad]
-static constexpr double kTimeout       = 5.0;  // max simulation time [s]
-
+namespace ex = mj_kdl_examples;
 namespace fs = std::filesystem;
-class MjcfVelCtrlTest : public testing::Test
+
+static constexpr double kTargetPose[7] = { 0.3, 0.5, 2.9, -2.0, 0.3, 1.2, 1.3 };
+static constexpr double kVelGain       = 500.0; // velocity actuator kv [Nm s/rad]
+static constexpr double kKv            = 2.0;   // [rad/s per rad]
+static constexpr double kMaxVel        = 0.6;   // [rad/s]
+static constexpr double kTol           = 0.01;  // [rad]
+static constexpr double kTimeout       = 5.0;   // [s]
+
+TEST(MjcfVelCtrlTest, ConvergesInVelocityMode)
 {
-  protected:
-    fs::path      root_;
-    mj_kdl::Env   env_;
-    mjModel      *model_ = nullptr;
-    mjData       *data_  = nullptr;
-    mj_kdl::Robot s_;
-    unsigned      n_ = 0;
+    const std::string arm = ex::find_menagerie_model("kinova_gen3/gen3.xml");
+    if (!fs::exists(arm)) GTEST_SKIP() << arm << " not found";
 
-    void SetUp() override
-    {
-        std::string arm_mjcf = mj_kdl_examples::find_menagerie_model("kinova_gen3/gen3.xml");
-        if (!fs::exists(arm_mjcf)) {
-            GTEST_SKIP() << arm_mjcf << " not found";
-            return;
-        }
-
-        mj_kdl::SceneSpec sc;
+    mj_kdl::RobotSpec rs;
+    rs.path  = arm;
+    rs.modes = { { .mode = mj_kdl::CtrlMode::VELOCITY, .joints = {}, .kv = kVelGain } };
+    mj_kdl::SceneSpec sc;
     sc.timestep   = 0.002;
     sc.add_floor  = true;
-    sc.add_skybox = true;
-        sc.robots.push_back(mj_kdl::RobotSpec{ .path = arm_mjcf, .attachments = {} });
+    sc.add_skybox = false;
+    sc.robots.push_back(rs);
 
-        ASSERT_TRUE(mj_kdl::init_env(&env_, &sc));
-        model_ = env_.model;
-        data_  = env_.data;
-        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s_, &env_, "base_link", "bracelet_link"));
-
-        n_ = static_cast<unsigned>(s_.n_joints);
-
-        KDL::JntArray q_home(n_);
-        for (unsigned i = 0; i < n_; ++i) q_home(i) = kHomePose[i];
-        mj_kdl::set_joint_pos(&s_, q_home);
-
-        // POSITION mode: initialise pos_cmd to home so the servo starts settled.
-        s_.ctrl_mode = mj_kdl::CtrlMode::POSITION;
-        for (unsigned i = 0; i < n_; ++i) { s_.jnt_pos_cmd[i] = kHomePose[i]; }
-        mj_kdl::update(&env_);
-    }
-};
-
-TEST_F(MjcfVelCtrlTest, Convergence)
-{
-    const double dt      = model_->opt.timestep;
-    bool         arrived = false;
-
-    while (data_->time < kTimeout && !arrived) {
-        mj_kdl::update(&env_); // reads sensors, applies prev pos_cmd to servo
-
-        double max_err = 0.0;
-        for (unsigned i = 0; i < n_; ++i) {
-            double err = kTargetPose[i] - s_.jnt_pos_msr[i];
-            max_err    = std::max(max_err, std::abs(err));
-            double vel = std::clamp(kKv * err, -kMaxVel, kMaxVel);
-            s_.jnt_pos_cmd[i] += vel * dt; // integrate velocity into position setpoint
-        }
-
-        if (max_err < kTol) {
-            arrived = true;
-            // Freeze setpoint at current position to avoid overshoot.
-            for (unsigned i = 0; i < n_; ++i) s_.jnt_pos_cmd[i] = s_.jnt_pos_msr[i];
-        }
-
-        mj_kdl::step(&env_);
-    }
+    mj_kdl::Env   env;
+    mj_kdl::Robot robot;
+    ASSERT_TRUE(mj_kdl::init_env(&env, &sc));
+    ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link"));
+    mj_kdl::set_joint_pos(&robot, ex::home_q(7));
+    ASSERT_TRUE(mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::VELOCITY));
 
     double max_err = 0.0;
-    for (unsigned i = 0; i < n_; ++i)
-        max_err = std::max(max_err, std::abs(kTargetPose[i] - s_.jnt_pos_msr[i]));
-
-    EXPECT_TRUE(arrived) << "velocity controller did not converge within " << kTimeout << " s";
-    EXPECT_LE(max_err, kTol * 2);
+    while (env.data->time < kTimeout) {
+        mj_kdl::update(&env);
+        max_err = 0.0;
+        for (int i = 0; i < 7; ++i) {
+            const double err     = kTargetPose[i] - robot.jnt_pos_msr[i];
+            max_err              = std::max(max_err, std::abs(err));
+            robot.jnt_vel_cmd[i] = ex::clamp_abs(kKv * err, kMaxVel);
+        }
+        if (max_err < kTol) break;
+        mj_kdl::step(&env);
+    }
+    EXPECT_LT(max_err, kTol);
+    EXPECT_LT(env.data->time, 2.5) << "measured 1.93 s";
 }
 
 int main(int argc, char *argv[])

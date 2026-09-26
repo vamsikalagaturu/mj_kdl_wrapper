@@ -1017,22 +1017,23 @@ mj_kdl::init_robot_from_mjcf(&right, &env, "r2_base_link", "r2_bracelet_link", "
 ```
 
 The `prefix` argument is prepended to every name the call resolves (bodies, tool body, TCP
-site, F/T sensors); passing already-prefixed names with no prefix, as `ex_dual_arm` does, is
-the same. Each robot gets its own KDL chain and
+site, F/T sensors), as `ex_rnea_pick_place` does with `"r2_"`; passing already-prefixed names
+with no prefix, as above, is the same. Each robot gets its own KDL chain and
 command ports, while both share the same `Env`; one `update(&env)` reads and commands both.
 
 ## 14. Grow Into Task Examples
 
 The included examples show how these pieces combine:
 
-- `ex_table_scene`: table asset, primitive objects, sites, cameras, reset hook.
-- `ex_table_pick_place`: IK waypoints, phase table, torque impedance, table asset sites.
+- `ex_table_pick_place`: IK waypoints, phase table, torque impedance, table asset sites, a
+  scene wrench pushing the arm mid-carry.
 - `ex_table_pour`: gripper-held bottle asset, free particles, receiver asset; `--record`
   writes an MP4.
-- `ex_rnea_pick_place`, `ex_achd_pick_place`, `ex_achd_table_slide`: computed torque through
-  RNEA and ACHD; the slide also presses on the table through ACHD's external-force input.
+- `ex_rnea_pick_place`: two prefixed arms at one table, each with its own RNEA computed
+  torque, plus free objects and scene cameras.
+- `ex_achd_pick_place`, `ex_achd_table_slide`: ACHD; the slide also presses on the table
+  through ACHD's external-force input.
 - `ex_admittance_ft`: F/T admittance around an RNEA task-space inner loop.
-- `ex_dual_arm`: two prefixed robots in one scene.
 
 Read `../examples.md` for behavior summaries and expected outputs.
 
@@ -1053,10 +1054,12 @@ mj_kdl::SceneObject obstacle{
 };
 
 if (mj_kdl::Status s = mj_kdl::scene_add_object(&env, obstacle); !s) std::cerr << s.error;
-// env.model/env.data are replaced; registered robots, scene slots and the viewer follow.
+// env.model/env.data are replaced; the physics state carries over by name, and registered
+// robots, scene slots, the viewer and recorders follow.
 ```
 
-A scene slot whose name is gone from the rebuilt model is unbound and skipped.
+A scene slot whose name is gone from the rebuilt model is unbound and skipped. A failed
+rebuild returns the error and leaves the `Env` as it was.
 Any MuJoCo IDs you cached yourself may be invalid; recompute them.
 
 ## 16. Debugging Checklist

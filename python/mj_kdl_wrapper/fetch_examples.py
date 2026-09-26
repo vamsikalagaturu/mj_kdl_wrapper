@@ -21,7 +21,12 @@ def copy_examples(dest: Path) -> None:
     """Copy the bundled example scripts into ``dest`` as a sibling dir."""
     pkg_root = resources.files("mj_kdl_wrapper")
     with resources.as_file(pkg_root / "examples") as examples_src:
-        shutil.copytree(examples_src, dest / "examples", dirs_exist_ok=True)
+        shutil.copytree(
+            examples_src,
+            dest / "examples",
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "MUJOCO_LOG.TXT"),
+        )
 
 
 def main() -> int:

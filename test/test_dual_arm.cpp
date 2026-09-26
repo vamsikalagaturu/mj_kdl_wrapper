@@ -1,92 +1,58 @@
 /* test_dual_arm.cpp
- * Two Kinova GEN3 arms in one shared MuJoCo scene, facing each other.
- * Each arm is its own mj_kdl::Robot (sharing model/data).
- * Gravity compensation uses KDL::ChainDynParam::JntToGravity  - not qfrc_bias.
- *
- * GravityInformational  - KDL vs MuJoCo gravity comparison at home pose
- *   (zero velocity, so qfrc_bias == gravity torques); logged only, no assertion.
- * DualArmDrift  - 500-step closed-loop gravity comp; EE drift must be < 1 mm.
- *
- * Self-skips when Menagerie is absent. */
+ * Two Kinova GEN3 arms in one scene, facing each other, each its own mj_kdl::Robot with its own
+ * KDL chain: a prefix names the whole chain, KDL gravity matches MuJoCo's for both, and both hold
+ * their pose under KDL gravity compensation. Self-skips when Menagerie is absent. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "common.hpp"
 #include "example_paths.hpp"
 
 #include <gtest/gtest.h>
 
-#include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/chaindynparam.hpp>
+#include <kdl/chainfksolverpos_recursive.hpp>
 
 #include <cmath>
+#include <filesystem>
 #include <memory>
 #include <string>
-#include <filesystem>
 
-static constexpr double kHomePose[7] = { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 };
-
-// Compute KDL gravity torques from the measured state, store in jnt_trq_cmd.
-static void apply_grav_comp(mj_kdl::Robot *s, KDL::ChainDynParam &dyn)
-{
-    KDL::JntArray q(s->n_joints), g(s->n_joints);
-    for (int i = 0; i < s->n_joints; ++i) q(i) = s->jnt_pos_msr[i];
-    dyn.JntToGravity(q, g);
-    for (int i = 0; i < s->n_joints; ++i) s->jnt_trq_cmd[i] = g(i);
-}
-
+namespace ex = mj_kdl_examples;
 namespace fs = std::filesystem;
+
 class DualArmTest : public testing::Test
 {
   protected:
-    mj_kdl::Env                                      env;
-    mj_kdl::Robot                                    arm1, arm2;
-    std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk1;
-    std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk2;
-    std::unique_ptr<KDL::ChainDynParam>              dyn1;
-    std::unique_ptr<KDL::ChainDynParam>              dyn2;
-    KDL::JntArray                                    q_home;
-    int                                              n = 0;
+    mj_kdl::Env                         env;
+    mj_kdl::Robot                       arm1, arm2;
+    std::unique_ptr<KDL::ChainDynParam> dyn1, dyn2;
+    const KDL::JntArray                 q_home = ex::home_q(7);
 
     void SetUp() override
     {
-        std::string mjcf = mj_kdl_examples::find_menagerie_model("kinova_gen3/gen3.xml");
-        if (!fs::exists(mjcf)) {
-            GTEST_SKIP() << mjcf << " not found";
-            return;
-        }
+        const std::string mjcf = ex::find_menagerie_model("kinova_gen3/gen3.xml");
+        if (!fs::exists(mjcf)) GTEST_SKIP() << mjcf << " not found";
 
-        /* Build a single MuJoCo scene with two arms facing each other.
-         *   arm1: at x = -0.5 m, facing +X (default orientation)
-         *   arm2: at x = +0.5 m, facing -X (rotated 180 degrees around Z)
-         * arm2 joints are prefixed "r2_" in MuJoCo to avoid name collisions. */
+        // arm1 at x = -0.5 m facing +X; arm2 at x = +0.5 m turned 180 deg about Z, prefixed "r2_".
         mj_kdl::SceneSpec scene;
-    scene.timestep   = 0.002;
-    scene.add_floor  = true;
-    scene.add_skybox = true;
-        scene.timestep  = 0.002;
-        scene.gravity_z = -9.81;
-        scene.add_floor = true;
+        scene.timestep   = 0.002;
+        scene.add_floor  = true;
+        scene.add_skybox = false;
+        mj_kdl::RobotSpec left, right;
+        left.path     = mjcf;
+        left.pos[0]   = -0.5;
+        right.path    = mjcf;
+        right.prefix  = "r2_";
+        right.pos[0]  = 0.5;
+        right.quat[2] = 1.0;
+        right.quat[3] = 0.0;
+        scene.robots  = { left, right };
 
-        scene.robots = {
-            mj_kdl::RobotSpec{ .path = mjcf, .pos = { -0.5, 0.0, 0.0 }, .attachments = {} },
-            mj_kdl::RobotSpec{ .path = mjcf, .prefix = "r2_", .pos = { 0.5, 0.0, 0.0 }, .quat = { 0.0, 0.0, 1.0, 0.0 }, .attachments = {} }, // yaw 180 deg
-        };
-
-        ASSERT_TRUE(mj_kdl::init_env(&env, &scene)) << "init_env() returned false";
-
-        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&arm1, &env, "base_link", "bracelet_link", ""))
-          << "arm1 init_robot_from_mjcf() returned false";
-
-        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&arm2, &env, "base_link", "bracelet_link", "r2_"))
-          << "arm2 init_robot_from_mjcf() returned false";
-
-        n    = arm1.n_joints;
-        fk1  = std::make_unique<KDL::ChainFkSolverPos_recursive>(arm1.chain);
-        fk2  = std::make_unique<KDL::ChainFkSolverPos_recursive>(arm2.chain);
+        ASSERT_TRUE(mj_kdl::init_env(&env, &scene));
+        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&arm1, &env, "base_link", "bracelet_link", ""));
+        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&arm2, &env, "base_link", "bracelet_link", "r2_"));
         dyn1 = std::make_unique<KDL::ChainDynParam>(arm1.chain, KDL::Vector(0, 0, -9.81));
         dyn2 = std::make_unique<KDL::ChainDynParam>(arm2.chain, KDL::Vector(0, 0, -9.81));
-
-        q_home.resize(n);
-        for (int j = 0; j < n; ++j) q_home(j) = kHomePose[j];
     }
 
     int dof(const mj_kdl::Robot &r, int j) const
@@ -105,69 +71,46 @@ TEST_F(DualArmTest, PrefixNamesTheWholeChain)
     mj_kdl::cleanup(&named);
 }
 
-TEST_F(DualArmTest, GravityInformational)
+TEST_F(DualArmTest, KdlGravityMatchesMujocoForBothArms)
 {
     mj_kdl::set_joint_pos(&arm1, q_home);
     mj_kdl::set_joint_pos(&arm2, q_home);
     mj_forward(env.model, env.data);
 
-    KDL::JntArray g1(n), g2(n);
+    // At rest qfrc_bias is the gravity torque; measured difference 1e-14 Nm.
+    KDL::JntArray g1(7), g2(7);
     dyn1->JntToGravity(q_home, g1);
     dyn2->JntToGravity(q_home, g2);
-
-    double err1 = 0.0, err2 = 0.0;
-    for (int j = 0; j < n; ++j) {
-        err1 = std::max(err1, std::abs(g1(j) - env.data->qfrc_bias[dof(arm1, j)]));
-        err2 = std::max(err2, std::abs(g2(j) - env.data->qfrc_bias[dof(arm2, j)]));
+    for (int j = 0; j < 7; ++j) {
+        EXPECT_NEAR(g1(j), env.data->qfrc_bias[dof(arm1, j)], 1e-9) << "arm1 joint " << j;
+        EXPECT_NEAR(g2(j), env.data->qfrc_bias[dof(arm2, j)], 1e-9) << "arm2 joint " << j;
     }
-    (void)err1; (void)err2;
 }
 
 TEST_F(DualArmTest, DualArmDrift)
 {
-    // Sync both arms to home pose and record initial EE frames.
     mj_kdl::set_joint_pos(&arm1, q_home);
     mj_kdl::set_joint_pos(&arm2, q_home);
-    arm1.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
-    arm2.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
+    ASSERT_TRUE(mj_kdl::set_control_mode(&arm1, mj_kdl::CtrlMode::TORQUE));
+    ASSERT_TRUE(mj_kdl::set_control_mode(&arm2, mj_kdl::CtrlMode::TORQUE));
+    ex::prime_gravity(arm1, *dyn1, q_home);
+    ex::prime_gravity(arm2, *dyn2, q_home);
 
-    KDL::Frame ee1_init, ee2_init;
-    fk1->JntToCart(q_home, ee1_init);
-    fk2->JntToCart(q_home, ee2_init);
+    KDL::ChainFkSolverPos_recursive fk1(arm1.chain), fk2(arm2.chain);
+    KDL::Frame                      ee_init;
+    fk1.JntToCart(q_home, ee_init);
 
-    /* Prime jnt_trq_cmd for both arms so the first update() applies compensation
-     * immediately, not zero torques (which would impart velocity that gravity comp
-     * cannot damp). */
-    {
-        KDL::JntArray g1(n), g2(n);
-        dyn1->JntToGravity(q_home, g1);
-        dyn2->JntToGravity(q_home, g2);
-        for (int j = 0; j < n; ++j) arm1.jnt_trq_cmd[j] = g1(j);
-        for (int j = 0; j < n; ++j) arm2.jnt_trq_cmd[j] = g2(j);
-    }
-
-    // 500-step closed-loop gravity compensation; one step() advances both arms.
     for (int i = 0; i < 500; ++i) {
         mj_kdl::update(&env);
-        apply_grav_comp(&arm1, *dyn1);
-        apply_grav_comp(&arm2, *dyn2);
+        ex::pd_gravity(arm1, *dyn1, q_home);
+        ex::pd_gravity(arm2, *dyn2, q_home);
         mj_kdl::step(&env);
     }
+    mj_kdl::update(&env);
 
-    KDL::JntArray q1_end(n), q2_end(n);
-    for (int j = 0; j < n; ++j) {
-        q1_end(j) = arm1.jnt_pos_msr[j];
-        q2_end(j) = arm2.jnt_pos_msr[j];
-    }
-    KDL::Frame ee1_end, ee2_end;
-    fk1->JntToCart(q1_end, ee1_end);
-    fk2->JntToCart(q2_end, ee2_end);
-
-    double drift1 = (ee1_init.p - ee1_end.p).Norm();
-    double drift2 = (ee2_init.p - ee2_end.p).Norm();
-
-    ASSERT_LE(drift1, 0.001) << "arm1 drift " << drift1 * 1000.0 << " mm exceeds 1 mm threshold";
-    ASSERT_LE(drift2, 0.001) << "arm2 drift " << drift2 * 1000.0 << " mm exceeds 1 mm threshold";
+    // Measured drift: 3e-18 m.
+    EXPECT_LE((ex::tcp_frame(fk1, arm1).p - ee_init.p).Norm(), 1e-6);
+    EXPECT_LE((ex::tcp_frame(fk2, arm2).p - ee_init.p).Norm(), 1e-6);
 }
 
 int main(int argc, char *argv[])

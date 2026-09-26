@@ -184,7 +184,7 @@
 
   <!--
     Joint-direct position actuator on the left driver joint: ctrl is the joint angle in radians
-    (ctrlrange = joint range), so command, measured qpos, and target share one unit. kp = 100;
+    (ctrlrange 0..0.82, joint range 0..0.8), so command, measured qpos, and target share one unit. kp = 100;
     biasprm = [0, -kp, -kd]. The split tendon + driver-coupling equality keep the right driver
     following the left.
   -->

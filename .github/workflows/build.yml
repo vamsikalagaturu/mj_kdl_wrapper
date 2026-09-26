@@ -11,13 +11,14 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # The library, installed and consumed through CMake and pkg-config; tests.yml builds the rest.
   build:
     runs-on: ubuntu-24.04
     env:
       MUJOCO_VERSION: 3.14.0
       MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.14.0
-      FETCHCONTENT_BASE_DIR: ${{ github.workspace }}/.fetchcontent
       CCACHE_DIR: ${{ github.workspace }}/.ccache
+      PREFIX: ${{ github.workspace }}/prefix
     steps:
       - uses: actions/checkout@v4
 
@@ -26,7 +27,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y \
-            ccache ninja-build \
+            ccache ninja-build pkg-config \
             libeigen3-dev libglfw3-dev libgl-dev libegl-dev
 
       # Native MuJoCo release (cached between runs).
@@ -48,35 +49,69 @@ jobs:
       - name: Check version metadata
         run: python3 scripts/check_versions.py
 
-      # Compiler cache, shared with the tests workflow via the common prefix.
+      - name: Cache the Orocos KDL checkout
+        uses: actions/cache@v4
+        with:
+          path: third_party/orocos_kinematics_dynamics
+          key: orocos-kdl-${{ hashFiles('cmake/Versions.cmake') }}
+
       - name: Cache ccache
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-${{ github.sha }}
+          key: ccache-build-${{ runner.os }}-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.os }}-
+            ccache-build-${{ runner.os }}-
 
-      - name: Cache FetchContent deps
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.FETCHCONTENT_BASE_DIR }}
-          key: fetchcontent-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
-
-      # Compile the library, examples, and test binaries (no ctest here - the
-      # tests workflow runs them).
       - name: Configure
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
             -DMJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}" \
-            -DBUILD_TESTS=ON \
+            -DBUILD_TESTS=OFF \
+            -DBUILD_EXAMPLES=OFF \
             -DBUILD_DOCS=OFF \
-            -DMJ_KDL_FETCH_MENAGERIE=OFF \
-            -DFETCHCONTENT_BASE_DIR="${FETCHCONTENT_BASE_DIR}" \
-            -DFETCHCONTENT_UPDATES_DISCONNECTED=ON
+            -DMJ_KDL_FETCH_MENAGERIE=OFF
 
-      - name: Build
-        run: cmake --build build
+      - name: Build and install
+        run: |
+          cmake --build build
+          cmake --install build
+
+      # A consumer of the install; the system liborocos-kdl path must not win over the bundled one.
+      - name: Consume the install
+        run: |
+          mkdir -p consumer
+          cat > consumer/main.cpp <<'EOF'
+          #include <mj_kdl_wrapper/mj_kdl_wrapper.hpp>
+          #include <kdl/chaindynparam.hpp>
+          int main()
+          {
+              mj_kdl::Env env;
+              KDL::Chain chain;
+              KDL::ChainDynParam dyn(chain, KDL::Vector(0, 0, -9.81));
+              return env.model == nullptr ? 0 : 1;
+          }
+          EOF
+          cat > consumer/CMakeLists.txt <<'EOF'
+          cmake_minimum_required(VERSION 3.16)
+          project(consumer CXX)
+          set(CMAKE_CXX_STANDARD 20)
+          find_package(mj_kdl_wrapper REQUIRED)
+          add_executable(consumer main.cpp)
+          target_link_libraries(consumer PRIVATE mj_kdl_wrapper::mj_kdl_wrapper)
+          EOF
+          cmake -S consumer -B consumer/build -DCMAKE_PREFIX_PATH="${PREFIX}"
+          cmake --build consumer/build
+          export PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig"
+          g++ -std=c++20 consumer/main.cpp -o consumer/pc_consumer \
+            $(pkg-config --cflags --libs mj_kdl_wrapper)
+          for exe in consumer/build/consumer consumer/pc_consumer; do
+            readelf -d "${exe}" | grep -q '(RPATH)'
+            LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ldd "${exe}" \
+              | grep -q "liborocos-kdl.so.* => ${PREFIX}/lib/"
+            LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu "${exe}"
+          done
