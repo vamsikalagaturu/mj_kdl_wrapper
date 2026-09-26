@@ -800,7 +800,7 @@ void UpdateWrapperRealtimeFactor(mj::Simulate* sim) {
   if (rtf == 0.0) {
     mju::strcpy_arr(label, "MAX");
   } else {
-    std::snprintf(label, sizeof(label), "%.2fx", rtf);
+    std::snprintf(label, sizeof(label), "%gx", rtf);
   }
   mjuiItem& item = sim->ui0.sect[SECT_SIMULATION].item[kSimRtfItem];
   item.multi.nelem = 1;
@@ -3208,7 +3208,7 @@ void Simulate::Render() {
   if (wrapper_rtf == 0.0) {
     std::snprintf(rtlabel, sizeof(rtlabel), "MAX");
   } else if (wrapper_rtf != 1.0) {
-    std::snprintf(rtlabel, sizeof(rtlabel), "%.0f%%", 100 * wrapper_rtf);
+    std::snprintf(rtlabel, sizeof(rtlabel), "%gx", wrapper_rtf);
   }
 
   // show real-time overlay

@@ -71,7 +71,8 @@ while exactly one component owns the loop's timing.
 
 `Viewer::realtime_factor` is the user's speed setting: `1.0` is wall-clock speed, `0.5` runs at
 half speed, `0.0` means uncapped (shown as `RTF: MAX` in the Simulate UI). The `,` and `.` keys
-adjust it at run time.
+step it along 0.05x, 0.1x, 0.25x, 0.5x, 0.75x, 1x, 1.25x, 1.5x, 2x, 3x, 4x, 6x, 8x, 10x, then
+MAX.
 
 It is written on the control thread — the render thread only pushes key presses into an atomic,
 which `step()` drains — so it is read without a lock. Read it from the same thread that calls

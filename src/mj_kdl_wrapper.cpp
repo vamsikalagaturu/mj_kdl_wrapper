@@ -26,6 +26,7 @@
 
 #include <chrono>
 #include <algorithm>
+#include <iterator>
 #include <atomic>
 #include <cmath>
 #include <condition_variable>
@@ -2553,28 +2554,28 @@ static std::string realtime_factor_label(double realtime_factor)
     if (realtime_factor == 0.0) return "RTF: MAX";
 
     char buf[32] = {};
-    std::snprintf(buf, sizeof(buf), "RTF: %.2fx", realtime_factor);
+    std::snprintf(buf, sizeof(buf), "RTF: %gx", realtime_factor);
     return buf;
 }
+
+// Above the last rung the viewer runs uncapped (0.0, shown as MAX).
+static constexpr double kRtfLadder[] = { 0.05, 0.1, 0.25, 0.5, 0.75, 1.0, 1.25,
+                                         1.5,  2.0, 3.0,  4.0, 6.0,  8.0, 10.0 };
 
 static void adjust_realtime_factor(Viewer *v, int direction)
 {
     if (!v || direction == 0) return;
 
-    constexpr double kStep   = 1.41421356237;
-    constexpr double kMinRtf = 0.05;
-    constexpr double kMaxRtf = 10.0;
-
+    const double rtf = v->realtime_factor;
     if (direction > 0) {
-        if (v->realtime_factor == 0.0) return; // already uncapped/max-speed
-        double next        = v->realtime_factor * kStep;
-        v->realtime_factor = (next > kMaxRtf) ? 0.0 : next;
+        if (rtf == 0.0) return;
+        const auto *next   = std::upper_bound(std::begin(kRtfLadder), std::end(kRtfLadder), rtf);
+        v->realtime_factor = next == std::end(kRtfLadder) ? 0.0 : *next;
+    } else if (rtf == 0.0) {
+        v->realtime_factor = kRtfLadder[std::size(kRtfLadder) - 1];
     } else {
-        if (v->realtime_factor == 0.0) {
-            v->realtime_factor = kMaxRtf;
-        } else {
-            v->realtime_factor = std::max(kMinRtf, v->realtime_factor / kStep);
-        }
+        const auto *prev   = std::lower_bound(std::begin(kRtfLadder), std::end(kRtfLadder), rtf);
+        v->realtime_factor = prev == std::begin(kRtfLadder) ? kRtfLadder[0] : *(prev - 1);
     }
 
     v->_tick_t = {};
