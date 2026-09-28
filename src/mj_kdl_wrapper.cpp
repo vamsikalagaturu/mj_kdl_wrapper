@@ -3052,6 +3052,7 @@ static bool step_viewer(Env *env)
         auto *sim = ss->sim.get();
 
         if (sim->exitrequest.load()) return false;
+        v->fps = sim->fps_;
 
         // Speed control: ,/. keys are intercepted by sim_ui_key_cb.
         int  rtf_step    = ss->rtf_step.exchange(0);

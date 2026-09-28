@@ -428,7 +428,8 @@ struct Viewer
     mjvCamera cam{};
     /* Real-time factor for pace_realtime(): 1.0 = real time, 0.5 = half speed, 0.0 = uncapped.
      * The ',' and '.' keys adjust it. */
-    double                                realtime_factor = 1.0;
+    double realtime_factor = 1.0;
+    double fps             = 0.0; // the window's frame rate, read-only, set by step()
     std::chrono::steady_clock::time_point _tick_t{};         // internal: pacing
     void                                 *_sim_ui = nullptr; // internal: SimUiState*, open
 };

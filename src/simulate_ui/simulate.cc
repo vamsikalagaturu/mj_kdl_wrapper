@@ -727,10 +727,11 @@ void UpdateInfoText(mj::Simulate*  sim,
 
   // format FPS text
   char fps[10];
-  if (sim->fps_ < 1) {
-    mju::sprintf_arr(fps, "%0.1f ", sim->fps_);
+  const double frame_rate = sim->fps_;
+  if (frame_rate < 1) {
+    mju::sprintf_arr(fps, "%0.1f ", frame_rate);
   } else {
-    mju::sprintf_arr(fps, "%.0f ", sim->fps_);
+    mju::sprintf_arr(fps, "%.0f ", frame_rate);
   }
 
   // total iterations of all islands with statistics

@@ -198,8 +198,8 @@ class Simulate {
   SimulateMutex               mtx;
   std::condition_variable_any cond_loadrequest;
 
-  int    frames_ = 0;
-  double fps_    = 0;
+  int                 frames_ = 0;
+  std::atomic<double> fps_    = 0;  // written by the render thread, read by step()
 
   std::chrono::time_point<Clock> last_fps_update_;
 
