@@ -13,11 +13,6 @@ A C++ library bridging [MuJoCo](https://github.com/google-deepmind/mujoco) physi
 <table>
 <tr>
   <td align="center"><img src="docs/screenshots/ex_gravity_comp.png" width="380"/><br/><b>ex_gravity_comp</b> &mdash; Single arm, KDL gravity compensation</td>
-  <td align="center"><img src="docs/screenshots/ex_table_scene.png" width="380"/><br/><b>ex_table_scene</b> &mdash; Arm + table + scene objects</td>
-</tr>
-<tr>
-  <td align="center"><img src="docs/screenshots/ex_pick.png" width="380"/><br/><b>ex_pick</b> &mdash; Pick-and-place with Robotiq 2F-85</td>
-  <td align="center"><img src="docs/screenshots/ex_dual_arm.png" width="380"/><br/><b>ex_dual_arm</b> &mdash; Dual arm + grippers</td>
 </tr>
 </table>
 
@@ -27,16 +22,19 @@ A C++ library bridging [MuJoCo](https://github.com/google-deepmind/mujoco) physi
   MuJoCo scene via `mjSpec`, with ordered attachment chains and relative placement.
 - **Multi-robot** -- multiple robots with independent KDL chains in one simulation.
 - **KDL from the model** -- builds the KDL chain directly from the compiled MuJoCo model.
-- **Control** -- POSITION / TORQUE ports plus KDL FK, IK, RNEA, and ACHD solvers.
-- **Runtime environments** -- `Env` with reset hooks for task setup and replay.
+- **Control** -- POSITION / VELOCITY / TORQUE ports, each mode a group of MuJoCo actuators
+  (see [torque control](docs/howto/torque_control.md)), plus KDL FK, IK, RNEA, and ACHD solvers.
+- **Runtime environments** -- one `Env` owns the model, robots, scene slots and viewer;
+  `step` / `update` / `reset` drive it, and reset re-seeds everything it holds.
 - **Interactive viewer** -- MuJoCo simulate UI with Frames / Trace / Perturb panels
   and overlay lines.
 - **Recording** -- interactive and headless EGL + ffmpeg MP4 capture.
-- **Python bindings** -- the same API from Python via `pip install`, returning PyKDL types.
+- **Python bindings** -- the same concepts from Python (`Env`, `Robot`, `Viewer`,
+  `VideoRecorder`), returning PyKDL types and numpy arrays.
 
 ## Install
 
-Ubuntu/Debian. Requires MuJoCo 3.9.0 (auto-downloaded), CMake >= 3.16, a C++20
+Ubuntu/Debian. Requires MuJoCo 3.14.0 (auto-downloaded), CMake >= 3.16, a C++20
 compiler, and (for Python) Python >= 3.10. The secorolab Orocos KDL fork is built
 from source; the system KDL is never used.
 
@@ -56,7 +54,7 @@ sudo apt install cmake g++ git python3-dev python3-venv \
 
 ```bash
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
-# pin a release with --branch v0.1.0 (see Releases for the latest tag)
+# pin a release with --branch vX.Y.Z (see Releases for the latest tag)
 cd mj_kdl_wrapper
 
 # configure (downloads MuJoCo, clones and builds the KDL fork; the menagerie
@@ -67,11 +65,12 @@ cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMJ_KDL_FETCH_MENAGERIE=ON
 # compile
 cmake --build build --parallel $(nproc)
 
-# optional install; self-contained, bundles KDL into the prefix
+# optional install; self-contained, bundles KDL into the prefix; consumers use
+# find_package(mj_kdl_wrapper) or pkg-config (lib/pkgconfig/mj_kdl_wrapper.pc)
 cmake --install build
 
 # check: run the pick-and-place example
-./build/src/examples/ex_pick
+./build/src/examples/ex_table_pick_place
 ```
 
 To share one KDL across several projects, set up a `ws/` folder, build the fork
@@ -81,8 +80,9 @@ bundling its own:
 ```bash
 # Workspace folder with the two source trees
 mkdir -p ws && cd ws
-git clone -b vereshchagin-driver-weighting \
-  https://github.com/secorolab/orocos_kinematics_dynamics.git
+git clone https://github.com/secorolab/orocos_kinematics_dynamics.git
+# The pinned commit: MJ_KDL_OROCOS_KDL_GIT_SHA in cmake/Versions.cmake
+git -C orocos_kinematics_dynamics checkout c86af053388aa78d2c5ad2fa6afe1fd556621ce8
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
 
 # 1. Build the KDL fork once into ws/install
@@ -105,7 +105,7 @@ MuJoCo/KDL, sharing one KDL across projects, and all CMake options.
 
 ```bash
 uv pip install "git+https://github.com/vamsikalagaturu/mj_kdl_wrapper.git"
-# pin a release by appending @v0.1.0 to the URL (see Releases for the latest tag)
+# pin a release by appending @vX.Y.Z to the URL (see Releases for the latest tag)
 
 # fetch the MuJoCo Menagerie models and bundled assets into the user cache
 mj-kdl-fetch-menagerie
@@ -114,7 +114,8 @@ mj-kdl-fetch-menagerie
 Installing without a `@tag` tracks the `main` branch, which only advances at
 releases - so the default command above already installs the latest release.
 
-Bundles MuJoCo, the KDL fork, and PyKDL. See the
+The wheel bundles the KDL fork, PyKDL and the MuJoCo plugins; MuJoCo itself comes from
+the pinned `mujoco` pip package it depends on. See the
 [standalone guide](docs/install/standalone.md#python) for editable installs,
 Menagerie models, and build options.
 
@@ -131,22 +132,24 @@ cd mj_kdl_wrapper_examples
 mj-kdl-fetch-menagerie
 
 # check: run the pick-and-place example
-python examples/ex_pick.py --gui
+python examples/ex_table_pick_place.py --gui
 ```
 
 ### ROS 2 (colcon)
 
-Tested on ROS 2 **Jazzy** and **Lyrical**. Build the secorolab KDL as its own
+CI builds it on ROS 2 **Jazzy** and **Lyrical** and runs its ROS camera test there (the full
+test suite runs in the non-ROS CI). Build the secorolab KDL as its own
 workspace package, then the wrapper against it so the overlay shares one
 `liborocos-kdl`:
 
 ```bash
 # Workspace with the KDL fork and the wrapper as sibling packages
 mkdir -p ~/ros2_ws/src && cd ~/ros2_ws
-git clone -b vereshchagin-driver-weighting \
-  https://github.com/secorolab/orocos_kinematics_dynamics.git src/orocos_kinematics_dynamics
+git clone https://github.com/secorolab/orocos_kinematics_dynamics.git src/orocos_kinematics_dynamics
+# The pinned commit: MJ_KDL_OROCOS_KDL_GIT_SHA in cmake/Versions.cmake
+git -C src/orocos_kinematics_dynamics checkout c86af053388aa78d2c5ad2fa6afe1fd556621ce8
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git src/mj_kdl_wrapper
-# pin a release with --branch v0.1.0 (see Releases for the latest tag)
+# pin a release with --branch vX.Y.Z (see Releases for the latest tag)
 
 # Use your distro: jazzy or lyrical
 source /opt/ros/jazzy/setup.bash
@@ -169,13 +172,18 @@ rationale, build ordering, and consuming it from your own nodes.
 - [Python Bindings API Guide](docs/api/python.md)
 - Generated C++ and Python API reference: `build/docs/html/index.html` (build with
   `cmake -B build -DBUILD_DOCS=ON && cmake --build build --target docs`)
+- Upgrading from 0.3.x: "Migrating to 0.4" in [docs/index.md](docs/index.md)
+
+Logging: `mj_kdl::set_log_level()` takes a severity threshold, `INFO` < `WARN` < `ERROR` <
+`NONE` (default `INFO`, everything); your code can log through it with `MJ_LOG_INFO()`,
+`MJ_LOG_WARN()` and `MJ_LOG_ERROR()`. See the [C++ API guide](docs/api/cpp.md#logging).
 
 ## Examples
 
-The example catalog lives in [docs/examples.md](docs/examples.md).
-Every C++ `src/examples/ex_*.cpp` example has a same-name Python counterpart in
-`python/examples/`, including the named force-torque admittance demos:
-`ex_admittance_ft`, `ex_admittance_ft_rnea`, and `ex_admittance_ft_achd`.
+The example catalog lives in [docs/examples.md](docs/examples.md). C++ examples are in
+`src/examples/`, Python ones in `python/mj_kdl_wrapper/examples/`; each exists in both. Every
+example ends by itself. The C++ ones open the viewer unless given `--headless`; the Python
+ones run headless unless given `--gui`, and run the same sequence either way.
 
 ## Tests
 
@@ -192,7 +200,9 @@ for the full list.
 
 - [C++ tutorial](docs/tutorials/cpp.md)
 - [Python tutorial](docs/tutorials/python.md)
+- [Conventions](docs/conventions.md) -- units, frames, quaternion order, what persists
 - [Torque control notes](docs/howto/torque_control.md)
+- [Loop pacing](docs/howto/loop_pacing.md)
 - [URDF to MJCF notes](docs/howto/urdf_to_mjcf.md)
 - [Examples guide](docs/examples.md)
 
@@ -205,8 +215,11 @@ These ship in the repo and the wheel, and are copied into the user cache
 
 | Path | Description |
 |------|-------------|
-| `assets/robotiq_2f85/2f85.xml` | Local Robotiq 2F-85 gripper asset used by examples/tests |
-| `assets/kinova_gen3/gen3.xml` | Local Kinova Gen3 arm asset; Menagerie's model plus a base_link/shoulder_link contact exclusion |
+| `assets/robotiq_2f85/2f85.xml` | Robotiq 2F-85; ctrl is the driver joint angle, 0 (open) to 0.82 rad (closed). Use `tool_body = "g_base_mount"` (with prefix `g_`): the mount carries mass too |
+| `assets/kinova_gen3/gen3.xml` | Kinova Gen3; Menagerie's model plus a base_link/shoulder_link contact exclusion and Kinova's joint armature |
 | `assets/ft_sensor.xml` | Local 6-axis force-torque sensor asset used by FT examples/tests |
 | `assets/table.xml` | Table asset with authored `table_top` site |
 | `assets/mug.xml`, `assets/mug_table.xml` | Pouring example assets |
+| `assets/cabinet/cabinet.xml` | Three-drawer cabinet (robot-less scene tests) |
+| `assets/cube.xml` | Free cube (`test_scene_state`) |
+| `assets/door_latch/door_latch.xml` | Latched cupboard door fixture (not used here; motion-spec-dsl's `door_open` model loads it) |

@@ -10,23 +10,15 @@ def _model_path() -> str:
         pytest.skip(str(exc))
 
 
-def _asset_path(name: str) -> str:
-    try:
-        return mjk.menagerie.asset_path(name)
-    except RuntimeError:
-        mjk.menagerie.fetch_assets()
-        return mjk.menagerie.asset_path(name)
-
-
 def test_ft_sensor_returns_pykdl_wrench():
     kdl = pytest.importorskip("PyKDL")
 
     ft = mjk.AttachmentSpec()
-    ft.mjcf_path = _asset_path("ft_sensor.xml")
+    ft.mjcf_path = mjk.menagerie.asset_path("ft_sensor.xml")
     ft.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
 
     gripper = mjk.AttachmentSpec()
-    gripper.mjcf_path = _asset_path("robotiq_2f85/2f85.xml")
+    gripper.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml")
     gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "wrist_ft_site")
     gripper.prefix = "g_"
 
@@ -40,22 +32,22 @@ def test_ft_sensor_returns_pykdl_wrench():
     spec.add_skybox = True
     spec.robots = [robot_spec]
 
-    scene = mjk.Scene.build(spec)
+    env = mjk.Env.build(spec)
     try:
         ft_spec = mjk.ForceTorqueSensorSpec()
         ft_spec.name = "wrist_ft"
         ft_spec.frame_site = "wrist_ft_site"
 
         tool = mjk.ToolFrameSpec()
-        tool.tool_body = "g_base"
+        tool.tool_body = "g_base_mount"
         tool.tcp_site = "g_pinch"
         tool.ft_sensors = [ft_spec]
 
-        robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link", tool=tool)
-        robot.update()
+        robot = env.create_robot("base_link", "bracelet_link", tool=tool)
+        env.update()
 
         assert robot.ft_sensor_names == ["wrist_ft"]
         assert isinstance(robot.ft_sensor("wrist_ft"), kdl.Wrench)
-        assert isinstance(robot.ft_sensor_frame("wrist_ft"), kdl.Frame)
+        assert isinstance(env.site_frame("wrist_ft_site"), kdl.Frame)
     finally:
-        scene.close()
+        env.close()

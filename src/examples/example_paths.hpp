@@ -27,6 +27,9 @@ inline std::string find_menagerie_model(const fs::path &relative)
         const auto path = fs::path(root) / relative;
         if (fs::exists(path)) return path.string();
     }
+    // A bundled model derived from Menagerie's (kinova_gen3/gen3.xml) replaces the upstream copy.
+    if (const auto bundled = cache_root() / "assets" / relative; fs::exists(bundled))
+        return bundled.string();
     const auto path = cache_root() / "menagerie" / relative;
     return fs::exists(path) ? path.string() : "";
 }
@@ -35,9 +38,10 @@ inline std::string menagerie_model(const fs::path &relative)
 {
     if (std::string path = find_menagerie_model(relative); !path.empty()) return path;
     throw std::runtime_error(
-        relative.string() + " not found. Searched $MJ_KDL_MENAGERIE and "
-        + (cache_root() / "menagerie").string()
-        + ". Run 'mj-kdl-fetch-menagerie' or set MJ_KDL_MENAGERIE.");
+      relative.string() + " not found. Searched $MJ_KDL_MENAGERIE and "
+      + (cache_root() / "menagerie").string()
+      + ". Run 'mj-kdl-fetch-menagerie' or set MJ_KDL_MENAGERIE."
+    );
 }
 
 inline std::string find_asset(const fs::path &relative)
@@ -50,7 +54,8 @@ inline std::string asset(const fs::path &relative)
 {
     if (std::string path = find_asset(relative); !path.empty()) return path;
     throw std::runtime_error(
-        relative.string() + " not found in " + (cache_root() / "assets").string()
-        + ". Run 'mj-kdl-fetch-menagerie' to populate bundled assets.");
+      relative.string() + " not found in " + (cache_root() / "assets").string()
+      + ". Run 'mj-kdl-fetch-menagerie' to populate bundled assets."
+    );
 }
 } // namespace mj_kdl_examples

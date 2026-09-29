@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Table pour example ported from src/examples/ex_table_pour.cpp."""
+"""Pour balls into a tabletop receiver; Python counterpart of src/examples/ex_table_pour.cpp.
+
+Headless, it exits 1 if fewer than MIN_IN_RECEIVER balls land in the receiver; --record [out.mp4]
+also writes a 1080p MP4 through VideoRecorder (EGL + ffmpeg).
+"""
 
 from __future__ import annotations
 
@@ -17,9 +21,14 @@ JUG_X = 0.30
 JUG_Y = 0.14
 RETREAT_X = JUG_X - 0.08
 RETREAT_Y = JUG_Y - 0.08
+JUG_RADIUS = 0.028
+JUG_HEIGHT = 0.084
 BALL_RADIUS = 0.007
 NUM_BALLS = 36
 POUR_TILT_RAD = 1.95
+TILT_OUTLET_Z = TABLE_Z + 0.18
+GRIPPER_CLOSED = 0.82  # [rad] top of the 2F-85's ctrlrange (its driver joint stops at 0.8)
+MIN_IN_RECEIVER = 24
 IK_TOL = 3e-3
 KP = [120.0, 220.0, 120.0, 220.0, 110.0, 190.0, 90.0]
 KD = [12.0, 22.0, 12.0, 22.0, 11.0, 18.0, 9.0]
@@ -109,7 +118,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
 
     env = mjk.Env.build(spec)
     tool = mjk.ToolFrameSpec()
-    tool.tool_body = "g_base"
+    tool.tool_body = "g_base_mount"
     tool.tcp_site = "g_pinch"
     robot = env.create_robot("base_link", "bracelet_link", tool=tool)
     return env, robot
@@ -128,13 +137,6 @@ def as_list(q: kdl.JntArray) -> list[float]:
 
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
-
-
-def clamp_joint(value: float, limit: tuple[float, float]) -> float:
-    low, high = limit
-    if math.isfinite(low) and math.isfinite(high) and high > low:
-        return clamp(value, low, high)
-    return value
 
 
 def joint_limit_arrays(robot: mjk.Robot) -> tuple[kdl.JntArray, kdl.JntArray]:
@@ -167,7 +169,7 @@ def build_waypoints(env: mjk.Env, robot: mjk.Robot) -> dict[str, list[float]]:
     base_T_world = world_T_base.Inverse()
 
     # Constant TCP->outlet offset, measured at the live home configuration.
-    robot.set_joint_pos(HOME, call_forward=False)
+    robot.set_joint_pos(HOME)
     world_T_outlet = env.site_frame("pour_outlet")
     world_T_tcp = env.site_frame("g_pinch")
     tcp_outlet = world_T_tcp.Inverse() * world_T_outlet.p
@@ -190,11 +192,27 @@ def build_waypoints(env: mjk.Env, robot: mjk.Robot) -> dict[str, list[float]]:
             raise RuntimeError(f"IK pose error for {name}")
         return as_list(out)
 
+    # Gen3's wrist joint is continuous: the tilt may run past pi, so it is not clamped.
+    def tilted(q_pour: list[float]) -> list[float]:
+        q_tilt = q_pour[:]
+        q_tilt[-1] += POUR_TILT_RAD
+        return q_tilt
+
     q_pre_pour = solve("pre-pour", HOME, kdl.Vector(JUG_X, JUG_Y, TABLE_Z + 0.27))
-    q_pour = solve("pour", q_pre_pour, kdl.Vector(JUG_X, JUG_Y, TABLE_Z + 0.20))
+    pour_pos = kdl.Vector(JUG_X, JUG_Y, TABLE_Z + 0.20)
+    q_pour = solve("pour", q_pre_pour, pour_pos)
+    q_tilt = tilted(q_pour)
+    # Tilting swings the outlet away; shift the pour pose until the tilted outlet is on target.
+    for _ in range(4):
+        robot.set_joint_pos(q_tilt)
+        outlet = env.site_frame("pour_outlet").p
+        err = kdl.Vector(JUG_X, JUG_Y, TILT_OUTLET_Z) - outlet
+        if err.Norm() < 5e-3:
+            break
+        pour_pos = pour_pos + err
+        q_pour = solve("pour", q_pre_pour, pour_pos)
+        q_tilt = tilted(q_pour)
     q_retreat = solve("retreat", q_pour, kdl.Vector(RETREAT_X, RETREAT_Y, TABLE_Z + 0.27))
-    q_tilt = q_pour[:]
-    q_tilt[-1] = clamp_joint(q_tilt[-1] + POUR_TILT_RAD, robot.joint_limits[-1])
     return {
         "home": HOME[:],
         "pre_pour": q_pre_pour,
@@ -204,14 +222,18 @@ def build_waypoints(env: mjk.Env, robot: mjk.Robot) -> dict[str, list[float]]:
     }
 
 
-def apply_pd_gravity(robot: mjk.Robot, target: list[float]) -> None:
-    robot.update()
-    gravity = robot.gravity_torques(-9.81)
+def gravity(dyn: kdl.ChainDynParam, q_values) -> list[float]:
+    g = kdl.JntArray(len(q_values))
+    dyn.JntToGravity(jnt(q_values), g)
+    return [g[i] for i in range(g.rows())]
+
+
+def pd_gravity(robot: mjk.Robot, dyn: kdl.ChainDynParam, target: list[float]) -> None:
+    q, qd = robot.jnt_pos_msr, robot.jnt_vel_msr
+    g = gravity(dyn, q)
     robot.jnt_trq_cmd = [
-        KP[i] * (target[i] - robot.jnt_pos_msr[i]) - KD[i] * robot.jnt_vel_msr[i] + gravity[i]
-        for i in range(robot.n_joints)
+        g[i] + KP[i] * (target[i] - q[i]) - KD[i] * qd[i] for i in range(robot.n_joints)
     ]
-    robot.update()
 
 
 def max_abs_joint_err(robot: mjk.Robot, target: list[float]) -> float:
@@ -223,7 +245,7 @@ def lerp(start: list[float], target: list[float], alpha: float) -> list[float]:
 
 
 def place_balls_in_bottle(env: mjk.Env, robot: mjk.Robot) -> None:
-    robot.set_joint_pos(HOME, call_forward=True)
+    robot.set_joint_pos(HOME)
     center = env.site_frame("pour_center")
     spacing = 2.0 * BALL_RADIUS
     for i in range(NUM_BALLS):
@@ -244,124 +266,100 @@ def balls_in_receiver(env: mjk.Env) -> tuple[int, list[float]]:
         pos = [frame.p.x(), frame.p.y(), frame.p.z()]
         centroid = [a + b for a, b in zip(centroid, pos)]
         if (
-            abs(pos[0] - JUG_X) < 0.040
-            and abs(pos[1] - JUG_Y) < 0.040
-            and TABLE_Z + 0.004 < pos[2] < TABLE_Z + 0.13
+            abs(pos[0] - JUG_X) < JUG_RADIUS - 0.012
+            and abs(pos[1] - JUG_Y) < JUG_RADIUS - 0.012
+            and TABLE_Z + 0.006 < pos[2] < TABLE_Z + JUG_HEIGHT + 0.04
         ):
             count += 1
     return count, [value / NUM_BALLS for value in centroid]
 
 
-def step_once(robot: mjk.Robot, viewer: mjk.SimulateViewer | None) -> bool:
-    if viewer is not None:
-        return viewer.step()
-    return robot.step()
-
-
-def run_phase(
-    env: mjk.Env,
-    robot: mjk.Robot,
-    phase: Phase,
-    viewer: mjk.SimulateViewer | None,
-    recorder: mjk.VideoRecorder | None,
-    record_every: int,
-    step_counter: list[int],
-    state: dict,
-) -> bool:
+def run_phase(env, robot, fingers, dyn, phase: Phase, state: dict) -> bool:
+    """One update() per step: it reads the state and applies the previous cycle's command."""
     print(f"State: {phase.name}")
-    robot.update()
     start = robot.jnt_pos_msr[:]
-    t0 = env.time()
+    t0 = env.data.time
     while True:
-        elapsed = env.time() - t0
+        env.update()
+        elapsed = env.data.time - t0
         alpha = clamp(elapsed / phase.duration, 0.0, 1.0) if phase.duration > 0.0 else 1.0
-        apply_pd_gravity(robot, lerp(start, phase.target, alpha))
-        if env.has_actuator("g_fingers_actuator"):
-            env.set_actuator_ctrl("g_fingers_actuator", phase.gripper)
+        pd_gravity(robot, dyn, lerp(start, phase.target, alpha))
+        fingers.ctrl[0] = phase.gripper
 
-        done_time = elapsed >= phase.duration
-        done_pose = phase.settle_tol < 0.0 or max_abs_joint_err(robot, phase.target) <= phase.settle_tol
-        done_timeout = phase.timeout > 0.0 and elapsed >= phase.timeout
-        if (done_time and done_pose) or done_timeout:
+        err = max_abs_joint_err(robot, phase.target)
+        done_pose = phase.settle_tol < 0.0 or err <= phase.settle_tol
+        if (elapsed >= phase.duration and done_pose) or elapsed >= phase.timeout:
             return True
-        if viewer is not None and not viewer.is_running():
+        if not env.step():
             return False
-        if not step_once(robot, viewer):
-            return False
-        if viewer is not None and env.time() < state["prev"] - 1e-6:  # UI reset pressed
-            env.reset()
-            state["prev"] = env.time()
+        if state["reset"]:
+            state["reset"] = False
             raise ResetRequested()
-        state["prev"] = env.time()
-        step_counter[0] += 1
-        if recorder is not None and step_counter[0] % record_every == 0:
-            recorder.record_frame()
+        env.pace()
+        state["steps"] += 1
+        recorder = state["recorder"]
+        if recorder is not None and state["steps"] % state["record_every"] == 0:
+            if not recorder.record_frame():
+                raise RuntimeError(f"record_frame() failed at step {state['steps']}")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--gui", action="store_true")
     parser.add_argument("--record", nargs="?", const="table_pour.mp4")
-    parser.add_argument("--headless", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     env, robot = build_env()
     recorder = None
     try:
-        robot.ctrl_mode = mjk.CtrlMode.TORQUE
+        robot.set_control_mode(mjk.CtrlMode.TORQUE)
+        fingers = env.data.actuator("g_fingers_actuator")
+        chain = robot.kdl_chain()
+        dyn = kdl.ChainDynParam(chain, kdl.Vector(0.0, 0.0, env.spec.gravity_z))
+        fps = 60
+        state = {"reset": False, "steps": 0, "recorder": None}
+        state["record_every"] = max(1, int(1.0 / (fps * env.model.opt.timestep)))
 
         def on_reset(ctx):
             place_balls_in_bottle(env, robot)  # also re-homes the arm
-            if env.has_actuator("g_fingers_actuator"):
-                env.set_actuator_ctrl("g_fingers_actuator", 255.0)
+            fingers.ctrl[0] = GRIPPER_CLOSED
+            robot.jnt_trq_cmd = gravity(dyn, HOME)
+            state["reset"] = True
 
         env.on_reset = on_reset
         env.reset()
-
         waypoints = build_waypoints(env, robot)
+        env.reset()  # waypoint search moved the arm; start the run from home again
+        state["reset"] = False
+        g = GRIPPER_CLOSED
         phases = [
-            Phase("HOME", waypoints["home"], 0.8, 2.0, 0.08, 255.0),
-            Phase("PRE_POUR", waypoints["pre_pour"], 2.0, 4.0, 0.08, 255.0),
-            Phase("POUR", waypoints["pour"], 1.8, 4.0, 0.07, 255.0),
-            Phase("TILT", waypoints["tilt"], 3.0, 5.0, 0.07, 255.0),
-            Phase("POUR_HOLD", waypoints["tilt"], 2.5 if not args.gui else 10.0, 0.0, -1.0, 255.0),
-            Phase("RETREAT", waypoints["retreat"], 1.6, 3.0, 0.08, 255.0),
-            Phase("HOLD", waypoints["retreat"], 1.0 if not args.gui else 10.0, 0.0, -1.0, 255.0),
+            Phase("HOME", waypoints["home"], 1.0, 2.5, 0.08, g),
+            Phase("PRE_POUR", waypoints["pre_pour"], 4.0, 6.5, 0.08, g),
+            Phase("POUR", waypoints["pour"], 3.5, 5.5, 0.07, g),
+            Phase("TILT", waypoints["tilt"], 7.0, 10.0, 0.07, g),
+            Phase("POUR_HOLD", waypoints["tilt"], 9.0, 9.0, -1.0, g),
+            Phase("RETREAT", waypoints["retreat"], 2.0, 4.0, 0.08, g),
+            Phase("HOLD", waypoints["retreat"], 1.0, 1.0, -1.0, g),
         ]
 
-        fps = 60
-        record_every = max(1, int(1.0 / (fps * env.timestep())))
         if args.record:
             recorder = mjk.VideoRecorder.open_preset(
                 env, args.record, mjk.VideoResolution.R1080p, fps
             )
-        step_counter = [0]
-        state = {"prev": env.time()}
+            state["recorder"] = recorder
         if args.gui:
-            viewer = mjk.SimulateViewer.open(robot, "ex_table_pour.py")
+            env.open_viewer("ex_table_pour.py")
+        completed = False
+        while not completed:
             try:
-                while viewer.is_running():
-                    try:
-                        for phase in phases:
-                            if not run_phase(
-                                env, robot, phase, viewer, recorder, record_every, step_counter, state
-                            ):
-                                raise StopIteration
-                        break
-                    except ResetRequested:
-                        continue
-                    except StopIteration:
-                        break
-            finally:
-                viewer.close()
-        else:
-            for phase in phases:
-                if not run_phase(
-                    env, robot, phase, None, recorder, record_every, step_counter, state
-                ):
-                    break
+                completed = all(run_phase(env, robot, fingers, dyn, p, state) for p in phases)
+                break
+            except ResetRequested:
+                continue
+        env.update()
+
         in_receiver, centroid = balls_in_receiver(env)
-        print(f"balls in transparent receiver: {in_receiver}/{NUM_BALLS}")
+        print(f"balls in transparent receiver: {in_receiver}/{NUM_BALLS} (min {MIN_IN_RECEIVER})")
         print(f"grain centroid: {[round(v, 3) for v in centroid]} receiver center={[JUG_X, JUG_Y]}")
         if recorder is not None:
             print(f"recorded: {args.record}")
@@ -369,7 +367,11 @@ def main() -> int:
         if recorder is not None:
             recorder.close()
         env.close()
-    return 0
+    if args.gui:
+        return 0
+    ok = completed and in_receiver >= MIN_IN_RECEIVER
+    print(f"{'PASS' if ok else 'FAIL'}: the balls were poured into the receiver")
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

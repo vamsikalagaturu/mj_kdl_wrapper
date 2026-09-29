@@ -1,0 +1,18 @@
+<!-- A link whose mesh is found through a relative meshdir, as in eddie_description. -->
+<mujoco model="mesh_link">
+  <compiler meshdir="../meshes"/>
+  <asset>
+    <mesh name="cube" file="cube.obj"/>
+  </asset>
+  <worldbody>
+    <body name="base">
+      <body name="link">
+        <joint name="hinge" type="hinge" axis="0 0 1"/>
+        <geom type="mesh" mesh="cube" mass="1"/>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <motor name="hinge" joint="hinge" ctrlrange="-1 1"/>
+  </actuator>
+</mujoco>

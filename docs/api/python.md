@@ -5,11 +5,17 @@ README. For complete function signatures, see the generated stubs in
 `python/mj_kdl_wrapper/*.pyi`.
 
 Coming from 0.2.x? Placement orientation moved from `.euler` to `.quat`
-`[x, y, z, w]`; see [Migrating from 0.2.x](@ref sec_migrate_quat).
+`[x, y, z, w]`; see [Migrating from 0.2.x](@ref sec_migrate_quat). Units, frames and what
+persists between calls: [Conventions](@ref page_conventions).
+
+A call that fails on its input raises `RuntimeError` whose message says why (the C++
+`Status::error` text); a wrong-sized joint vector raises `ValueError`, and a spec field of
+the wrong length (a 5-value `quat`, say) raises `TypeError`.
 
 The Python package exposes the same scene, robot, reset, viewer, and recorder
-concepts as the C++ wrapper. It owns MuJoCo `mjModel`/`mjData` through `Scene`
-or `Env` and returns KDL values through the upstream `PyKDL` module.
+concepts as the C++ wrapper. As in C++, one `Env` owns the MuJoCo
+`mjModel`/`mjData`, its robots and its viewer; KDL values come back through the
+upstream `PyKDL` module.
 
 The wheel bundles `PyKDL` as a top-level extension module built from the same
 Orocos KDL fork as the wrapper. `import PyKDL` works after installation, but
@@ -18,24 +24,28 @@ as a separate Python distribution with its own `.dist-info`.
 
 ## Model Paths
 
-`mj_kdl_wrapper.menagerie.model_path(name)` resolves bundled-example model
-paths without hard-coding a checkout location. It checks overrides first, then
-known local or cached MuJoCo Menagerie checkouts:
+`mj_kdl_wrapper.menagerie.model_path(name)` resolves the models the examples use
+(`kinova_gen3`, `robotiq_2f85`, `universal_robots_ur5e`, `universal_robots_ur10e`)
+without hard-coding a checkout location, in this order:
 
-1. `MJ_KDL_MODEL` / `MJ_KDL_GRIPPER` - per-model file overrides.
+1. The file named by `env_var`, when the caller passes one (`model_path("kinova_gen3",
+   env_var="MJ_KDL_MODEL")`) and that variable is set.
 2. `MJ_KDL_MENAGERIE` - a MuJoCo Menagerie checkout root.
-3. The user cache `~/.cache/mj_kdl_wrapper/menagerie`, populated by
+3. The bundled assets in `~/.cache/mj_kdl_wrapper/assets`: a bundled model derived from
+   Menagerie's (`kinova_gen3/gen3.xml`, with armature) replaces the upstream copy.
+4. The Menagerie checkout in `~/.cache/mj_kdl_wrapper/menagerie`, populated by
    `mj-kdl-fetch-menagerie`.
 
-`menagerie.asset_path(rel)` resolves bundled assets (gripper, table, mug) the
-same way: an optional per-asset env override, otherwise the user cache
-`~/.cache/mj_kdl_wrapper/assets`. `mj-kdl-fetch-menagerie` populates both, and
-the same cache backs the C++ examples (see the C++ guide).
+`menagerie.asset_path(rel)` resolves bundled assets (gripper, table, mug, cabinet, F/T
+sensor): an optional per-asset `env_var` override, otherwise the user cache
+`~/.cache/mj_kdl_wrapper/assets`, which it refreshes from the installed package when it is
+missing or out of date. `mj-kdl-fetch-menagerie` populates both caches, and the same cache
+backs the C++ examples (see the C++ guide). It refuses a `--dest` that is neither empty nor a
+Menagerie checkout, and a failed fetch leaves nothing behind.
 
-**Overrides:** the example scripts wire these per-file env vars -- `MJ_KDL_MODEL`
-(arm), `MJ_KDL_GRIPPER`, `MJ_KDL_TABLE`, `MJ_KDL_BOTTLE`, `MJ_KDL_RECEIVER`. Each
-must point at an existing file or resolution raises a clear error.
-`MJ_KDL_MENAGERIE` overrides the Menagerie checkout root.
+**Overrides:** the example scripts pass these per-file env vars -- `MJ_KDL_MODEL`
+(arm), `MJ_KDL_GRIPPER`, `MJ_KDL_TABLE`, `MJ_KDL_BOTTLE`, `MJ_KDL_RECEIVER`, `MJ_KDL_CABINET`,
+`MJ_KDL_FT`. Each must point at an existing file or resolution raises a clear error.
 
 For other MJCF sources, set the relevant environment variable or assign
 `RobotSpec.path` directly.
@@ -43,7 +53,7 @@ For other MJCF sources, set the relevant environment variable or assign
 ## Load From MJCF
 
 `SceneSpec` has no defaults for `timestep`, `add_floor`, or `add_skybox`.
-Those are explicit scene choices. `Scene.build()` rejects `timestep <= 0`.
+Those are explicit scene choices; `Env.build()` raises if one is unset or `timestep <= 0`.
 `spec.robots` may be empty; object-only scenes are valid.
 
 ```python
@@ -58,7 +68,7 @@ robot_spec = mjk.RobotSpec()
 robot_spec.path = mjk.menagerie.model_path("kinova_gen3")
 spec.robots = [robot_spec]
 
-scene = mjk.Scene.build(spec)
+env = mjk.Env.build(spec)
 ```
 
 For an object-only scene, put MJCF or primitive objects in `spec.objects` and
@@ -71,27 +81,38 @@ cabinet.mjcf_path = mjk.menagerie.asset_path("cabinet/cabinet.xml")
 cabinet.fixed = True
 
 spec.objects = [cabinet]
-scene = mjk.Scene.build(spec)
+env = mjk.Env.build(spec)
 ```
 
-`Scene` owns the compiled MuJoCo model/data. Call `close()` when you want to
-release native resources deterministically. Use `time()`, `timestep()`,
-`step()`, and `step_n(n)` when you want to advance the scene without a `Robot`
-control loop.
+`Env` owns the compiled MuJoCo model/data. Call `close()`, or use it as a context manager,
+to release native resources deterministically. `step()` advances it whether or not it has
+robots; `env.data.time` and `env.model.opt.timestep` report where it is. `build()`, `step()`, `pace()`,
+`reset()`, `add_object()`, `remove_object()` and a recorder's `record_frame()` and `render_rgb()`
+release the GIL while they run. `env.spec` is a read-only copy of the scene the `Env` runs,
+objects added or removed since `build()` included; changing the copy changes nothing.
 
 ```python
-scene.step_n(10)
-print(scene.time(), scene.timestep())
-scene.save_xml("combined_scene.xml")
-scene.save_binary("combined_scene.mjb")
+with mjk.Env.build(spec) as env:
+    env.step()
 ```
 
-Set wrapper log verbosity globally when debugging scene construction:
+```python
+import mujoco
+
+for _ in range(10):
+    env.step()
+print(env.data.time, env.model.opt.timestep)
+env.save_model_xml("combined_scene.xml")
+mujoco.mj_saveModel(env.model, "combined_scene.mjb", None)
+```
+
+The log level is a threshold: messages at that level and above print. `INFO` (the default)
+prints everything, `WARN` warnings and errors, `ERROR` errors only, `NONE` nothing:
 
 ```python
-mjk.set_log_level(mjk.LogLevel.INFO)
-assert mjk.get_log_level() == mjk.LogLevel.INFO
-print(mjk.mujoco_version())
+mjk.set_log_level(mjk.LogLevel.WARN)   # quiet the scene-construction progress
+assert mjk.get_log_level() == mjk.LogLevel.WARN
+print(mjk.__mujoco_version__)
 ```
 
 `mjk.__version__` is the Python package version. `mjk.__mujoco_version__` is the
@@ -100,27 +121,45 @@ MuJoCo version the extension was built against.
 ## Init A KDL Chain
 
 ```python
-robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link")
+robot = env.create_robot("base_link", "bracelet_link")
 
 robot.ctrl_mode = mjk.CtrlMode.POSITION
 robot.jnt_pos_cmd = [0.0] * robot.n_joints
-robot.update()
-robot.step()
+env.update()
+env.step()
 ```
 
-After init, `joint_names`, `joint_limits`, and all joint port vectors are in KDL
-chain order. Assignment to command ports must match `n_joints`; the bindings
-raise `ValueError`/`RuntimeError` for wrong sizes or closed handles.
+`create_robot()` registers the robot with the `Env`, whose `update()` reads and
+commands every registered robot. After init, `joint_names`, `joint_limits`, and
+all joint port vectors are in KDL chain order, and the command ports hold the
+current pose.
+
+The ports (`jnt_pos_msr`, `jnt_vel_msr`, `jnt_trq_msr`, `jnt_pos_cmd`, `jnt_vel_cmd`,
+`jnt_trq_cmd`, and the boolean `jnt_saturated`) read as read-only numpy copies. Write a port
+by assigning the whole vector; writing one element raises, so a lost write cannot go unnoticed:
+
+```python
+q = robot.jnt_pos_cmd.copy()
+q[0] += 0.1
+robot.jnt_pos_cmd = q          # writes the port
+robot.jnt_pos_cmd[0] = 0.1     # ValueError: assignment destination is read-only
+```
+
+A held copy stays what it was: it does not follow later `update()` or `reset()` calls. An
+assignment must have `n_joints` values (`ValueError` otherwise), and a robot of a closed `Env`
+raises `RuntimeError("robot is closed")`.
 
 When a tool or gripper is attached, pass `ToolFrameSpec` so the KDL chain uses
-the TCP site and includes the tool transform:
+the TCP site and includes the tool's inertia. `tool_body` is the tool's root body; for the
+2F-85 that is `g_base_mount`, which carries mass too. `robot.tip_T_tcp` is the transform from
+the chain tip to the TCP:
 
 ```python
 tool = mjk.ToolFrameSpec()
-tool.tool_body = "g_base"
+tool.tool_body = "g_base_mount"
 tool.tcp_site = "g_pinch"
 
-robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link", tool=tool)
+robot = env.create_robot("base_link", "bracelet_link", tool=tool)
 assert robot.has_tcp_frame
 ```
 
@@ -152,9 +191,16 @@ ft.name = "wrist_ft"          # resolves wrist_ft_force + wrist_ft_torque
 ft.frame_site = "wrist_ft_site"
 
 tool.ft_sensors = [ft]
-robot = mjk.Robot.from_scene(scene, "base_link", "bracelet_link", tool=tool)
-robot.update()
+robot = env.create_robot("base_link", "bracelet_link", tool=tool)
+env.update()
 wrench = robot.ft_sensor("wrist_ft")
+```
+
+When the chain comes from the same description that produced the MJCF, register it as given;
+`joint_names` are the MuJoCo joints in chain order, and no tool inertia is lumped onto it:
+
+```python
+robot = env.create_robot_from_chain(chain, joint_names, tool=tool)
 ```
 
 ## Attach MJCF Bodies
@@ -165,7 +211,7 @@ without manual pose offsets:
 
 ```python
 gripper = mjk.AttachmentSpec()
-gripper.mjcf_path = "assets/robotiq_2f85/2f85.xml"
+gripper.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml")
 gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
 gripper.prefix = "g_"
 
@@ -192,7 +238,10 @@ attachment.
 ## Multi-Robot Scene
 
 Use prefixes to keep MuJoCo names distinct when loading the same MJCF more than
-once. The prefix is also passed when creating the corresponding `Robot` handle.
+once. `create_robot()`'s `prefix` is prepended to every name it resolves (base and tip
+bodies, tool body, TCP site, F/T sensor names), so `create_robot("base_link",
+"bracelet_link", "r2_", tool)` and the same call with `r2_`-prefixed names and no prefix
+build the same robot.
 
 ```python
 left = mjk.RobotSpec()
@@ -205,10 +254,10 @@ right.prefix = "r2_"
 right.pos = [0.5, 0.0, 0.0]
 
 spec.robots = [left, right]
-scene = mjk.Scene.build(spec)
+env = mjk.Env.build(spec)
 
-robot1 = mjk.Robot.from_scene(scene, "base_link", "bracelet_link")
-robot2 = mjk.Robot.from_scene(scene, "base_link", "bracelet_link", prefix="r2_")
+robot1 = env.create_robot("base_link", "bracelet_link")
+robot2 = env.create_robot("r2_base_link", "r2_bracelet_link")
 ```
 
 ## Table And Scene Objects
@@ -217,18 +266,18 @@ robot2 = mjk.Robot.from_scene(scene, "base_link", "bracelet_link", prefix="r2_")
 objects can be mounted to sites or bodies created earlier in the scene spec.
 Build order is decorations, objects in declaration order, robots, then cameras.
 
-For primitive objects, `shape`, `size`, `rgba`, `mass`, and `friction` are
-required. For MJCF-backed objects, `mjcf_path` takes precedence and primitive
-geometry fields are ignored at runtime.
+For primitive objects, `shape`, `size`, `rgba` and `friction` are required, and `mass`
+unless the object is `fixed`. For MJCF-backed objects, `mjcf_path` takes precedence and
+primitive geometry fields are ignored at runtime.
 
 ```python
 table = mjk.SceneObject()
 table.name = "table"
-table.mjcf_path = "assets/table.xml"
+table.mjcf_path = mjk.menagerie.asset_path("table.xml")
 table.pos = [0.0, 0.0, 0.7]
 table.fixed = True
 
-mount = mjk.scene_object_site_name(table, "table_top")
+mount = "table_top"   # the asset's own site name; SceneObject.prefix would prepend to it
 
 robot_spec = mjk.RobotSpec()
 robot_spec.path = mjk.menagerie.model_path("kinova_gen3")
@@ -246,7 +295,7 @@ cube.friction = [0.8, 0.02, 0.001]
 
 spec.objects = [table, cube]
 spec.robots = [robot_spec]
-scene = mjk.Scene.build(spec)
+env = mjk.Env.build(spec)
 ```
 
 MuJoCo restricts free joints to top-level bodies, so a non-fixed primitive with
@@ -264,29 +313,30 @@ cam.pos = [1.8, -2.0, 1.4]
 cam.fovy = 45.0
 spec.cameras = [cam]
 
-scene = mjk.Scene.build(spec)
-print(scene.camera_names())
+env = mjk.Env.build(spec)
+print([env.model.camera(i).name for i in range(env.model.ncam)])
 ```
 
-`SimulateViewer.use_camera(name)` and `VideoRecorder.use_camera(name)` switch to
-a fixed camera. Pass `""` to return to the free camera.
+The viewer's and `VideoRecorder`'s `use_camera(name)` switch to a fixed camera.
+Pass `""` to return to the free camera.
 
-Use `body_frame()` and `site_frame()` to read world poses as `PyKDL.Frame`.
-`Scene.set_body_pose()` teleports a free body; Python quaternions for this
-method use `xyzw` order and are converted before calling MuJoCo.
+Use `body_frame()` and `site_frame()` to read world poses as `PyKDL.Frame`; the
+kinematics are recomputed only when the state changed since they were last
+computed. `Env.set_body_pose()` teleports a free body and zeroes its velocity; its quaternion
+is `[x, y, z, w]` like every quaternion in the API.
 
 ```python
-tcp = scene.site_frame("g_pinch")
-scene.set_body_pose("red_cube", [0.45, 0.0, 0.75], [0.0, 0.0, 0.0, 1.0])
+tcp = env.site_frame("g_pinch")
+env.set_body_pose("red_cube", [0.45, 0.0, 0.75], [0.0, 0.0, 0.0, 1.0])
 ```
 
-For named actuators that are not part of a `Robot` joint mapping, use the direct
-actuator helpers:
+For named actuators that are not part of a `Robot` joint mapping, write `env.data` directly
+(see [Direct MuJoCo access](@ref sec_py_direct_mujoco)); `env.model.actuator(name)` raises
+`KeyError` when the actuator is missing:
 
 ```python
-if scene.has_actuator("finger"):
-    scene.set_actuator_ctrl("finger", 0.25)
-    print(scene.actuator_ctrl("finger"))
+env.data.actuator("g_fingers_actuator").ctrl[0] = 0.25   # the "g_"-prefixed 2F-85's drive
+print(env.data.actuator("g_fingers_actuator").ctrl[0])
 ```
 
 ## PyKDL Interop
@@ -307,51 +357,59 @@ tcp = kdl.Frame()
 fk.JntToCart(q, tcp)
 ```
 
-`Robot.set_joint_pos()` and `Robot.fk_frame(q)` accept either Python sequences
-or `PyKDL.JntArray`. `Scene.body_frame()` and `Scene.site_frame()` return
-`PyKDL.Frame`.
+`Robot.set_joint_pos()` accepts either a Python sequence or a `PyKDL.JntArray`.
+`Env.body_frame()` and `Env.site_frame()` return `PyKDL.Frame`.
 
-`Robot.gravity_torques(gravity_z=-9.81)` is a convenience wrapper around
-`KDL::ChainDynParam::JntToGravity()` using the robot's measured positions.
-For full dynamics, get the chain with `kdl_chain()` and construct the PyKDL
-solver you need.
+Gravity torques come from `ChainDynParam` on the same chain and `JntArray`:
+
+```python
+dyn = kdl.ChainDynParam(chain, kdl.Vector(0.0, 0.0, env.spec.gravity_z))
+g = kdl.JntArray(robot.n_joints)
+dyn.JntToGravity(q, g)
+```
 
 ## Control Loop
 
 ```python
-robot.ctrl_mode = mjk.CtrlMode.TORQUE
+robot.set_control_mode(mjk.CtrlMode.TORQUE)   # seeds the torque ports, no jump
+dyn = kdl.ChainDynParam(robot.kdl_chain(), kdl.Vector(0.0, 0.0, env.spec.gravity_z))
+q, g = kdl.JntArray(robot.n_joints), kdl.JntArray(robot.n_joints)
 
-while robot.step():
-    robot.update()
-    robot.jnt_trq_cmd = robot.gravity_torques()
+while env.data.time < 5.0 and env.step():
+    env.update()
+    for i, value in enumerate(robot.jnt_pos_msr):
+        q[i] = value
+    dyn.JntToGravity(q, g)
+    robot.jnt_trq_cmd = [g[i] for i in range(robot.n_joints)]
 ```
 
-`update()` reads MuJoCo state into `jnt_pos_msr`, `jnt_vel_msr`, and
-`jnt_trq_msr`, then applies the command ports. In `POSITION` mode it writes
-`jnt_pos_cmd` to actuator controls. In `TORQUE` mode it writes `jnt_trq_cmd` to
-generalized forces. `Robot.step()` advances the owning scene data and returns
-`False` only when the underlying simulation loop has been closed by an
-interactive viewer.
+`env.update()` reads MuJoCo state into every registered robot's `jnt_pos_msr`,
+`jnt_vel_msr`, and `jnt_trq_msr`, then applies their command ports: the active
+mode's command goes to that mode's actuator controls (`jnt_pos_cmd`,
+`jnt_vel_cmd` or `jnt_trq_cmd`), clamped to `ctrlrange` and flagged in
+`jnt_saturated`. `robot.joint_force_limits()` returns each joint's torque limit in the active
+mode. `env.step()` advances one timestep, after which joint state and frames describe the same
+instant; it returns `False` only when the viewer window has been closed, so a headless loop
+needs its own end condition.
 
-Use `set_joint_pos(q, call_forward=True)` to seed joint state directly in KDL
-order:
+Use `set_joint_pos(q)` to seed joint state directly in KDL order:
 
 ```python
 robot.set_joint_pos([0.0] * robot.n_joints)
-print(robot.fk_frame())
+env.update()                   # jnt_pos_msr now reads the seeded pose
 ```
 
 ## Reset
 
-`Env` is the resettable owner variant. It keeps registered robots synchronized
-across resets and runtime scene rebuilds.
+`Env.reset()` resets everything the `Env` holds and keeps registered robots
+synchronized across resets and runtime scene rebuilds.
 
 ```python
 env = mjk.Env.build(spec)
 robot = env.create_robot("base_link", "bracelet_link")
 
 def on_reset(ctx: mjk.ResetContext) -> None:
-    robot.set_joint_pos([0.0] * robot.n_joints, call_forward=False)
+    robot.set_joint_pos([0.0] * robot.n_joints)
 
 env.on_reset = on_reset
 
@@ -360,18 +418,22 @@ opts.keyframe = 0
 info = env.reset(opts)
 ```
 
-`Env.reset()` restores MuJoCo state, calls the optional reset hook, re-seeds
-registered robot command ports from measured state, and clears stale forces.
-`ResetContext.options` and `ResetContext.info` expose the active reset request
-inside the hook. `ResetOptions.use_keyframe = False` forces a default MuJoCo
-reset instead of loading a keyframe.
+`Env.reset()` restores MuJoCo state, re-seeds every registered robot's ports and F/T
+readings from the reset state (so the first command holds the pose), then calls the optional
+reset hook, then reads the measurements back. A command the hook primes is kept; a POSITION
+robot the hook moves needs its `jnt_pos_cmd` set there too. The Simulate UI's reset button
+does the same. An exception the hook raises comes out of `reset()` (or of the `step()` that
+ran a UI reset) after the measurements have been read back; `env.on_reset` reads `None` until
+set, and `close()` drops it.
+`ResetContext.options` and `ResetContext.info` are a copy of the reset request and its result,
+safe to keep after the hook returns. `ResetOptions.use_keyframe = False` forces a default
+MuJoCo reset instead of loading a keyframe.
 
-`Env` mirrors the scene-level helpers for runtime state:
+`Env` also carries the runtime-state helpers:
 
 ```python
-env.set_actuator_ctrl("finger", 0.25)
 frame = env.body_frame("red_cube")
-env.save_xml("episode_start.xml")
+env.save_model_xml("episode_start.xml")
 ```
 
 ## Runtime Add And Remove Objects
@@ -386,24 +448,43 @@ cube.rgba = [1.0, 0.5, 0.0, 1.0]
 cube.mass = 0.1
 cube.friction = [0.8, 0.02, 0.001]
 
-scene.add_object(cube)
-robot.update()
-scene.remove_object("cube")
+env.add_object(cube)
+env.update()
+env.remove_object("cube")
 ```
 
-`Scene.add_object()`, `Scene.remove_object()`, `Env.add_object()`, and
-`Env.remove_object()` rebuild the native MuJoCo model/data and rebind existing
-Python `Robot` handles. Calling `Scene.close()` or `Env.close()` invalidates
-dependent robot handles; using one raises `RuntimeError("robot is closed")`.
+`Env.add_object()` and `Env.remove_object()` rebuild the native MuJoCo
+model/data and rebind existing Python `Robot` handles, the viewer and open recorders.
+`remove_object()` of a name the scene does not hold raises `RuntimeError` naming it. Calling
+`Env.close()` invalidates dependent robot handles; using one raises
+`RuntimeError("robot is closed")`.
 
-Use `Env.add_object()` / `Env.remove_object()` when the scene is resettable and
-registered robots should remain synchronized with future resets.
+## Direct MuJoCo Access {#sec_py_direct_mujoco}
+
+`env.model` and `env.data` are the live `mujoco.MjModel` and `mujoco.MjData` the `Env` runs
+on, so the `mujoco` package reads and writes them in place. `add_object()` and
+`remove_object()` replace both: re-read them after either call rather than holding the old
+objects. The viewer thread reads `env.data` too; call `mujoco` functions on it only while the
+viewer is closed or paused.
+
+```python
+import mujoco
+import numpy as np
+
+print(env.data.time, env.model.opt.timestep)
+env.data.actuator("g_fingers_actuator").ctrl[0] = 0.25   # KeyError if missing
+env.data.body("red_cube").xfrc_applied[:] = [0.0, 0.0, 5.0, 0.0, 0.0, 0.0]   # force, torque
+
+f = np.zeros(6)
+for i in range(env.data.ncon):
+    mujoco.mj_contactForce(env.model, env.data, i, f)   # contact frame: normal, then tangents
+```
 
 ## Headless Video Recording
 
 ```python
 recorder = mjk.VideoRecorder.open_preset(
-    scene,
+    env,
     "sim.mp4",
     mjk.VideoResolution.R720p,
     fps=60,
@@ -411,45 +492,54 @@ recorder = mjk.VideoRecorder.open_preset(
 recorder.set_free_camera(2.5, 135.0, -20.0, (0.0, 0.0, 0.7))
 
 for _ in range(3000):
-    robot.update()
-    robot.step()
+    env.step()
+    env.update()
     recorder.record_frame()
 
 recorder.close()
 ```
 
-Use `VideoRecorder.open(scene_or_env, path, width, height, fps)` for explicit
-frame sizes, or `open_preset()` for `VideoResolution` presets. `record_frame()`
-captures the current state; step the scene or robot before each call.
+Use `VideoRecorder.open(env, path, width, height, fps)` for explicit frame
+sizes, or `open_preset()` for `VideoResolution` presets. `record_frame()`
+captures the current state; step the `Env` before each call. A recorder is also a context
+manager.
 
-The recorder camera list includes `Current`, `Free`, `Tracking`, robot MJCF
-cameras, and cameras added through `SceneSpec.cameras`.
+For frames in memory instead of a file, open an offscreen renderer; `render_rgb()` returns a
+`(height, width, 3)` uint8 array, top row first, on any recorder:
+
+```python
+with mjk.VideoRecorder.open_offscreen(env, 640, 480) as rec:
+    rgb = rec.render_rgb()
+```
+
+A recorder's `use_camera(name)` takes any fixed camera of the model (robot MJCF cameras and
+`SceneSpec.cameras`); `""` returns to the free camera.
 
 Recording is offscreen-only: a `VideoRecorder` renders on its own EGL context,
 so the interactive window never pays for it. To record the view a fresh window
-opens with, leave the recorder on its default free camera (`use_camera` with an
-empty name); the simulate UI's record panel offers the same choices, all
-rendered offscreen.
+opens with, leave the recorder on its default free camera. The Simulate UI's Recorder panel
+also offers its `Current` and `Tracking` views, all rendered offscreen.
 
 ## Viewer Controls
 
-`SimulateViewer.open(robot)` starts the custom MuJoCo Simulate UI and binds it
-to a robot handle. For object-only scenes, pass the `Scene` instead:
+`env.open_viewer()` starts the custom MuJoCo Simulate UI on the `Env`, with or
+without robots; `env.step()` then also honours its pause, perturbation and
+recording, and `env.close()` closes the window:
 
 ```python
-viewer = mjk.SimulateViewer.open(robot, "MuJoCo")
-while viewer.step():
-    robot.update()
-viewer.close()
-
-viewer = mjk.SimulateViewer.open(scene, "object scene")
-while viewer.step():
-    pass
-viewer.close()
+env.open_viewer("MuJoCo")
+while env.data.time < 10.0 and env.step():   # ends by itself, or when the window closes
+    env.update()
+    env.pace()
+env.close()
 ```
 
+`env.viewer.key_pressed(key)` reports a held GLFW key code, and
+`env.viewer.capture_key(key)` withholds a key from the UI's own bindings (arrows, space,
+escape) so a controller can use it.
+
 The UI exposes the same wrapper panels as the C++ viewer: `Frames`, `Trace`,
-`Perturb`, `Recorder`, and `RTF`. Use `viewer.add_trace_segment()` for Python
-trace overlays and `viewer.use_camera(name)` to switch to a named camera.
-`viewer.realtime_factor` controls pacing; `1.0` is real time, `0.0` runs as fast
-as the loop allows.
+`Perturb`, `Recorder`, and `RTF`. Trace overlays, camera selection and the
+real-time factor (`1.0` is real time, `0.0` runs as fast as the loop allows) go
+through the `Env`'s viewer; see the stubs in `python/mj_kdl_wrapper/*.pyi` for
+the exact method names.

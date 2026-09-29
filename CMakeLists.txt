@@ -14,6 +14,26 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
+# An existing checkout is used as is, so say when it is not the pinned commit.
+function(mj_kdl_warn_off_pin what dir pin)
+    if(NOT pin MATCHES "^[0-9a-f]+$" OR NOT EXISTS "${dir}/.git")
+        return()
+    endif()
+    find_package(Git QUIET)
+    if(NOT GIT_FOUND)
+        return()
+    endif()
+    execute_process(
+      COMMAND "${GIT_EXECUTABLE}" -C "${dir}" rev-parse HEAD
+      OUTPUT_VARIABLE _head
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      RESULT_VARIABLE _rc
+    )
+    if(_rc EQUAL 0 AND NOT _head STREQUAL pin)
+        message(WARNING "${what} at ${dir} is at ${_head}, not the pinned ${pin}.")
+    endif()
+endfunction()
+
 # Shared cache root for downloaded MuJoCo, MuJoCo Menagerie, and bundled assets.
 # Mirrors python/mj_kdl_wrapper/menagerie.py:_cache_root and
 # src/examples/example_paths.hpp:cache_root; keep all three in sync.
@@ -55,7 +75,7 @@ set(
 )
 set(
   MJ_KDL_OROCOS_KDL_GIT_TAG
-  "vereshchagin-driver-weighting"
+  "${MJ_KDL_OROCOS_KDL_GIT_SHA}"
   CACHE STRING
   "Orocos KDL fork branch, tag, or commit to build"
 )
@@ -96,7 +116,8 @@ option(
 
 # MuJoCo - default to the user cache, override with -DMJ_KDL_MUJOCO_DIR=...
 if(NOT DEFINED CACHE{MJ_KDL_MUJOCO_DIR} AND NOT MJ_KDL_MUJOCO_DEFAULT_DIR)
-    message(FATAL_ERROR "Set XDG_CACHE_HOME or HOME for the default MuJoCo cache, or pass MJ_KDL_MUJOCO_DIR explicitly.")
+    message(FATAL_ERROR "Set XDG_CACHE_HOME or HOME for the default MuJoCo cache, "
+      "or pass MJ_KDL_MUJOCO_DIR explicitly.")
 endif()
 set(MJ_KDL_MUJOCO_DIR "${MJ_KDL_MUJOCO_DEFAULT_DIR}" CACHE PATH "MuJoCo install location")
 if(MJ_KDL_FETCH_MUJOCO AND NOT EXISTS "${MJ_KDL_MUJOCO_DIR}/include/mujoco/mujoco.h")
@@ -112,14 +133,23 @@ if(MJ_KDL_FETCH_MUJOCO AND NOT EXISTS "${MJ_KDL_MUJOCO_DIR}/include/mujoco/mujoc
           "Automatic MuJoCo download does not support ${CMAKE_SYSTEM_PROCESSOR}. "
           "Set MJ_KDL_MUJOCO_DIR to an existing MuJoCo ${MJ_KDL_MUJOCO_VERSION} install.")
     endif()
+    set(
+      _mj_kdl_mujoco_default_url
+      "https://github.com/google-deepmind/mujoco/releases/download/${MJ_KDL_MUJOCO_VERSION}/mujoco-${MJ_KDL_MUJOCO_VERSION}-${_mj_kdl_mujoco_platform}.tar.gz"
+    )
     if(NOT MJ_KDL_MUJOCO_URL)
         set(
           MJ_KDL_MUJOCO_URL
-          "https://github.com/google-deepmind/mujoco/releases/download/${MJ_KDL_MUJOCO_VERSION}/mujoco-${MJ_KDL_MUJOCO_VERSION}-${_mj_kdl_mujoco_platform}.tar.gz"
+          "${_mj_kdl_mujoco_default_url}"
           CACHE STRING
           "Override MuJoCo release archive URL"
           FORCE
         )
+    endif()
+    # Only the default archive has a known hash; an overridden URL is the user's to vouch for.
+    set(_mj_kdl_mujoco_hash)
+    if(MJ_KDL_MUJOCO_URL STREQUAL _mj_kdl_mujoco_default_url)
+        set(_mj_kdl_mujoco_hash URL_HASH "SHA256=${MJ_KDL_MUJOCO_SHA256}")
     endif()
     include(FetchContent)
     if(POLICY CMP0135)
@@ -131,6 +161,7 @@ if(MJ_KDL_FETCH_MUJOCO AND NOT EXISTS "${MJ_KDL_MUJOCO_DIR}/include/mujoco/mujoc
     FetchContent_Declare(
       mujoco_release
       URL "${MJ_KDL_MUJOCO_URL}"
+      ${_mj_kdl_mujoco_hash}
       SOURCE_DIR "${MJ_KDL_MUJOCO_DIR}"
       SOURCE_SUBDIR _mj_kdl_no_configure
     )
@@ -161,7 +192,6 @@ find_library(MUJOCO_LIBRARY mujoco
              NO_DEFAULT_PATH REQUIRED)
 get_filename_component(MUJOCO_LIB_DIR "${MUJOCO_LIBRARY}" DIRECTORY)
 list(APPEND CMAKE_BUILD_RPATH "${MUJOCO_LIB_DIR}")
-set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 message(STATUS "MuJoCo : ${MUJOCO_LIBRARY}")
 
 # For consumers wanting MuJoCo without the KDL, glfw and OpenGL that mj_kdl_wrapper brings.
@@ -192,6 +222,8 @@ endif()
 # no system liborocos-kdl is ever consulted. The wrapper consumes it through an
 # IMPORTED target and PyKDL (built later) consumes its install prefix.
 include(ExternalProject)
+# KDL's public headers include <Eigen/Core>, whichever KDL is used.
+find_package(Eigen3 REQUIRED NO_MODULE)
 # TRUE only when this build compiles and installs its own copy of the fork. The
 # consume-from-elsewhere branches leave it FALSE, which switches off PyKDL
 # building, KDL bundling, and the self-contained install of KDL.
@@ -214,7 +246,6 @@ elseif(MJ_KDL_OROCOS_KDL_INSTALL_DIR)
   find_library(MJ_KDL_OROCOS_KDL_LIBRARY orocos-kdl
                PATHS "${MJ_KDL_OROCOS_KDL_INSTALL_DIR}/lib"
                NO_DEFAULT_PATH REQUIRED)
-  find_package(Eigen3 REQUIRED NO_MODULE)
   add_library(orocos-kdl SHARED IMPORTED GLOBAL)
   set_target_properties(orocos-kdl PROPERTIES
     IMPORTED_LOCATION "${MJ_KDL_OROCOS_KDL_LIBRARY}"
@@ -235,13 +266,15 @@ if(EXISTS "${_MJ_KDL_OROCOS_SRC}/orocos_kdl/CMakeLists.txt")
   # no clone.
   set(_MJ_KDL_OROCOS_DOWNLOAD DOWNLOAD_COMMAND "")
   message(STATUS "Orocos KDL: building existing source ${_MJ_KDL_OROCOS_SRC}")
+  mj_kdl_warn_off_pin("Orocos KDL" "${_MJ_KDL_OROCOS_SRC}" "${MJ_KDL_OROCOS_KDL_GIT_TAG}")
 elseif(MJ_KDL_FETCH_OROCOS_KDL)
   # Clone the fork into MJ_KDL_OROCOS_KDL_DIR (default: third_party/...), then
   # build it. The checkout persists across builds like the Menagerie checkout.
+  # Not shallow: a shallow clone can only check out a branch or tag, not the pinned commit.
   set(_MJ_KDL_OROCOS_DOWNLOAD
     GIT_REPOSITORY "${MJ_KDL_OROCOS_KDL_GIT_REPOSITORY}"
     GIT_TAG        "${MJ_KDL_OROCOS_KDL_GIT_TAG}"
-    GIT_SHALLOW    TRUE
+    GIT_SHALLOW    FALSE
     UPDATE_DISCONNECTED TRUE
   )
   message(
@@ -262,16 +295,22 @@ ExternalProject_Add(orocos_kdl_ep
   CMAKE_ARGS
     -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
     -DCMAKE_INSTALL_PREFIX=${_MJ_KDL_OROCOS_PREFIX}
+    -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+    -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+    -DCMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER}
+    -DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}
     -DENABLE_TESTS=OFF
     -DENABLE_EXAMPLES=OFF
+    # Same flags as the wrapper: Eigen's allocation ABI in KDL's headers must match its library.
+    "-DCMAKE_C_FLAGS=${CMAKE_C_FLAGS}"
+    "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+    "-DCMAKE_SHARED_LINKER_FLAGS=${CMAKE_SHARED_LINKER_FLAGS}"
   BUILD_BYPRODUCTS "${_MJ_KDL_OROCOS_PREFIX}/lib/liborocos-kdl.so"
 )
 # IMPORTED target the wrapper links against. The install tree is produced by the
 # ExternalProject build step; create the include dir up front so the path
 # recorded on the target is valid at configure time.
 file(MAKE_DIRECTORY "${_MJ_KDL_OROCOS_PREFIX}/include")
-# KDL public headers include <Eigen/Core>; carry Eigen on the imported target.
-find_package(Eigen3 REQUIRED NO_MODULE)
 add_library(orocos-kdl SHARED IMPORTED GLOBAL)
 set_target_properties(orocos-kdl PROPERTIES
   IMPORTED_LOCATION "${_MJ_KDL_OROCOS_PREFIX}/lib/liborocos-kdl.so"
@@ -313,7 +352,7 @@ target_include_directories(mujoco_simulate_ui PUBLIC
   ${MUJOCO_INCLUDE_DIR}
 )
 target_link_libraries(mujoco_simulate_ui PUBLIC
-  ${MUJOCO_LIBRARY}
+  mujoco::mujoco
   glfw
   OpenGL::GL
 )
@@ -336,36 +375,25 @@ target_include_directories(mj_kdl_wrapper PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
-if(IS_ABSOLUTE "${MUJOCO_INCLUDE_DIR}" AND "${MUJOCO_INCLUDE_DIR}" MATCHES "^${CMAKE_BINARY_DIR}")
-    target_include_directories(mj_kdl_wrapper PUBLIC $<BUILD_INTERFACE:${MUJOCO_INCLUDE_DIR}>)
-else()
-    target_include_directories(mj_kdl_wrapper PUBLIC "${MUJOCO_INCLUDE_DIR}")
-endif()
-# The fetched orocos_kdl include dir lives in the build (or source) tree. Wrap
-# such paths in BUILD_INTERFACE so the installed CMake export stays valid; add
-# external paths (e.g. system Eigen) directly.
-foreach(_kdl_inc IN LISTS orocos_kdl_INCLUDE_DIRS)
-    if(IS_ABSOLUTE "${_kdl_inc}" AND
-       ("${_kdl_inc}" MATCHES "^${CMAKE_SOURCE_DIR}" OR "${_kdl_inc}" MATCHES "^${CMAKE_BINARY_DIR}"))
-        target_include_directories(mj_kdl_wrapper PUBLIC $<BUILD_INTERFACE:${_kdl_inc}>)
-    else()
-        target_include_directories(mj_kdl_wrapper PUBLIC "${_kdl_inc}")
-    endif()
-endforeach()
 target_include_directories(mj_kdl_wrapper PRIVATE
   ${MJ_SIM_LOCAL_DIR}
   ${MJ_SIM_DIR}
 )
 
 target_link_libraries(mj_kdl_wrapper PUBLIC
-  ${MUJOCO_LIBRARY}
+  mujoco::mujoco
   glfw
   OpenGL::GL
   ${orocos_kdl_LIBRARIES}
+  # The installed fork's orocos-kdl target does not carry Eigen.
+  Eigen3::Eigen
 )
 target_link_libraries(mj_kdl_wrapper PRIVATE
   mujoco_simulate_ui
 )
+# DT_RPATH, not RUNPATH: LD_LIBRARY_PATH must not swap the KDL fork for a system liborocos-kdl
+# with the same soname.
+target_link_options(mj_kdl_wrapper PUBLIC "LINKER:--disable-new-dtags")
 
 # When KDL is built via ExternalProject, its headers and library only exist
 # after that build step. Order it before the wrapper compiles/links.
@@ -377,8 +405,10 @@ target_compile_options(mj_kdl_wrapper PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(mj_kdl_wrapper PRIVATE
   MUJOCO_PLUGIN_DIR="${MJ_KDL_MUJOCO_DIR}/bin/mujoco_plugin"
 )
+# dladdr() finds a mujoco_plugin directory installed next to the library.
+target_link_libraries(mj_kdl_wrapper PRIVATE ${CMAKE_DL_LIBS})
 if(BUILD_RECORDER AND EGL_LIBRARY)
-    target_link_libraries(mj_kdl_wrapper PUBLIC ${EGL_LIBRARY})
+    target_link_libraries(mj_kdl_wrapper PRIVATE ${EGL_LIBRARY})
     target_compile_definitions(mj_kdl_wrapper PRIVATE MJ_KDL_HAS_EGL)
 endif()
 
@@ -424,8 +454,6 @@ if(BUILD_PYTHON_BINDINGS)
       BUILD_RPATH "${MUJOCO_LIB_DIR}"
       INSTALL_RPATH "$ORIGIN;$ORIGIN/../mujoco"
     )
-    target_compile_definitions(mj_kdl_wrapper PRIVATE MJ_KDL_RELOCATABLE_PLUGINS)
-    target_link_libraries(mj_kdl_wrapper PRIVATE ${CMAKE_DL_LIBS})
 
     find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
     find_package(pybind11 CONFIG QUIET)
@@ -460,11 +488,18 @@ if(BUILD_PYTHON_BINDINGS)
           CMAKE_ARGS
             -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
             -DCMAKE_INSTALL_PREFIX=${_MJ_KDL_PYKDL_INSTALL}
+            -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+            -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+            -DCMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER}
+            -DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}
             -DCMAKE_PREFIX_PATH=${_MJ_KDL_OROCOS_PREFIX}
             -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
             -Dpybind11_DIR=${pybind11_DIR}
             -DPYTHON_SITE_PACKAGES_INSTALL_DIR=.
             "-DCMAKE_INSTALL_RPATH=\$ORIGIN/mj_kdl_wrapper"
+            # DT_RPATH, as for the wrapper: LD_LIBRARY_PATH must not swap in a system KDL.
+            -DCMAKE_MODULE_LINKER_FLAGS=-Wl,--disable-new-dtags
+            -DCMAKE_SHARED_LINKER_FLAGS=-Wl,--disable-new-dtags
           UPDATE_DISCONNECTED TRUE
         )
         # Bundle PyKDL (top-level module) and the Orocos KDL shared library from the
@@ -537,6 +572,53 @@ if(BUILD_PYTHON_BINDINGS)
     endif()
 endif()
 
+# MuJoCo Menagerie (robot model zoo - used by the examples and tests)
+option(MJ_KDL_FETCH_MENAGERIE "Download MuJoCo Menagerie into MJ_KDL_MENAGERIE_DIR" OFF)
+set(
+  MJ_KDL_MENAGERIE_DIR "${MJ_KDL_MENAGERIE_DEFAULT_DIR}"
+  CACHE PATH
+  "MuJoCo Menagerie location (used as the MJ_KDL_FETCH_MENAGERIE destination)"
+)
+if(MJ_KDL_FETCH_MENAGERIE)
+    if(NOT MJ_KDL_MENAGERIE_DIR)
+        message(FATAL_ERROR "Set XDG_CACHE_HOME or HOME for the default Menagerie cache, "
+          "or pass MJ_KDL_MENAGERIE_DIR explicitly.")
+    endif()
+    set(MENAGERIE_SOURCE_DIR "${MJ_KDL_MENAGERIE_DIR}")
+    if(EXISTS ${MENAGERIE_SOURCE_DIR}/README.md)
+        message(STATUS "Menagerie: already present at ${MENAGERIE_SOURCE_DIR}")
+        mj_kdl_warn_off_pin("Menagerie" "${MENAGERIE_SOURCE_DIR}" "${MJ_KDL_MENAGERIE_GIT_SHA}")
+    else()
+        find_package(Git REQUIRED)
+        message(STATUS
+          "Menagerie: fetching ${MJ_KDL_MENAGERIE_GIT_SHA} into ${MENAGERIE_SOURCE_DIR}")
+        # One commit, shallow: FetchContent shallow-clones only branches and tags, and the full
+        # history is several GB.
+        file(MAKE_DIRECTORY "${MENAGERIE_SOURCE_DIR}")
+        function(_mj_kdl_menagerie_git)
+            execute_process(
+              COMMAND "${GIT_EXECUTABLE}" -C "${MENAGERIE_SOURCE_DIR}" ${ARGN}
+              RESULT_VARIABLE _rc
+            )
+            if(NOT _rc EQUAL 0)
+                message(FATAL_ERROR "Menagerie: 'git ${ARGN}' failed in ${MENAGERIE_SOURCE_DIR}")
+            endif()
+        endfunction()
+        _mj_kdl_menagerie_git(init -q)
+        _mj_kdl_menagerie_git(fetch -q --depth 1
+          https://github.com/google-deepmind/mujoco_menagerie.git ${MJ_KDL_MENAGERIE_GIT_SHA})
+        _mj_kdl_menagerie_git(checkout -q --detach FETCH_HEAD)
+        message(STATUS "Menagerie: ready at ${MENAGERIE_SOURCE_DIR}")
+    endif()
+    # At build time, so an edited asset reaches the tests without a reconfigure.
+    add_custom_target(mj_kdl_cache_assets ALL
+      COMMAND "${CMAKE_COMMAND}" -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets" "${_MJ_KDL_CACHE_ROOT}/assets"
+      COMMENT "Copying bundled assets into ${_MJ_KDL_CACHE_ROOT}/assets"
+      VERBATIM
+    )
+endif()
+
 # Examples (GUI by default; pass --headless to skip the window)
 option(BUILD_EXAMPLES "Build examples" ON)
 if(BUILD_EXAMPLES)
@@ -550,37 +632,6 @@ if(BUILD_TESTS)
     add_subdirectory(test)
 endif()
 
-# MuJoCo Menagerie (robot model zoo - used by the examples and tests)
-option(MJ_KDL_FETCH_MENAGERIE "Download MuJoCo Menagerie into MJ_KDL_MENAGERIE_DIR" OFF)
-set(
-  MJ_KDL_MENAGERIE_DIR "${MJ_KDL_MENAGERIE_DEFAULT_DIR}"
-  CACHE PATH
-  "MuJoCo Menagerie location (used as the MJ_KDL_FETCH_MENAGERIE destination)"
-)
-if(MJ_KDL_FETCH_MENAGERIE)
-    if(NOT MJ_KDL_MENAGERIE_DIR)
-        message(FATAL_ERROR "Set XDG_CACHE_HOME or HOME for the default Menagerie cache, or pass MJ_KDL_MENAGERIE_DIR explicitly.")
-    endif()
-    set(MENAGERIE_SOURCE_DIR "${MJ_KDL_MENAGERIE_DIR}")
-    if(EXISTS ${MENAGERIE_SOURCE_DIR}/README.md)
-        message(STATUS "Menagerie: already present at ${MENAGERIE_SOURCE_DIR}")
-    else()
-        include(FetchContent)
-        message(STATUS "Menagerie: fetching into ${MENAGERIE_SOURCE_DIR}")
-        FetchContent_Declare(
-      mujoco_menagerie
-      GIT_REPOSITORY https://github.com/google-deepmind/mujoco_menagerie.git
-      GIT_TAG        main
-      GIT_SHALLOW    TRUE
-      SOURCE_DIR     ${MENAGERIE_SOURCE_DIR}
-    )
-        FetchContent_MakeAvailable(mujoco_menagerie)
-        message(STATUS "Menagerie: ready at ${MENAGERIE_SOURCE_DIR}")
-    endif()
-    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/assets/" DESTINATION "${_MJ_KDL_CACHE_ROOT}/assets")
-    message(STATUS "Bundled assets: ready at ${_MJ_KDL_CACHE_ROOT}/assets")
-endif()
-
 # Documentation (Doxygen + local CSS)
 # Build separately:  cmake --build build --target docs
 # Requires:  sudo apt install doxygen
@@ -589,20 +640,17 @@ if(BUILD_DOCS)
     find_package(Doxygen REQUIRED)
 
     set(MJ_KDL_KDL_DOXYGEN_INPUT_DIRS)
-    foreach(_kdl_inc IN LISTS orocos_kdl_INCLUDE_DIRS)
-        if(EXISTS "${_kdl_inc}/kdl")
-            list(APPEND MJ_KDL_KDL_DOXYGEN_INPUT_DIRS "${_kdl_inc}/kdl")
-        elseif(EXISTS "${_kdl_inc}/chain.hpp" OR EXISTS "${_kdl_inc}/frames.hpp")
-            list(APPEND MJ_KDL_KDL_DOXYGEN_INPUT_DIRS "${_kdl_inc}")
-        endif()
-    endforeach()
-    if(NOT MJ_KDL_KDL_DOXYGEN_INPUT_DIRS)
-        find_path(MJ_KDL_KDL_INCLUDE_ROOT kdl/chain.hpp
-          PATHS ${orocos_kdl_INCLUDE_DIRS} /usr/include /usr/local/include
-        )
-        if(MJ_KDL_KDL_INCLUDE_ROOT AND EXISTS "${MJ_KDL_KDL_INCLUDE_ROOT}/kdl")
-            list(APPEND MJ_KDL_KDL_DOXYGEN_INPUT_DIRS "${MJ_KDL_KDL_INCLUDE_ROOT}/kdl")
-        endif()
+    set(_mj_kdl_kdl_tag_depends)
+    if(_MJ_KDL_BUILD_OROCOS_KDL)
+        # The fork's headers exist only once orocos_kdl_ep has installed them.
+        set(MJ_KDL_KDL_DOXYGEN_INPUT_DIRS "${_MJ_KDL_OROCOS_PREFIX}/include/kdl")
+        set(_mj_kdl_kdl_tag_depends orocos_kdl_ep)
+    else()
+        foreach(_kdl_inc IN LISTS orocos_kdl_INCLUDE_DIRS)
+            if(EXISTS "${_kdl_inc}/kdl/chain.hpp")
+                list(APPEND MJ_KDL_KDL_DOXYGEN_INPUT_DIRS "${_kdl_inc}/kdl")
+            endif()
+        endforeach()
     endif()
 
     set(MJ_KDL_DOCS_DEPENDS)
@@ -618,9 +666,10 @@ if(BUILD_DOCS)
         )
         add_custom_command(
           OUTPUT ${MJ_KDL_KDL_TAG_FILE}
-          COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/docs
+          # Doxygen creates only the last level of HTML_OUTPUT (html/kdl).
+          COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/docs/html
           COMMAND ${DOXYGEN_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile.kdl
-          DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile.kdl
+          DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile.kdl ${_mj_kdl_kdl_tag_depends}
           WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
           COMMENT "Generating Orocos KDL Doxygen tag file..."
           VERBATIM
@@ -629,7 +678,8 @@ if(BUILD_DOCS)
         set(MJ_KDL_DOXYGEN_TAGFILES "${MJ_KDL_KDL_TAG_FILE}=kdl/")
         message(STATUS "Doxygen KDL tag input: ${MJ_KDL_KDL_DOXYGEN_INPUT_DIRS}")
     else()
-        message(WARNING "Doxygen: KDL headers were not found; external KDL symbols will not be resolved")
+        message(WARNING
+          "Doxygen: KDL headers were not found; external KDL symbols will not be resolved")
     endif()
 
     configure_file(
@@ -691,29 +741,85 @@ if(MJ_KDL_INSTALL_CPP_PACKAGE)
           ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
         )
     endif()
+    # The C++ install ships no assets, so only the licenses of what it compiles in.
     install(FILES
+      LICENSE
       NOTICE
       THIRD_PARTY_LICENSES.md
       licenses/Apache-2.0.txt
-      licenses/Robotiq-2F85-BSD-2-Clause.txt
-      DESTINATION ${CMAKE_INSTALL_LIBDIR}
+      DESTINATION ${CMAKE_INSTALL_DOCDIR}
     )
-    install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    install(FILES include/mj_kdl_wrapper/mj_kdl_wrapper.hpp
+      DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/mj_kdl_wrapper
+    )
+    if(TARGET mj_kdl_camera_ros)
+        install(FILES include/mj_kdl_wrapper/camera_ros.hpp
+          DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/mj_kdl_wrapper
+        )
+    endif()
+
+    # libmujoco is not bundled: the install loads it from where it was found. KDL is either
+    # bundled ($ORIGIN, below) or loaded from its own prefix.
+    set_property(TARGET mj_kdl_wrapper APPEND PROPERTY INSTALL_RPATH "${MUJOCO_LIB_DIR}")
+    set(_mj_kdl_kdl_dir "")
+    if(NOT _MJ_KDL_BUILD_OROCOS_KDL)
+        get_target_property(_mj_kdl_kdl_type orocos-kdl TYPE)
+        if(_mj_kdl_kdl_type MATCHES "SHARED_LIBRARY|UNKNOWN_LIBRARY")
+            get_target_property(_mj_kdl_kdl_location orocos-kdl LOCATION)
+            get_filename_component(_mj_kdl_kdl_dir "${_mj_kdl_kdl_location}" DIRECTORY)
+            set_property(TARGET mj_kdl_wrapper APPEND PROPERTY INSTALL_RPATH "${_mj_kdl_kdl_dir}")
+        endif()
+    elseif(NOT MJ_KDL_INSTALL_BUNDLED_KDL)
+        message(WARNING
+          "MJ_KDL_INSTALL_BUNDLED_KDL=OFF: the installed library has no path to the KDL fork; "
+          "the loader then takes the first liborocos-kdl it finds, possibly a system one.")
+    endif()
+    if(TARGET mj_kdl_camera_ros)
+        set_property(TARGET mj_kdl_camera_ros APPEND PROPERTY
+          INSTALL_RPATH "$ORIGIN;${MUJOCO_LIB_DIR}")
+        if(_mj_kdl_kdl_dir)
+            set_property(TARGET mj_kdl_camera_ros APPEND PROPERTY
+              INSTALL_RPATH "${_mj_kdl_kdl_dir}")
+        endif()
+    endif()
+    # Found next to the library at runtime, so a moved install keeps its plugins.
+    if(EXISTS "${MJ_KDL_MUJOCO_DIR}/bin/mujoco_plugin")
+        install(DIRECTORY "${MJ_KDL_MUJOCO_DIR}/bin/mujoco_plugin"
+          DESTINATION ${CMAKE_INSTALL_LIBDIR}
+          FILES_MATCHING PATTERN "*.so"
+        )
+    endif()
 
     # Self-contained install: bundle the fork we built (lib + headers + its CMake
     # package config) into this prefix and rpath the wrapper to $ORIGIN so it loads
     # the co-installed liborocos-kdl. Skipped when consuming an external KDL, which
     # is already shared from its own prefix.
+    set(_MJ_KDL_KDL_IN_PREFIX OFF)
     if(MJ_KDL_INSTALL_BUNDLED_KDL AND _MJ_KDL_BUILD_OROCOS_KDL)
+        set(_MJ_KDL_KDL_IN_PREFIX ON)
         install(DIRECTORY "${_MJ_KDL_OROCOS_PREFIX}/"
           DESTINATION .
           USE_SOURCE_PERMISSIONS
         )
         install(FILES licenses/LGPL-2.1.txt licenses/KDL_SOURCE.txt
-          DESTINATION ${CMAKE_INSTALL_LIBDIR}
+          DESTINATION ${CMAKE_INSTALL_DOCDIR}
         )
         set_property(TARGET mj_kdl_wrapper APPEND PROPERTY INSTALL_RPATH "$ORIGIN")
     endif()
+
+    # KDL flags come from the fork's orocos-kdl.pc; an external KDL also needs its rpath here.
+    file(RELATIVE_PATH _MJ_KDL_PC_PREFIX
+      "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig" "${CMAKE_INSTALL_PREFIX}")
+    string(REGEX REPLACE "/$" "" _MJ_KDL_PC_PREFIX "${_MJ_KDL_PC_PREFIX}")
+    set(_MJ_KDL_PC_KDL_RPATH "")
+    if(_mj_kdl_kdl_dir)
+        set(_MJ_KDL_PC_KDL_RPATH "-Wl,-rpath,${_mj_kdl_kdl_dir}")
+    endif()
+    configure_file(cmake/mj_kdl_wrapper.pc.in
+      ${CMAKE_CURRENT_BINARY_DIR}/mj_kdl_wrapper.pc @ONLY)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/mj_kdl_wrapper.pc
+      DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
+    )
 
     install(EXPORT mj_kdl_wrapperTargets
       FILE mj_kdl_wrapperTargets.cmake
@@ -730,7 +836,7 @@ if(MJ_KDL_INSTALL_CPP_PACKAGE)
     write_basic_package_version_file(
       ${CMAKE_CURRENT_BINARY_DIR}/mj_kdl_wrapperConfigVersion.cmake
       VERSION ${PROJECT_VERSION}
-      COMPATIBILITY SameMajorVersion
+      COMPATIBILITY SameMinorVersion
     )
 
     install(FILES
