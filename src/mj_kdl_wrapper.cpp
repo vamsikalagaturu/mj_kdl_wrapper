@@ -96,8 +96,8 @@ struct RobotInternals
     Env             *env = nullptr;
     std::vector<int> kdl_to_mj_qpos;
     std::vector<int> kdl_to_mj_dof;
-    std::vector<int> mode_ctrl[3];      // per CtrlMode: the joint's actuator, -1 if none
-    int              robot_index  = -1; // SceneSpec::robots index owning mode groups; -1 none
+    std::vector<int> mode_ctrl[3]; // per CtrlMode: the joint's actuator, -1 if none
+    std::vector<int> mode_owners;  // owners of the joints' mode groups (1 + 3 * owner + mode)
     CtrlMode         applied_mode = CtrlMode::POSITION; // mode whose group is enabled
     bool             mode_applied = false;              // applied_mode is live in the model
     std::string      mj_prefix;                         // re-resolves the joints after a rebuild
@@ -1034,8 +1034,11 @@ static Status resolve_joints(
             const int group = m->actuator_group[ai];
             int       mode  = -1;
             if (group >= 1 && group <= 30) {
-                mode           = (group - 1) % 3;
-                in.robot_index = (group - 1) / 3;
+                mode            = (group - 1) % 3;
+                const int owner = (group - 1) / 3;
+                if (std::find(in.mode_owners.begin(), in.mode_owners.end(), owner)
+                    == in.mode_owners.end())
+                    in.mode_owners.push_back(owner);
             } else {
                 mode = native_mode(
                   m->actuator_gaintype[ai],
@@ -1056,7 +1059,9 @@ static Status resolve_joints(
               return a >= 0;
           });
         const bool enabled =
-          in.robot_index < 0 || !(m->opt.disableactuator & (1 << mode_group(in.robot_index, mode)));
+          std::none_of(in.mode_owners.begin(), in.mode_owners.end(), [&](int owner) {
+              return m->opt.disableactuator & (1 << mode_group(owner, mode));
+          });
         if (driven && enabled) {
             in.applied_mode = static_cast<CtrlMode>(mode);
             in.mode_applied = true;
@@ -1278,7 +1283,22 @@ void cleanup(Env *env)
     env->on_reset = nullptr;
 }
 
-static Status attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
+static Status apply_ctrl_modes(
+  mjSpec                          *arm,
+  const std::vector<CtrlModeSpec> &modes,
+  int                              owner,
+  const std::string               &who,
+  int                             *disable_bits
+);
+
+// owner is the attachment's mode-group owner, used only when it has modes.
+static Status attach_to_spec(
+  mjSpec               *robot_spec,
+  const AttachmentSpec *a,
+  int                   owner,
+  const std::string    &who,
+  int                  *disable_bits
+)
 {
     if (!robot_spec || !a || a->mjcf_path.empty())
         MJ_FAIL("attach_to_spec: null spec or empty mjcf_path");
@@ -1292,6 +1312,8 @@ static Status attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
     MjSpecPtr att = make_spec_ptr(mj_parseXML(a->mjcf_path.c_str(), nullptr, err, sizeof(err)));
     if (!att) MJ_FAIL("mj_parseXML failed for attachment '" << a->mjcf_path << "': " << err);
     absolutize_asset_files(att.get());
+    // On the attachment's own spec, before the prefix: only its own joints take its modes.
+    if (Status s = apply_ctrl_modes(att.get(), a->modes, owner, who, disable_bits); !s) return s;
 
     mjsBody *att_root = first_root_body(att.get());
     if (!att_root) MJ_FAIL("no root body found in attachment spec '" << a->mjcf_path << "'");
@@ -1315,13 +1337,19 @@ static bool range_limited(mjtLimited flag, const double *range)
 }
 
 /* Give each listed joint one actuator per requested mode, each mode in its own group of this
- * robot; the joint's own actuator joins the group of the mode it gives natively. Collects the
+ * owner; the joint's own actuator joins the group of the mode it gives natively. Collects the
  * groups to start disabled. */
-static Status add_mode_actuators(mjSpec *arm, const RobotSpec &rs, int robot, int *disable_bits)
+static Status apply_ctrl_modes(
+  mjSpec                          *arm,
+  const std::vector<CtrlModeSpec> &modes,
+  int                              owner,
+  const std::string               &who,
+  int                             *disable_bits
+)
 {
-    if (rs.modes.empty()) return {};
-    if (mode_group(robot, static_cast<int>(CtrlMode::VELOCITY)) > 30)
-        MJ_FAIL("robots[" << robot << "]: control-mode groups only reach robot index 9");
+    if (modes.empty()) return {};
+    if (mode_group(owner, static_cast<int>(CtrlMode::VELOCITY)) > 30)
+        MJ_FAIL(who << ": control-mode groups run out after ten robots and moded attachments");
 
     std::map<std::string, std::vector<mjsActuator *>> by_joint;
     for (mjsElement *e = mjs_firstElement(arm, mjOBJ_ACTUATOR); e; e = mjs_nextElement(arm, e)) {
@@ -1330,7 +1358,7 @@ static Status add_mode_actuators(mjSpec *arm, const RobotSpec &rs, int robot, in
     }
 
     int enabled = 0, used = 0;
-    for (const CtrlModeSpec &ms : rs.modes) {
+    for (const CtrlModeSpec &ms : modes) {
         // Every actuated joint when none are named: those that cannot take modes are skipped.
         const bool               all    = ms.joints.empty();
         std::vector<std::string> joints = ms.joints;
@@ -1348,17 +1376,15 @@ static Status add_mode_actuators(mjSpec *arm, const RobotSpec &rs, int robot, in
                   : -1;
             if (native < 0) {
                 if (all) {
-                    MJ_LOG_INFO(
-                      "robots[" << robot << "]: joint '" << joint << "' takes no control modes"
-                    );
+                    MJ_LOG_INFO(who << ": joint '" << joint << "' takes no control modes");
                     continue;
                 }
                 MJ_FAIL(
-                  "robots[" << robot << "]: joint '" << joint
-                            << "' needs exactly one position-servo or motor actuator"
+                  who << ": joint '" << joint
+                      << "' needs exactly one position-servo or motor actuator"
                 );
             }
-            own->group = mode_group(robot, native);
+            own->group = mode_group(owner, native);
             enabled |= 1 << own->group;
             used |= 1 << own->group;
 
@@ -1366,12 +1392,11 @@ static Status add_mode_actuators(mjSpec *arm, const RobotSpec &rs, int robot, in
             if (mode == native) continue;
             if (ms.mode == CtrlMode::POSITION) {
                 MJ_FAIL(
-                  "robots[" << robot << "]: joint '" << joint
-                            << "' is motor-driven; POSITION is not supported"
+                  who << ": joint '" << joint << "' is motor-driven; POSITION is not supported"
                 );
             }
             if (ms.mode == CtrlMode::VELOCITY && ms.kv <= 0.0)
-                MJ_FAIL("robots[" << robot << "]: VELOCITY needs kv > 0");
+                MJ_FAIL(who << ": VELOCITY needs kv > 0");
 
             // Both limits below are in actuator-force units: a servo's forcerange, a motor's ctrl.
             const bool    servo = native == static_cast<int>(CtrlMode::POSITION);
@@ -1382,7 +1407,7 @@ static Status add_mode_actuators(mjSpec *arm, const RobotSpec &rs, int robot, in
             added->trntype     = mjTRN_JOINT;
             mjs_setString(added->target, joint.c_str());
             added->gear[0] = own->gear[0];
-            added->group   = mode_group(robot, mode);
+            added->group   = mode_group(owner, mode);
             used |= 1 << added->group;
             if (ms.mode == CtrlMode::TORQUE) {
                 mjs_setToMotor(added);
@@ -1454,6 +1479,8 @@ Status build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     bool first_arm      = true;
     int  disable_bits   = 0;
     char err[kMjErrBuf] = {};
+    // Robots own mode groups by their index; attachments with modes take the owners after them.
+    int next_owner = static_cast<int>(sc->robots.size());
     for (int ai = 0; ai < (int)sc->robots.size(); ++ai) {
         const RobotSpec &rs = sc->robots[ai];
         if (rs.path.empty()) MJ_FAIL("robots[" << ai << "].path is empty");
@@ -1461,8 +1488,9 @@ Status build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
         MjSpecPtr arm = make_spec_ptr(mj_parseXML(rs.path.c_str(), nullptr, err, sizeof(err)));
         if (!arm) MJ_FAIL("mj_parseXML failed for '" << rs.path << "': " << err);
         absolutize_asset_files(arm.get());
+        const std::string who = "robots[" + std::to_string(ai) + "]";
         // Before the attachments are merged in, so only the robot's own joints take modes.
-        if (Status s = add_mode_actuators(arm.get(), rs, ai, &disable_bits); !s) return s;
+        if (Status s = apply_ctrl_modes(arm.get(), rs.modes, ai, who, &disable_bits); !s) return s;
 
         // Inherit physics options (integrator, solver, etc.) from the first
         // arm, then apply the SceneSpec's user-controlled fields on top.
@@ -1474,8 +1502,12 @@ Status build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
         }
 
         // Apply attachment chain in order (mount, sensor, gripper, etc.).
-        for (const auto &att : rs.attachments) {
-            if (Status s = attach_to_spec(arm.get(), &att); !s) return s;
+        for (size_t k = 0; k < rs.attachments.size(); ++k) {
+            const AttachmentSpec &att     = rs.attachments[k];
+            const int             owner   = att.modes.empty() ? -1 : next_owner++;
+            const std::string     att_who = who + ".attachments[" + std::to_string(k) + "]";
+            if (Status s = attach_to_spec(arm.get(), &att, owner, att_who, &disable_bits); !s)
+                return s;
         }
 
         mjsBody *arm_root = first_root_body(arm.get());
@@ -2309,8 +2341,8 @@ static Status switch_control_mode(Robot *r, CtrlMode mode, bool seed_ports)
             );
         }
     }
-    if (in.robot_index >= 0) {
-        if (Status s = switch_group(in.env, in.robot_index, mode); !s) return s;
+    for (const int owner : in.mode_owners) {
+        if (Status s = switch_group(in.env, owner, mode); !s) return s;
     }
     const mjData *d = r->data;
     for (int i = 0; seed_ports && i < r->n_joints; ++i) {

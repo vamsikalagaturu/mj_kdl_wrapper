@@ -423,7 +423,8 @@ actuators: `POSITION` writes `jnt_pos_cmd`, `VELOCITY` `jnt_vel_cmd`, `TORQUE`
 in `jnt_saturated`). Nothing is written to `qfrc_applied`. `set_control_mode(&robot, mode)`
 switches modes without a jump (setting `robot.ctrl_mode` directly switches at the next
 `update()` without seeding, keeping commands you primed), and `joint_force_limits(&robot)` returns each joint's torque limit in the
-active mode. Which modes a robot offers is set per robot in `RobotSpec::modes`; see
+active mode. Which modes a robot offers is set in `RobotSpec::modes`, and for an attached arm
+in `AttachmentSpec::modes`; see
 [Torque control](@ref page_howto_torque_control).
 
 Scene slots cover what no `Robot` chain owns: bind them once with

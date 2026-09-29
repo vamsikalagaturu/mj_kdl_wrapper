@@ -105,26 +105,6 @@ struct AttachTarget
 
 /**
  * @ingroup grp_types
- * One link in an ordered attachment chain for a robot.
- * An attachment is any MJCF body (end effector, mount, FT sensor, tool, additional arm
- * on a mobile base, etc.) attached under a named element in the accumulated robot spec.
- * Attachments are applied in declaration order; attach_to may reference any body, site,
- * or frame present after all prior attachments have been applied.
- */
-struct AttachmentSpec
-{
-    std::string  mjcf_path;                // MJCF file for this attachment
-    AttachTarget attach_to;                // parent in root or prior attachment (default: world)
-    std::string  prefix;                   // element name prefix (avoids name conflicts)
-    double       pos[3]  = { 0, 0, 0 };    // position offset [m]
-    double       quat[4] = { 0, 0, 0, 1 }; // orientation offset [x, y, z, w]
-
-    /* Contact exclusion pairs registered by build_scene(). */
-    std::vector<std::pair<std::string, std::string>> contact_exclusions; // (body1, body2) pairs
-};
-
-/**
- * @ingroup grp_types
  * Joint-space control mode. Each mode drives its own actuator, in its own actuator group:
  *   POSITION - jnt_pos_cmd to a position servo's ctrl.
  *   TORQUE   - jnt_trq_cmd to a motor's ctrl.
@@ -134,14 +114,38 @@ enum class CtrlMode { POSITION, TORQUE, VELOCITY };
 
 /**
  * @ingroup grp_types
- * A control mode for RobotSpec::modes. joints empty = every joint the robot's own MJCF
- * actuates. kv is the VELOCITY actuator's gain [N m s/rad], required for VELOCITY.
+ * A control mode for RobotSpec::modes or AttachmentSpec::modes. joints empty = every joint the
+ * robot's or attachment's own MJCF actuates. kv is the VELOCITY actuator's gain [N m s/rad],
+ * required for VELOCITY.
  */
 struct CtrlModeSpec
 {
     CtrlMode                 mode = CtrlMode::TORQUE;
     std::vector<std::string> joints;
     double                   kv = 0.0;
+};
+
+/**
+ * @ingroup grp_types
+ * One link in an ordered attachment chain for a robot.
+ * An attachment is any MJCF body (end effector, mount, FT sensor, tool, additional arm
+ * on a mobile base, etc.) attached under a named element in the accumulated robot spec.
+ * Attachments are applied in declaration order; attach_to may reference any body, site,
+ * or frame present after all prior attachments have been applied.
+ * modes: control modes for its own joints, in groups of their own so it switches apart from its
+ * robot; empty by default, unlike RobotSpec::modes.
+ */
+struct AttachmentSpec
+{
+    std::string               mjcf_path; // MJCF file for this attachment
+    AttachTarget              attach_to; // parent in root or prior attachment (default: world)
+    std::string               prefix;    // element name prefix (avoids name conflicts)
+    double                    pos[3]  = { 0, 0, 0 };    // position offset [m]
+    double                    quat[4] = { 0, 0, 0, 1 }; // orientation offset [x, y, z, w]
+    std::vector<CtrlModeSpec> modes;                    // {} = native mode only
+
+    /* Contact exclusion pairs registered by build_scene(). */
+    std::vector<std::pair<std::string, std::string>> contact_exclusions; // (body1, body2) pairs
 };
 
 /**
@@ -165,10 +169,11 @@ struct CtrlModeSpec
  * modes lists the control modes the robot offers beyond the one its own actuators give
  * (a `<position>` servo gives POSITION, a `<motor>` gives TORQUE); by default every robot also gets
  * TORQUE. build_scene() adds one actuator per extra mode on each listed joint and puts each mode
- * in its own actuator group, switched with set_control_mode(). Only the robot's own joints take
- * modes, never its attachments. With no joint list, joints that cannot take modes are skipped.
- * Actuator groups 1-30 are reserved for this (group 1 + 3 * robot index + mode); the robot's MJCF
- * must not assign actuator groups itself.
+ * in its own actuator group, switched with set_control_mode(). These are the robot's own joints;
+ * an attachment's take modes through AttachmentSpec::modes. With no joint list, joints that
+ * cannot take modes are skipped. Actuator groups 1-30 are reserved for this: group
+ * 1 + 3 * owner + mode, where the owners are the robots in order and then every attachment with
+ * modes in order, ten at most. The robot's MJCF must not assign actuator groups itself.
  */
 struct RobotSpec
 {

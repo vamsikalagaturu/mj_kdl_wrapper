@@ -168,6 +168,29 @@ def test_control_modes_switch_and_opt_out():
         env.close()
 
 
+def test_an_attached_arm_switches_mode_apart_from_its_robot():
+    _skip_without_model()
+
+    assert mjk.AttachmentSpec().modes == []
+    spec = _scene_spec()
+    attached = mjk.AttachmentSpec()
+    attached.mjcf_path = _model_path()
+    attached.prefix = "a_"
+    attached.pos = [1.0, 0.0, 0.0]
+    attached.modes = [mjk.CtrlModeSpec(mjk.CtrlMode.TORQUE)]
+    spec.robots[0].attachments = [attached]
+    env = mjk.Env.build(spec)
+    try:
+        root = env.create_robot("base_link", "bracelet_link")
+        arm = env.create_robot("base_link", "bracelet_link", "a_")
+        arm.set_control_mode(mjk.CtrlMode.TORQUE)
+        env.update()
+        assert arm.ctrl_mode == mjk.CtrlMode.TORQUE
+        assert root.ctrl_mode == mjk.CtrlMode.POSITION
+    finally:
+        env.close()
+
+
 def test_set_body_pose_accepts_python_xyzw_quaternion():
     _skip_without_model()
     kdl = pytest.importorskip("PyKDL")
