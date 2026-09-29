@@ -459,6 +459,10 @@ enum class VideoResolution {
  * pipes raw RGB data to an ffmpeg process, producing an H.264 MP4 without a
  * display server or GLFW window.
  *
+ * Each recorder renders on a thread of its own: record_frame() and render_rgb() take a
+ * snapshot of the scene on the caller's thread and return, so a control loop pays for the
+ * snapshot, not the render. cam and opt are read at the snapshot.
+ *
  * Requirements: EGL (libegl-dev) and ffmpeg available in PATH.
  *
  * Typical usage:
@@ -849,11 +853,12 @@ Status init_video_recorder(
 
 /**
  * @ingroup grp_recorder
- * Render env's current state and write one frame to the video stream.
+ * Snapshot env's current state as the next video frame; it is rendered and encoded on the
+ * recorder's thread. Waits only while the previous frame has not been picked up.
  *
  * @param vr   VideoRecorder initialised by init_video_recorder().
  * @param env  Env to render.
- * @return true on success; false on render or pipe write error.
+ * @return false once rendering or the pipe to ffmpeg has failed; every frame is recorded.
  */
 bool record_frame(VideoRecorder *vr, Env *env);
 
@@ -882,6 +887,18 @@ Status init_offscreen(VideoRecorder *vr, mjModel *model, int width, int height);
  * @return true on success.
  */
 bool render_rgb(VideoRecorder *vr, Env *env, std::uint8_t *out);
+
+/**
+ * @ingroup grp_recorder
+ * Snapshot env's current state and return; done gets the top-down RGB8 frame on the recorder's
+ * thread, valid only during the call. Waits only while the previous frame has not been picked up.
+ *
+ * @param vr    VideoRecorder initialised by init_offscreen() or init_video_recorder().
+ * @param env   Env to render.
+ * @param done  Receives width*height*3 bytes.
+ * @return false once rendering has failed.
+ */
+bool render_rgb(VideoRecorder *vr, Env *env, std::function<void(const std::uint8_t *rgb)> done);
 
 /**
  * @ingroup grp_recorder

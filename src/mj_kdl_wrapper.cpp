@@ -35,6 +35,7 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <limits>
 #include <map>
 #include <memory>
@@ -3138,18 +3139,51 @@ static bool step_viewer(Env *env)
 
 #ifdef MJ_KDL_HAS_EGL
 
+using RgbDone = std::function<void(const std::uint8_t *rgb)>;
+
+// One frame handed to the render thread: a scene already snapshotted, and where its pixels go.
+struct RecorderJob
+{
+    enum class Kind { Record, Rgb, Callback } kind = Kind::Record;
+    std::uint8_t                  *out             = nullptr; // Rgb: the caller's buffer
+    RgbDone                        done;                      // Callback
+    std::shared_ptr<const mjModel> model;                     // the recorder's copy
+    std::uint64_t                  model_gen = 0;
+    std::uint64_t                  seq       = 0;
+};
+
+// Only the render thread touches GL or the sink, and it never reads the (headless: unlocked) Env.
 struct VideoRecorderImpl
 {
     EGLDisplay           egl_dpy = EGL_NO_DISPLAY;
     EGLContext           egl_ctx = EGL_NO_CONTEXT;
-    mjvScene             scn{};
     mjrContext           con{};
+    bool                 con_made = false;
+    std::uint64_t        con_gen  = 0;
     FfmpegSink           sink;
     int                  width  = 0;
     int                  height = 0;
-    std::vector<uint8_t> rgb_buf;
-    bool                 made      = false; // scn and con hold the model of model_gen
-    std::uint64_t        model_gen = 0;
+    std::vector<uint8_t> rgb_buf; // render thread's readback, bottom row first
+
+    mjvScene      scn[2]{};
+    bool          scn_made[2] = { false, false };
+    std::uint64_t scn_gen[2]  = { 0, 0 };
+    int           back        = 0;
+
+    std::shared_ptr<const mjModel> model; // copied at each Env rebuild, on the caller's thread
+    std::uint64_t                  model_gen  = 0;
+    bool                           have_model = false;
+
+    std::thread             thread;
+    std::mutex              mtx;
+    std::condition_variable cv;
+    RecorderJob             job;
+    bool                    pending   = false;
+    bool                    quit      = false;
+    bool                    failed    = false; // sticky: EGL or the ffmpeg pipe gave out
+    std::uint64_t           submitted = 0;
+    std::uint64_t           finished  = 0;
+    bool                    last_ok   = true; // result of job `finished`
 };
 
 static constexpr EGLint kEglMaxDevices = 8;
@@ -3245,6 +3279,73 @@ static void vr_egl_done(VideoRecorderImpl *impl)
     impl->egl_dpy = EGL_NO_DISPLAY;
 }
 
+static void flip_rows(std::uint8_t *rgb, int width, int height)
+{
+    const std::size_t row_bytes = static_cast<std::size_t>(kRgbBytesPerPixel) * width;
+    for (int top = 0, bot = height - 1; top < bot; ++top, --bot) {
+        std::uint8_t *top_row = rgb + top * row_bytes;
+        std::swap_ranges(top_row, top_row + row_bytes, rgb + bot * row_bytes);
+    }
+}
+
+// Runs on the render thread. The render context follows the model the frame was snapshotted from.
+static bool vr_render(VideoRecorderImpl *impl, const RecorderJob &job, int front)
+{
+    if (!impl->con_made || impl->con_gen != job.model_gen) {
+        if (impl->con_made) mjr_freeContext(&impl->con);
+        mjr_defaultContext(&impl->con);
+        mjr_makeContext(job.model.get(), &impl->con, mjFONTSCALE_150);
+        mjr_setBuffer(mjFB_OFFSCREEN, &impl->con);
+        mjr_resizeOffscreen(impl->width, impl->height, &impl->con);
+        impl->con_made = true;
+        impl->con_gen  = job.model_gen;
+    }
+    const mjrRect vp = { 0, 0, impl->width, impl->height };
+    mjr_render(vp, &impl->scn[front], &impl->con);
+    std::uint8_t *px = job.kind == RecorderJob::Kind::Rgb ? job.out : impl->rgb_buf.data();
+    mjr_readPixels(px, nullptr, vp, &impl->con);
+
+    // No flip for the sink: its filter chain turns the frame over on its way into the encoder.
+    if (job.kind == RecorderJob::Kind::Record)
+        return sink_write(&impl->sink, px, impl->rgb_buf.size());
+    // Callers of the public API get the image top-down, as every image format wants it.
+    flip_rows(px, impl->width, impl->height);
+    if (job.kind == RecorderJob::Kind::Callback) job.done(px);
+    return true;
+}
+
+static void vr_run(VideoRecorderImpl *impl, std::promise<Status> ready)
+{
+    Status     started = vr_egl_init(impl);
+    const bool ok      = static_cast<bool>(started);
+    ready.set_value(std::move(started));
+    if (!ok) {
+        vr_egl_done(impl);
+        return;
+    }
+    for (;;) {
+        std::unique_lock<std::mutex> lock(impl->mtx);
+        impl->cv.wait(lock, [impl] { return impl->pending || impl->quit; });
+        if (!impl->pending) break;
+        const int   front = impl->back;
+        RecorderJob job   = std::move(impl->job);
+        impl->back        = 1 - impl->back;
+        impl->pending     = false;
+        lock.unlock();
+        impl->cv.notify_all();
+
+        const bool rendered = vr_render(impl, job, front);
+        lock.lock();
+        impl->failed   = impl->failed || !rendered;
+        impl->last_ok  = rendered;
+        impl->finished = job.seq;
+        lock.unlock();
+        impl->cv.notify_all();
+    }
+    if (impl->con_made) mjr_freeContext(&impl->con);
+    vr_egl_done(impl);
+}
+
 Status init_offscreen(VideoRecorder *vr, mjModel *model, int width, int height)
 {
     if (!vr || !model) MJ_FAIL("init_offscreen: null recorder or model");
@@ -3258,9 +3359,16 @@ Status init_offscreen(VideoRecorder *vr, mjModel *model, int width, int height)
     auto *impl   = new VideoRecorderImpl();
     impl->width  = width;
     impl->height = height;
+    impl->rgb_buf.resize(
+      static_cast<size_t>(width) * static_cast<size_t>(height) * kRgbBytesPerPixel
+    );
 
-    if (Status s = vr_egl_init(impl); !s) {
-        vr_egl_done(impl);
+    // The thread makes the EGL context, so it is current there and nowhere else.
+    std::promise<Status> ready;
+    std::future<Status>  started = ready.get_future();
+    impl->thread                 = std::thread(vr_run, impl, std::move(ready));
+    if (Status s = started.get(); !s) {
+        impl->thread.join();
         delete impl;
         return s;
     }
@@ -3268,22 +3376,63 @@ Status init_offscreen(VideoRecorder *vr, mjModel *model, int width, int height)
     return {};
 }
 
-// The scene and render context belong to a model: made at the first frame, remade on a rebuild.
-static void vr_follow_model(VideoRecorderImpl *impl, const Env *env)
+// Waits only until the render thread has picked up the previous frame.
+static bool vr_submit(VideoRecorder *vr, Env *env, RecorderJob job)
 {
-    if (impl->made && impl->model_gen == env->_impl->model_gen) return;
-    if (impl->made) {
-        mjr_freeContext(&impl->con);
-        mjv_freeScene(&impl->scn);
+    auto                        *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
+    std::unique_lock<std::mutex> lock(impl->mtx);
+    impl->cv.wait(lock, [impl] { return !impl->pending; });
+    if (impl->failed) return false;
+    const int back = impl->back;
+    lock.unlock();
+
+    // The render thread builds its context from this copy, never from the Env's live model.
+    if (!impl->have_model || impl->model_gen != env->_impl->model_gen) {
+        mjModel *copy = mj_copyModel(nullptr, env->model);
+        if (!copy) {
+            MJ_LOG_ERROR("recorder: copying the model failed");
+            return false;
+        }
+        impl->model      = std::shared_ptr<mjModel>(copy, mj_deleteModel);
+        impl->model_gen  = env->_impl->model_gen;
+        impl->have_model = true;
     }
-    mjv_defaultScene(&impl->scn);
-    mjr_defaultContext(&impl->con);
-    mjv_makeScene(env->model, &impl->scn, 4000);
-    mjr_makeContext(env->model, &impl->con, mjFONTSCALE_150);
-    mjr_setBuffer(mjFB_OFFSCREEN, &impl->con);
-    mjr_resizeOffscreen(impl->width, impl->height, &impl->con);
-    impl->made      = true;
-    impl->model_gen = env->_impl->model_gen;
+    mjvScene &scn = impl->scn[back];
+    if (!impl->scn_made[back] || impl->scn_gen[back] != impl->model_gen) {
+        if (impl->scn_made[back]) mjv_freeScene(&scn);
+        mjv_defaultScene(&scn);
+        mjv_makeScene(impl->model.get(), &scn, 4000);
+        impl->scn_made[back] = true;
+        impl->scn_gen[back]  = impl->model_gen;
+    }
+    {
+        const auto env_lock = lock_env(env);
+        ensure_kinematics(env);
+        mjv_updateScene(env->model, env->data, &vr->opt, nullptr, &vr->cam, mjCAT_ALL, &scn);
+    }
+
+    // The overlay geoms a window shows live on the viewer's user scene, and this offscreen
+    // scene is rebuilt from the model every frame -- so append them the same way the UI thread
+    // does (simulate.cc), or a recording loses every trace segment and every arrow.
+    if (env->viewer._sim_ui) {
+        auto                       *ss = static_cast<SimUiState *>(env->viewer._sim_ui);
+        std::lock_guard<std::mutex> lk(ss->user_scn_mtx);
+        const int                   ngeom = std::min(ss->user_scn.ngeom, scn.maxgeom - scn.ngeom);
+        if (ngeom > 0) {
+            std::memcpy(scn.geoms + scn.ngeom, ss->user_scn.geoms, ngeom * sizeof(mjvGeom));
+            scn.ngeom += ngeom;
+        }
+    }
+
+    job.model     = impl->model;
+    job.model_gen = impl->model_gen;
+    lock.lock();
+    job.seq       = ++impl->submitted;
+    impl->job     = std::move(job);
+    impl->pending = true;
+    lock.unlock();
+    impl->cv.notify_all();
+    return true;
 }
 
 Status init_video_recorder(
@@ -3299,10 +3448,6 @@ Status init_video_recorder(
     if (Status s = init_offscreen(vr, model, width, height); !s) return s;
 
     auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
-    impl->rgb_buf.resize(
-      static_cast<size_t>(width) * static_cast<size_t>(height) * kRgbBytesPerPixel
-    );
-
     if (Status s = sink_open(&impl->sink, out_path, width, height, width, height, fps, true); !s) {
         cleanup(vr);
         return s;
@@ -3314,82 +3459,50 @@ Status init_video_recorder(
     return {};
 }
 
-// Renders into `out` the way MuJoCo fills it: bottom row first.
-static bool render_bottom_up(VideoRecorder *vr, Env *env, std::uint8_t *out)
-{
-    if (!vr || !vr->_impl || !env || !env->model || !out) return false;
-    auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
-
-    // One EGL context per recorder: make this one current before rendering.
-    if (!eglMakeCurrent(impl->egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, impl->egl_ctx)) {
-        MJ_LOG_ERROR("EGL: make current failed (error 0x" << std::hex << eglGetError() << ")");
-        return false;
-    }
-    vr_follow_model(impl, env);
-
-    {
-        const auto lock = lock_env(env);
-        ensure_kinematics(env);
-        mjv_updateScene(env->model, env->data, &vr->opt, nullptr, &vr->cam, mjCAT_ALL, &impl->scn);
-    }
-
-    // The overlay geoms a window shows live on the viewer's user scene, and this offscreen
-    // scene is rebuilt from the model every frame -- so append them the same way the UI thread
-    // does (simulate.cc), or a recording loses every trace segment and every arrow.
-    if (env->viewer._sim_ui) {
-        auto                       *ss = static_cast<SimUiState *>(env->viewer._sim_ui);
-        std::lock_guard<std::mutex> lk(ss->user_scn_mtx);
-        const int ngeom = std::min(ss->user_scn.ngeom, impl->scn.maxgeom - impl->scn.ngeom);
-        if (ngeom > 0) {
-            std::memcpy(
-              impl->scn.geoms + impl->scn.ngeom, ss->user_scn.geoms, ngeom * sizeof(mjvGeom)
-            );
-            impl->scn.ngeom += ngeom;
-        }
-    }
-
-    mjrRect vp = { 0, 0, impl->width, impl->height };
-    mjr_render(vp, &impl->scn, &impl->con);
-    mjr_readPixels(out, nullptr, vp, &impl->con);
-    return true;
-}
-
 bool render_rgb(VideoRecorder *vr, Env *env, std::uint8_t *out)
 {
-    if (!render_bottom_up(vr, env, out)) return false;
-    auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
+    if (!vr || !vr->_impl || !env || !env->model || !out) return false;
+    auto       *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
+    RecorderJob job;
+    job.kind = RecorderJob::Kind::Rgb;
+    job.out  = out;
+    if (!vr_submit(vr, env, std::move(job))) return false;
+    std::unique_lock<std::mutex> lock(impl->mtx);
+    const std::uint64_t          seq = impl->submitted;
+    impl->cv.wait(lock, [impl, seq] { return impl->finished >= seq; });
+    return impl->last_ok;
+}
 
-    // Callers of the public API get the image top-down, as every image format wants it.
-    const std::size_t row_bytes = static_cast<std::size_t>(kRgbBytesPerPixel) * impl->width;
-    for (int top = 0, bot = impl->height - 1; top < bot; ++top, --bot) {
-        std::uint8_t *top_row = out + top * row_bytes;
-        std::swap_ranges(top_row, top_row + row_bytes, out + bot * row_bytes);
-    }
-    return true;
+bool render_rgb(VideoRecorder *vr, Env *env, std::function<void(const std::uint8_t *rgb)> done)
+{
+    if (!vr || !vr->_impl || !env || !env->model || !done) return false;
+    RecorderJob job;
+    job.kind = RecorderJob::Kind::Callback;
+    job.done = std::move(done);
+    return vr_submit(vr, env, std::move(job));
 }
 
 bool record_frame(VideoRecorder *vr, Env *env)
 {
-    if (!vr || !vr->_impl) return false;
-    auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
-    if (!impl->sink.pipe) return false;
-    // No flip here: the sink's filter chain turns the frame over on its way into the encoder.
-    if (!render_bottom_up(vr, env, impl->rgb_buf.data())) return false;
-    return sink_write(&impl->sink, impl->rgb_buf.data(), impl->rgb_buf.size());
+    if (!vr || !vr->_impl || !env || !env->model) return false;
+    if (!static_cast<VideoRecorderImpl *>(vr->_impl)->sink.pipe) return false;
+    return vr_submit(vr, env, RecorderJob{});
 }
 
 void cleanup(VideoRecorder *vr)
 {
     if (!vr || !vr->_impl) return;
     auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
-    sink_close(&impl->sink);
-    if (impl->made) {
-        // Its GL objects live in its own context, which another recorder may have replaced.
-        if (eglMakeCurrent(impl->egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, impl->egl_ctx))
-            mjr_freeContext(&impl->con);
-        mjv_freeScene(&impl->scn);
+    {
+        // The frame still waiting is rendered before the thread ends.
+        const std::lock_guard<std::mutex> lock(impl->mtx);
+        impl->quit = true;
     }
-    vr_egl_done(impl);
+    impl->cv.notify_all();
+    if (impl->thread.joinable()) impl->thread.join();
+    sink_close(&impl->sink);
+    for (int i = 0; i < 2; ++i)
+        if (impl->scn_made[i]) mjv_freeScene(&impl->scn[i]);
     delete impl;
     vr->_impl = nullptr;
 }
@@ -3406,6 +3519,10 @@ Status init_offscreen(VideoRecorder *, mjModel *, int, int)
     MJ_FAIL("offscreen rendering requires EGL; rebuild with -DBUILD_RECORDER=ON");
 }
 bool render_rgb(VideoRecorder *, Env *, std::uint8_t *) { return false; }
+bool render_rgb(VideoRecorder *, Env *, std::function<void(const std::uint8_t *rgb)>)
+{
+    return false;
+}
 void cleanup(VideoRecorder *vr)
 {
     if (vr) vr->_impl = nullptr;

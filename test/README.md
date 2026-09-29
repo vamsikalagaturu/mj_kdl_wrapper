@@ -203,6 +203,9 @@ Each mode is an actuator group switched with `opt.disableactuator`.
   `<velocity>` actuator, the pivot is left alone; VELOCITY tracks 5 rad/s through `env.scene`,
   then TORQUE takes over without a jump; a scene actuator slot flags a clamped command; a
   motor-driven robot starts in TORQUE and `joint_force_limits()` follows the active mode.
+- **AttachedArmModesTest** (`fixtures/arm_mount.xml` + two attached GEN3s): each arm gets mode
+  groups of its own; one switches to TORQUE and holds within 0.01 rad while the other holds in
+  POSITION; an attachment without `modes` gets no actuators.
 
 ### test_regressions
 
@@ -211,8 +214,9 @@ Fixes from the 0.4.0 audit; headless, self-skips without the bundled Gen3.
 - **RebuildTest** -- `scene_add_object()` keeps the physics state and the commands; a failed
   `scene_remove_object()` keeps the object order; removing a robot's joint fails and leaves the
   Env; a failed re-init leaves the robot as it was; an `on_reset` set before `init_env()` is
-  kept; recorders follow a rebuild and outlive each other; a viewer that cannot open returns an
-  error.
+  kept; recorders follow a rebuild and outlive each other; a frame shows the state it was taken
+  at, delivered on the recorder's thread; one recorder keeps every frame it is given; a viewer
+  that cannot open returns an error.
 - **LogLevel.IsASeverityThreshold** -- each level shows its own and more severe messages.
 - **Screenshot.PathReachesFfmpegVerbatimAndAMissingFfmpegIsAFailure** -- the screenshot writer
   takes its path verbatim and reports a missing ffmpeg.
