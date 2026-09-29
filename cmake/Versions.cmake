@@ -1,4 +1,4 @@
-set(MJ_KDL_VERSION "0.3.21")
+set(MJ_KDL_VERSION "0.4.0")
 set(MJ_KDL_MUJOCO_VERSION "3.14.0")
 # sha256 of mujoco-<version>-linux-x86_64.tar.gz; scripts/update_mujoco_version.py rewrites it.
 set(MJ_KDL_MUJOCO_SHA256 "326f0da78a7767cc18fab7205c993a771b5f19eda913648f958ee3f625240944")
