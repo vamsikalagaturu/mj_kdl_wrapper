@@ -1,29 +1,8 @@
 #!/usr/bin/env python3
-"""Kinova + Robotiq tabletop admittance control driven by a named FT sensor.
+"""F/T admittance around an RNEA task-space inner loop; Python counterpart of ex_admittance_ft.cpp.
 
-The robot stays in ONE control law for the whole run: admittance. Admittance
-control is an outer force->position loop wrapped around a stiff inner position
-controller (it is the position-controlled dual of impedance control, which is
-torque-based). The outer loop maps external force to a TCP position offset; the
-inner loop (POSITION mode) tracks that offset exactly.
-
-Outer admittance law per Cartesian axis (no position stiffness):
-
-    M * a = F_ext - D * v
-    v += a * dt          (clamped to MAX_VEL)
-    offset += v * dt     (clamped to MAX_OFFSET)
-
-The logical FT sensor sits between the Kinova wrist and the Robotiq gripper.
-After closing the gripper and letting the wrist load settle, the controller
-tares it (the gripper's ~10 N static load only appears once it has closed).
-
-The run has two sources of external force, both handled by the same law:
-  - Intro: a scripted force whose direction sweeps a helix (spiral_force) drives
-    the admittance, so the TCP traces a helix.
-  - After the helix: the scripted force stops; the controller stays in
-    admittance and responds to the FT-measured force, so in the GUI you can
-    ctrl + right-drag the gripper. With K = 0 there is no equilibrium to spring
-    back to: when force stops, damping bleeds v -> 0 and the pose holds.
+Headless, it runs the self-check and exits 1 when a metric is out of its limit; with --gui the
+same sequence runs once, the mouse (ctrl + right-drag) pushing the tool after the helix.
 """
 
 from __future__ import annotations
@@ -37,17 +16,27 @@ import mj_kdl_wrapper as mjk
 HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 TABLE_Z = 0.70
 
-# Admittance outer loop: virtual mass, damping, stiffness (isotropic).
-# K_ADM = 0 -> pure hand-guiding: holds pose on release. Set > 0 to self-center.
+# Inner loop: Cartesian PD gains [1/s^2], [1/s] and acceleration limits.
+KP_LIN, KD_LIN = 2500.0, 100.0
+KP_ROT, KD_ROT = 2500.0, 100.0
+BETA_LIN_MAX, BETA_ROT_MAX = 300.0, 300.0
+KP_NULL, KD_NULL = 100.0, 20.0  # posture gains in the task's null space
+
+# Admittance: virtual mass, damping, stiffness (isotropic); K = 0 holds the pose on release.
 M_ADM, D_ADM, K_ADM = 8.0, 80.0, 0.0
 FORCE_DEADBAND = 2.5  # N; rejects sensor noise and settling transients
 MAX_OFFSET = 0.20     # m; reachable workspace half-extent around home
 MAX_VEL = 0.25        # m/s
 TOOL_BODY = "g_base"  # rigid gripper base; where the headless self-check pushes
 GRIPPER_ACTUATOR = "g_fingers_actuator"
+FT_SITE = "wrist_ft_site"  # the F/T sensor's frame
+GRIPPER_CLOSED = 0.82  # rad; driver joint, the bundled 2F-85's ctrlrange is 0..0.82
 SETTLE_STEPS = 300  # ~0.6 s at dt=0.002 to close the gripper before taring
 HANDOFF_TARE_TIME = 1.0  # s; let scripted-motion transients settle before FT hand-guiding
+GUIDE_TIME = 4.7  # s; hand-guiding window, as long as the self-check's push phases
 SELFCHECK_PUSH = (8.0, 12.0, 6.0)
+ELBOW_BODY = "forearm_link"  # its origin is the elbow joint
+MIN_ELBOW_HEIGHT = 0.64  # m above the table
 
 # Intro helical force: amplitude/shape and how long it is applied.
 TEACH_TIME = 16.0
@@ -125,9 +114,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
 
     robot_spec = mjk.RobotSpec()
     robot_spec.path = mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
-    robot_spec.attach_to = mjk.AttachTarget(
-        mjk.AttachKind.Site, mjk.scene_object_site_name(table, "table_top")
-    )
+    robot_spec.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "table_top")
     robot_spec.attachments = [ft_attachment(), gripper_attachment()]
     spec.robots = [robot_spec]
 
@@ -135,10 +122,10 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
 
     ft = mjk.ForceTorqueSensorSpec()
     ft.name = "wrist_ft"
-    ft.frame_site = "wrist_ft_site"
+    ft.frame_site = FT_SITE
 
     tool = mjk.ToolFrameSpec()
-    tool.tool_body = "g_base"
+    tool.tool_body = "g_base_mount"
     tool.tcp_site = "g_pinch"
     tool.ft_sensors = [ft]
 
@@ -146,100 +133,91 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     return env, robot
 
 
-def ik_step(
-    ik: kdl.ChainIkSolverVel_wdls,
-    fk: kdl.ChainFkSolverPos_recursive,
-    q_seed: list[float],
-    target: kdl.Frame,
-    limits: list[tuple[float, float]],
-) -> list[float]:
-    q = jnt(q_seed)
-    dq = kdl.JntArray(len(q_seed))
-    current = kdl.Frame()
-    fk.JntToCart(q, current)
-    dx = kdl.diff(current, target)
-    if dx.vel.Norm() > 0.03:
-        dx.vel = dx.vel * (0.03 / dx.vel.Norm())
-    if dx.rot.Norm() > 0.15:
-        dx.rot = dx.rot * (0.15 / dx.rot.Norm())
-    if ik.CartToJnt(q, dx, dq) < 0:
-        return q_seed
-    out = []
-    for i, value in enumerate(q_seed):
-        low, high = limits[i]
-        next_value = value + dq[i]
-        if math.isfinite(low) and math.isfinite(high) and high > low:
-            next_value = clamp(next_value, low, high)
-        out.append(next_value)
-    return out
+def tcp_frame(robot: mjk.Robot, state: dict) -> kdl.Frame:
+    frame = kdl.Frame()
+    state["fk"].JntToCart(jnt(robot.jnt_pos_msr), frame)
+    return frame
 
 
-def hold(robot: mjk.Robot, q: list[float]) -> None:
-    """Inner position loop: command and pin the arm to q (exact tracking).
+def jacobian_twist(jac: kdl.Jacobian, qdot: kdl.JntArray) -> list[float]:
+    return [sum(jac[row, col] * qdot[col] for col in range(qdot.rows())) for row in range(6)]
 
-    Admittance control is an outer force->position loop wrapped around a stiff
-    inner position controller. The Kinova's position actuators are too soft to
-    track a moving Cartesian target, so we make the inner loop ideal by also
-    setting the joint state directly (call_forward refreshes kinematics/sensors).
-    """
-    robot.jnt_pos_cmd = q
-    robot.set_joint_pos(q, call_forward=True)
+
+def rnea_track(env: mjk.Env, robot: mjk.Robot, state: dict, target: kdl.Frame) -> None:
+    """Task-space computed torque: Cartesian PD -> qddot + null-space posture -> RNEA torque."""
+    q = jnt(robot.jnt_pos_msr)
+    qdot = jnt(robot.jnt_vel_msr)
+
+    err = kdl.diff(tcp_frame(robot, state), target)
+    jac = kdl.Jacobian(robot.n_joints)
+    state["jac_solver"].JntToJac(q, jac)
+    tcp_vel = jacobian_twist(jac, qdot)
+
+    qddot = kdl.JntArray(robot.n_joints)
+    beta = kdl.Twist()
+    beta.vel = kdl.Vector(
+        clamp(KP_LIN * err.vel.x() - KD_LIN * tcp_vel[0], -BETA_LIN_MAX, BETA_LIN_MAX),
+        clamp(KP_LIN * err.vel.y() - KD_LIN * tcp_vel[1], -BETA_LIN_MAX, BETA_LIN_MAX),
+        clamp(KP_LIN * err.vel.z() - KD_LIN * tcp_vel[2], -BETA_LIN_MAX, BETA_LIN_MAX),
+    )
+    beta.rot = kdl.Vector(
+        clamp(KP_ROT * err.rot.x() - KD_ROT * tcp_vel[3], -BETA_ROT_MAX, BETA_ROT_MAX),
+        clamp(KP_ROT * err.rot.y() - KD_ROT * tcp_vel[4], -BETA_ROT_MAX, BETA_ROT_MAX),
+        clamp(KP_ROT * err.rot.z() - KD_ROT * tcp_vel[5], -BETA_ROT_MAX, BETA_ROT_MAX),
+    )
+    # qdd = J#(beta - J z) + z = J# beta + (I - J# J) z (Siciliano et al. 2009, Sec. 3.5.1).
+    z = jnt([KP_NULL * (HOME[i] - q[i]) - KD_NULL * qdot[i] for i in range(robot.n_joints)])
+    jz = jacobian_twist(jac, z)
+    beta = beta - kdl.Twist(kdl.Vector(*jz[:3]), kdl.Vector(*jz[3:]))
+    if state["acc_ik"].CartToJnt(q, beta, qddot) < 0:
+        raise RuntimeError("RNEA task acceleration solve failed")
+    for i in range(robot.n_joints):
+        qddot[i] += z[i]
+
+    tau = kdl.JntArray(robot.n_joints)
+    wrenches = [kdl.Wrench.Zero() for _ in range(state["n_seg"])]
+    if state["id_solver"].CartToJnt(q, qdot, qddot, wrenches, tau) < 0:
+        raise RuntimeError("RNEA inverse dynamics failed")
+    robot.jnt_trq_cmd = [tau[i] for i in range(robot.n_joints)]
 
 
 def close_gripper(env: mjk.Env) -> None:
-    if env.has_actuator(GRIPPER_ACTUATOR):
-        env.set_actuator_ctrl(GRIPPER_ACTUATOR, 255.0)
+    env.data.actuator(GRIPPER_ACTUATOR).ctrl[0] = GRIPPER_CLOSED
 
 
-def settle_and_tare(env: mjk.Env, robot: mjk.Robot) -> list[float]:
-    """Close the gripper, hold home until the wrist load settles, then tare.
-
-    The gripper's static load shows up at the FT site only once it has closed
-    and settled (~10 N here). Taring before that (right after reset, gripper
-    open) leaves a large constant bias error that an integrating (K=0)
-    admittance turns into permanent drift. So we hold the closed-gripper home
-    pose for a moment first, then capture the bias.
-    """
+def settle_and_tare(env: mjk.Env, robot: mjk.Robot, state: dict) -> list[float]:
+    """Hold home while the gripper closes, then tare: its ~10 N load only appears once closed."""
+    env.update()
+    home = tcp_frame(robot, state)
     for _ in range(SETTLE_STEPS):
-        robot.update()
+        env.update()
         close_gripper(env)
-        hold(robot, HOME)
-        if not robot.step():
+        rnea_track(env, robot, state, home)
+        if not env.step():
             break
-        robot.pace()
-    robot.update()
-    return xyz(robot.ft_sensor_frame("wrist_ft").M * robot.ft_sensor("wrist_ft").force)
+        env.pace()
+    env.update()
+    return tare_force(env, robot)
 
 
-def measured_force(robot: mjk.Robot, state: dict) -> list[float]:
-    """External force on the tool in world frame, gravity-tared, deadbanded.
-
-    The MuJoCo force sensor reports the reaction wrench at the site, so the
-    external push the user applies is the negated, bias-removed reading. The
-    bias is the gripper's static gravity load captured after the gripper closes
-    and the wrist load settles (see settle_and_tare); expressed in
-    the world frame this is just the distal weight (mg, downward) and is
-    invariant to the arm configuration, so a single tare stays valid as the TCP
-    translates around home. Sub-deadband residue (noise, settling transients)
-    is rejected to zero.
-    """
+def measured_force(env: mjk.Env, robot: mjk.Robot, state: dict) -> list[float]:
+    """External force on the tool in the world frame: tared reaction, negated, deadbanded."""
     wrench = robot.ft_sensor("wrist_ft")
-    f_world = xyz(robot.ft_sensor_frame("wrist_ft").M * wrench.force)
+    f_world = xyz(env.site_frame(FT_SITE).M * wrench.force)
     bias = state["bias"]
     f_ext = [bias[i] - f_world[i] for i in range(3)]
-    if vnorm(f_ext) < FORCE_DEADBAND:
+    force_norm = vnorm(f_ext)
+    if force_norm < FORCE_DEADBAND:
         return [0.0, 0.0, 0.0]
     return f_ext
 
 
-def tare_force(robot: mjk.Robot) -> list[float]:
-    return xyz(robot.ft_sensor_frame("wrist_ft").M * robot.ft_sensor("wrist_ft").force)
+def tare_force(env: mjk.Env, robot: mjk.Robot) -> list[float]:
+    return xyz(env.site_frame(FT_SITE).M * robot.ft_sensor("wrist_ft").force)
 
 
 def admittance_update(state: dict, force: list[float], dt: float) -> None:
-    # offset = integral of velocity, so with K = 0 it is a pure integrator: the
-    # moment the push stops (force deadbanded to zero) we kill the velocity so
-    # motion stops dead and the offset (pose) is held exactly where it was left.
+    # With K = 0 the offset integrates velocity, so no force stops the motion where it is.
     if force == [0.0, 0.0, 0.0]:
         state["vel"] = [0.0, 0.0, 0.0]
         return
@@ -252,12 +230,7 @@ def admittance_update(state: dict, force: list[float], dt: float) -> None:
 
 
 def spiral_force(t: float) -> list[float]:
-    """Scripted external force whose direction sweeps a helix over TEACH_TIME.
-
-    The force is D_ADM times the velocity of a helical path, so a mass-damper
-    admittance (steady state v = F / D) turns it into helical motion. Applied to
-    the tool and sensed by the FT sensor, this drives the intro helix.
-    """
+    """D_ADM times a helix's velocity: the mass-damper admittance (v = F / D) traces the helix."""
     if t < 0.0 or t > TEACH_TIME:
         return [0.0, 0.0, 0.0]
     theta = 2.0 * math.pi * TEACH_TURNS * t / TEACH_TIME
@@ -269,72 +242,52 @@ def spiral_force(t: float) -> list[float]:
 
 
 def admittance_step(env, robot, nominal, state, force):
-    """One admittance tick: force -> offset (outer loop) -> position-tracked TCP.
-
-    robot.update() must have run this step so the FT read behind `force` is
-    current. Returns the commanded target frame (for tracing).
-    """
-    ik = state["ik"]
-    fk = state["fk"]
-    admittance_update(state, force, env.timestep())
+    """Force -> offset (outer loop) -> RNEA-tracked TCP target, which it returns."""
+    admittance_update(state, force, env.model.opt.timestep)
     target = kdl.Frame(nominal.M, nominal.p + kdl.Vector(*state["offset"]))
-    state["q_des"] = ik_step(ik, fk, state["q_des"], target, robot.joint_limits)
-    hold(robot, state["q_des"])
+    rnea_track(env, robot, state, target)
     return target
 
 
 def run_gui(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dict) -> None:
-    """Admittance control for the whole run (POSITION inner loop throughout).
-
-    For the first TEACH_TIME seconds a scripted helical force drives the
-    admittance, so the TCP traces a helix. After that the scripted force stops
-    and you can ctrl + right-drag the gripper to apply your own force, which the
-    FT senses; the same admittance responds and holds on release.
-    """
-    viewer = mjk.SimulateViewer.open(robot, "ex_admittance_ft.py")
+    """The same sequence with the viewer; after the helix the mouse pushes the tool."""
+    env.open_viewer("ex_admittance_ft.py")
+    viewer = env.viewer
     viewer.set_free_camera(1.55, 145.0, -24.0, (0.05, 0.0, TABLE_Z + 0.35))
-    prev = env.time()
-    start = env.time()
+    start = env.data.time
     handoff_tared = False
     target_prev: list[float] | None = None
     tcp_prev: list[float] | None = None
     trace_step = 0
     try:
-        while viewer.is_running():
-            if env.time() < prev - 1e-6:
-                env.reset()
-                start = env.time()
+        while env.data.time - start < TEACH_TIME + HANDOFF_TARE_TIME + GUIDE_TIME:
+            # on_reset flags a UI reset and has already re-seeded the admittance state.
+            if state["reset"]:
+                state["reset"] = False
+                start = env.data.time
                 handoff_tared = False
-                state["offset"] = [0.0, 0.0, 0.0]
-                state["vel"] = [0.0, 0.0, 0.0]
-                state["q_des"] = HOME[:]
                 target_prev = tcp_prev = None
-            prev = env.time()
-            t = env.time() - start
-            robot.update()
+                viewer.clear_trace()
+            t = env.data.time - start
+            env.update()
             close_gripper(env)
-            # Intro: the scripted helical force IS the external force the demo
-            # applies (fed straight in -- also shoving the body would double-
-            # actuate it). After: the FT-measured force, so a hand-drag is sensed.
+            # The helix force is fed to the admittance directly, not applied to the body.
             if t < TEACH_TIME:
                 force = spiral_force(t)
             elif t < TEACH_TIME + HANDOFF_TARE_TIME:
                 force = [0.0, 0.0, 0.0]
             else:
                 if not handoff_tared:
-                    state["bias"] = tare_force(robot)
+                    state["bias"] = tare_force(env, robot)
                     handoff_tared = True
-                force = measured_force(robot, state)
+                force = measured_force(env, robot, state)
             target = admittance_step(env, robot, nominal, state, force)
 
-            # Draw the commanded (yellow) and actual measured TCP (green) paths.
-            # Both poses are in the base_link frame, so map them through the base
-            # body's world pose before tracing or the trail lands at the wrong
-            # place (down by the base) and looks skewed.
+            # Commanded (yellow) and measured (green) TCP paths; the chain's frames are base_link's.
             trace_step += 1
             world_base = env.body_frame("base_link")
             target_xyz = frame_point(world_base, target.p)
-            tcp_xyz = frame_point(world_base, robot.fk_frame().p)
+            tcp_xyz = frame_point(world_base, tcp_frame(robot, state).p)
             if target_prev and trace_step % 5 == 0:
                 viewer.add_trace_segment(target_prev, target_xyz, (1.0, 0.95, 0.0, 1.0))
             if tcp_prev and trace_step % 5 == 0:
@@ -342,95 +295,100 @@ def run_gui(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dict) -> 
             target_prev = target_xyz
             tcp_prev = tcp_xyz
 
-            if not viewer.step():
+            if not env.step():
                 break
-            viewer.pace()
+            env.pace()
     finally:
-        env.set_body_wrench(TOOL_BODY, (0.0, 0.0, 0.0))
-        viewer.close()
+        env.data.body(TOOL_BODY).xfrc_applied[:] = 0.0
+
+
+def elbow_height(env: mjk.Env) -> float:
+    return env.body_frame(ELBOW_BODY).p.z() - TABLE_Z
 
 
 def run_selfcheck(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dict) -> dict:
-    """Headless exercise of the same admittance law the GUI uses. Returns metrics.
-
-    Phase A: the scripted helical force drives the admittance (intro behaviour).
-    Phase B: a physical +Y wrench is sensed by the FT and yielded to, then
-    released. Verifies the admittance reacts to both force sources and holds
-    when force stops.
-    """
-    t0 = env.time()
+    """The helix, the tare, then a scripted push on the tool sensed by the F/T; returns metrics."""
+    elbow_start = elbow_min = elbow_height(env)
+    t0 = env.data.time
     helix_react = 0.0
     helix_track_err = 0.0
-    while env.time() - t0 < TEACH_TIME:
-        t = env.time() - t0
-        robot.update()
+    while env.data.time - t0 < TEACH_TIME:
+        t = env.data.time - t0
+        env.update()
         close_gripper(env)
         target = admittance_step(env, robot, nominal, state, spiral_force(t))
-        tcp = robot.fk_frame()
+        tcp = tcp_frame(robot, state)
         err = [tcp.p[i] - target.p[i] for i in range(3)]
         helix_react = max(helix_react, vnorm(state["offset"]))
         helix_track_err = max(helix_track_err, vnorm(err))
-        if not robot.step():
+        if not env.step():
             break
-        robot.pace()
+        elbow_min = min(elbow_min, elbow_height(env))
+        env.pace()
 
     handoff_force = 0.0
-    t_handoff = env.time()
-    while env.time() - t_handoff < HANDOFF_TARE_TIME:
-        robot.update()
+    t_handoff = env.data.time
+    while env.data.time - t_handoff < HANDOFF_TARE_TIME:
+        env.update()
         close_gripper(env)
         target = admittance_step(env, robot, nominal, state, [0.0, 0.0, 0.0])
-        tcp = robot.fk_frame()
+        tcp = tcp_frame(robot, state)
         err = [tcp.p[i] - target.p[i] for i in range(3)]
         helix_track_err = max(helix_track_err, vnorm(err))
-        if not robot.step():
+        if not env.step():
             break
-        robot.pace()
-    robot.update()
-    state["bias"] = tare_force(robot)
+        elbow_min = min(elbow_min, elbow_height(env))
+        env.pace()
+    env.update()
+    state["bias"] = tare_force(env, robot)
     for _ in range(100):
-        robot.update()
+        env.update()
         close_gripper(env)
-        force = measured_force(robot, state)
+        force = measured_force(env, robot, state)
         handoff_force = max(handoff_force, vnorm(force))
         admittance_step(env, robot, nominal, state, force)
-        if not robot.step():
+        if not env.step():
             break
-        robot.pace()
+        elbow_min = min(elbow_min, elbow_height(env))
+        env.pace()
 
     helix_settle_err = 0.0
-    t_settle = env.time()
-    while env.time() - t_settle < 0.5:
-        robot.update()
+    t_settle = env.data.time
+    while env.data.time - t_settle < 0.5:
+        env.update()
         close_gripper(env)
         target = admittance_step(env, robot, nominal, state, [0.0, 0.0, 0.0])
-        tcp = robot.fk_frame()
+        tcp = tcp_frame(robot, state)
         err = [tcp.p[i] - target.p[i] for i in range(3)]
         helix_settle_err = max(helix_settle_err, vnorm(err))
-        if not robot.step():
+        if not env.step():
             break
-        robot.pace()
+        elbow_min = min(elbow_min, elbow_height(env))
+        env.pace()
 
     pre_push = state["offset"][:]
-    t1 = env.time()
+    t1 = env.data.time
     settled: list[float] | None = None
     push_recovery_err: float | None = None
-    while env.time() - t1 < 4.0:
-        t = env.time() - t1
-        env.set_body_wrench(TOOL_BODY, SELFCHECK_PUSH if t < 1.0 else (0.0, 0.0, 0.0))
-        robot.update()
+    while env.data.time - t1 < 4.0:
+        t = env.data.time - t1
+        push = SELFCHECK_PUSH if t < 1.0 else (0.0, 0.0, 0.0)
+        env.data.body(TOOL_BODY).xfrc_applied[:] = [*push, 0.0, 0.0, 0.0]
+        env.update()
         close_gripper(env)
-        target = admittance_step(env, robot, nominal, state, measured_force(robot, state))
-        tcp = robot.fk_frame()
+        target = admittance_step(env, robot, nominal, state, measured_force(env, robot, state))
+        tcp = tcp_frame(robot, state)
         err = [tcp.p[i] - target.p[i] for i in range(3)]
         if push_recovery_err is None and t >= 2.0:
             push_recovery_err = vnorm(err)
+        # Once the release transient (~1.5 s) has died; the drift is judged from here to the end.
         if settled is None and t >= 2.5:
             settled = state["offset"][:]
-        if not robot.step():
+        if not env.step():
             break
-        robot.pace()
-    env.set_body_wrench(TOOL_BODY, (0.0, 0.0, 0.0))
+        elbow_min = min(elbow_min, elbow_height(env))
+        env.pace()
+    env.data.body(TOOL_BODY).xfrc_applied[:] = 0.0
     return {
         "helix_react": helix_react,
         "helix_track_err": helix_track_err,
@@ -440,6 +398,8 @@ def run_selfcheck(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dic
         "push_dy": (settled or pre_push)[1] - pre_push[1],
         "push_recovery_err": push_recovery_err or 0.0,
         "hold_drift": vnorm([state["offset"][i] - (settled or pre_push)[i] for i in range(3)]),
+        "elbow_start": elbow_start,
+        "elbow_min": elbow_min,
     }
 
 
@@ -451,36 +411,37 @@ def main() -> int:
     env, robot = build_env()
     try:
         chain = robot.kdl_chain()
-        fk = kdl.ChainFkSolverPos_recursive(chain)
-        ik = kdl.ChainIkSolverVel_wdls(chain)
-        ik.setLambda(0.05)
-        robot.ctrl_mode = mjk.CtrlMode.POSITION  # inner loop of the admittance controller
+        acc_ik = kdl.ChainIkSolverVel_wdls(chain)
+        acc_ik.setLambda(0.10)
+        robot.set_control_mode(mjk.CtrlMode.TORQUE)  # RNEA computed-torque inner loop
 
         state = {
             "bias": [0.0, 0.0, 0.0],
             "offset": [0.0, 0.0, 0.0],
             "vel": [0.0, 0.0, 0.0],
-            "q_des": HOME[:],
-            "ik": ik,
-            "fk": fk,
+            "fk": kdl.ChainFkSolverPos_recursive(chain),
+            "jac_solver": kdl.ChainJntToJacSolver(chain),
+            "acc_ik": acc_ik,
+            "id_solver": kdl.ChainIdSolver_RNE(chain, kdl.Vector(0.0, 0.0, -9.81)),
+            "n_seg": chain.getNrOfSegments(),
+            "reset": False,
         }
 
         def on_reset(ctx):
-            robot.set_joint_pos(HOME, call_forward=False)
+            robot.set_joint_pos(HOME)
             state["offset"] = [0.0, 0.0, 0.0]
             state["vel"] = [0.0, 0.0, 0.0]
-            state["q_des"] = HOME[:]
-            env.set_body_wrench(TOOL_BODY, (0.0, 0.0, 0.0))
+            env.data.body(TOOL_BODY).xfrc_applied[:] = 0.0
+            state["reset"] = True
 
         env.on_reset = on_reset
         env.reset()
-        # Single tare after settling. Orientation is held during hand-guiding so
-        # the world-frame gravity bias stays ~constant; a slow auto-tare would be
-        # needed only if drift exceeded the deadband during large reorientations.
-        state["bias"] = settle_and_tare(env, robot)
-        nominal = robot.fk_frame()
+        state["reset"] = False
+        state["bias"] = settle_and_tare(env, robot, state)
+        nominal = tcp_frame(robot, state)
 
-        print(f"FT bias: [{state['bias'][0]:.3f}, {state['bias'][1]:.3f}, {state['bias'][2]:.3f}] N")
+        bias = state['bias']
+        print(f"FT bias: [{bias[0]:.3f}, {bias[1]:.3f}, {bias[2]:.3f}] N")
         if args.gui:
             run_gui(env, robot, nominal, state)
             print(
@@ -497,14 +458,23 @@ def main() -> int:
             print(f"FT push response (offset dY):      {m['push_dy']:.4f} m")
             print(f"push release recovery error:       {m['push_recovery_err']:.4f} m")
             print(f"hold drift after push released:    {m['hold_drift']:.4f} m")
-            assert m["helix_react"] > 0.05, "admittance did not respond to the helical force"
-            assert m["helix_track_err"] < 0.006, "TCP did not track the commanded helix"
-            assert m["helix_settle_err"] < 0.004, "TCP did not settle cleanly after the helix"
-            assert m["handoff_force"] == 0.0, "FT handoff produced a false external force"
-            assert m["push_response"] > 0.05, "admittance did not yield to the FT-sensed push"
-            assert m["push_recovery_err"] < 0.006, "TCP did not recover quickly after the push"
-            assert m["hold_drift"] < 0.01, "pose did not hold after the push stopped"
-            print("OK: admittance responded to helix + FT push and held on release")
+            print(
+                f"elbow height start / lowest:       {m['elbow_start']:.4f} / "
+                f"{m['elbow_min']:.4f} m (limit {MIN_ELBOW_HEIGHT:.4f} m)"
+            )
+            ok = (
+                m["helix_react"] > 0.10
+                and m["helix_track_err"] < 0.006
+                and m["helix_settle_err"] < 0.006
+                and m["handoff_force"] == 0.0
+                and m["push_response"] > 0.12
+                and m["push_recovery_err"] < 0.002
+                and m["hold_drift"] < 0.001
+                and m["elbow_min"] >= MIN_ELBOW_HEIGHT
+            )
+            goal = "the admittance responded to the helix and the FT push and held on release"
+            print(f"{'PASS' if ok else 'FAIL'}: {goal}")
+            return 0 if ok else 1
     finally:
         env.close()
     return 0

@@ -1,50 +1,78 @@
 from __future__ import annotations
 
-from enum import Enum
-from typing import Callable, Optional, Sequence, Union, overload
+from typing import Any, Callable, ClassVar, Optional, Sequence, Union
 
+import mujoco
+import numpy as np
+import numpy.typing as npt
 import PyKDL as kdl
 
-
-class LogLevel(Enum):
-    NONE: "LogLevel"
-    INFO: "LogLevel"
-    WARN: "LogLevel"
-    ERROR: "LogLevel"
+_JointValues = Union[Sequence[float], npt.NDArray[np.float64]]
 
 
-class AttachKind(Enum):
-    World: "AttachKind"
-    Body: "AttachKind"
-    Site: "AttachKind"
-    Frame: "AttachKind"
+class _Enum:
+    """A pybind11 enum: members are class attributes, not an enum.Enum."""
+    __members__: ClassVar[dict[str, Any]]
+    def __init__(self, value: int) -> None: ...
+    def __int__(self) -> int: ...
+    def __index__(self) -> int: ...
+    @property
+    def name(self) -> str: ...
+    @property
+    def value(self) -> int: ...
 
 
-class Shape(Enum):
-    Unspecified: "Shape"
-    BOX: "Shape"
-    SPHERE: "Shape"
-    CYLINDER: "Shape"
+class LogLevel(_Enum):
+    """Log threshold: messages at or above it print; NONE prints nothing."""
+    INFO: ClassVar[LogLevel]
+    WARN: ClassVar[LogLevel]
+    ERROR: ClassVar[LogLevel]
+    NONE: ClassVar[LogLevel]
 
 
-class Condim(Enum):
-    Tangential: "Condim"
-    Torsional: "Condim"
-    Rolling: "Condim"
+class AttachKind(_Enum):
+    World: ClassVar[AttachKind]
+    Body: ClassVar[AttachKind]
+    Site: ClassVar[AttachKind]
+    Frame: ClassVar[AttachKind]
 
 
-class CtrlMode(Enum):
-    POSITION: "CtrlMode"
-    TORQUE: "CtrlMode"
+class Shape(_Enum):
+    Unspecified: ClassVar[Shape]
+    BOX: ClassVar[Shape]
+    SPHERE: ClassVar[Shape]
+    CYLINDER: ClassVar[Shape]
 
 
-class VideoResolution(Enum):
-    R360p: "VideoResolution"
-    R480p: "VideoResolution"
-    R720p: "VideoResolution"
-    R1080p: "VideoResolution"
-    R2K: "VideoResolution"
-    R4K: "VideoResolution"
+class Condim(_Enum):
+    Tangential: ClassVar[Condim]
+    Torsional: ClassVar[Condim]
+    Rolling: ClassVar[Condim]
+
+
+class CtrlMode(_Enum):
+    POSITION: ClassVar[CtrlMode]
+    TORQUE: ClassVar[CtrlMode]
+    VELOCITY: ClassVar[CtrlMode]
+
+
+class VideoResolution(_Enum):
+    R360p: ClassVar[VideoResolution]
+    R480p: ClassVar[VideoResolution]
+    R720p: ClassVar[VideoResolution]
+    R1080p: ClassVar[VideoResolution]
+    R2K: ClassVar[VideoResolution]
+    R4K: ClassVar[VideoResolution]
+
+
+class CtrlModeSpec:
+    """A control mode build_scene adds to a robot, on its own actuator group."""
+    mode: CtrlMode
+    joints: list[str]
+    kv: float
+    def __init__(
+        self, mode: CtrlMode = CtrlMode.TORQUE, joints: Sequence[str] = (), kv: float = 0.0
+    ) -> None: ...
 
 
 class AttachTarget:
@@ -73,13 +101,17 @@ class RobotSpec:
     pos: list[float]
     quat: list[float]
     attachments: list[AttachmentSpec]
+    modes: list[CtrlModeSpec]
+    """Extra control modes; default [TORQUE], [] = native only."""
     def __init__(self) -> None: ...
 
 
 class SceneObject:
-    """MJCF asset or primitive object. Primitive size, rgba, mass, and friction are required."""
+    """MJCF asset or primitive object. A primitive needs size, rgba and friction, and mass
+    unless fixed; rgba on an asset recolors its geoms."""
     name: str
     mjcf_path: str
+    prefix: str
     attach_to: AttachTarget
     shape: Shape
     size: Optional[list[float]]
@@ -90,6 +122,15 @@ class SceneObject:
     mass: Optional[float]
     condim: Condim
     friction: Optional[list[float]]
+    def __init__(self) -> None: ...
+
+
+class SiteSpec:
+    """A frame marked on a body of the assembled scene."""
+    body: str
+    name: str
+    pos: list[float]
+    quat: list[float]
     def __init__(self) -> None: ...
 
 
@@ -112,6 +153,7 @@ class SceneSpec:
     floor_z: float
     add_skybox: Optional[bool]
     objects: list[SceneObject]
+    sites: list[SiteSpec]
     cameras: list[CameraSpec]
     def __init__(self) -> None: ...
 
@@ -140,124 +182,87 @@ class ResetOptions:
 
 
 class ResetInfo:
-    used_keyframe: bool
-    keyframe: int
+    @property
+    def used_keyframe(self) -> bool: ...
+    @property
+    def keyframe(self) -> int: ...
 
 
 class ResetContext:
-    """Context passed to Env.on_reset after MuJoCo data is reset."""
+    """A copy of the reset's options and result, passed to Env.on_reset."""
     @property
     def options(self) -> ResetOptions: ...
     @property
     def info(self) -> ResetInfo: ...
 
 
-class Scene:
-    """Owned MuJoCo model/data built from SceneSpec."""
-    spec: SceneSpec
-    @staticmethod
-    def build(spec: SceneSpec) -> "Scene": ...
-    """Build and compile a MuJoCo scene."""
-    def close(self) -> None: ...
-    def save_xml(self, path: str) -> None: ...
-    def save_binary(self, path: str) -> None: ...
-    def time(self) -> float: ...
-    def timestep(self) -> float: ...
-    def step(self) -> None: ...
-    def step_n(self, n: int) -> None: ...
-    def camera_names(self) -> list[str]: ...
-    def body_frame(self, name: str) -> kdl.Frame: ...
-    """Return a body world pose as PyKDL.Frame."""
-    def site_frame(self, name: str) -> kdl.Frame: ...
-    """Return a site world pose as PyKDL.Frame."""
-    def set_body_pose(
-        self,
-        name: str,
-        pos: Sequence[float],
-        quat: Optional[Sequence[float]] = None,
-    ) -> None: ...
-    """Set a free body pose. quat is xyzw when provided."""
-    def set_actuator_ctrl(self, name: str, value: float) -> None: ...
-    def set_body_wrench(
-        self,
-        name: str,
-        force: Sequence[float],
-        torque: Sequence[float] = (0.0, 0.0, 0.0),
-    ) -> None: ...
-    """Set a world-frame external body wrench."""
-    def actuator_ctrl(self, name: str) -> float: ...
-    def has_actuator(self, name: str) -> bool: ...
-    def add_object(self, object: SceneObject) -> None: ...
-    """Rebuild the scene with an added object and rebind existing Robot handles."""
-    def remove_object(self, name: str) -> None: ...
-    """Rebuild the scene without the named object and rebind existing Robot handles."""
-
-
 class Robot:
-    """Robot handle synchronized with a Scene or Env and backed by a wrapper-built KDL chain."""
+    """Robot registered with an Env (Env.create_robot) and backed by a wrapper-built KDL chain.
+    Env.update() reads and commands it; Env.close() closes it."""
     ctrl_mode: CtrlMode
     paused: bool
-    n_joints: int
-    joint_names: list[str]
-    joint_limits: list[tuple[float, float]]
-    jnt_pos_msr: list[float]
-    jnt_vel_msr: list[float]
-    jnt_trq_msr: list[float]
-    jnt_pos_cmd: list[float]
-    jnt_trq_cmd: list[float]
-    @staticmethod
-    def from_scene(
-        scene: Scene,
-        base_body: str,
-        tip_body: str,
-        prefix: str = "",
-        tool: Optional[ToolFrameSpec] = None,
-    ) -> "Robot": ...
-    def update(self) -> None: ...
-    def step(self) -> bool: ...
-    def pace(self) -> None: ...
-    def step_n(self, n: int) -> bool: ...
-    def set_joint_pos(
-        self,
-        q: Union[Sequence[float], kdl.JntArray],
-        call_forward: bool = True,
-    ) -> None: ...
-    def gravity_torques(self, gravity_z: float = -9.81) -> list[float]: ...
-    def kdl_chain(self) -> kdl.Chain: ...
-    """Return the wrapper-built chain as a PyKDL.Chain."""
+    @property
+    def n_joints(self) -> int: ...
+    @property
+    def joint_names(self) -> list[str]: ...
+    @property
+    def joint_limits(self) -> list[tuple[float, float]]: ...
+    # Ports read as read-only copies; assign the whole port to write it.
+    @property
+    def jnt_pos_msr(self) -> npt.NDArray[np.float64]: ...
+    @jnt_pos_msr.setter
+    def jnt_pos_msr(self, values: _JointValues) -> None: ...
+    @property
+    def jnt_vel_msr(self) -> npt.NDArray[np.float64]: ...
+    @jnt_vel_msr.setter
+    def jnt_vel_msr(self, values: _JointValues) -> None: ...
+    @property
+    def jnt_trq_msr(self) -> npt.NDArray[np.float64]: ...
+    @jnt_trq_msr.setter
+    def jnt_trq_msr(self, values: _JointValues) -> None: ...
+    @property
+    def jnt_pos_cmd(self) -> npt.NDArray[np.float64]: ...
+    @jnt_pos_cmd.setter
+    def jnt_pos_cmd(self, values: _JointValues) -> None: ...
+    @property
+    def jnt_vel_cmd(self) -> npt.NDArray[np.float64]: ...
+    @jnt_vel_cmd.setter
+    def jnt_vel_cmd(self, values: _JointValues) -> None: ...
+    @property
+    def jnt_trq_cmd(self) -> npt.NDArray[np.float64]: ...
+    @jnt_trq_cmd.setter
+    def jnt_trq_cmd(self, values: _JointValues) -> None: ...
+    @property
+    def jnt_saturated(self) -> npt.NDArray[np.bool_]: ...
+    def set_control_mode(self, mode: CtrlMode) -> None:
+        """Switch mode without a jump: seeds the new mode's commands from the current state."""
+    def set_joint_pos(self, q: Union[_JointValues, kdl.JntArray]) -> None:
+        """Write MuJoCo joint positions; frames read afterwards follow them."""
+    def kdl_chain(self) -> kdl.Chain:
+        """The robot's own chain as a PyKDL.Chain, valid while the robot lives."""
     @property
     def ft_sensor_names(self) -> list[str]: ...
-    def ft_sensor(self, name: str) -> kdl.Wrench: ...
-    """Return the latest measured force-torque sensor value as a PyKDL.Wrench."""
-    def ft_sensor_frame(self, name: str) -> kdl.Frame: ...
-    """Return the configured FT sensor frame_site pose as a PyKDL.Frame."""
-    def fk_frame(
-        self,
-        q: Optional[Union[Sequence[float], kdl.JntArray]] = None,
-    ) -> kdl.Frame: ...
-    """Return FK terminal pose as PyKDL.Frame."""
+    def ft_sensor(self, name: str) -> kdl.Wrench:
+        """Return the latest measured force-torque sensor value as a PyKDL.Wrench."""
     @property
     def has_tcp_frame(self) -> bool: ...
     @property
     def tcp_site(self) -> str: ...
     @property
-    def tip_to_tcp(self) -> kdl.Frame: ...
+    def tip_T_tcp(self) -> kdl.Frame: ...
+    def joint_force_limits(self, fallback: float = 1e6) -> npt.NDArray[np.float64]:
+        """Per-joint force/torque limit of the active mode's actuators; fallback where
+        unlimited."""
 
 
-class SimulateViewer:
-    """Wrapper for the custom MuJoCo simulate UI."""
+class Viewer:
+    """The simulate UI of an Env, opened by Env.open_viewer(); inert while closed."""
     realtime_factor: float
-    @staticmethod
-    @overload
-    def open(robot: Robot, title: str = "MuJoCo") -> "SimulateViewer": ...
-    @staticmethod
-    @overload
-    def open(scene: "Scene", title: str = "MuJoCo") -> "SimulateViewer": ...
-    def close(self) -> None: ...
     def is_running(self) -> bool: ...
-    def step(self) -> bool: ...
-    def pace(self) -> None: ...
-    def step_n(self, n: int) -> bool: ...
+    def key_pressed(self, key: int) -> bool:
+        """True while the GLFW key code is held; False headless."""
+    def capture_key(self, key: int, capture: bool = True) -> None:
+        """Claim a GLFW key so the UI does not act on it; capture=False gives it back."""
     def clear_trace(self) -> None: ...
     def add_trace_segment(
         self,
@@ -271,27 +276,34 @@ class SimulateViewer:
         distance: float,
         azimuth: float,
         elevation: float,
-        lookat: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        lookat: Sequence[float] = (0.0, 0.0, 0.0),
     ) -> None: ...
 
 
 class VideoRecorder:
-    """Offscreen MuJoCo video recorder for a Scene or Env."""
+    """Offscreen MuJoCo video recorder for an Env."""
     @staticmethod
     def open(
-        scene: Union["Scene", "Env"],
+        env: Env,
         out_path: str,
         width: int = 1280,
         height: int = 720,
         fps: int = 60,
-    ) -> "VideoRecorder": ...
+    ) -> VideoRecorder: ...
     @staticmethod
     def open_preset(
-        scene: Union["Scene", "Env"],
+        env: Env,
         out_path: str,
         resolution: VideoResolution = VideoResolution.R720p,
         fps: int = 60,
-    ) -> "VideoRecorder": ...
+    ) -> VideoRecorder: ...
+    @staticmethod
+    def open_offscreen(env: Env, width: int, height: int) -> VideoRecorder:
+        """Open an offscreen renderer (no video file) for render_rgb()."""
+    def render_rgb(self) -> npt.NDArray[np.uint8]:
+        """The Env's current state as a (height, width, 3) array, top row first."""
+    def __enter__(self) -> VideoRecorder: ...
+    def __exit__(self, *args: object) -> None: ...
     def record_frame(self) -> bool: ...
     def use_camera(self, name: str = "") -> bool: ...
     def set_free_camera(
@@ -299,18 +311,34 @@ class VideoRecorder:
         distance: float,
         azimuth: float,
         elevation: float,
-        lookat: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        lookat: Sequence[float] = (0.0, 0.0, 0.0),
     ) -> None: ...
     def close(self) -> None: ...
 
 
 class Env:
-    """Resettable scene environment that keeps registered Robot handles synchronized."""
-    spec: SceneSpec
+    """The simulation: compiled scene, its robots and viewer. The loop is step(), then
+    update() (read every robot, apply its commands), then pace()."""
     on_reset: Optional[Callable[[ResetContext], None]]
+    """Called by reset() after every robot is re-seeded; its exception comes out of reset() or
+    step()."""
+    @property
+    def spec(self) -> SceneSpec:
+        """A copy of the SceneSpec the Env runs, with objects added or removed since build()."""
+    @property
+    def model(self) -> mujoco.MjModel:
+        """The live mujoco.MjModel; a new object after add_object()/remove_object()."""
+    @property
+    def data(self) -> mujoco.MjData:
+        """The live mujoco.MjData; a new object after add_object()/remove_object(). The viewer
+        thread reads it too: call mujoco functions on it only while the viewer is closed or
+        paused."""
     @staticmethod
-    def build(spec: SceneSpec) -> "Env": ...
-    def close(self) -> None: ...
+    def build(spec: SceneSpec) -> Env: ...
+    def close(self) -> None:
+        """Close the viewer and free the model; robots become closed."""
+    def __enter__(self) -> Env: ...
+    def __exit__(self, *args: object) -> None: ...
     def create_robot(
         self,
         base_body: str,
@@ -318,14 +346,34 @@ class Env:
         prefix: str = "",
         tool: Optional[ToolFrameSpec] = None,
     ) -> Robot: ...
-    def reset(self, options: Optional[ResetOptions] = None) -> ResetInfo: ...
-    def add_object(self, object: SceneObject) -> None: ...
-    """Rebuild the environment with an added object and rebind existing Robot handles."""
-    def remove_object(self, name: str) -> None: ...
-    """Rebuild the environment without the named object and rebind existing Robot handles."""
-    def camera_names(self) -> list[str]: ...
-    def time(self) -> float: ...
-    def timestep(self) -> float: ...
+    def create_robot_from_chain(
+        self,
+        chain: kdl.Chain,
+        joint_names: Sequence[str],
+        prefix: str = "",
+        tool: Optional[ToolFrameSpec] = None,
+    ) -> Robot:
+        """Register a robot driven by chain; joint_names are the MuJoCo joints in chain order."""
+    def step(self) -> bool:
+        """Advance one timestep; False once the viewer window is closed."""
+    def update(self) -> None:
+        """Read every robot, then apply its commands."""
+    def pace(self) -> None:
+        """Sleep out this step's share of wall time; no-op headless. step() never sleeps."""
+    def open_viewer(self, title: str = "MuJoCo") -> None:
+        """Open the simulate UI; step() drives it, close() closes it."""
+    @property
+    def viewer(self) -> Viewer: ...
+    def reset(self, options: Optional[ResetOptions] = None) -> ResetInfo:
+        """Reset MuJoCo state, re-seed every robot, then call on_reset; what it moves is read
+        back."""
+    def add_object(self, object: SceneObject) -> None:
+        """Rebuild with an added object; robots and the viewer follow the new model."""
+    def set_control_mode(self, robot: int, mode: CtrlMode) -> None:
+        """Switch robot (its SceneSpec.robots index) to mode, for robots driven without a
+        Robot."""
+    def remove_object(self, name: str) -> None:
+        """Rebuild without the named object; robots and the viewer follow the new model."""
     def body_frame(self, name: str) -> kdl.Frame: ...
     def site_frame(self, name: str) -> kdl.Frame: ...
     def set_body_pose(
@@ -333,24 +381,14 @@ class Env:
         name: str,
         pos: Sequence[float],
         quat: Optional[Sequence[float]] = None,
-    ) -> None: ...
-    def set_actuator_ctrl(self, name: str, value: float) -> None: ...
-    def set_body_wrench(
-        self,
-        name: str,
-        force: Sequence[float],
-        torque: Sequence[float] = (0.0, 0.0, 0.0),
-    ) -> None: ...
-    def actuator_ctrl(self, name: str) -> float: ...
-    def has_actuator(self, name: str) -> bool: ...
-    def save_xml(self, path: str) -> None: ...
-    def save_binary(self, path: str) -> None: ...
+    ) -> None:
+        """Set a free body pose. quat is xyzw when provided."""
+    def save_model_xml(self, path: str) -> None: ...
 
 
 __version__: str
 __mujoco_version__: str
 
-def set_log_level(level: LogLevel) -> None: ...
+def set_log_level(level: LogLevel) -> None:
+    """Print wrapper messages at level and above; NONE prints nothing."""
 def get_log_level() -> LogLevel: ...
-def mujoco_version() -> str: ...
-def scene_object_site_name(object: SceneObject, site_name: str) -> str: ...

@@ -16,8 +16,8 @@ jobs:
   docs:
     runs-on: ubuntu-24.04
     env:
-      MUJOCO_VERSION: 3.9.0
-      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.9.0
+      MUJOCO_VERSION: 3.14.0
+      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.14.0
       FETCHCONTENT_BASE_DIR: ${{ github.workspace }}/.fetchcontent
     steps:
       - uses: actions/checkout@v4
@@ -54,7 +54,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.FETCHCONTENT_BASE_DIR }}
-          key: fetchcontent-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          key: fetchcontent-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'test/CMakeLists.txt', 'cmake/Versions.cmake') }}
+
+      # The docs link the fork's headers, so the docs target builds KDL.
+      - name: Cache the Orocos KDL checkout
+        uses: actions/cache@v4
+        with:
+          path: third_party/orocos_kinematics_dynamics
+          key: orocos-kdl-${{ hashFiles('cmake/Versions.cmake') }}
 
       - name: Configure
         run: |

@@ -21,8 +21,8 @@ jobs:
     container:
       image: ros:${{ matrix.ros_distro }}
     env:
-      MUJOCO_VERSION: 3.9.0
-      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.9.0
+      MUJOCO_VERSION: 3.14.0
+      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.14.0
     steps:
       # System build dependencies (KDL/MuJoCo are not installed from apt).
       - name: Install dependencies
@@ -46,12 +46,14 @@ jobs:
         with:
           path: ws/src/mj_kdl_wrapper
 
-      # The secorolab Orocos KDL fork is a sibling workspace package.
+      # The secorolab Orocos KDL fork is a sibling workspace package, at MJ_KDL_OROCOS_KDL_GIT_SHA
+      # (cmake/Versions.cmake; scripts/check_versions.py keeps the two equal).
       - name: Clone the Orocos KDL fork
         run: |
-          git clone --depth 1 -b feature/achd_fixed_joint \
-            https://github.com/secorolab/orocos_kinematics_dynamics.git \
+          git clone https://github.com/secorolab/orocos_kinematics_dynamics.git \
             ws/src/orocos_kinematics_dynamics
+          git -C ws/src/orocos_kinematics_dynamics checkout --detach \
+            c86af053388aa78d2c5ad2fa6afe1fd556621ce8
 
       # Build the shared KDL first, then the wrapper against it (FROM_PACKAGE).
       - name: colcon build (KDL first, then the wrapper against it)
@@ -64,4 +66,14 @@ jobs:
           colcon build --packages-select mj_kdl_wrapper \
             --cmake-args -DMJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON \
                          -DMJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}" \
-                         -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF
+                         -DMJ_KDL_WITH_ROS=ON \
+                         -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF
+
+      # The ROS camera publisher's test needs no Menagerie; tests.yml runs the rest.
+      - name: Test the ROS camera publisher
+        shell: bash
+        run: |
+          source /opt/ros/${{ matrix.ros_distro }}/setup.bash
+          source ws/install/setup.bash
+          ctest --test-dir ws/build/mj_kdl_wrapper -R '^CameraRosTest\.' \
+            --no-tests=error --output-on-failure

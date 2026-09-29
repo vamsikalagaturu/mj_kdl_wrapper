@@ -1,0 +1,12 @@
+prefix=${pcfiledir}/@_MJ_KDL_PC_PREFIX@
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+mujoco_libdir=@MUJOCO_LIB_DIR@
+mujoco_includedir=@MUJOCO_INCLUDE_DIR@
+
+Name: mj_kdl_wrapper
+Description: MuJoCo physics with Orocos KDL kinematics and dynamics
+Version: @PROJECT_VERSION@
+Requires: orocos-kdl
+Cflags: -I${includedir} -I${mujoco_includedir}
+Libs: -L${libdir} -lmj_kdl_wrapper -L${mujoco_libdir} -lmujoco -Wl,--disable-new-dtags -Wl,-rpath,${libdir} -Wl,-rpath,${mujoco_libdir} @_MJ_KDL_PC_KDL_RPATH@

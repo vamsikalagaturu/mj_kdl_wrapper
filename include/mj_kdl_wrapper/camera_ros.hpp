@@ -42,7 +42,7 @@ struct CameraConf
  * convention, or every pose a consumer estimates comes out rotated.
  *
  *   CameraRosPublisher pub(*node, model, conf);
- *   if (pub.wants_frame(t) && render_rgb(&vr, model, data, rgb.data())) pub.publish(rgb.data(), t);
+ *   if (pub.wants_frame(t) && render_rgb(&vr, &env, rgb.data())) pub.publish(rgb.data(), t);
  */
 class CameraRosPublisher
 {

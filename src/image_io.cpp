@@ -1,9 +1,20 @@
-/* ffmpeg-backed image writer used by the Simulate UI screenshot path.
- * Requires ffmpeg in PATH at runtime. */
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Vamsi Kalagaturu
+ * See LICENSE for details. */
 
 #include "mj_kdl_wrapper/image_io.hpp"
 
-#include <cstdio>
+#include <cerrno>
+#include <csignal>
+#include <string>
+#include <vector>
+
+#include <fcntl.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+extern char **environ;
 
 namespace mj_kdl {
 
@@ -11,31 +22,45 @@ bool write_png_rgb(const std::string &path, const std::uint8_t *rgb, int width, 
 {
     if (!rgb || width <= 0 || height <= 0) return false;
 
-    /* Build the ffmpeg command.
-     * -f rawvideo       : input is raw pixels
-     * -pix_fmt rgb24    : input format
-     * -s WxH            : frame dimensions
-     * -i pipe:0         : read from stdin
-     * -vframes 1        : encode one frame
-     * -y                : overwrite output without asking */
-    char cmd[1024];
-    std::snprintf(
-      cmd,
-      sizeof(cmd),
-      "ffmpeg -loglevel error -f rawvideo -pix_fmt rgb24 -s %dx%d -i pipe:0 -vframes 1 -y \"%s\"",
-      width,
-      height,
-      path.c_str()
-    );
+    // An argument list, no shell: the path reaches ffmpeg as written.
+    const std::string        size = std::to_string(width) + "x" + std::to_string(height);
+    std::vector<std::string> args = { "ffmpeg",   "-loglevel", "error",     "-f", "rawvideo",
+                                      "-pix_fmt", "rgb24",     "-s",        size, "-i",
+                                      "pipe:0",   "-y",        "-frames:v", "1",  path };
+    std::vector<char *>      argv;
+    for (auto &arg : args) argv.push_back(arg.data());
+    argv.push_back(nullptr);
 
-    FILE *pipe = popen(cmd, "w");
-    if (!pipe) return false;
+    // A missing or failing ffmpeg must cost the screenshot, not the process.
+    std::signal(SIGPIPE, SIG_IGN);
 
-    const std::size_t n       = static_cast<std::size_t>(width) * height * 3;
-    const std::size_t written = std::fwrite(rgb, 1, n, pipe);
-    const int         rc      = pclose(pipe);
+    int fds[2];
+    if (pipe2(fds, O_CLOEXEC) != 0) return false;
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_adddup2(&actions, fds[0], STDIN_FILENO);
+    pid_t     pid = -1;
+    const int err = posix_spawnp(&pid, "ffmpeg", &actions, nullptr, argv.data(), environ);
+    posix_spawn_file_actions_destroy(&actions);
+    close(fds[0]);
+    if (err != 0) {
+        close(fds[1]);
+        return false;
+    }
 
-    return written == n && rc == 0;
+    const auto *bytes = rgb;
+    std::size_t left  = static_cast<std::size_t>(width) * height * 3;
+    while (left > 0) {
+        const ssize_t n = write(fds[1], bytes, left);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) break;
+        bytes += n;
+        left -= static_cast<std::size_t>(n);
+    }
+    close(fds[1]);
+    int wstatus = 0;
+    while (waitpid(pid, &wstatus, 0) < 0 && errno == EINTR) {}
+    return left == 0 && WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0;
 }
 
 } // namespace mj_kdl

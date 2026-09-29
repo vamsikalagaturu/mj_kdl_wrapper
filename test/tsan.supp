@@ -1,0 +1,3 @@
+# MuJoCo and the Mesa driver are not built with TSan, so their own threads look racy to it.
+race:libmujoco.so
+race:libgallium

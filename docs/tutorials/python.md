@@ -17,29 +17,27 @@ The Python API has the same layers as the C++ wrapper:
 | Layer | Type | Responsibility |
 |-------|------|----------------|
 | Scene description | `SceneSpec`, `RobotSpec`, `AttachmentSpec`, `SceneObject`, `CameraSpec` | Describe what should be compiled into MuJoCo |
-| Runtime owner | `Scene` or `Env` | Own the compiled MuJoCo model/data |
-| Robot control handle | `Robot` | KDL chain, joint maps, measured ports, command ports |
-| Visualization/recording | `SimulateViewer`, `VideoRecorder` | Interactive Simulate UI and offscreen MP4 recording |
+| Runtime owner | `Env` | Own the compiled MuJoCo model/data, the robots and the viewer |
+| Robot control handle | `Robot` | KDL chain, measured ports, command ports |
+| Visualization/recording | the `Env`'s viewer, `VideoRecorder` | Interactive Simulate UI and offscreen MP4 recording |
 | KDL interop | `PyKDL` | FK, IK, dynamics solvers over the wrapper-built chain |
-
-Use `Scene` for simple one-off simulations. Use `Env` when you need reset hooks
-or registered robots that stay synchronized across resets and scene rebuilds.
 
 Most applications follow this flow:
 
 1. Build a `SceneSpec`.
-2. Call `Env.build(spec)` or `Scene.build(spec)`.
-3. Create one or more `Robot` handles.
+2. Call `Env.build(spec)`.
+3. Create one or more `Robot` handles with `env.create_robot()`.
 4. Install `env.on_reset` if task state must be restored.
-5. In the loop: `update()`, compute commands, write command ports, then `step()`.
-6. Close viewer/recorder and environment when done.
+5. Optionally `env.open_viewer()`.
+6. In the loop: `env.step()`, `env.update()`, compute commands, write command ports.
+7. Close the recorder and the environment when done (`env.close()` closes the viewer).
 
 ## Complete Runnable Script
 
-The code below is a complete interactive script. If you save it as
-`python_tutorial_demo.py` in the repository root and run it from an environment
-where `mj_kdl_wrapper` is installed, it builds a table scene, initializes a
-tool-aware KDL robot, opens the Simulate UI, and runs gravity compensation.
+The code below is a complete interactive script. Saved as `python_tutorial_demo.py` and run
+from any directory in an environment where `mj_kdl_wrapper` is installed, it builds a table
+scene, initializes a tool-aware KDL robot, opens the Simulate UI, and runs gravity
+compensation.
 Pass `--headless` to run the same controller without a window for CI or remote
 machines without a display.
 
@@ -50,27 +48,27 @@ from __future__ import annotations
 
 import math
 import argparse
-from pathlib import Path
+
+import PyKDL as kdl
 
 import mj_kdl_wrapper as mjk
 
 
 HOME_POSE = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
-TABLE_PATH = Path("assets/table.xml")
 SURFACE_Z = 0.7
 CUBE_HALF = 0.025
 
 
-def require_path(path: str | Path, label: str) -> str:
-    resolved = Path(path)
-    if not resolved.exists():
-        raise FileNotFoundError(f"{label} not found: {resolved}")
-    return str(resolved)
+def joints(values) -> kdl.JntArray:
+    q = kdl.JntArray(len(values))
+    for i, value in enumerate(values):
+        q[i] = value
+    return q
 
 
 def make_gripper() -> mjk.AttachmentSpec:
     gripper = mjk.AttachmentSpec()
-    gripper.mjcf_path = require_path("assets/robotiq_2f85/2f85.xml", "gripper model")
+    gripper.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml")
     gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
     gripper.prefix = "g_"
     return gripper
@@ -79,7 +77,7 @@ def make_gripper() -> mjk.AttachmentSpec:
 def make_table() -> mjk.SceneObject:
     table = mjk.SceneObject()
     table.name = "table"
-    table.mjcf_path = require_path(TABLE_PATH, "table asset")
+    table.mjcf_path = mjk.menagerie.asset_path("table.xml")
     table.pos = [0.0, 0.0, SURFACE_Z]
     table.fixed = True
     return table
@@ -108,11 +106,8 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     spec.objects = [table, make_cube()]
 
     arm = mjk.RobotSpec()
-    arm.path = require_path(mjk.menagerie.model_path("kinova_gen3"), "arm model")
-    arm.attach_to = mjk.AttachTarget(
-        mjk.AttachKind.Site,
-        mjk.scene_object_site_name(table, "table_top"),
-    )
+    arm.path = mjk.menagerie.model_path("kinova_gen3")
+    arm.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "table_top")
     arm.attachments = [make_gripper()]
     spec.robots = [arm]
 
@@ -127,23 +122,24 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     env = mjk.Env.build(spec)
 
     tool = mjk.ToolFrameSpec()
-    tool.tool_body = "g_base"
+    tool.tool_body = "g_base_mount"
     tool.tcp_site = "g_pinch"
     robot = env.create_robot("base_link", "bracelet_link", tool=tool)
     return env, robot
 
 
-def run_controller(env: mjk.Env, robot: mjk.Robot) -> None:
-    robot.update()
-    robot.jnt_trq_cmd = robot.gravity_torques(env.spec.gravity_z)
-    if env.has_actuator("g_fingers_actuator"):
-        env.set_actuator_ctrl("g_fingers_actuator", 0.0)
+def run_controller(env: mjk.Env, robot: mjk.Robot, dyn: kdl.ChainDynParam) -> None:
+    env.update()
+    g = kdl.JntArray(robot.n_joints)
+    dyn.JntToGravity(joints(robot.jnt_pos_msr), g)
+    robot.jnt_trq_cmd = [g[i] for i in range(robot.n_joints)]
+    env.data.actuator("g_fingers_actuator").ctrl[0] = 0.0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--headless", action="store_true", help="run without opening the Simulate UI")
-    parser.add_argument("--duration", type=float, default=2.0, help="headless run duration in seconds")
+    parser.add_argument("--duration", type=float, default=2.0, help="run duration in seconds")
     args = parser.parse_args()
 
     env, robot = build_env()
@@ -151,40 +147,41 @@ def main() -> int:
         robot.ctrl_mode = mjk.CtrlMode.TORQUE
 
         def on_reset(ctx: mjk.ResetContext) -> None:
-            robot.set_joint_pos(HOME_POSE, call_forward=False)
+            robot.set_joint_pos(HOME_POSE)
             env.set_body_pose("cube", [0.35, 0.10, SURFACE_Z + CUBE_HALF])
 
         env.on_reset = on_reset
         env.reset()
 
-        robot.update()
-        start = robot.fk_frame().p
-        start_xyz = [start.x(), start.y(), start.z()]
+        chain = robot.kdl_chain()
+        fk = kdl.ChainFkSolverPos_recursive(chain)
+        dyn = kdl.ChainDynParam(chain, kdl.Vector(0.0, 0.0, env.spec.gravity_z))
 
-        if args.headless:
-            end_time = env.time() + args.duration
-            while env.time() < end_time:
-                run_controller(env, robot)
-                robot.step()
-                robot.pace()
-        else:
-            viewer = mjk.SimulateViewer.open(robot, "python tutorial")
-            viewer.use_camera("task")
-            try:
-                while viewer.is_running():
-                    run_controller(env, robot)
-                    if not viewer.step():
-                        break
-                    viewer.pace()
-            finally:
-                viewer.close()
+        def tcp_xyz() -> list[float]:
+            frame = kdl.Frame()
+            fk.JntToCart(joints(robot.jnt_pos_msr), frame)
+            return [frame.p.x(), frame.p.y(), frame.p.z()]
 
-        end = robot.fk_frame().p
-        end_xyz = [end.x(), end.y(), end.z()]
+        start_xyz = tcp_xyz()
+
+        if not args.headless:
+            env.open_viewer("python tutorial")
+            env.viewer.use_camera("task")
+        end_time = env.data.time + args.duration
+        # Ends after the duration either way; closing the window ends it early.
+        while env.data.time < end_time:
+            run_controller(env, robot, dyn)
+            if not env.step():
+                break
+            env.pace()
+
+        env.update()
+        end_xyz = tcp_xyz()
         drift = math.sqrt(sum((b - a) ** 2 for a, b in zip(start_xyz, end_xyz)))
-        print(f"MuJoCo {mjk.mujoco_version()}")
+        cameras = [env.model.camera(i).name for i in range(env.model.ncam)]
+        print(f"MuJoCo {mjk.__mujoco_version__}")
         print(f"joints: {robot.n_joints}")
-        print(f"cameras: {' '.join(env.camera_names())}")
+        print(f"cameras: {' '.join(cameras)}")
         print(f"EE drift: {drift:.6f} m")
     finally:
         env.close()
@@ -218,19 +215,22 @@ env = mjk.Env.build(spec)
 ```
 
 `Env` owns native MuJoCo resources. Call `env.close()` when you want deterministic
-cleanup. For simple scripts, a `try/finally` block keeps that explicit:
+cleanup, or use the `Env` as a context manager:
 
 ```python
-try:
+with mjk.Env.build(spec) as env:
     ...
-finally:
-    env.close()
 ```
+
+A call that fails raises `RuntimeError` with the reason, e.g. an unset `timestep` or an
+unknown body name.
 
 ## 2. Initialize A Robot
 
 `Robot` is the handle for one controllable articulation. It stores KDL chain
 metadata, joint names/limits, measured ports, and command ports.
+`create_robot()` registers it with the `Env`, whose `update()` reads and
+commands it from then on.
 
 ```python
 robot = env.create_robot("base_link", "bracelet_link")
@@ -242,62 +242,70 @@ All joint vectors are in KDL chain order:
 
 - `jnt_pos_msr`, `jnt_vel_msr`, `jnt_trq_msr` are measured ports.
 - `jnt_pos_cmd` is used in `CtrlMode.POSITION`.
+- `jnt_vel_cmd` is used in `CtrlMode.VELOCITY`.
 - `jnt_trq_cmd` is used in `CtrlMode.TORQUE`.
+
+Each read returns a read-only numpy copy. Write a port by assigning the whole vector
+(`robot.jnt_pos_cmd = q`); `robot.jnt_pos_cmd[0] = x` raises `ValueError` instead of being
+silently lost. Take `.copy()` to edit a port's values before assigning them back.
 
 ## 3. Run Position Control
 
-In position mode, write `jnt_pos_cmd`. `update()` reads measured state and
-applies the command ports to MuJoCo.
+In position mode, write `jnt_pos_cmd`. `env.update()` reads measured state for
+every robot and applies their command ports to MuJoCo.
 
 ```python
 robot.ctrl_mode = mjk.CtrlMode.POSITION
-robot.update()
-robot.jnt_pos_cmd = list(robot.jnt_pos_msr)
 
-end_time = env.time() + 2.0
-while env.time() < end_time:
-    robot.update()
+end_time = env.data.time + 2.0
+while env.data.time < end_time:
+    env.step()
+    env.update()
     robot.jnt_pos_cmd = list(robot.jnt_pos_msr)
-    robot.step()
-    robot.pace()
+    env.pace()
 ```
 
-`robot.step()` advances the owning scene by one MuJoCo timestep. For scenes
-without a robot control loop, `env.time()` and `env.timestep()` still expose
-the runtime clock.
+`env.step()` advances the `Env` by one MuJoCo timestep; afterwards joint state
+and frames describe the same instant. `env.data.time` and `env.model.opt.timestep` expose
+the runtime clock, with or without robots; `env.model` / `env.data` are the live
+`mujoco.MjModel` / `mujoco.MjData` (see the Python API guide).
 
 ## 4. Add KDL Gravity Compensation
 
-The Python binding exposes a convenience gravity helper for the common case:
-
-```python
-robot.ctrl_mode = mjk.CtrlMode.TORQUE
-
-while env.time() < end_time:
-    robot.update()
-    robot.jnt_trq_cmd = robot.gravity_torques(env.spec.gravity_z)
-    robot.step()
-    robot.pace()
-```
-
-For other KDL solvers, use the standard `PyKDL` module and the wrapper-built
-chain:
+Gravity torques and FK come from the standard `PyKDL` solvers over the wrapper-built chain,
+fed a `JntArray` of the measured positions:
 
 ```python
 import PyKDL as kdl
 
+def joints(values) -> kdl.JntArray:
+    q = kdl.JntArray(len(values))
+    for i, value in enumerate(values):
+        q[i] = value
+    return q
+
 chain = robot.kdl_chain()
+dyn = kdl.ChainDynParam(chain, kdl.Vector(0.0, 0.0, env.spec.gravity_z))
 fk = kdl.ChainFkSolverPos_recursive(chain)
 
-q = kdl.JntArray(robot.n_joints)
-for i, value in enumerate(robot.jnt_pos_msr):
-    q[i] = value
+def gravity() -> list[float]:
+    g = kdl.JntArray(robot.n_joints)
+    dyn.JntToGravity(joints(robot.jnt_pos_msr), g)
+    return [g[i] for i in range(robot.n_joints)]
+
+robot.ctrl_mode = mjk.CtrlMode.TORQUE
+
+while env.data.time < end_time:
+    env.step()
+    env.update()
+    robot.jnt_trq_cmd = gravity()
+    env.pace()
 
 tcp = kdl.Frame()
-fk.JntToCart(q, tcp)
+fk.JntToCart(joints(robot.jnt_pos_msr), tcp)
 ```
 
-`robot.fk_frame()` is available for simple FK reads and returns a `PyKDL.Frame`.
+The later snippets reuse `joints()`, `fk` and `gravity()`.
 
 ## 5. Attach A Gripper Or Tool
 
@@ -306,7 +314,7 @@ accumulated robot spec. They are applied in order.
 
 ```python
 gripper = mjk.AttachmentSpec()
-gripper.mjcf_path = "assets/robotiq_2f85/2f85.xml"
+gripper.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml")
 gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
 gripper.prefix = "g_"
 
@@ -332,7 +340,7 @@ Tell KDL about the attached tool when creating the robot:
 
 ```python
 tool = mjk.ToolFrameSpec()
-tool.tool_body = "g_base"
+tool.tool_body = "g_base_mount"
 tool.tcp_site = "g_pinch"
 
 robot = env.create_robot("base_link", "bracelet_link", tool=tool)
@@ -340,20 +348,21 @@ assert robot.has_tcp_frame
 ```
 
 `tool_body` identifies the attached subtree whose inertia should be included in
-the KDL chain. `tcp_site` becomes the terminal frame for FK and task-space code.
+the KDL chain; for the 2F-85 it is the root body `g_base_mount`, whose mass `g_base` would
+leave out. `tcp_site` becomes the terminal frame for FK and task-space code.
 If the scene includes an attached FT sensor asset, add a `ForceTorqueSensorSpec`
 to `tool.ft_sensors`; `robot.ft_sensor(name)` returns a `PyKDL.Wrench`.
 
 ## 6. Add Tables, Objects, And Asset Sites
 
 `SceneObject` supports primitive objects and MJCF-backed assets. MJCF assets use
-`mjcf_path`; primitive objects require `shape`, `size`, `rgba`, `mass`, and
-`friction`.
+`mjcf_path`; primitive objects require `shape`, `size`, `rgba` and `friction`, and `mass`
+unless `fixed`.
 
 ```python
 table = mjk.SceneObject()
 table.name = "table"
-table.mjcf_path = "assets/table.xml"
+table.mjcf_path = mjk.menagerie.asset_path("table.xml")
 table.pos = [0.0, 0.0, 0.7]
 table.fixed = True
 
@@ -374,7 +383,7 @@ Objects are compiled before robots, in declaration order. That lets a robot
 mount to a site exported by a previous object:
 
 ```python
-mount = mjk.scene_object_site_name(table, "table_top")
+mount = "table_top"   # the asset's own site name; SceneObject.prefix would prepend to it
 robot_spec.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, mount)
 ```
 
@@ -382,19 +391,18 @@ After build, read authored object sites as frames:
 
 ```python
 env = mjk.Env.build(spec)
-world_t_table_top = env.site_frame(mjk.scene_object_site_name(table, "table_top"))
+world_t_table_top = env.site_frame("table_top")
 surface_z = world_t_table_top.p.z()
 ```
 
 Free objects must stay world-anchored because MuJoCo restricts free joints to
 top-level bodies.
 
-`spec.robots` can be empty. For object-only scenes, build `Scene` from objects
-and open the viewer on the scene itself:
+`spec.robots` can be empty. An object-only `Env` opens the viewer the same way:
 
 ```python
-scene = mjk.Scene.build(spec)
-viewer = mjk.SimulateViewer.open(scene, "object scene")
+env = mjk.Env.build(spec)
+env.open_viewer("object scene")
 ```
 
 ## 7. Add Cameras
@@ -416,23 +424,26 @@ List compiled cameras after build. A viewer or recorder can switch to any
 compiled fixed camera after it is opened:
 
 ```python
-print(env.camera_names())
+print([env.model.camera(i).name for i in range(env.model.ncam)])
 ```
 
 Pass `""` to return to the free camera.
 
 ## 8. Write Reset Hooks
 
-`Env.reset()` resets MuJoCo, runs your hook, forwards dynamics, then syncs
-registered robot command ports so stale commands do not hit the first post-reset
-step.
+`Env.reset()` resets MuJoCo, re-seeds every registered robot's ports from the reset state (so
+stale commands do not hit the first post-reset step), runs your hook, then reads the
+measurements back. A command the hook primes is kept; a POSITION robot the hook moves needs
+its `jnt_pos_cmd` set there too. The Simulate UI's reset button does the same. The hook gets a
+`ResetContext` copy it may keep; an exception it raises comes out of `reset()` (or the
+`step()` that ran a UI reset) once the measurements are read back.
 
 ```python
 home = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 cube_start = [0.35, 0.10, 0.725]
 
 def on_reset(ctx: mjk.ResetContext) -> None:
-    robot.set_joint_pos(home, call_forward=False)
+    robot.set_joint_pos(home)
     env.set_body_pose("cube", cube_start)
     task_state["name"] = "HOME"
     task_state["step"] = 0
@@ -450,28 +461,23 @@ and task state. Avoid hiding reset logic in the control loop.
 
 ## 9. Use The Simulate UI
 
-`SimulateViewer.open(robot)` starts the custom Simulate UI. Object-only scenes
-use `SimulateViewer.open(scene)` instead. The viewer owns the window; your loop
-still owns controller logic.
+`env.open_viewer()` starts the custom Simulate UI on the `Env`, with or without
+robots. The viewer owns the window; your loop still owns controller logic and its end
+condition, and `env.step()` returns `False` once the window is closed.
 
 ```python
-viewer = mjk.SimulateViewer.open(robot, "task")
-viewer.use_camera("task")
+env.open_viewer("task")
+env.viewer.use_camera("task")
 
-try:
-    while viewer.is_running():
-        robot.update()
-        robot.jnt_trq_cmd = robot.gravity_torques(env.spec.gravity_z)
-        if not viewer.step():
-            break
-        viewer.pace()
-finally:
-    viewer.close()
+while env.data.time < 10.0 and env.step():
+    env.update()
+    robot.jnt_trq_cmd = gravity()
+    env.pace()
 ```
 
 The viewer exposes the same wrapper panels as C++: `Frames`, `Trace`, `Perturb`,
-`Recorder`, and `RTF`. `viewer.realtime_factor` controls pacing; `1.0` is
-real time and `0.0` runs as fast as possible.
+`Recorder`, and `RTF`. The real-time factor controls pacing; `1.0` is real time
+and `0.0` runs as fast as possible. `env.close()` closes the window.
 
 ### Draw A Live Trajectory Trace Overlay
 
@@ -482,20 +488,19 @@ and add the segments you want visible:
 trace = []
 orange = [1.0, 0.5, 0.1, 1.0]
 
-while viewer.is_running():
-    robot.update()
-    frame = robot.fk_frame()
+while env.data.time < 10.0 and env.step():
+    env.update()
+    frame = kdl.Frame()
+    fk.JntToCart(joints(robot.jnt_pos_msr), frame)
     trace.append([frame.p.x(), frame.p.y(), frame.p.z()])
     trace = trace[-1024:]
 
-    viewer.clear_trace()
+    env.viewer.clear_trace()
     for a, b in zip(trace, trace[1:]):
-        viewer.add_trace_segment(a, b, orange)
+        env.viewer.add_trace_segment(a, b, orange)
 
-    robot.jnt_trq_cmd = robot.gravity_torques(env.spec.gravity_z)
-    if not viewer.step():
-        break
-    viewer.pace()
+    robot.jnt_trq_cmd = gravity()
+    env.pace()
 ```
 
 `add_trace_segment()` silently drops segments once the user-scene geometry
@@ -517,10 +522,9 @@ recorder.use_camera("task")
 
 try:
     for _ in range(3000):
-        robot.update()
-        robot.jnt_trq_cmd = robot.gravity_torques(env.spec.gravity_z)
-        robot.step()
-        robot.pace()
+        env.step()
+        env.update()
+        robot.jnt_trq_cmd = gravity()
         recorder.record_frame()
 finally:
     recorder.close()
@@ -549,7 +553,7 @@ spec.add_skybox = True
 
 table = mjk.SceneObject()
 table.name = "table"
-table.mjcf_path = "assets/table.xml"
+table.mjcf_path = mjk.menagerie.asset_path("table.xml")
 table.pos = [0.0, 0.0, 0.7]
 table.fixed = True
 
@@ -565,16 +569,13 @@ cube.friction = [0.8, 0.02, 0.001]
 spec.objects = [table, cube]
 
 gripper = mjk.AttachmentSpec()
-gripper.mjcf_path = "assets/robotiq_2f85/2f85.xml"
+gripper.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml")
 gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
 gripper.prefix = "g_"
 
 arm = mjk.RobotSpec()
 arm.path = mjk.menagerie.model_path("kinova_gen3")
-arm.attach_to = mjk.AttachTarget(
-    mjk.AttachKind.Site,
-    mjk.scene_object_site_name(table, "table_top"),
-)
+arm.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "table_top")
 arm.attachments = [gripper]
 spec.robots = [arm]
 
@@ -593,7 +594,7 @@ env = mjk.Env.build(spec)
 
 ```python
 tool = mjk.ToolFrameSpec()
-tool.tool_body = "g_base"
+tool.tool_body = "g_base_mount"
 tool.tcp_site = "g_pinch"
 robot = env.create_robot("base_link", "bracelet_link", tool=tool)
 robot.ctrl_mode = mjk.CtrlMode.TORQUE
@@ -611,11 +612,13 @@ when the solver requires them.
 Keep state data separate from controller math:
 
 ```python
+GRIPPER_CLOSED = 0.82  # the bundled 2F-85's ctrl is its driver angle [rad]
+
 plan = [
     {"name": "HOME", "target": q_home, "duration": 1.0, "timeout": 2.5, "gripper": 0.0},
     {"name": "PICK", "target": q_pick, "duration": 1.5, "timeout": 3.5, "gripper": 0.0},
-    {"name": "CLOSE", "target": q_pick, "duration": 0.8, "timeout": 1.5, "gripper": 255.0},
-    {"name": "LIFT", "target": q_lift, "duration": 2.0, "timeout": 4.0, "gripper": 255.0},
+    {"name": "CLOSE", "target": q_pick, "duration": 0.8, "timeout": 1.5, "gripper": GRIPPER_CLOSED},
+    {"name": "LIFT", "target": q_lift, "duration": 2.0, "timeout": 4.0, "gripper": GRIPPER_CLOSED},
 ]
 ```
 
@@ -624,33 +627,30 @@ interpolate to the target and apply impedance:
 
 ```python
 q_enter = list(robot.jnt_pos_msr)
-t_enter = env.time()
+t_enter = env.data.time
 
 def interpolate(target, duration):
-    alpha = min(max((env.time() - t_enter) / duration, 0.0), 1.0)
+    alpha = min(max((env.data.time - t_enter) / duration, 0.0), 1.0)
     return [q0 + alpha * (q1 - q0) for q0, q1 in zip(q_enter, target)]
 
 def apply_impedance(q_des):
-    robot.update()
-    gravity = robot.gravity_torques(env.spec.gravity_z)
     cmd = []
-    for q, dq, q_target, g in zip(robot.jnt_pos_msr, robot.jnt_vel_msr, q_des, gravity):
+    for q, dq, q_target, g in zip(robot.jnt_pos_msr, robot.jnt_vel_msr, q_des, gravity()):
         cmd.append(g + 120.0 * (q_target - q) - 18.0 * dq)
     robot.jnt_trq_cmd = cmd
 ```
 
-The Robotiq Menagerie gripper actuator is controlled directly by name:
+The bundled Robotiq gripper's actuator is controlled directly by name through `env.data`:
 
 ```python
-if env.has_actuator("g_fingers_actuator"):
-    env.set_actuator_ctrl("g_fingers_actuator", state["gripper"])
+env.data.actuator("g_fingers_actuator").ctrl[0] = state["gripper"]
 ```
 
 ### 11.4 Reset And Validate
 
 ```python
 def on_reset(ctx: mjk.ResetContext) -> None:
-    robot.set_joint_pos(q_home, call_forward=False)
+    robot.set_joint_pos(q_home)
     env.set_body_pose("cube", [0.35, 0.10, 0.725])
     task["index"] = 0
     task["entered_at"] = 0.0
@@ -686,17 +686,22 @@ right.attachments = [gripper]
 spec.robots = [left, right]
 env = mjk.Env.build(spec)
 
+right_tool = mjk.ToolFrameSpec()
+right_tool.tool_body = "r2_g_base_mount"
+right_tool.tcp_site = "r2_g_pinch"
+
 left_robot = env.create_robot("base_link", "bracelet_link", tool=tool)
-right_robot = env.create_robot("base_link", "bracelet_link", prefix="r2_", tool=tool)
+right_robot = env.create_robot("r2_base_link", "r2_bracelet_link", tool=right_tool)
 ```
 
 Each robot gets its own KDL chain and command ports while sharing the same
-MuJoCo scene.
+`Env`; one `env.update()` reads and commands both. `prefix` is prepended to every name the
+call resolves (bodies, tool body, TCP site, F/T sensors), as `ex_rnea_pick_place.py` does
+with `"r2_"`; passing already-prefixed names with no prefix, as above, is the same.
 
 ## 13. Modify A Running Scene
 
-`Scene.add_object()`, `Env.add_object()`, `remove_object()` rebuild the native
-model/data. Use them for task setup and coarse changes, not per-frame spawning.
+`Env.add_object()` and `Env.remove_object()` rebuild the native model/data. Use them for task setup and coarse changes, not per-frame spawning.
 
 ```python
 obstacle = mjk.SceneObject()
@@ -709,25 +714,27 @@ obstacle.mass = 0.5
 obstacle.friction = [0.8, 0.02, 0.001]
 
 env.add_object(obstacle)
-robot.update()
+env.update()
 env.remove_object("obstacle")
 ```
 
-Existing Python `Robot` handles are rebound automatically. A closed `Scene`,
-`Env`, or `Robot` raises `RuntimeError` instead of leaving dangling native
+Existing Python `Robot` handles, the viewer and open recorders follow the new model. A
+closed `Env` or `Robot` raises `RuntimeError` instead of leaving dangling native
 pointers.
 
 ## 14. Grow Into The Examples
 
-The included Python examples mirror the C++ examples:
+The Python examples mirror the C++ ones:
 
 - `ex_gravity_comp`: single-arm gravity compensation.
-- `ex_table_scene`: table asset, primitive objects, cameras, reset hook.
-- `ex_pick`: IK waypoints, gripper command, state machine.
-- `ex_table_pick_place`: tabletop pick/place using table asset sites.
-- `ex_table_pour`: gripper-held bottle asset and receiver.
-- `ex_dual_arm`: two prefixed robots in one scene.
-- `ex_record`: headless MP4 recording.
+- `ex_joint_ctrl`: a POSITION mode motion, then a VELOCITY mode motion back.
+- `ex_table_pick_place`: IK waypoints, gripper command, phase table, table asset sites, a push
+  on the arm mid-carry through `xfrc_applied`.
+- `ex_table_pour`: gripper-held bottle asset and receiver; `--record` writes an MP4.
+- `ex_rnea_pick_place`: two prefixed arms at one table with RNEA computed torque, free objects,
+  scene cameras.
+- `ex_achd_pick_place`, `ex_achd_table_slide`: ACHD torque control.
+- `ex_admittance_ft`: F/T admittance around an RNEA task-space inner loop.
 
-Read the corresponding files in `../../python/examples/` when you want complete,
-runnable versions of the patterns above.
+They live in `python/mj_kdl_wrapper/examples/` (or run `mj-kdl-fetch-examples` to copy them
+out) and end by themselves. They run headless by default and accept `--gui`.

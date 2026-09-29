@@ -9,6 +9,8 @@ Regression tests for two fixes in build_scene:
 
 from pathlib import Path
 
+import pytest
+
 import mj_kdl_wrapper as mjk
 
 CABINET = Path(mjk.menagerie.asset_path("cabinet/cabinet.xml"))
@@ -31,18 +33,56 @@ def _cube() -> mjk.SceneObject:
     return obj
 
 
+def _spec(objects) -> mjk.SceneSpec:
+    spec = mjk.SceneSpec()
+    spec.timestep = 0.002
+    spec.add_floor = True
+    spec.add_skybox = False
+    spec.objects = objects
+    return spec
+
+
+def test_fixed_primitive_needs_no_mass():
+    obj = _cube()
+    obj.fixed = True
+    obj.mass = None
+    with mjk.Env.build(_spec([obj])) as env:
+        assert env.step()
+
+
+@pytest.mark.parametrize("field", ["size", "rgba", "mass", "friction"])
+def test_primitive_without_a_required_field_is_refused(field):
+    obj = _cube()
+    setattr(obj, field, None)
+    with pytest.raises(RuntimeError, match=f"SceneObject.{field}"):
+        mjk.Env.build(_spec([obj]))
+
+
+@pytest.mark.parametrize("field", ["pos", "fovy"])
+def test_camera_without_a_required_field_is_refused(field):
+    cam = mjk.CameraSpec()
+    cam.name = "top"
+    cam.pos = [0.0, 0.0, 2.0]
+    cam.fovy = 45.0
+    setattr(cam, field, None)
+    spec = _spec([_cube()])
+    spec.cameras = [cam]
+    with pytest.raises(RuntimeError, match=f"CameraSpec.{field}"):
+        mjk.Env.build(spec)
+
+
 def test_robotless_scene_applies_timestep():
     spec = mjk.SceneSpec()
     spec.timestep = 0.004
     spec.add_floor = True
     spec.add_skybox = True
     spec.objects = [_cube()]
-    scene = mjk.Scene.build(spec)  # no robots
+    env = mjk.Env.build(spec)  # no robots
     try:
-        assert scene.timestep() == 0.004
-        scene.step()
+        assert env.model.opt.timestep == 0.004
+        assert env.step()
     finally:
-        scene.close()
+        env.close()
 
 
 def test_mesh_scene_object_builds_and_moves():
@@ -56,27 +96,27 @@ def test_mesh_scene_object_builds_and_moves():
     spec.add_floor = True
     spec.add_skybox = True
     spec.objects = [obj]
-    scene = mjk.Scene.build(spec)
+    env = mjk.Env.build(spec)
     try:
         # Meshes compiled -> the drawer's grasp site exists; force pulls the
         # drawer through the cabinet rails, then out and onto the floor.
-        closed = scene.site_frame("cabinet_grasp1").p
-        scene.set_body_wrench("cabinet_drawer1", [40.0, 0.0, 0.0])
+        closed = env.site_frame("grasp1").p
+        env.data.body("drawer1").xfrc_applied[:3] = [40.0, 0.0, 0.0]
         for _ in range(120):
-            scene.step()
-        guided = scene.site_frame("cabinet_grasp1").p
+            env.step()
+        guided = env.site_frame("grasp1").p
         assert guided.x() > closed.x() + 0.05
         assert abs(guided.y()) < 0.03
         for _ in range(400):
-            scene.step()
-        scene.set_body_wrench("cabinet_drawer1", [0.0, 0.0, 0.0])
+            env.step()
+        env.data.body("drawer1").xfrc_applied[:] = 0.0
         for _ in range(400):
-            scene.step()
-        opened = scene.site_frame("cabinet_grasp1").p
+            env.step()
+        opened = env.site_frame("grasp1").p
         assert opened.x() > closed.x() + 0.3
         assert opened.z() < closed.z() - 0.01
     finally:
-        scene.close()
+        env.close()
 
 
 def test_mesh_scene_object_applies_quat():
@@ -93,11 +133,11 @@ def test_mesh_scene_object_applies_quat():
     spec.add_floor = False
     spec.add_skybox = False
     spec.objects = [obj]
-    scene = mjk.Scene.build(spec)
+    env = mjk.Env.build(spec)
     try:
-        y = scene.body_frame("cabinet").M * Vector(0.0, 1.0, 0.0)
+        y = env.body_frame("cabinet").M * Vector(0.0, 1.0, 0.0)
         assert abs(y.x() + 0.456825992585671) < 1e-9
         assert abs(y.y() - 0.802872337479472) < 1e-9
         assert abs(y.z() - 0.383022221559489) < 1e-9
     finally:
-        scene.close()
+        env.close()
