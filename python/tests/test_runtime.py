@@ -176,6 +176,8 @@ def test_an_attached_arm_switches_mode_apart_from_its_robot():
     attached = mjk.AttachmentSpec()
     attached.mjcf_path = _model_path()
     attached.prefix = "a_"
+    attached.attach_to.kind = mjk.AttachKind.Body
+    attached.attach_to.name = "base_link"
     attached.pos = [1.0, 0.0, 0.0]
     attached.modes = [mjk.CtrlModeSpec(mjk.CtrlMode.TORQUE)]
     spec.robots[0].attachments = [attached]

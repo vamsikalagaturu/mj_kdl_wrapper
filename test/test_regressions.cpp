@@ -213,6 +213,19 @@ TEST_F(RebuildTest, OneRecorderKeepsEveryFrameItIsGiven)
     EXPECT_EQ(frames, 50);
 }
 
+TEST_F(RebuildTest, AnAttachmentLeftAtTheWorldIsRefused)
+{
+    mj_kdl::SceneSpec      spec = spec_;
+    mj_kdl::AttachmentSpec loose;
+    loose.mjcf_path = spec.robots[0].path;
+    loose.prefix    = "loose_";
+    spec.robots[0].attachments.push_back(loose);
+    mj_kdl::Env          env;
+    const mj_kdl::Status s = mj_kdl::init_env(&env, &spec);
+    EXPECT_FALSE(s);
+    EXPECT_NE(s.error.find("attach_to is the world"), std::string::npos) << s.error;
+}
+
 TEST(LogLevel, IsASeverityThreshold)
 {
     const auto level = mj_kdl::get_log_level();

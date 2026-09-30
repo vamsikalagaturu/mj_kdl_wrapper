@@ -1303,6 +1303,9 @@ static Status attach_to_spec(
 {
     if (!robot_spec || !a || a->mjcf_path.empty())
         MJ_FAIL("attach_to_spec: null spec or empty mjcf_path");
+    // Only the robot's first root body reaches the scene, so a second root would vanish.
+    if (a->attach_to.kind == AttachKind::World)
+        MJ_FAIL(who << ": attach_to is the world; name a body, site or frame of the robot");
     ensure_plugins_loaded();
     MJ_LOG_INFO(
       "attach_to_spec: parent='" << (a->attach_to.name.empty() ? "(world)" : a->attach_to.name)

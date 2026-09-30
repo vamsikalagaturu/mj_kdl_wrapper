@@ -138,7 +138,7 @@ struct CtrlModeSpec
 struct AttachmentSpec
 {
     std::string               mjcf_path; // MJCF file for this attachment
-    AttachTarget              attach_to; // parent in root or prior attachment (default: world)
+    AttachTarget              attach_to; // body, site or frame of root or prior attachment
     std::string               prefix;    // element name prefix (avoids name conflicts)
     double                    pos[3]  = { 0, 0, 0 };    // position offset [m]
     double                    quat[4] = { 0, 0, 0, 1 }; // orientation offset [x, y, z, w]
