@@ -378,7 +378,8 @@ struct ToolFrameSpec
 
 /**
  * @ingroup grp_types
- * A robot's control ports. reset() assigns a freshly seeded one, so every field here is reset.
+ * A robot's control ports. Sized once by init_robot_*(); reset() rewrites their values in place,
+ * so a pointer to an element stays valid until the robot is re-initialised or destroyed.
  */
 struct RobotPorts
 {

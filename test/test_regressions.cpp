@@ -226,6 +226,19 @@ TEST_F(RebuildTest, AnAttachmentLeftAtTheWorldIsRefused)
     EXPECT_NE(s.error.find("attach_to is the world"), std::string::npos) << s.error;
 }
 
+TEST_F(RebuildTest, APortPointerSurvivesAReset)
+{
+    ASSERT_TRUE(mj_kdl::set_control_mode(&robot_, mj_kdl::CtrlMode::TORQUE));
+    double       *torque   = &robot_.jnt_trq_cmd[1];
+    const double *position = &robot_.jnt_pos_msr[1];
+
+    mj_kdl::reset(&env_);
+    *torque = 5.0;
+    mj_kdl::update(&env_);
+    EXPECT_EQ(ctrl("joint_2_torque"), 5.0) << "a command written through a held pointer";
+    EXPECT_EQ(*position, qpos("joint_2")) << "a measurement read through a held pointer";
+}
+
 TEST(LogLevel, IsASeverityThreshold)
 {
     const auto level = mj_kdl::get_log_level();

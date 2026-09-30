@@ -216,8 +216,8 @@ Fixes from the 0.4.0 audit; headless, self-skips without the bundled Gen3.
   Env; a failed re-init leaves the robot as it was; an `on_reset` set before `init_env()` is
   kept; recorders follow a rebuild and outlive each other; a frame shows the state it was taken
   at, delivered on the recorder's thread; one recorder keeps every frame it is given; an
-  attachment left at the world is refused rather than dropped; a viewer that cannot open returns
-  an error.
+  attachment left at the world is refused rather than dropped; a pointer held to a port element
+  still commands and reads the robot after `reset()`; a viewer that cannot open returns an error.
 - **LogLevel.IsASeverityThreshold** -- each level shows its own and more severe messages.
 - **Screenshot.PathReachesFfmpegVerbatimAndAMissingFfmpegIsAFailure** -- the screenshot writer
   takes its path verbatim and reports a missing ffmpeg.

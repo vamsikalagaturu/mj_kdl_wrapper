@@ -108,7 +108,7 @@ init_robot_from_mjcf(&robot, &env, ...)   -- KDL chain; registers the robot
 
 **Control cycle (`update(&env)`):** for every registered robot, reads `qpos`/`qvel`/`qfrc_actuator` into `jnt_pos_msr` / `jnt_vel_msr` / `jnt_trq_msr` and the F/T wrenches, then writes the active mode's command (`jnt_pos_cmd` / `jnt_vel_cmd` / `jnt_trq_cmd`) to that mode's actuators' `data->ctrl`; then samples and applies the scene slots. Each mode is an actuator group toggled via `opt.disableactuator` (see `docs/howto/torque_control.md`). `step(&env)` is `mj_step2` then `mj_step1`, so frames and sensors after it describe the new state.
 
-**Reset by construction:** each part's runtime state is one struct (`RobotPorts`, `ForceTorqueReading`, `Scene*Reading` / `Scene*Command`) that `reset()` assigns afresh; parts go through `reset_parts()`, which requires a `reset_part()` overload per part at compile time. New runtime state belongs in one of those structs.
+**Reset by construction:** each part's runtime state is one struct (`ForceTorqueReading`, `Scene*Reading` / `Scene*Command`) that `reset()` assigns afresh, except `RobotPorts`, which `seed_ports()` rewrites in place because callers hold pointers into it (a new port field needs a line there); parts go through `reset_parts()`, which requires a `reset_part()` overload per part at compile time. New runtime state belongs in one of those structs.
 
 **Scene patching:** `build_scene()` merges MJCF files using `mjSpec` (MuJoCo's programmatic spec API), then injects floor, skybox, objects, sites and cameras. Runtime add/remove (`scene_add_object` / `scene_remove_object`) rebuilds the `Env`'s model and re-resolves its robots, scene slots and viewer.
 

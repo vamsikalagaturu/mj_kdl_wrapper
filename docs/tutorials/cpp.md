@@ -464,6 +464,7 @@ torque, say) is not overwritten, and a pose it sets is what the ports read. Comm
 re-seeded after the hook: a hook that moves a POSITION robot sets its `jnt_pos_cmd` too, or
 the first update drives it back. Each part's runtime state lives in one struct that reset
 assigns afresh, so a field added later is reset too; a part without a reset does not compile.
+A robot's ports are rewritten in place, so a pointer you keep to a port element survives it.
 The Simulate UI's reset button runs the same path.
 
 Use `ResetContext` when your hook needs direct MuJoCo access:

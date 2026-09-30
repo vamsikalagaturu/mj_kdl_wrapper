@@ -1791,29 +1791,34 @@ static Status resolve_ft_sensors(Robot *r, const ToolFrameSpec *tool, const std:
     return {};
 }
 
-// Ports that hold the robot where it is, in the mode its model is in.
-static RobotPorts seeded_ports(const Robot &r)
+// The only place the ports are allocated: callers keep pointers into them across reset().
+static void size_ports(RobotPorts &p, int n)
 {
-    const RobotInternals &in = *r._impl;
-    const mjData         *d  = r.data;
-    const int             n  = r.n_joints;
-    RobotPorts            p;
-    p.ctrl_mode = r.ctrl_mode; // a requested switch still happens at the next update()
-    p.jnt_pos_msr.resize(n);
-    p.jnt_vel_msr.resize(n);
-    p.jnt_trq_msr.resize(n);
-    p.jnt_pos_cmd.resize(n);
+    p.jnt_pos_msr.assign(n, 0.0);
+    p.jnt_vel_msr.assign(n, 0.0);
+    p.jnt_trq_msr.assign(n, 0.0);
+    p.jnt_pos_cmd.assign(n, 0.0);
     p.jnt_vel_cmd.assign(n, 0.0);
     p.jnt_trq_cmd.assign(n, 0.0);
     p.jnt_saturated.assign(n, 0);
-    for (int i = 0; i < n; ++i) {
-        const int dof    = in.kdl_to_mj_dof[i];
-        p.jnt_pos_msr[i] = d->qpos[in.kdl_to_mj_qpos[i]];
-        p.jnt_vel_msr[i] = d->qvel[dof];
-        p.jnt_trq_msr[i] = d->qfrc_actuator[dof];
-        p.jnt_pos_cmd[i] = p.jnt_pos_msr[i];
+}
+
+// Ports that hold the robot where it is, written into their storage; ctrl_mode is left as set,
+// so a requested switch still happens at the next update().
+static void seed_ports(Robot &r)
+{
+    const RobotInternals &in = *r._impl;
+    const mjData         *d  = r.data;
+    for (int i = 0; i < r.n_joints; ++i) {
+        const int dof      = in.kdl_to_mj_dof[i];
+        r.jnt_pos_msr[i]   = d->qpos[in.kdl_to_mj_qpos[i]];
+        r.jnt_vel_msr[i]   = d->qvel[dof];
+        r.jnt_trq_msr[i]   = d->qfrc_actuator[dof];
+        r.jnt_pos_cmd[i]   = r.jnt_pos_msr[i];
+        r.jnt_vel_cmd[i]   = 0.0;
+        r.jnt_trq_cmd[i]   = 0.0;
+        r.jnt_saturated[i] = 0;
     }
-    return p;
 }
 
 static void unregister_robot(Robot *r)
@@ -1843,8 +1848,9 @@ static void take_robot(Robot *r, Robot *built, Env *env)
     std::swap(r->_impl, built->_impl);
     if (std::find(env->robots.begin(), env->robots.end(), r) == env->robots.end())
         env->robots.push_back(r);
-    r->_impl->env                 = env;
-    static_cast<RobotPorts &>(*r) = seeded_ports(*r);
+    r->_impl->env = env;
+    size_ports(*r, r->n_joints);
+    seed_ports(*r);
 }
 
 static Status resolve_robot_joints(Robot *r, const std::string &pfx)
@@ -2199,11 +2205,13 @@ static void read_scene(Env *env)
 
 /* What reset() restores. Each part's runtime state lives in one struct that is assigned afresh,
  * so a field added to it is reset without a line here; a part handed to reset_parts() without a
- * reset_part() overload does not compile. */
+ * reset_part() overload does not compile. A robot's ports are the exception: callers hold
+ * pointers into them, so seed_ports() rewrites them in place and a new field needs a line.
+ */
 static void reset_part(std::vector<Robot *> &robots, Env *env)
 {
     for (Robot *r : robots) {
-        static_cast<RobotPorts &>(*r) = seeded_ports(*r);
+        seed_ports(*r);
         for (auto &sensor : r->ft_sensors)
             static_cast<ForceTorqueReading &>(sensor) = ForceTorqueReading{};
         // Hold the reset pose in whatever mode the robot is in.

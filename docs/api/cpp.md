@@ -469,10 +469,12 @@ opts.keyframe = 0;
 mj_kdl::ResetInfo info = mj_kdl::reset(&env, &opts);
 ```
 
-Each part's runtime state is one struct (`RobotPorts`, `ForceTorqueReading`, and
-the `Scene*Reading` / `Scene*Command` bases of the slots) that reset assigns afresh,
+Each part's runtime state is one struct (`ForceTorqueReading`, and the
+`Scene*Reading` / `Scene*Command` bases of the slots) that reset assigns afresh,
 so a field added to one is reset without further code; a part without a reset
-overload does not compile. The Simulate UI's reset button runs the same path,
+overload does not compile. `RobotPorts` is rewritten in place instead: its vectors
+are sized once by `init_robot_*()`, so a pointer to a port element stays valid
+across resets. The Simulate UI's reset button runs the same path,
 hook included. `on_reset` may be set before or after `init_env()`.
 
 `cleanup(&env)` closes the viewer, frees the model/data and forgets the robots,
