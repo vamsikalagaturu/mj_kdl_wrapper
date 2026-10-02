@@ -45,11 +45,6 @@ def main() -> int:
 
     py_project = pyproject["project"]
     errors: list[str] = []
-    if py_project["version"] != project_version:
-        errors.append(
-            f"pyproject project.version={py_project['version']} != MJ_KDL_VERSION={project_version}"
-        )
-
     dependency = f"mujoco=={mujoco_version}"
     if dependency not in py_project.get("dependencies", []):
         errors.append(f"pyproject dependencies must contain {dependency!r}")

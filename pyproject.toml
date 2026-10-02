@@ -1,13 +1,13 @@
 [build-system]
 requires = [
-  "scikit-build-core>=0.11.2",
+  "scikit-build-core>=1.1",
   "pybind11>=2.13",
 ]
 build-backend = "scikit_build_core.build"
 
 [project]
 name = "mj-kdl-wrapper"
-version = "0.4.1"
+dynamic = ["version"]
 description = "Python bindings for mj_kdl_wrapper: MuJoCo physics with Orocos KDL kinematics and dynamics"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -56,6 +56,13 @@ sdist.include = [
 
 [tool.scikit-build.wheel.packages]
 mj_kdl_wrapper = "python/mj_kdl_wrapper"
+
+# cmake/Versions.cmake is the one place the version is written.
+[[tool.dynamic-metadata]]
+provider = "scikit_build_core.metadata.regex"
+field = "version"
+input = "cmake/Versions.cmake"
+regex = '^set\(MJ_KDL_VERSION "(?P<value>[^"]+)"\)'
 
 [tool.ruff]
 line-length = 100
