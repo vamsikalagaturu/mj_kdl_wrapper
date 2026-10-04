@@ -130,7 +130,7 @@ static KDL::Vector ft_force_world(const mj_kdl::Robot &robot)
 
 static KDL::Vector external_force(const mj_kdl::Robot &robot, const Admittance &a)
 {
-    const KDL::Vector f = a.bias - ft_force_world(robot);
+    const KDL::Vector f = ft_force_world(robot) - a.bias;
     return norm3(f) < kForceDeadband ? KDL::Vector::Zero() : f;
 }
 

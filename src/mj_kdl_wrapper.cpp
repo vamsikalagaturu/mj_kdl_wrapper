@@ -2179,7 +2179,8 @@ static void read_robot(Robot *r)
     for (auto &sensor : r->ft_sensors) {
         const double *f = d->sensordata + sensor.force_adr;
         const double *t = d->sensordata + sensor.torque_adr;
-        sensor.wrench   = KDL::Wrench(KDL::Vector(f[0], f[1], f[2]), KDL::Vector(t[0], t[1], t[2]));
+        // MuJoCo gives the parent's force on the child; a physical sensor reports the load on it.
+        sensor.wrench = -KDL::Wrench(KDL::Vector(f[0], f[1], f[2]), KDL::Vector(t[0], t[1], t[2]));
     }
 }
 

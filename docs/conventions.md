@@ -26,7 +26,7 @@ meet it when you read `mjData::qpos` of a free joint yourself.
 | KDL chain, `robot.chain` / `robot.kdl_chain()` solvers | the chain's base body |
 | `Robot::tip_T_tcp` | chain tip to the TCP site |
 | wrench slot `wrench` | world axes, applied at the body's centre of mass (`xfrc_applied`) |
-| F/T `wrench` | the MuJoCo `<force>`/`<torque>` sensors' site; `frame_site` names a frame to read with `get_site_frame()` / `env.site_frame()` |
+| F/T `wrench` | the MuJoCo `<force>`/`<torque>` sensors' site; `frame_site` names a frame to read with `get_site_frame()` / `env.site_frame()`. The load on the sensor, as a physical F/T reports it: the negation of MuJoCo's reading |
 
 ## Joint ports
 

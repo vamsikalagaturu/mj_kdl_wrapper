@@ -201,11 +201,11 @@ def settle_and_tare(env: mjk.Env, robot: mjk.Robot, state: dict) -> list[float]:
 
 
 def measured_force(env: mjk.Env, robot: mjk.Robot, state: dict) -> list[float]:
-    """External force on the tool in the world frame: tared reaction, negated, deadbanded."""
+    """External force on the tool in the world frame: the tared reading, deadbanded."""
     wrench = robot.ft_sensor("wrist_ft")
     f_world = xyz(env.site_frame(FT_SITE).M * wrench.force)
     bias = state["bias"]
-    f_ext = [bias[i] - f_world[i] for i in range(3)]
+    f_ext = [f_world[i] - bias[i] for i in range(3)]
     force_norm = vnorm(f_ext)
     if force_norm < FORCE_DEADBAND:
         return [0.0, 0.0, 0.0]

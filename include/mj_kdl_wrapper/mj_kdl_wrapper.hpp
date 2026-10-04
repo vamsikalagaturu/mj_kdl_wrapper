@@ -335,6 +335,10 @@ struct ForceTorqueSensorSpec
 /**
  * @ingroup grp_types
  * What a force-torque sensor measures. reset() assigns a fresh one, so every field here is reset.
+ *
+ * The wrench is the load on the sensor, as a physical F/T sensor reports it: a tool hanging below
+ * reads its weight pointing down. MuJoCo's `<force>`/`<torque>` sensors give the opposite (the
+ * parent's force on the child), so the reading is their negation.
  */
 struct ForceTorqueReading
 {
