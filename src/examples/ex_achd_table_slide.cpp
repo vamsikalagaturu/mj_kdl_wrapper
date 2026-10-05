@@ -30,7 +30,7 @@
 #include <limits>
 #include <string>
 
-namespace ex = mj_kdl_examples;
+namespace ex = mjkdl_examples;
 
 static constexpr int    kApproachSteps  = 7500; // no contact within 15 s fails the run
 static constexpr int    kPressSteps     = 250;  // the press ramps up over 0.5 s
@@ -86,10 +86,10 @@ static void set_alpha_no_linear_z(KDL::Jacobian &alpha)
     alpha.setColumn(4, KDL::Twist(KDL::Vector(0, 0, 0), KDL::Vector(0, 0, 1)));
 }
 
-static double elbow_height(mj_kdl::Env &env)
+static double elbow_height(mjkdl::Env &env)
 {
     KDL::Frame elbow;
-    mj_kdl::get_body_frame(&env, kElbowBody, &elbow);
+    mjkdl::get_body_frame(&env, kElbowBody, &elbow);
     return elbow.p.z() - kTableZ;
 }
 
@@ -108,17 +108,17 @@ static double site_sink_speed(const mjModel *model, const mjData *data, int site
     return -vel[5];
 }
 
-static void print_contact_heights(mj_kdl::Env &env)
+static void print_contact_heights(mjkdl::Env &env)
 {
     for (const char *name : { "spherical_wrist_2_link", "bracelet_link" }) {
         KDL::Frame frame;
-        if (mj_kdl::get_body_frame(&env, name, &frame)) {
+        if (mjkdl::get_body_frame(&env, name, &frame)) {
             std::cout << name << "_z_above_table=" << std::fixed << std::setprecision(4)
                       << frame.p.z() - kTableZ << "\n";
         }
     }
     KDL::Frame tcp;
-    if (mj_kdl::get_site_frame(&env, kTcpSite, &tcp)) {
+    if (mjkdl::get_site_frame(&env, kTcpSite, &tcp)) {
         std::cout << "tcp_z_above_table=" << std::fixed << std::setprecision(4)
                   << tcp.p.z() - kTableZ << "\n";
     }
@@ -126,7 +126,7 @@ static void print_contact_heights(mj_kdl::Env &env)
 
 // Prints qdd and the RNEA torque for the current error with nc task constraints (6 or 5).
 static void print_nc_comparison(
-  const mj_kdl::Robot    &robot,
+  const mjkdl::Robot    &robot,
   const KDL::Twist       &err,
   const KDL::JntArray    &q,
   const KDL::JntArray    &qd,
@@ -163,20 +163,20 @@ int main(int argc, char **argv)
 {
     const bool headless = ex::parse_args(argc, argv).headless;
 
-    mj_kdl::RobotSpec robot_spec;
+    mjkdl::RobotSpec robot_spec;
     robot_spec.path   = ex::asset("kinova_gen3/gen3.xml");
     robot_spec.pos[2] = kTableZ;
 
-    mj_kdl::SceneSpec scene = ex::scene_spec();
+    mjkdl::SceneSpec scene = ex::scene_spec();
     scene.robots.push_back(robot_spec);
     scene.objects.push_back(ex::table_object(ex::asset("table.xml"), kTableZ));
 
-    mj_kdl::Env env;
-    if (!mj_kdl::init_env(&env, &scene)) return 1;
-    mj_kdl::ToolFrameSpec tool;
+    mjkdl::Env env;
+    if (!mjkdl::init_env(&env, &scene)) return 1;
+    mjkdl::ToolFrameSpec tool;
     tool.tcp_site = kTcpSite;
-    mj_kdl::Robot robot;
-    if (!mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool))
+    mjkdl::Robot robot;
+    if (!mjkdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool))
         return 1;
     const int table_geom = mj_name2id(env.model, mjOBJ_GEOM, "top");
     const int tcp_site   = mj_name2id(env.model, mjOBJ_SITE, kTcpSite);
@@ -204,14 +204,14 @@ int main(int argc, char **argv)
     }
 
     bool restarted = false;
-    env.on_reset   = [&](mj_kdl::ResetContext *) {
-        mj_kdl::set_joint_pos(&robot, q_start);
+    env.on_reset   = [&](mjkdl::ResetContext *) {
+        mjkdl::set_joint_pos(&robot, q_start);
         for (unsigned i = 0; i < n; ++i) robot.jnt_pos_cmd[i] = q_start(i);
         restarted = true;
     };
-    mj_kdl::reset(&env);
+    mjkdl::reset(&env);
     print_contact_heights(env);
-    if (!mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::TORQUE)) return 1;
+    if (!mjkdl::set_control_mode(&robot, mjkdl::CtrlMode::TORQUE)) return 1;
 
     const KDL::Twist root_acc(KDL::Vector(0.0, 0.0, -scene.gravity_z), KDL::Vector::Zero());
     KDL::ChainFkSolverPos_recursive fk(robot.chain);
@@ -226,7 +226,7 @@ int main(int argc, char **argv)
     for (unsigned i = 0; i < 6; ++i) alpha6(i, i) = 1.0;
     set_alpha_no_linear_z(alpha5);
 
-    mj_kdl::update(&env);
+    mjkdl::update(&env);
     ex::read_q(robot, q, qd);
     KDL::Frame tracked;
     fk.JntToCart(q, tracked);
@@ -251,7 +251,7 @@ int main(int argc, char **argv)
     int    reaction_count = 0;
 
     const auto restart_task = [&] {
-        mj_kdl::update(&env);
+        mjkdl::update(&env);
         ex::read_q(robot, q, qd);
         fk.JntToCart(q, tracked);
         phase          = Phase::Approach;
@@ -277,7 +277,7 @@ int main(int argc, char **argv)
             if (dist > 1e-4) tracked.p += (to_goal / dist) * std::min(dist, kVMaxLin * dt);
         }
 
-        mj_kdl::update(&env);
+        mjkdl::update(&env);
         ex::read_q(robot, q, qd);
         KDL::Frame current;
         fk.JntToCart(q, current);
@@ -315,7 +315,7 @@ int main(int argc, char **argv)
         return true;
     };
 
-    if (!headless && !mj_kdl::open_viewer(&env)) return 1;
+    if (!headless && !mjkdl::open_viewer(&env)) return 1;
     restarted      = false;
     bool solver_ok = true;
     bool finished  = false;
@@ -324,7 +324,7 @@ int main(int argc, char **argv)
             solver_ok = false;
             break;
         }
-        if (!mj_kdl::step(&env)) break;
+        if (!mjkdl::step(&env)) break;
         elbow_min = std::min(elbow_min, elbow_height(env));
         if (phase == Phase::Approach && touches(env.data, table_geom)) {
             touchdown = site_sink_speed(env.model, env.data, tcp_site);
@@ -346,14 +346,14 @@ int main(int argc, char **argv)
             restart_task();
             continue;
         }
-        mj_kdl::pace_realtime(&env);
+        mjkdl::pace_realtime(&env);
         if (phase == Phase::Approach && phase_steps >= kApproachSteps) break;
         if (phase == Phase::Slide && phase_steps >= kSlideSteps) {
             finished = true;
             break;
         }
     }
-    mj_kdl::update(&env);
+    mjkdl::update(&env);
 
     ex::read_q(robot, q, qd);
     KDL::Frame current;
@@ -374,7 +374,7 @@ int main(int argc, char **argv)
               << "touchdown_speed_m_s=" << std::setprecision(4) << touchdown << " (limit "
               << kMaxTouchdown << ") elbow_min_z_above_table=" << elbow_min << " (limit "
               << kMinElbowHeight << ")\n";
-    mj_kdl::cleanup(&env);
+    mjkdl::cleanup(&env);
     const bool ok = solver_ok && finished && contact_fraction >= kContactHeld
                     && touchdown <= kMaxTouchdown && elbow_min >= kMinElbowHeight;
     return headless

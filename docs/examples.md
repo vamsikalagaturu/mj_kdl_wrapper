@@ -6,16 +6,16 @@ bundled Robotiq 2F-85 gripper under `assets/robotiq_2f85`.
 Build from the repo root:
 
 ```bash
-git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
-cd mj_kdl_wrapper
-vcs import < mj_kdl_wrapper.repos
+git clone https://github.com/vamsikalagaturu/mjkdl.git
+cd mjkdl
+vcs import < mjkdl.repos
 
 cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build --parallel $(nproc)
 ```
 
 Every example ends by itself. A C++ example (`src/examples/`) opens the Simulate UI unless
-given `--headless`; a Python one (`python/mj_kdl_wrapper/examples/`) runs headless unless given
+given `--headless`; a Python one (`python/mjkdl/examples/`) runs headless unless given
 `--gui`. Either way it runs the same sequence or duration, prints its result, and exits;
 closing the window ends it early. Headless, each example checks its own goal (the limit is
 printed next to the measured value), prints `PASS` or `FAIL`, and exits 1 on a failure. The C++
@@ -276,8 +276,8 @@ null-space term 0.246).
 
 ```bash
 ./build/src/examples/ex_admittance_ft --headless
-python -m mj_kdl_wrapper.examples.ex_admittance_ft         # headless self-check
-python -m mj_kdl_wrapper.examples.ex_admittance_ft --gui
+python -m mjkdl.examples.ex_admittance_ft         # headless self-check
+python -m mjkdl.examples.ex_admittance_ft --gui
 ```
 
 ---
@@ -291,7 +291,7 @@ write fails the run.
 ```bash
 ./build/src/examples/ex_table_pour --record pour.mp4        # 1080p, default table_pour.mp4
 ./build/src/examples/ex_achd_pick_place --record pick.mp4   # 720p, default achd_pick_place.mp4
-python -m mj_kdl_wrapper.examples.ex_table_pour --record pour.mp4
+python -m mjkdl.examples.ex_table_pour --record pour.mp4
 ```
 
 **Requires:** `BUILD_RECORDER=ON` (default) and `ffmpeg` in `PATH`.

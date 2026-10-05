@@ -19,7 +19,7 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
     env:
       MUJOCO_VERSION: 3.14.0
-      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.14.0
+      MJKDL_MUJOCO_DIR: /tmp/mujoco-3.14.0
       CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
       - uses: actions/checkout@v4
@@ -47,13 +47,13 @@ jobs:
       - name: Import the Orocos KDL fork
         run: |
           pip install vcstool
-          vcs import < mj_kdl_wrapper.repos
+          vcs import < mjkdl.repos
 
       - name: Cache MuJoCo
         id: cache-mujoco
         uses: actions/cache@v4
         with:
-          path: ${{ env.MJ_KDL_MUJOCO_DIR }}
+          path: ${{ env.MJKDL_MUJOCO_DIR }}
           key: mujoco-${{ runner.os }}-${{ env.MUJOCO_VERSION }}
 
       - name: Install MuJoCo ${{ env.MUJOCO_VERSION }}
@@ -69,11 +69,11 @@ jobs:
           uv venv .venv
           . .venv/bin/activate
           uv pip install . \
-            --config-settings=cmake.define.MJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}" \
+            --config-settings=cmake.define.MJKDL_MUJOCO_DIR="${MJKDL_MUJOCO_DIR}" \
             --config-settings=cmake.define.CMAKE_CXX_COMPILER_LAUNCHER=ccache \
             --config-settings=cmake.define.CMAKE_C_COMPILER_LAUNCHER=ccache
           uv pip install pytest
-          python -c "import PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mujoco.mj_versionString(), mjk.__mujoco_version__)"
+          python -c "import PyKDL, mujoco, mjkdl as mjk; print(mujoco.mj_versionString(), mjkdl.__mujoco_version__)"
           set -o pipefail
           pytest -q -rs python/tests | tee pytest.log
           # A skipped test fails the job, except where the runner has no offscreen rendering.

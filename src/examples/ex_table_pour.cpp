@@ -24,7 +24,7 @@
 #include <string>
 #include <vector>
 
-namespace ex = mj_kdl_examples;
+namespace ex = mjkdl_examples;
 
 static constexpr double kRobotBackX    = -0.26;
 static constexpr double kJugX          = 0.30;
@@ -44,20 +44,20 @@ static constexpr int    kRecordFps     = 60;
 static constexpr double kKp[7] = { 120, 220, 120, 220, 110, 190, 90 };
 static constexpr double kKd[7] = { 12, 22, 12, 22, 11, 18, 9 };
 
-static mj_kdl::SceneObject make_ball(int idx)
+static mjkdl::SceneObject make_ball(int idx)
 {
-    mj_kdl::SceneObject ball;
+    mjkdl::SceneObject ball;
     char                name[32];
     std::snprintf(name, sizeof(name), "grain_%02d", idx);
     ball.name    = name;
-    ball.shape   = mj_kdl::Shape::SPHERE;
+    ball.shape   = mjkdl::Shape::SPHERE;
     ball.size[0] = kBallRadius;
     ball.size[1] = ball.size[2] = 0.0;
     ball.pos[2]                 = ex::kTableZ + 0.40 + idx * 2.0 * kBallRadius;
     const float rgba[4]         = { 1.0f, 0.84f, 0.30f, 1.0f };
     std::copy(rgba, rgba + 4, ball.rgba);
     ball.mass        = 0.006;
-    ball.condim      = mj_kdl::Condim::Torsional;
+    ball.condim      = mjkdl::Condim::Torsional;
     ball.friction[0] = 0.5;
     ball.friction[1] = 0.02;
     ball.friction[2] = 0.001;
@@ -76,22 +76,22 @@ int main(int argc, char *argv[])
     const ex::Args args     = ex::parse_args(argc, argv, "table_pour.mp4");
     const bool     headless = args.headless;
 
-    mj_kdl::AttachmentSpec bottle;
+    mjkdl::AttachmentSpec bottle;
     bottle.mjcf_path = ex::asset("mug.xml");
-    bottle.attach_to = { mj_kdl::AttachKind::Body, "g_base" };
+    bottle.attach_to = { mjkdl::AttachKind::Body, "g_base" };
     bottle.prefix    = "pour_";
 
-    mj_kdl::RobotSpec robot_spec;
+    mjkdl::RobotSpec robot_spec;
     robot_spec.path   = ex::asset("kinova_gen3/gen3.xml");
     robot_spec.pos[0] = kRobotBackX;
     robot_spec.pos[2] = ex::kTableZ;
     robot_spec.attachments.push_back(ex::gripper_attachment(ex::asset("robotiq_2f85/2f85.xml")));
     robot_spec.attachments.push_back(bottle);
 
-    mj_kdl::SceneSpec scene_cfg = ex::scene_spec();
+    mjkdl::SceneSpec scene_cfg = ex::scene_spec();
     scene_cfg.objects.push_back(ex::table_object(ex::asset("table.xml"), ex::kTableZ));
     for (int i = 0; i < kNumBalls; ++i) scene_cfg.objects.push_back(make_ball(i));
-    mj_kdl::SceneObject receiver;
+    mjkdl::SceneObject receiver;
     receiver.name      = "recv";
     receiver.mjcf_path = ex::asset("mug_table.xml");
     receiver.pos[0]    = kJugX;
@@ -100,21 +100,21 @@ int main(int argc, char *argv[])
     scene_cfg.objects.push_back(receiver);
     scene_cfg.robots.push_back(robot_spec);
 
-    mj_kdl::Env   env;
-    mj_kdl::Robot robot;
-    if (!mj_kdl::init_env(&env, &scene_cfg)) return 1;
-    const mj_kdl::ToolFrameSpec tool = ex::gripper_tool();
-    if (!mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool))
+    mjkdl::Env   env;
+    mjkdl::Robot robot;
+    if (!mjkdl::init_env(&env, &scene_cfg)) return 1;
+    const mjkdl::ToolFrameSpec tool = ex::gripper_tool();
+    if (!mjkdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool))
         return 1;
-    if (!mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::TORQUE)) return 1;
-    mj_kdl::SceneActuatorSlot *fingers =
-      mj_kdl::bind_scene_actuator(&env.scene, "g_fingers_actuator");
+    if (!mjkdl::set_control_mode(&robot, mjkdl::CtrlMode::TORQUE)) return 1;
+    mjkdl::SceneActuatorSlot *fingers =
+      mjkdl::bind_scene_actuator(&env.scene, "g_fingers_actuator");
     if (!fingers) return 1;
-    std::vector<mj_kdl::SceneFreeBodySlot *> grains;
+    std::vector<mjkdl::SceneFreeBodySlot *> grains;
     for (int i = 0; i < kNumBalls; ++i) {
         char name[32];
         std::snprintf(name, sizeof(name), "grain_%02d", i);
-        grains.push_back(mj_kdl::bind_scene_free_body(&env.scene, name));
+        grains.push_back(mjkdl::bind_scene_free_body(&env.scene, name));
         if (!grains.back()) return 1;
     }
 
@@ -139,10 +139,10 @@ int main(int argc, char *argv[])
       KDL::Frame(KDL::Vector(kRobotBackX, 0.0, ex::kTableZ)).Inverse();
 
     // The TCP -> outlet offset, measured at home, turns an outlet target into a TCP target.
-    mj_kdl::set_joint_pos(&robot, q_home);
+    mjkdl::set_joint_pos(&robot, q_home);
     KDL::Frame world_T_outlet, world_T_tcp;
-    mj_kdl::get_site_frame(&env, "pour_outlet", &world_T_outlet);
-    mj_kdl::get_site_frame(&env, "g_pinch", &world_T_tcp);
+    mjkdl::get_site_frame(&env, "pour_outlet", &world_T_outlet);
+    mjkdl::get_site_frame(&env, "g_pinch", &world_T_tcp);
     const KDL::Vector tcp_outlet = world_T_tcp.Inverse() * world_T_outlet.p;
 
     const auto solve =
@@ -171,8 +171,8 @@ int main(int argc, char *argv[])
     for (int iter = 0; iter < 4; ++iter) {
         q_tilt = q_pour;
         q_tilt(n - 1) += kPourTiltRad;
-        mj_kdl::set_joint_pos(&robot, q_tilt);
-        mj_kdl::get_site_frame(&env, "pour_outlet", &world_T_outlet);
+        mjkdl::set_joint_pos(&robot, q_tilt);
+        mjkdl::get_site_frame(&env, "pour_outlet", &world_T_outlet);
         const KDL::Vector err = KDL::Vector(kJugX, kJugY, kTiltOutletZ) - world_T_outlet.p;
         if (err.Norm() < 5e-3) break;
         pour_outlet += err;
@@ -184,10 +184,10 @@ int main(int argc, char *argv[])
         return 1;
 
     bool restart = false;
-    env.on_reset = [&](mj_kdl::ResetContext *ctx) {
-        mj_kdl::set_joint_pos(&robot, q_home);
+    env.on_reset = [&](mjkdl::ResetContext *ctx) {
+        mjkdl::set_joint_pos(&robot, q_home);
         KDL::Frame world_T_center;
-        mj_kdl::get_site_frame(&env, "pour_center", &world_T_center);
+        mjkdl::get_site_frame(&env, "pour_center", &world_T_center);
         const double spacing = 2.0 * kBallRadius;
         for (int i = 0; i < kNumBalls; ++i) {
             const int         layer = i / 9, slot = i % 9;
@@ -196,7 +196,7 @@ int main(int argc, char *argv[])
             );
             const KDL::Vector w      = world_T_center * local;
             const double      pos[3] = { w.x(), w.y(), w.z() };
-            mj_kdl::set_body_pose(&env, grains[i]->name.c_str(), pos);
+            mjkdl::set_body_pose(&env, grains[i]->name.c_str(), pos);
         }
         ctx->data->ctrl[fingers->ctrl_id] = ex::kGripperClosed;
         ex::prime_gravity(robot, dyn, q_home);
@@ -216,16 +216,16 @@ int main(int argc, char *argv[])
     };
     // clang-format on
 
-    mj_kdl::VideoRecorder recorder;
+    mjkdl::VideoRecorder recorder;
     bool                  recording = false;
     const int             steps_per_frame =
       std::max(1, static_cast<int>(std::lround(1.0 / (kRecordFps * env.model->opt.timestep))));
     if (args.record) {
-        const mj_kdl::Status s = mj_kdl::init_video_recorder(
+        const mjkdl::Status s = mjkdl::init_video_recorder(
           &recorder,
           env.model,
           args.record_path.c_str(),
-          mj_kdl::VideoResolution::R1080p,
+          mjkdl::VideoResolution::R1080p,
           kRecordFps
         );
         if (!s) {
@@ -241,8 +241,8 @@ int main(int argc, char *argv[])
         recording              = true;
     }
 
-    mj_kdl::reset(&env);
-    if (!headless && !mj_kdl::open_viewer(&env)) return 1;
+    mjkdl::reset(&env);
+    if (!headless && !mjkdl::open_viewer(&env)) return 1;
 
     int        sim_step    = 0;
     bool       record_fail = false;
@@ -254,17 +254,17 @@ int main(int argc, char *argv[])
       [&](std::size_t, const KDL::JntArray &q_des) { ex::pd_gravity(robot, dyn, q_des, kKp, kKd); },
       [&](const ex::Phase &, double) {
           if (recording && ++sim_step % steps_per_frame == 0
-              && !mj_kdl::record_frame(&recorder, &env)) {
+              && !mjkdl::record_frame(&recorder, &env)) {
               std::cerr << "record_frame() failed at step " << sim_step << "\n";
-              mj_kdl::cleanup(&recorder);
+              mjkdl::cleanup(&recorder);
               recording   = false;
               record_fail = true;
           }
       }
     );
-    mj_kdl::update(&env);
+    mjkdl::update(&env);
     if (recording) {
-        mj_kdl::cleanup(&recorder);
+        mjkdl::cleanup(&recorder);
         std::cout << "Saved recording: " << args.record_path << "\n";
     }
 
@@ -279,7 +279,7 @@ int main(int argc, char *argv[])
               << std::fixed << std::setprecision(3) << "grain centroid: [" << centroid.x() << ", "
               << centroid.y() << ", " << centroid.z() << "] receiver center=[" << kJugX << ", "
               << kJugY << "]\n";
-    mj_kdl::cleanup(&env);
+    mjkdl::cleanup(&env);
     const bool ok = completed && !record_fail && in_receiver >= kMinInReceiver;
     return headless ? ex::verdict(ok, "the balls were poured into the receiver") : 0;
 }

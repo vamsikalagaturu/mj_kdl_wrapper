@@ -2,7 +2,7 @@
  * POSITION mode on the Kinova GEN3: the MJCF's own servos (kp = 2000, kv = 100) track a linear
  * joint trajectory, and commands are clamped to the servos' ctrlrange. */
 
-#include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "mjkdl/mjkdl.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
 
@@ -13,7 +13,7 @@
 #include <filesystem>
 #include <string>
 
-namespace ex = mj_kdl_examples;
+namespace ex = mjkdl_examples;
 namespace fs = std::filesystem;
 
 static constexpr double kTargetPose[7]  = { 0.3, 0.5, 2.9, -2.0, 0.3, 1.2, 1.3 };
@@ -24,25 +24,25 @@ static constexpr double kErrTol         = 0.01; // [rad], measured 0.0061
 class MjcfPosCtrlTest : public testing::Test
 {
   protected:
-    mj_kdl::Env   env_;
-    mj_kdl::Robot s_;
+    mjkdl::Env   env_;
+    mjkdl::Robot s_;
 
     void SetUp() override
     {
         const std::string arm = ex::find_asset("kinova_gen3/gen3.xml");
         if (!fs::exists(arm)) GTEST_SKIP() << arm << " not found";
 
-        mj_kdl::RobotSpec rs;
+        mjkdl::RobotSpec rs;
         rs.path = arm;
-        mj_kdl::SceneSpec sc;
+        mjkdl::SceneSpec sc;
         sc.timestep   = 0.002;
         sc.add_floor  = true;
         sc.add_skybox = false;
         sc.robots.push_back(rs);
-        ASSERT_TRUE(mj_kdl::init_env(&env_, &sc));
-        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s_, &env_, "base_link", "bracelet_link"));
-        mj_kdl::set_joint_pos(&s_, ex::home_q(7));
-        ASSERT_TRUE(mj_kdl::set_control_mode(&s_, mj_kdl::CtrlMode::POSITION));
+        ASSERT_TRUE(mjkdl::init_env(&env_, &sc));
+        ASSERT_TRUE(mjkdl::init_robot_from_mjcf(&s_, &env_, "base_link", "bracelet_link"));
+        mjkdl::set_joint_pos(&s_, ex::home_q(7));
+        ASSERT_TRUE(mjkdl::set_control_mode(&s_, mjkdl::CtrlMode::POSITION));
     }
 
     // The position servo driving joint i: robot 0's POSITION group is 1.
@@ -61,13 +61,13 @@ TEST_F(MjcfPosCtrlTest, TrajectoryTracking)
 {
     const double t_start = env_.data->time;
     while (env_.data->time < t_start + kMotionDuration + kSettleTime) {
-        mj_kdl::update(&env_);
+        mjkdl::update(&env_);
         const double alpha = ex::clamp01((env_.data->time - t_start) / kMotionDuration);
         for (int i = 0; i < 7; ++i)
             s_.jnt_pos_cmd[i] = ex::kHomePose[i] + alpha * (kTargetPose[i] - ex::kHomePose[i]);
-        mj_kdl::step(&env_);
+        mjkdl::step(&env_);
     }
-    mj_kdl::update(&env_);
+    mjkdl::update(&env_);
 
     double max_err = 0.0;
     for (int i = 0; i < 7; ++i)
@@ -78,7 +78,7 @@ TEST_F(MjcfPosCtrlTest, TrajectoryTracking)
 TEST_F(MjcfPosCtrlTest, ClampCtrlrange)
 {
     for (int i = 0; i < 7; ++i) s_.jnt_pos_cmd[i] = 1e9;
-    mj_kdl::update(&env_);
+    mjkdl::update(&env_);
 
     int limited = 0;
     for (int i = 0; i < 7; ++i) {

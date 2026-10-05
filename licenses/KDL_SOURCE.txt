@@ -1,2 +1,2 @@
-The bundled Orocos KDL and PyKDL binaries, when present, are built from the secorolab fork, branch `vereshchagin-driver-weighting` (mj_kdl_wrapper.repos):
+The bundled Orocos KDL and PyKDL binaries, when present, are built from the secorolab fork, branch `vereshchagin-driver-weighting` (mjkdl.repos):
 https://github.com/secorolab/orocos_kinematics_dynamics/tree/vereshchagin-driver-weighting

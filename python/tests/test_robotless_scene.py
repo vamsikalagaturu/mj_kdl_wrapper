@@ -9,9 +9,9 @@ Regression tests for two fixes in build_scene:
 
 import pytest
 
-import mj_kdl_wrapper as mjk
+import mjkdl
 
-CABINET = mjk.ASSETS_DIR / "cabinet/cabinet.xml"
+CABINET = mjkdl.ASSETS_DIR / "cabinet/cabinet.xml"
 
 
 def test_bundled_asset_path_resolves():
@@ -19,10 +19,10 @@ def test_bundled_asset_path_resolves():
     assert (CABINET.parent / "cabinet_drawer.stl").exists()
 
 
-def _cube() -> mjk.SceneObject:
-    obj = mjk.SceneObject()
+def _cube() -> mjkdl.SceneObject:
+    obj = mjkdl.SceneObject()
     obj.name = "cube"
-    obj.shape = mjk.Shape.BOX
+    obj.shape = mjkdl.Shape.BOX
     obj.size = [0.03, 0.03, 0.03]
     obj.pos = [0.0, 0.0, 0.5]
     obj.rgba = [1.0, 0.0, 0.0, 1.0]
@@ -31,8 +31,8 @@ def _cube() -> mjk.SceneObject:
     return obj
 
 
-def _spec(objects) -> mjk.SceneSpec:
-    spec = mjk.SceneSpec()
+def _spec(objects) -> mjkdl.SceneSpec:
+    spec = mjkdl.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
     spec.add_skybox = False
@@ -44,7 +44,7 @@ def test_fixed_primitive_needs_no_mass():
     obj = _cube()
     obj.fixed = True
     obj.mass = None
-    with mjk.Env.build(_spec([obj])) as env:
+    with mjkdl.Env.build(_spec([obj])) as env:
         assert env.step()
 
 
@@ -53,12 +53,12 @@ def test_primitive_without_a_required_field_is_refused(field):
     obj = _cube()
     setattr(obj, field, None)
     with pytest.raises(RuntimeError, match=f"SceneObject.{field}"):
-        mjk.Env.build(_spec([obj]))
+        mjkdl.Env.build(_spec([obj]))
 
 
 @pytest.mark.parametrize("field", ["pos", "fovy"])
 def test_camera_without_a_required_field_is_refused(field):
-    cam = mjk.CameraSpec()
+    cam = mjkdl.CameraSpec()
     cam.name = "top"
     cam.pos = [0.0, 0.0, 2.0]
     cam.fovy = 45.0
@@ -66,16 +66,16 @@ def test_camera_without_a_required_field_is_refused(field):
     spec = _spec([_cube()])
     spec.cameras = [cam]
     with pytest.raises(RuntimeError, match=f"CameraSpec.{field}"):
-        mjk.Env.build(spec)
+        mjkdl.Env.build(spec)
 
 
 def test_robotless_scene_applies_timestep():
-    spec = mjk.SceneSpec()
+    spec = mjkdl.SceneSpec()
     spec.timestep = 0.004
     spec.add_floor = True
     spec.add_skybox = True
     spec.objects = [_cube()]
-    env = mjk.Env.build(spec)  # no robots
+    env = mjkdl.Env.build(spec)  # no robots
     try:
         assert env.model.opt.timestep == 0.004
         assert env.step()
@@ -84,17 +84,17 @@ def test_robotless_scene_applies_timestep():
 
 
 def test_mesh_scene_object_builds_and_moves():
-    obj = mjk.SceneObject()
+    obj = mjkdl.SceneObject()
     obj.name = "cabinet"
     obj.mjcf_path = str(CABINET)
     obj.pos = [0.0, 0.0, 0.0]
     obj.fixed = True
-    spec = mjk.SceneSpec()
+    spec = mjkdl.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
     spec.add_skybox = True
     spec.objects = [obj]
-    env = mjk.Env.build(spec)
+    env = mjkdl.Env.build(spec)
     try:
         # Meshes compiled -> the drawer's grasp site exists; force pulls the
         # drawer through the cabinet rails, then out and onto the floor.
@@ -120,18 +120,18 @@ def test_mesh_scene_object_builds_and_moves():
 def test_mesh_scene_object_applies_quat():
     from PyKDL import Vector
 
-    obj = mjk.SceneObject()
+    obj = mjkdl.SceneObject()
     obj.name = "cabinet"
     obj.mjcf_path = str(CABINET)
     # extrinsic XYZ euler (30, 40, 50) deg
     obj.quat = [0.08080468869083995, 0.40219849353410964, 0.30337177447125957, 0.860042173697679]
     obj.fixed = True
-    spec = mjk.SceneSpec()
+    spec = mjkdl.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = False
     spec.add_skybox = False
     spec.objects = [obj]
-    env = mjk.Env.build(spec)
+    env = mjkdl.Env.build(spec)
     try:
         y = env.body_frame("cabinet").M * Vector(0.0, 1.0, 0.0)
         assert abs(y.x() + 0.456825992585671) < 1e-9

@@ -1,6 +1,6 @@
 # Torque Control {#page_howto_torque_control}
 
-This document explains how torque-mode control works in mj-kdl-wrapper, why KDL is
+This document explains how torque-mode control works in mjkdl, why KDL is
 used for all dynamics computations, how MuJoCo's equation of motion relates to the
 torques you send, and how ACHD and RNEA fit together.
 
@@ -31,7 +31,7 @@ limits a mode to some joints (e.g. only the wheels of a mobile base).
 
 An attachment's own joints take modes through `AttachmentSpec::modes`, which is
 empty by default: an arm attached to a mobile base needs
-`.modes = { mj_kdl::CtrlModeSpec{} }` to get a torque group, and then switches
+`.modes = { mjkdl::CtrlModeSpec{} }` to get a torque group, and then switches
 apart from the base and from any other arm.
 
 Each owner `o` has group `1 + 3*o + mode` (POSITION = 0, TORQUE = 1,
@@ -41,14 +41,14 @@ scene holds at most 10 owners. Group 0 is left to actuators the wrapper does not
 manage (a gripper, the pivot of a drive).
 
 ```cpp
-mj_kdl::RobotSpec arm{ .path = "gen3.xml" };               // POSITION (native) + TORQUE
-mj_kdl::RobotSpec drive{                                    // test/fixtures/motor_wheel.xml
+mjkdl::RobotSpec arm{ .path = "gen3.xml" };               // POSITION (native) + TORQUE
+mjkdl::RobotSpec drive{                                    // test/fixtures/motor_wheel.xml
   .path  = "motor_wheel.xml",
-  .modes = { { .mode = mj_kdl::CtrlMode::VELOCITY, .joints = { "wheel" }, .kv = 2.0 } },
+  .modes = { { .mode = mjkdl::CtrlMode::VELOCITY, .joints = { "wheel" }, .kv = 2.0 } },
 };
 
-mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::TORQUE);  // or robot.ctrl_mode = TORQUE
-mj_kdl::set_control_mode(&env, 1, mj_kdl::CtrlMode::VELOCITY);  // env.scene slot users
+mjkdl::set_control_mode(&robot, mjkdl::CtrlMode::TORQUE);  // or robot.ctrl_mode = TORQUE
+mjkdl::set_control_mode(&env, 1, mjkdl::CtrlMode::VELOCITY);  // env.scene slot users
 ```
 
 `set_control_mode()` seeds the new group before enabling it (POSITION from the
@@ -176,7 +176,7 @@ for (unsigned i = 0; i < n; ++i) {
 }
 rnea.CartToJnt(q, qdot, qddot_des, f_ext, torques);
 for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = torques(i);
-mj_kdl::update(&env);
+mjkdl::update(&env);
 ```
 
 With Kp[i] acting as a squared natural frequency (rad/s^2 per rad) and
@@ -281,7 +281,7 @@ rnea.CartToJnt(q, qd, qdd, f_ext_rnea_zero, tau_cmd);  // qdd is from ACHD
 
 // update() clamps each torque to its joint's limit and flags it in jnt_saturated.
 for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = tau_cmd(i);
-mj_kdl::update(&env);
+mjkdl::update(&env);
 ```
 
 For the combined ACHD -> RNEA controller, do not pass ACHD task/support wrenches
@@ -338,7 +338,7 @@ subtract `G(q)` from the RNEA torque; the rest of the pipeline is unchanged.
 
 ## Reference
 
-- `init_robot_from_mjcf()` -- API doc in `mj_kdl_wrapper.hpp`
+- `init_robot_from_mjcf()` -- API doc in `mjkdl.hpp`
 - `KDL::ChainDynParam` -- orocos_kdl documentation
 - `KDL::ChainIdSolver_RNE` -- orocos_kdl documentation
 - `KDL::ChainHdSolver_Vereshchagin` -- orocos_kdl documentation

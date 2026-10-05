@@ -1,10 +1,10 @@
 import ast
 from pathlib import Path
 
-import mj_kdl_wrapper as mjk
-from mj_kdl_wrapper import _mj_kdl_wrapper as ext
+import mjkdl
+from mjkdl import _mjkdl as ext
 
-STUB = Path(mjk.__file__).with_name("_mj_kdl_wrapper.pyi")
+STUB = Path(mjkdl.__file__).with_name("_mjkdl.pyi")
 TREE = ast.parse(STUB.read_text())
 STUB_CLASSES = {n.name: n for n in TREE.body if isinstance(n, ast.ClassDef)}
 

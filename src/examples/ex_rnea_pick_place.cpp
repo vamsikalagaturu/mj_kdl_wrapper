@@ -32,7 +32,7 @@
 #include <string>
 #include <vector>
 
-namespace ex = mj_kdl_examples;
+namespace ex = mjkdl_examples;
 
 static constexpr double kMaxPlaceErr    = 0.005; // [m] in the table plane
 static constexpr double kMinElbowHeight = 0.45;  // [m] forearm_link origin above the table
@@ -62,27 +62,27 @@ static KDL::Vector cube_spot(int arm, const double xy[2])
 struct FreeObject
 {
     const char   *name;
-    mj_kdl::Shape shape;
+    mjkdl::Shape shape;
     double        x, y, half; // [m] on the table; half-size or radius
     float         rgb[3];
 };
 
 // clang-format off
 static const FreeObject kFreeObjects[] = {
-    { "red_box",       mj_kdl::Shape::BOX,     0.00,  0.42, 0.030, { 1.0f, 0.20f, 0.2f } },
-    { "green_box",     mj_kdl::Shape::BOX,     0.00, -0.42, 0.030, { 0.2f, 1.00f, 0.2f } },
-    { "yellow_box",    mj_kdl::Shape::BOX,    -0.45,  0.42, 0.040, { 1.0f, 0.85f, 0.1f } },
-    { "orange_sphere", mj_kdl::Shape::SPHERE,  0.45, -0.42, 0.035, { 1.0f, 0.55f, 0.0f } },
-    { "purple_sphere", mj_kdl::Shape::SPHERE,  0.00,  0.00, 0.025, { 0.7f, 0.00f, 0.9f } },
+    { "red_box",       mjkdl::Shape::BOX,     0.00,  0.42, 0.030, { 1.0f, 0.20f, 0.2f } },
+    { "green_box",     mjkdl::Shape::BOX,     0.00, -0.42, 0.030, { 0.2f, 1.00f, 0.2f } },
+    { "yellow_box",    mjkdl::Shape::BOX,    -0.45,  0.42, 0.040, { 1.0f, 0.85f, 0.1f } },
+    { "orange_sphere", mjkdl::Shape::SPHERE,  0.45, -0.42, 0.035, { 1.0f, 0.55f, 0.0f } },
+    { "purple_sphere", mjkdl::Shape::SPHERE,  0.00,  0.00, 0.025, { 0.7f, 0.00f, 0.9f } },
 };
 // clang-format on
 
-static mj_kdl::SceneObject scene_object(const FreeObject &f)
+static mjkdl::SceneObject scene_object(const FreeObject &f)
 {
-    mj_kdl::SceneObject o;
+    mjkdl::SceneObject o;
     o.name  = f.name;
     o.shape = f.shape;
-    for (int k = 0; k < 3; ++k) o.size[k] = f.shape == mj_kdl::Shape::BOX || k == 0 ? f.half : 0.0;
+    for (int k = 0; k < 3; ++k) o.size[k] = f.shape == mjkdl::Shape::BOX || k == 0 ? f.half : 0.0;
     o.pos[0] = f.x;
     o.pos[1] = f.y;
     o.pos[2] = ex::kTableZ + f.half;
@@ -94,10 +94,10 @@ static mj_kdl::SceneObject scene_object(const FreeObject &f)
     return o;
 }
 
-static mj_kdl::CameraSpec
+static mjkdl::CameraSpec
   camera(const char *name, const double pos[3], const double quat[4], double fovy)
 {
-    mj_kdl::CameraSpec cam;
+    mjkdl::CameraSpec cam;
     cam.name = name;
     std::copy(pos, pos + 3, cam.pos);
     std::copy(quat, quat + 4, cam.quat);
@@ -108,7 +108,7 @@ static mj_kdl::CameraSpec
 // RNEA computed torque for one arm; the solvers keep a reference to robot.chain.
 struct RneaArm
 {
-    RneaArm(mj_kdl::Robot &r, double gravity_z)
+    RneaArm(mjkdl::Robot &r, double gravity_z)
       : robot(r), n(r.chain.getNrOfJoints()), rnea(r.chain, KDL::Vector(0.0, 0.0, gravity_z)),
         dyn(r.chain, KDL::Vector(0.0, 0.0, gravity_z)), q(n), qdot(n), qddot(n), tau(n),
         f_ext(r.chain.getNrOfSegments(), KDL::Wrench::Zero())
@@ -123,7 +123,7 @@ struct RneaArm
         return true;
     }
 
-    mj_kdl::Robot         &robot;
+    mjkdl::Robot         &robot;
     unsigned               n;
     KDL::ChainIdSolver_RNE rnea;
     KDL::ChainDynParam     dyn;
@@ -135,9 +135,9 @@ int main(int argc, char *argv[])
 {
     const bool headless = ex::parse_args(argc, argv).headless;
 
-    mj_kdl::SceneSpec scene = ex::scene_spec();
+    mjkdl::SceneSpec scene = ex::scene_spec();
     for (int a = 0; a < 2; ++a) {
-        mj_kdl::RobotSpec spec;
+        mjkdl::RobotSpec spec;
         spec.path    = ex::asset("kinova_gen3/gen3.xml");
         spec.prefix  = kPrefix[a];
         spec.pos[0]  = kBase[a][0];
@@ -151,7 +151,7 @@ int main(int argc, char *argv[])
     scene.objects.push_back(ex::table_object(ex::asset("table.xml"), ex::kTableZ));
     for (int a = 0; a < 2; ++a) {
         const KDL::Vector   p    = cube_spot(a, ex::kPickXY);
-        mj_kdl::SceneObject cube = ex::cube_object(p.x(), p.y(), ex::kTableZ);
+        mjkdl::SceneObject cube = ex::cube_object(p.x(), p.y(), ex::kTableZ);
         cube.name                = std::string(kPrefix[a]) + "cube";
         scene.objects.push_back(cube);
     }
@@ -164,38 +164,38 @@ int main(int argc, char *argv[])
     scene.cameras.push_back(camera("overview", overview_pos, overview_q, 55.0));
     scene.cameras.push_back(camera("side", side_pos, side_q, 50.0));
 
-    mj_kdl::Env env;
-    if (!mj_kdl::init_env(&env, &scene)) return 1;
+    mjkdl::Env env;
+    if (!mjkdl::init_env(&env, &scene)) return 1;
     std::cout << "cameras:";
     for (int i = 0; i < env.model->ncam; ++i)
         std::cout << " " << mj_id2name(env.model, mjOBJ_CAMERA, i);
     std::cout << "\n";
 
-    const mj_kdl::ToolFrameSpec              tool = ex::gripper_tool();
-    std::array<mj_kdl::Robot, 2>             robots;
+    const mjkdl::ToolFrameSpec              tool = ex::gripper_tool();
+    std::array<mjkdl::Robot, 2>             robots;
     std::vector<ex::PhaseArm>                arms;
-    std::vector<mj_kdl::SceneFreeBodySlot *> cubes, free_bodies;
+    std::vector<mjkdl::SceneFreeBodySlot *> cubes, free_bodies;
     std::deque<RneaArm>                      ctl;
     std::array<int, 2>                       roots{};
     for (int a = 0; a < 2; ++a) {
         const std::string pre = kPrefix[a];
-        if (!mj_kdl::init_robot_from_mjcf(
+        if (!mjkdl::init_robot_from_mjcf(
               &robots[a], &env, "base_link", "bracelet_link", pre.c_str(), &tool
             ))
             return 1;
-        if (!mj_kdl::set_control_mode(&robots[a], mj_kdl::CtrlMode::TORQUE)) return 1;
+        if (!mjkdl::set_control_mode(&robots[a], mjkdl::CtrlMode::TORQUE)) return 1;
         arms.push_back(
           { &robots[a],
-            mj_kdl::bind_scene_actuator(&env.scene, (pre + "g_fingers_actuator").c_str()) }
+            mjkdl::bind_scene_actuator(&env.scene, (pre + "g_fingers_actuator").c_str()) }
         );
-        cubes.push_back(mj_kdl::bind_scene_free_body(&env.scene, (pre + "cube").c_str()));
+        cubes.push_back(mjkdl::bind_scene_free_body(&env.scene, (pre + "cube").c_str()));
         if (!arms.back().gripper || !cubes.back()) return 1;
         ctl.emplace_back(robots[a], scene.gravity_z);
         const int base = mj_name2id(env.model, mjOBJ_BODY, (pre + "base_link").c_str());
         roots[a]       = env.model->body_rootid[base];
     }
     for (const FreeObject &f : kFreeObjects) {
-        free_bodies.push_back(mj_kdl::bind_scene_free_body(&env.scene, f.name));
+        free_bodies.push_back(mjkdl::bind_scene_free_body(&env.scene, f.name));
         if (!free_bodies.back()) return 1;
     }
 
@@ -208,12 +208,12 @@ int main(int argc, char *argv[])
     double                disturb      = 0.0;
     int                   arm_contacts = 0;
 
-    env.on_reset = [&](mj_kdl::ResetContext *ctx) {
+    env.on_reset = [&](mjkdl::ResetContext *ctx) {
         for (int a = 0; a < 2; ++a) {
-            mj_kdl::set_joint_pos(&robots[a], wp.home);
+            mjkdl::set_joint_pos(&robots[a], wp.home);
             const KDL::Vector p      = cube_spot(a, ex::kPickXY);
             const double      pos[3] = { p.x(), p.y(), p.z() };
-            mj_kdl::set_body_pose(&env, cubes[a]->name.c_str(), pos);
+            mjkdl::set_body_pose(&env, cubes[a]->name.c_str(), pos);
             ctx->data->ctrl[arms[a].gripper->ctrl_id] = 0.0;
             ex::prime_gravity(robots[a], ctl[a].dyn, wp.home);
             elbow_min[a] = INFINITY;
@@ -222,8 +222,8 @@ int main(int argc, char *argv[])
         arm_contacts = 0;
         restart      = true;
     };
-    mj_kdl::reset(&env);
-    if (!headless && !mj_kdl::open_viewer(&env)) return 1;
+    mjkdl::reset(&env);
+    if (!headless && !mjkdl::open_viewer(&env)) return 1;
 
     const auto control = [&](std::size_t a, const KDL::JntArray &q_des) {
         if (!ctl[a].control(q_des)) solver_ok = false;
@@ -231,7 +231,7 @@ int main(int argc, char *argv[])
     const auto after_step = [&](const ex::Phase &, double) {
         for (int a = 0; a < 2; ++a) {
             KDL::Frame elbow;
-            mj_kdl::get_body_frame(
+            mjkdl::get_body_frame(
               &env, (std::string(kPrefix[a]) + "forearm_link").c_str(), &elbow
             );
             elbow_min[a] = std::min(elbow_min[a], elbow.p.z());
@@ -251,7 +251,7 @@ int main(int argc, char *argv[])
     };
     const bool completed =
       ex::run_phases(env, arms, ex::pick_place_phases(wp), restart, control, after_step);
-    mj_kdl::update(&env);
+    mjkdl::update(&env);
     if (!solver_ok) std::cerr << "RNEA failed during the run\n";
 
     bool ok = completed && solver_ok;
@@ -272,7 +272,7 @@ int main(int argc, char *argv[])
     std::cout << "largest free-object displacement: " << disturb * 1000.0 << " mm (limit "
               << kMaxDisturb * 1000.0 << " mm)\narm-to-arm contacts: " << arm_contacts
               << " (limit 0)\n";
-    mj_kdl::cleanup(&env);
+    mjkdl::cleanup(&env);
     ok = ok && disturb <= kMaxDisturb && arm_contacts == 0;
     return headless ? ex::verdict(ok, "both arms placed their cubes and left the rest alone") : 0;
 }

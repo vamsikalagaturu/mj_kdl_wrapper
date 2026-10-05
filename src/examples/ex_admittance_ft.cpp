@@ -30,7 +30,7 @@
 #include <iostream>
 #include <string>
 
-namespace ex = mj_kdl_examples;
+namespace ex = mjkdl_examples;
 
 // Admittance: virtual mass, damping, stiffness (isotropic).
 static constexpr double kMAdm          = 8.0;
@@ -116,7 +116,7 @@ static void admittance_update(Admittance &a, const KDL::Vector &force, double dt
 }
 
 // The sensor's force rotated into the world frame.
-static KDL::Vector ft_force_world(const mj_kdl::Robot &robot)
+static KDL::Vector ft_force_world(const mjkdl::Robot &robot)
 {
     const auto ft =
       std::find_if(robot.ft_sensors.begin(), robot.ft_sensors.end(), [](const auto &s) {
@@ -128,7 +128,7 @@ static KDL::Vector ft_force_world(const mj_kdl::Robot &robot)
     return R * ft->wrench.force;
 }
 
-static KDL::Vector external_force(const mj_kdl::Robot &robot, const Admittance &a)
+static KDL::Vector external_force(const mjkdl::Robot &robot, const Admittance &a)
 {
     const KDL::Vector f = ft_force_world(robot) - a.bias;
     return norm3(f) < kForceDeadband ? KDL::Vector::Zero() : f;
@@ -136,23 +136,23 @@ static KDL::Vector external_force(const mj_kdl::Robot &robot, const Admittance &
 
 struct Scene
 {
-    mj_kdl::SceneSpec          spec;
-    mj_kdl::Env                env;
-    mj_kdl::Robot              robot;
-    mj_kdl::SceneActuatorSlot *gripper   = nullptr;
-    mj_kdl::SceneWrenchSlot   *push      = nullptr; // the self-check's hand on the tool
+    mjkdl::SceneSpec          spec;
+    mjkdl::Env                env;
+    mjkdl::Robot              robot;
+    mjkdl::SceneActuatorSlot *gripper   = nullptr;
+    mjkdl::SceneWrenchSlot   *push      = nullptr; // the self-check's hand on the tool
     bool                       restarted = false;   // set by env.on_reset (the viewer's reset)
 };
 
 static bool build_scene(Scene &s)
 {
-    mj_kdl::AttachmentSpec ft_spec;
+    mjkdl::AttachmentSpec ft_spec;
     ft_spec.mjcf_path = ex::asset("ft_sensor.xml");
-    ft_spec.attach_to = { mj_kdl::AttachKind::Site, "pinch_site" };
+    ft_spec.attach_to = { mjkdl::AttachKind::Site, "pinch_site" };
 
-    mj_kdl::RobotSpec robot_spec;
+    mjkdl::RobotSpec robot_spec;
     robot_spec.path      = ex::asset("kinova_gen3/gen3.xml");
-    robot_spec.attach_to = { mj_kdl::AttachKind::Site, "table_top" };
+    robot_spec.attach_to = { mjkdl::AttachKind::Site, "table_top" };
     robot_spec.attachments.push_back(ft_spec);
     robot_spec.attachments.push_back(
       ex::gripper_attachment(ex::asset("robotiq_2f85/2f85.xml"), "wrist_ft_site")
@@ -162,18 +162,18 @@ static bool build_scene(Scene &s)
     s.spec.objects.push_back(ex::table_object(ex::asset("table.xml"), ex::kTableZ));
     s.spec.robots.push_back(robot_spec);
 
-    if (!mj_kdl::init_env(&s.env, &s.spec)) return false;
+    if (!mjkdl::init_env(&s.env, &s.spec)) return false;
 
-    mj_kdl::ForceTorqueSensorSpec ft_sensor;
+    mjkdl::ForceTorqueSensorSpec ft_sensor;
     ft_sensor.name             = kFtSensor;
     ft_sensor.frame_site       = "wrist_ft_site";
-    mj_kdl::ToolFrameSpec tool = ex::gripper_tool();
+    mjkdl::ToolFrameSpec tool = ex::gripper_tool();
     tool.ft_sensors.push_back(ft_sensor);
 
-    if (!mj_kdl::init_robot_from_mjcf(&s.robot, &s.env, "base_link", "bracelet_link", "", &tool))
+    if (!mjkdl::init_robot_from_mjcf(&s.robot, &s.env, "base_link", "bracelet_link", "", &tool))
         return false;
-    s.gripper = mj_kdl::bind_scene_actuator(&s.env.scene, kGripperActuator);
-    s.push    = mj_kdl::bind_scene_wrench(&s.env.scene, kToolBody);
+    s.gripper = mjkdl::bind_scene_actuator(&s.env.scene, kGripperActuator);
+    s.push    = mjkdl::bind_scene_wrench(&s.env.scene, kToolBody);
     return s.gripper && s.push;
 }
 
@@ -267,16 +267,16 @@ static void close_gripper(Scene &s) { s.gripper->command = ex::kGripperClosed; }
 // Hold home with the gripper closed until the wrist load settles, then tare the sensor.
 static void settle_and_tare(Scene &s, RneaController &ctrl, Admittance &a)
 {
-    mj_kdl::update(&s.env);
+    mjkdl::update(&s.env);
     const KDL::Frame home = ctrl.tcp();
     for (int i = 0; i < kSettleSteps; ++i) {
-        mj_kdl::update(&s.env);
+        mjkdl::update(&s.env);
         close_gripper(s);
         ctrl.track(home);
-        if (!mj_kdl::step(&s.env)) break;
-        mj_kdl::pace_realtime(&s.env);
+        if (!mjkdl::step(&s.env)) break;
+        mjkdl::pace_realtime(&s.env);
     }
-    mj_kdl::update(&s.env);
+    mjkdl::update(&s.env);
     a.bias = ft_force_world(s.robot);
 }
 
@@ -297,7 +297,7 @@ struct Metrics
 static double elbow_height(Scene &s)
 {
     KDL::Frame elbow;
-    mj_kdl::get_body_frame(&s.env, kElbowBody, &elbow);
+    mjkdl::get_body_frame(&s.env, kElbowBody, &elbow);
     return elbow.p.z() - ex::kTableZ;
 }
 
@@ -311,49 +311,49 @@ static Metrics
     const double t0 = s.env.data->time;
     while (s.env.data->time - t0 < kTeachTime) {
         const double t = s.env.data->time - t0;
-        mj_kdl::update(&s.env);
+        mjkdl::update(&s.env);
         close_gripper(s);
         const KDL::Frame target = control(s, ctrl, a, nominal, spiral_force(t));
         m.helix_react           = std::max(m.helix_react, norm3(a.offset));
         m.helix_track_err       = std::max(m.helix_track_err, norm3(ctrl.tcp().p - target.p));
-        if (!mj_kdl::step(&s.env)) break;
+        if (!mjkdl::step(&s.env)) break;
         m.elbow_min = std::min(m.elbow_min, elbow_height(s));
-        mj_kdl::pace_realtime(&s.env);
+        mjkdl::pace_realtime(&s.env);
     }
 
     const double th = s.env.data->time;
     while (s.env.data->time - th < kHandoffTareTime) {
-        mj_kdl::update(&s.env);
+        mjkdl::update(&s.env);
         close_gripper(s);
         const KDL::Frame target = control(s, ctrl, a, nominal, KDL::Vector::Zero());
         m.helix_track_err       = std::max(m.helix_track_err, norm3(ctrl.tcp().p - target.p));
-        if (!mj_kdl::step(&s.env)) break;
+        if (!mjkdl::step(&s.env)) break;
         m.elbow_min = std::min(m.elbow_min, elbow_height(s));
-        mj_kdl::pace_realtime(&s.env);
+        mjkdl::pace_realtime(&s.env);
     }
 
-    mj_kdl::update(&s.env);
+    mjkdl::update(&s.env);
     a.bias = ft_force_world(s.robot);
     for (int i = 0; i < kHandoffSteps; ++i) {
-        mj_kdl::update(&s.env);
+        mjkdl::update(&s.env);
         close_gripper(s);
         const KDL::Vector f = external_force(s.robot, a);
         m.handoff_force     = std::max(m.handoff_force, norm3(f));
         control(s, ctrl, a, nominal, f);
-        if (!mj_kdl::step(&s.env)) break;
+        if (!mjkdl::step(&s.env)) break;
         m.elbow_min = std::min(m.elbow_min, elbow_height(s));
-        mj_kdl::pace_realtime(&s.env);
+        mjkdl::pace_realtime(&s.env);
     }
 
     const double ts = s.env.data->time;
     while (s.env.data->time - ts < kSettleTime) {
-        mj_kdl::update(&s.env);
+        mjkdl::update(&s.env);
         close_gripper(s);
         const KDL::Frame target = control(s, ctrl, a, nominal, KDL::Vector::Zero());
         m.helix_settle_err      = std::max(m.helix_settle_err, norm3(ctrl.tcp().p - target.p));
-        if (!mj_kdl::step(&s.env)) break;
+        if (!mjkdl::step(&s.env)) break;
         m.elbow_min = std::min(m.elbow_min, elbow_height(s));
-        mj_kdl::pace_realtime(&s.env);
+        mjkdl::pace_realtime(&s.env);
     }
 
     const KDL::Vector push(kSelfcheckPush[0], kSelfcheckPush[1], kSelfcheckPush[2]);
@@ -365,7 +365,7 @@ static Metrics
     while (s.env.data->time - tp < kPushTime) {
         const double t = s.env.data->time - tp;
         s.push->wrench = KDL::Wrench(t < 1.0 ? push : KDL::Vector::Zero(), KDL::Vector::Zero());
-        mj_kdl::update(&s.env);
+        mjkdl::update(&s.env);
         close_gripper(s);
         const KDL::Frame target = control(s, ctrl, a, nominal, external_force(s.robot, a));
         if (!have_recovery && t >= 2.0) {
@@ -377,9 +377,9 @@ static Metrics
             settled      = a.offset;
             have_settled = true;
         }
-        if (!mj_kdl::step(&s.env)) break;
+        if (!mjkdl::step(&s.env)) break;
         m.elbow_min = std::min(m.elbow_min, elbow_height(s));
-        mj_kdl::pace_realtime(&s.env);
+        mjkdl::pace_realtime(&s.env);
     }
     s.push->wrench = KDL::Wrench::Zero();
 
@@ -411,9 +411,9 @@ static bool report(const Metrics &m)
 // The same sequence with the viewer: helix, tare, then the mouse pushes the tool; ends on its own.
 static void run_gui(Scene &s, RneaController &ctrl, Admittance &a, const KDL::Frame &nominal)
 {
-    mj_kdl::Viewer *viewer = &s.env.viewer;
-    mj_kdl::set_free_camera(viewer, 1.55, 145.0, -24.0, { 0.05, 0.0, ex::kTableZ + 0.35 });
-    if (!mj_kdl::open_viewer(&s.env, "ex_admittance_ft")) return;
+    mjkdl::Viewer *viewer = &s.env.viewer;
+    mjkdl::set_free_camera(viewer, 1.55, 145.0, -24.0, { 0.05, 0.0, ex::kTableZ + 0.35 });
+    if (!mjkdl::open_viewer(&s.env, "ex_admittance_ft")) return;
 
     const double run_time =
       kTeachTime + kHandoffTareTime + kHandoffSteps * s.spec.timestep + kSettleTime + kPushTime;
@@ -424,18 +424,18 @@ static void run_gui(Scene &s, RneaController &ctrl, Admittance &a, const KDL::Fr
     int         trace_step = 0;
 
     s.restarted = false;
-    while (mj_kdl::is_running(viewer)) {
+    while (mjkdl::is_running(viewer)) {
         if (s.restarted) {
             s.restarted   = false;
             a             = Admittance{};
             start         = s.env.data->time;
             handoff_tared = false;
             have_prev     = false;
-            mj_kdl::clear_trace(viewer);
+            mjkdl::clear_trace(viewer);
         }
         const double t = s.env.data->time - start;
         if (t >= run_time) break;
-        mj_kdl::update(&s.env);
+        mjkdl::update(&s.env);
         close_gripper(s);
 
         KDL::Vector force = KDL::Vector::Zero();
@@ -451,22 +451,22 @@ static void run_gui(Scene &s, RneaController &ctrl, Admittance &a, const KDL::Fr
         const KDL::Frame target = control(s, ctrl, a, nominal, force);
 
         KDL::Frame world_base;
-        mj_kdl::get_body_frame(&s.env, "base_link", &world_base);
+        mjkdl::get_body_frame(&s.env, "base_link", &world_base);
         const KDL::Vector target_xyz = world_base * target.p;
         const KDL::Vector tcp_xyz    = world_base * ctrl.tcp().p;
         ++trace_step;
         if (have_prev && trace_step % 5 == 0) {
             const float yellow[4] = { 1.0f, 0.95f, 0.0f, 1.0f };
             const float green[4]  = { 0.0f, 1.0f, 0.2f, 1.0f };
-            mj_kdl::add_trace_segment(viewer, target_prev, target_xyz, yellow);
-            mj_kdl::add_trace_segment(viewer, tcp_prev, tcp_xyz, green);
+            mjkdl::add_trace_segment(viewer, target_prev, target_xyz, yellow);
+            mjkdl::add_trace_segment(viewer, tcp_prev, tcp_xyz, green);
         }
         target_prev = target_xyz;
         tcp_prev    = tcp_xyz;
         have_prev   = true;
 
-        if (!mj_kdl::step(&s.env)) break;
-        mj_kdl::pace_realtime(&s.env);
+        if (!mjkdl::step(&s.env)) break;
+        mjkdl::pace_realtime(&s.env);
     }
 }
 
@@ -479,15 +479,15 @@ int main(int argc, char **argv)
         std::cerr << "failed to build admittance FT scene\n";
         return 1;
     }
-    if (!mj_kdl::set_control_mode(&s.robot, mj_kdl::CtrlMode::TORQUE)) return 1;
+    if (!mjkdl::set_control_mode(&s.robot, mjkdl::CtrlMode::TORQUE)) return 1;
     const KDL::JntArray q_home = ex::home_q(s.robot.chain.getNrOfJoints());
     RneaController      ctrl(s, q_home);
 
-    s.env.on_reset = [&](mj_kdl::ResetContext *) {
-        mj_kdl::set_joint_pos(&s.robot, q_home);
+    s.env.on_reset = [&](mjkdl::ResetContext *) {
+        mjkdl::set_joint_pos(&s.robot, q_home);
         s.restarted = true;
     };
-    mj_kdl::reset(&s.env);
+    mjkdl::reset(&s.env);
 
     Admittance a;
     settle_and_tare(s, ctrl, a);
@@ -507,6 +507,6 @@ int main(int argc, char **argv)
         std::cout << std::fixed << std::setprecision(4) << "final offset: [" << a.offset.x() << ", "
                   << a.offset.y() << ", " << a.offset.z() << "] m\n";
     }
-    mj_kdl::cleanup(&s.env);
+    mjkdl::cleanup(&s.env);
     return rc;
 }

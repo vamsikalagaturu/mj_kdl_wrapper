@@ -28,7 +28,7 @@
 #include <type_traits>
 #include <utility>
 
-#include "mj_kdl_wrapper/image_io.hpp"
+#include "mjkdl/image_io.hpp"
 #include <mujoco/mjdata.h>
 #include <mujoco/mjui.h>
 #include <mujoco/mjvisualize.h>
@@ -50,8 +50,8 @@ static std::string GetSavePath(const char* filename) {
 }
 #endif
 
-// Defined in mj_kdl_wrapper.cpp; its header would pull KDL into this target.
-namespace mj_kdl {
+// Defined in mjkdl.cpp; its header would pull KDL into this target.
+namespace mjkdl {
 bool save_model_xml_from_ui(const mjModel* model, const char* path);
 }
 
@@ -109,7 +109,7 @@ enum {
   SECT_RENDERING,
   SECT_VISUALIZATION,
   SECT_LOGGING,
-  SECT_GROUP,  // last: MJ_KDL_SHOW_GROUP can leave it out without shifting the others
+  SECT_GROUP,  // last: MJKDL_SHOW_GROUP can leave it out without shifting the others
   NSECT0,
 
   // right ui
@@ -1606,12 +1606,12 @@ void MakeUiSections(mj::Simulate* sim, const mjModel* m, const mjData* d) {
   MakeRenderingSection(sim, m);
   MakeVisualizationSection(sim, m);
   MakeLoggingSection(sim);
-#ifdef MJ_KDL_SHOW_GROUP
+#ifdef MJKDL_SHOW_GROUP
   MakeGroupSection(sim);
 #endif
   MakeJointSection(sim);
   MakeControlSection(sim);
-#ifdef MJ_KDL_SHOW_EQUALITY
+#ifdef MJKDL_SHOW_EQUALITY
   MakeEqualitySection(sim);
 #endif
   MakeFrameSection(sim);
@@ -2484,7 +2484,7 @@ void Simulate::Sync(bool state_only) {
   // mj_saveLastXML only knows models loaded by mj_loadXML; the wrapper saves the ones it built too
   if (pending_.save_xml) {
     if (!pending_.save_xml->empty()) {
-      mj_kdl::save_model_xml_from_ui(m_, pending_.save_xml->c_str());
+      mjkdl::save_model_xml_from_ui(m_, pending_.save_xml->c_str());
     }
     pending_.save_xml = std::nullopt;
   }
@@ -3113,7 +3113,7 @@ void Simulate::Render() {
       pending_.ui_update_rendering = true;
     }
 
-#ifdef MJ_KDL_SHOW_GROUP
+#ifdef MJKDL_SHOW_GROUP
     if (this->ui0_enable &&
         this->ui0.sect[SECT_RENDERING].state &&
         (IsDifferent(opt_prev_.geomgroup, opt.geomgroup) ||
@@ -3164,7 +3164,7 @@ void Simulate::Render() {
   }
 
   if (pending_.ui_update_equality) {
-#ifdef MJ_KDL_SHOW_EQUALITY
+#ifdef MJKDL_SHOW_EQUALITY
     if (this->ui1_enable && this->ui1.sect[SECT_EQUALITY].state) {
       mjui_update(SECT_EQUALITY, -1, &this->ui1, &this->uistate, &this->platform_ui->mjr_context());
     }
@@ -3287,7 +3287,7 @@ void Simulate::Render() {
     // "screenshot.png" for now.
     const std::string path = GetSavePath("screenshot.png");
     if (!path.empty()) {
-      if (!mj_kdl::write_png_rgb(path, rgb.get(), w, h)) {
+      if (!mjkdl::write_png_rgb(path, rgb.get(), w, h)) {
         // A failed save is not worth ending the run over; mju_error would abort it.
         mju_warning("could not save screenshot to %s", path.c_str());
       } else {

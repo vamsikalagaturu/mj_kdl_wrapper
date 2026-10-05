@@ -16,12 +16,12 @@ VERSION_FILE = ROOT / "cmake" / "Versions.cmake"
 def read_supported_version() -> str:
     text = VERSION_FILE.read_text(encoding="utf-8")
     match = re.search(
-        r'^\s*set\s*\(\s*MJ_KDL_MUJOCO_VERSION\s+"?(?P<version>[0-9]+\.[0-9]+\.[0-9]+)"?\s*\)',
+        r'^\s*set\s*\(\s*MJKDL_MUJOCO_VERSION\s+"?(?P<version>[0-9]+\.[0-9]+\.[0-9]+)"?\s*\)',
         text,
         re.MULTILINE,
     )
     if not match:
-        raise SystemExit(f"Could not find MJ_KDL_MUJOCO_VERSION in {VERSION_FILE}")
+        raise SystemExit(f"Could not find MJKDL_MUJOCO_VERSION in {VERSION_FILE}")
     return match.group("version")
 
 
@@ -65,14 +65,14 @@ def main() -> int:
 
     replace(
         VERSION_FILE,
-        [(f'MJ_KDL_MUJOCO_VERSION "{old_version}"', f'MJ_KDL_MUJOCO_VERSION "{new_version}"')],
+        [(f'MJKDL_MUJOCO_VERSION "{old_version}"', f'MJKDL_MUJOCO_VERSION "{new_version}"')],
     )
     if new_version != old_version:
         text = VERSION_FILE.read_text(encoding="utf-8")
         write(
             VERSION_FILE,
             re.sub(
-                r'(MJ_KDL_MUJOCO_SHA256 ")[0-9a-f]*(")',
+                r'(MJKDL_MUJOCO_SHA256 ")[0-9a-f]*(")',
                 rf"\g<1>{release_sha256(new_version)}\g<2>",
                 text,
             ),

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "mjkdl/mjkdl.hpp"
 
 #include <kdl/chaindynparam.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace mj_kdl_examples {
+namespace mjkdl_examples {
 
 // The bundled 2F-85's ctrl is its driver joint angle: ctrlrange 0..0.82, joint range 0..0.8.
 constexpr double kGripperClosed = 0.82;
@@ -77,12 +77,12 @@ inline void lerp_q(const KDL::JntArray &a, const KDL::JntArray &b, double t, KDL
     for (unsigned i = 0; i < a.rows(); ++i) out(i) = a(i) + t * (b(i) - a(i));
 }
 
-inline void read_q(const mj_kdl::Robot &robot, KDL::JntArray &q)
+inline void read_q(const mjkdl::Robot &robot, KDL::JntArray &q)
 {
     for (unsigned i = 0; i < q.rows(); ++i) q(i) = robot.jnt_pos_msr[i];
 }
 
-inline void read_q(const mj_kdl::Robot &robot, KDL::JntArray &q, KDL::JntArray &qd)
+inline void read_q(const mjkdl::Robot &robot, KDL::JntArray &q, KDL::JntArray &qd)
 {
     for (unsigned i = 0; i < q.rows(); ++i) {
         q(i)  = robot.jnt_pos_msr[i];
@@ -90,7 +90,7 @@ inline void read_q(const mj_kdl::Robot &robot, KDL::JntArray &q, KDL::JntArray &
     }
 }
 
-inline double max_abs_joint_err(const mj_kdl::Robot &robot, const KDL::JntArray &q)
+inline double max_abs_joint_err(const mjkdl::Robot &robot, const KDL::JntArray &q)
 {
     double max_err = 0.0;
     for (unsigned i = 0; i < q.rows(); ++i)
@@ -99,7 +99,7 @@ inline double max_abs_joint_err(const mj_kdl::Robot &robot, const KDL::JntArray 
 }
 
 // TCP of the chain at the measured joint positions, in the robot base frame.
-inline KDL::Frame tcp_frame(KDL::ChainFkSolverPos_recursive &fk, const mj_kdl::Robot &robot)
+inline KDL::Frame tcp_frame(KDL::ChainFkSolverPos_recursive &fk, const mjkdl::Robot &robot)
 {
     KDL::JntArray q(robot.chain.getNrOfJoints());
     read_q(robot, q);
@@ -110,7 +110,7 @@ inline KDL::Frame tcp_frame(KDL::ChainFkSolverPos_recursive &fk, const mj_kdl::R
 
 // jnt_trq_cmd = g(q) + kp * (q_des - q) - kd * qdot; kp/kd null for gravity alone.
 inline void pd_gravity(
-  mj_kdl::Robot       &robot,
+  mjkdl::Robot       &robot,
   KDL::ChainDynParam  &dyn,
   const KDL::JntArray &q_des,
   const double        *kp = nullptr,
@@ -128,16 +128,16 @@ inline void pd_gravity(
 }
 
 // Gravity at q as the first torque command, so the first step after a reset holds the arm.
-inline void prime_gravity(mj_kdl::Robot &robot, KDL::ChainDynParam &dyn, const KDL::JntArray &q)
+inline void prime_gravity(mjkdl::Robot &robot, KDL::ChainDynParam &dyn, const KDL::JntArray &q)
 {
     KDL::JntArray g(q.rows());
     dyn.JntToGravity(q, g);
     for (unsigned i = 0; i < q.rows(); ++i) robot.jnt_trq_cmd[i] = g(i);
 }
 
-inline mj_kdl::SceneSpec scene_spec()
+inline mjkdl::SceneSpec scene_spec()
 {
-    mj_kdl::SceneSpec spec;
+    mjkdl::SceneSpec spec;
     spec.timestep   = 0.002;
     spec.add_floor  = true;
     spec.add_skybox = true;
@@ -145,29 +145,29 @@ inline mj_kdl::SceneSpec scene_spec()
 }
 
 // The bundled 2F-85 on the arm's pinch site (or another site), element names prefixed "g_".
-inline mj_kdl::AttachmentSpec
+inline mjkdl::AttachmentSpec
   gripper_attachment(const std::string &path, const std::string &site = "pinch_site")
 {
-    mj_kdl::AttachmentSpec gripper;
+    mjkdl::AttachmentSpec gripper;
     gripper.mjcf_path = path;
-    gripper.attach_to = { mj_kdl::AttachKind::Site, site };
+    gripper.attach_to = { mjkdl::AttachKind::Site, site };
     gripper.prefix    = "g_";
     return gripper;
 }
 
 // The 2F-85's mount carries mass too, so the tool starts there; the TCP is its pinch site.
-inline mj_kdl::ToolFrameSpec gripper_tool(const std::string &prefix = "")
+inline mjkdl::ToolFrameSpec gripper_tool(const std::string &prefix = "")
 {
-    mj_kdl::ToolFrameSpec tool;
+    mjkdl::ToolFrameSpec tool;
     tool.tool_body = prefix + "g_base_mount";
     tool.tcp_site  = prefix + "g_pinch";
     return tool;
 }
 
 // The bundled table, its top (site "table_top") at surface_z.
-inline mj_kdl::SceneObject table_object(const std::string &path, double surface_z)
+inline mjkdl::SceneObject table_object(const std::string &path, double surface_z)
 {
-    mj_kdl::SceneObject table;
+    mjkdl::SceneObject table;
     table.name      = "table";
     table.mjcf_path = path;
     table.pos[2]    = surface_z;
@@ -175,11 +175,11 @@ inline mj_kdl::SceneObject table_object(const std::string &path, double surface_
     return table;
 }
 
-inline mj_kdl::SceneObject cube_object(double x, double y, double surface_z)
+inline mjkdl::SceneObject cube_object(double x, double y, double surface_z)
 {
-    mj_kdl::SceneObject cube;
+    mjkdl::SceneObject cube;
     cube.name   = "cube";
-    cube.shape  = mj_kdl::Shape::BOX;
+    cube.shape  = mjkdl::Shape::BOX;
     cube.pos[0] = x;
     cube.pos[1] = y;
     cube.pos[2] = surface_z + kCubeHS;
@@ -187,24 +187,24 @@ inline mj_kdl::SceneObject cube_object(double x, double y, double surface_z)
     const float rgba[4] = { 0.1f, 0.35f, 1.0f, 1.0f };
     std::copy(rgba, rgba + 4, cube.rgba);
     cube.mass        = 0.1;
-    cube.condim      = mj_kdl::Condim::Torsional;
+    cube.condim      = mjkdl::Condim::Torsional;
     cube.friction[0] = 0.8;
     cube.friction[1] = 0.02;
     cube.friction[2] = 0.001;
     return cube;
 }
 
-inline void place_cube(mj_kdl::Env &env)
+inline void place_cube(mjkdl::Env &env)
 {
     const double pos[3] = { kPickXY[0], kPickXY[1], kTableZ + kCubeHS };
-    mj_kdl::set_body_pose(&env, "cube", pos);
+    mjkdl::set_body_pose(&env, "cube", pos);
 }
 
 // Damped-least-squares IK stepped from seed, so the answer stays on the seed's branch.
 inline bool solve_near_seed(
   KDL::ChainIkSolverVel_wdls      &ik_vel,
   KDL::ChainFkSolverPos_recursive &fk,
-  const mj_kdl::Robot             &robot,
+  const mjkdl::Robot             &robot,
   const KDL::JntArray             &seed,
   const KDL::Frame                &target,
   KDL::JntArray                   &out
@@ -245,7 +245,7 @@ struct PickPlaceWaypoints
 };
 
 // Joint waypoints of the table pick-place, for an arm standing on the table at the world origin.
-inline bool solve_pick_place(const mj_kdl::Robot &robot, PickPlaceWaypoints &w)
+inline bool solve_pick_place(const mjkdl::Robot &robot, PickPlaceWaypoints &w)
 {
     const unsigned                  n = robot.chain.getNrOfJoints();
     KDL::ChainFkSolverPos_recursive fk(robot.chain);
@@ -310,14 +310,14 @@ inline std::vector<Phase> pick_place_phases(const PickPlaceWaypoints &w)
 // An arm the phases drive; each follows the same joint waypoints in its own base frame.
 struct PhaseArm
 {
-    mj_kdl::Robot             *robot;
-    mj_kdl::SceneActuatorSlot *gripper;
+    mjkdl::Robot             *robot;
+    mjkdl::SceneActuatorSlot *gripper;
 };
 
 // One update() per step for all arms, so a command lands one cycle later; control(i, q_des)
 // commands arm i. False if the viewer was closed.
 inline bool run_phases(
-  mj_kdl::Env                                                   &env,
+  mjkdl::Env                                                   &env,
   const std::vector<PhaseArm>                                   &arms,
   const std::vector<Phase>                                      &phases,
   bool                                                          &restart,
@@ -335,7 +335,7 @@ inline bool run_phases(
             const double t_enter = env.data->time;
             for (std::size_t i = 0; i < arms.size(); ++i) read_q(*arms[i].robot, q_enter[i]);
             while (true) {
-                mj_kdl::update(&env);
+                mjkdl::update(&env);
                 const double t_rel = env.data->time - t_enter;
                 const double alpha = phase.duration > 0.0 ? clamp01(t_rel / phase.duration) : 1.0;
                 double       err   = 0.0;
@@ -350,9 +350,9 @@ inline bool run_phases(
                 const bool done_timeout = phase.timeout > 0.0 && t_rel >= phase.timeout;
                 if ((t_rel >= phase.duration && done_pose) || done_timeout) break;
 
-                if (!mj_kdl::step(&env)) return false;
+                if (!mjkdl::step(&env)) return false;
                 if (restart) break;
-                mj_kdl::pace_realtime(&env);
+                mjkdl::pace_realtime(&env);
                 if (after_step) after_step(phase, t_rel);
             }
             if (restart) break;
@@ -361,4 +361,4 @@ inline bool run_phases(
     return true;
 }
 
-} // namespace mj_kdl_examples
+} // namespace mjkdl_examples

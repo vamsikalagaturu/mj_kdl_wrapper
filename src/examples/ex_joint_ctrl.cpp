@@ -23,7 +23,7 @@
 #include <limits>
 #include <string>
 
-namespace ex = mj_kdl_examples;
+namespace ex = mjkdl_examples;
 
 static constexpr double kTargetPose[7]  = { 0.3, 0.5, 2.9, -2.0, 0.3, 1.2, 1.3 };
 static constexpr double kMotionDuration = 2.0;   // [s]
@@ -41,28 +41,28 @@ int main(int argc, char *argv[])
 {
     const bool headless = ex::parse_args(argc, argv).headless;
 
-    mj_kdl::SceneSpec sc = ex::scene_spec();
-    mj_kdl::RobotSpec r;
+    mjkdl::SceneSpec sc = ex::scene_spec();
+    mjkdl::RobotSpec r;
     r.path  = ex::asset("kinova_gen3/gen3.xml");
-    r.modes = { { .mode = mj_kdl::CtrlMode::VELOCITY, .joints = {}, .kv = kVelGain } };
+    r.modes = { { .mode = mjkdl::CtrlMode::VELOCITY, .joints = {}, .kv = kVelGain } };
     sc.robots.push_back(r);
 
-    mj_kdl::Env   env;
-    mj_kdl::Robot robot;
-    if (!mj_kdl::init_env(&env, &sc)) return 1;
-    if (!mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link")) return 1;
+    mjkdl::Env   env;
+    mjkdl::Robot robot;
+    if (!mjkdl::init_env(&env, &sc)) return 1;
+    if (!mjkdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link")) return 1;
 
     const unsigned      n       = robot.chain.getNrOfJoints();
     const KDL::JntArray q_home  = ex::home_q(n);
     bool                restart = false;
 
-    env.on_reset = [&](mj_kdl::ResetContext *) {
-        mj_kdl::set_joint_pos(&robot, q_home);
+    env.on_reset = [&](mjkdl::ResetContext *) {
+        mjkdl::set_joint_pos(&robot, q_home);
         for (unsigned i = 0; i < n; ++i) robot.jnt_pos_cmd[i] = q_home(i);
         restart = true;
     };
-    mj_kdl::reset(&env);
-    if (!headless && !mj_kdl::open_viewer(&env)) return 1;
+    mjkdl::reset(&env);
+    if (!headless && !mjkdl::open_viewer(&env)) return 1;
 
     constexpr double kNotReached = std::numeric_limits<double>::infinity();
     Motion           motion      = Motion::Position;
@@ -73,12 +73,12 @@ int main(int argc, char *argv[])
     while (true) {
         if (restart) {
             restart = false;
-            if (!mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::POSITION)) return 1;
+            if (!mjkdl::set_control_mode(&robot, mjkdl::CtrlMode::POSITION)) return 1;
             motion  = Motion::Position;
             t_start = env.data->time;
             pos_err = vel_err = kNotReached;
         }
-        mj_kdl::update(&env);
+        mjkdl::update(&env);
         const double t       = env.data->time - t_start;
         double       max_err = 0.0;
         if (motion == Motion::Position) {
@@ -89,7 +89,7 @@ int main(int argc, char *argv[])
             }
             if (t >= kMotionDuration + kHoldTime) {
                 pos_err = max_err;
-                if (!mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::VELOCITY)) return 1;
+                if (!mjkdl::set_control_mode(&robot, mjkdl::CtrlMode::VELOCITY)) return 1;
                 motion  = Motion::Velocity;
                 t_start = env.data->time;
                 continue;
@@ -106,8 +106,8 @@ int main(int argc, char *argv[])
                 break;
             }
         }
-        if (!mj_kdl::step(&env)) break;
-        mj_kdl::pace_realtime(&env);
+        if (!mjkdl::step(&env)) break;
+        mjkdl::pace_realtime(&env);
     }
 
     const bool pos_ok = pos_err <= kMaxErr;
@@ -117,6 +117,6 @@ int main(int argc, char *argv[])
               << vel_err << " rad (" << (vel_ok ? "converged" : "not converged")
               << " at t = " << std::setprecision(2) << vel_time << " s, timeout " << kTimeout
               << " s)\n";
-    mj_kdl::cleanup(&env);
+    mjkdl::cleanup(&env);
     return headless ? ex::verdict(pos_ok && vel_ok, "both motions reached their goal") : 0;
 }

@@ -2,7 +2,7 @@
  * Kinova GEN3 + Robotiq 2F-85 picks a 4 cm cube off the floor with the examples' IK waypoints,
  * joint impedance and phase runner (src/examples/common.hpp). */
 
-#include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "mjkdl/mjkdl.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
 
@@ -17,14 +17,14 @@
 #include <string>
 #include <vector>
 
-namespace ex = mj_kdl_examples;
+namespace ex = mjkdl_examples;
 namespace fs = std::filesystem;
 
 class MjcfPickTest : public testing::Test
 {
   protected:
-    mj_kdl::Env            env_;
-    mj_kdl::Robot          s_;
+    mjkdl::Env            env_;
+    mjkdl::Robot          s_;
     ex::PickPlaceWaypoints wp_;
 
     void SetUp() override
@@ -35,20 +35,20 @@ class MjcfPickTest : public testing::Test
         if (!fs::exists(grp_mjcf)) GTEST_SKIP() << grp_mjcf << " not found";
 
         // The arm stands on the floor, so the cube lies at the examples' base-frame pick spot.
-        mj_kdl::RobotSpec rs;
+        mjkdl::RobotSpec rs;
         rs.path = arm_mjcf;
         rs.attachments.push_back(ex::gripper_attachment(grp_mjcf));
-        mj_kdl::SceneSpec sc;
+        mjkdl::SceneSpec sc;
         sc.timestep   = 0.002;
         sc.add_floor  = true;
         sc.add_skybox = false;
         sc.robots.push_back(rs);
         sc.objects.push_back(ex::cube_object(ex::kPickXY[0], ex::kPickXY[1], 0.0));
 
-        ASSERT_TRUE(mj_kdl::init_env(&env_, &sc));
-        const mj_kdl::ToolFrameSpec tool = ex::gripper_tool();
+        ASSERT_TRUE(mjkdl::init_env(&env_, &sc));
+        const mjkdl::ToolFrameSpec tool = ex::gripper_tool();
         ASSERT_TRUE(
-          mj_kdl::init_robot_from_mjcf(&s_, &env_, "base_link", "bracelet_link", "", &tool)
+          mjkdl::init_robot_from_mjcf(&s_, &env_, "base_link", "bracelet_link", "", &tool)
         );
         ASSERT_TRUE(ex::solve_pick_place(s_, wp_));
     }
@@ -56,9 +56,9 @@ class MjcfPickTest : public testing::Test
 
 TEST_F(MjcfPickTest, TcpLiesBeyondTheWrist)
 {
-    mj_kdl::Robot wrist;
+    mjkdl::Robot wrist;
     ASSERT_TRUE(
-      mj_kdl::init_robot_from_mjcf(&wrist, &env_, "base_link", "bracelet_link", "", nullptr)
+      mjkdl::init_robot_from_mjcf(&wrist, &env_, "base_link", "bracelet_link", "", nullptr)
     );
     EXPECT_EQ(wrist.chain.getNrOfJoints(), s_.chain.getNrOfJoints());
 
@@ -68,7 +68,7 @@ TEST_F(MjcfPickTest, TcpLiesBeyondTheWrist)
     ASSERT_GE(tcp_fk.JntToCart(wp_.home, tcp_frame), 0);
     // The 2F-85 pinch site is 21.7 cm out of the bracelet.
     EXPECT_NEAR((tcp_frame.p - wrist_frame.p).Norm(), 0.217325, 1e-6);
-    mj_kdl::cleanup(&wrist);
+    mjkdl::cleanup(&wrist);
 }
 
 TEST_F(MjcfPickTest, IkStaysOnTheSeedBranch)
@@ -86,18 +86,18 @@ TEST_F(MjcfPickTest, IkStaysOnTheSeedBranch)
 
 TEST_F(MjcfPickTest, CubeLifted)
 {
-    ASSERT_TRUE(mj_kdl::set_control_mode(&s_, mj_kdl::CtrlMode::TORQUE));
-    mj_kdl::SceneActuatorSlot *fingers =
-      mj_kdl::bind_scene_actuator(&env_.scene, "g_fingers_actuator");
-    mj_kdl::SceneFreeBodySlot *cube = mj_kdl::bind_scene_free_body(&env_.scene, "cube");
+    ASSERT_TRUE(mjkdl::set_control_mode(&s_, mjkdl::CtrlMode::TORQUE));
+    mjkdl::SceneActuatorSlot *fingers =
+      mjkdl::bind_scene_actuator(&env_.scene, "g_fingers_actuator");
+    mjkdl::SceneFreeBodySlot *cube = mjkdl::bind_scene_free_body(&env_.scene, "cube");
     ASSERT_NE(fingers, nullptr);
     ASSERT_NE(cube, nullptr);
     KDL::ChainDynParam dyn(s_.chain, KDL::Vector(0, 0, -9.81));
-    env_.on_reset = [&](mj_kdl::ResetContext *) {
-        mj_kdl::set_joint_pos(&s_, wp_.home);
+    env_.on_reset = [&](mjkdl::ResetContext *) {
+        mjkdl::set_joint_pos(&s_, wp_.home);
         ex::prime_gravity(s_, dyn, wp_.home);
     };
-    mj_kdl::reset(&env_);
+    mjkdl::reset(&env_);
 
     std::vector<ex::Phase> phases = ex::pick_place_phases(wp_);
     phases.resize(5); // HOME .. LIFT
@@ -110,7 +110,7 @@ TEST_F(MjcfPickTest, CubeLifted)
       restart,
       [&](std::size_t, const KDL::JntArray &q) { ex::pd_gravity(s_, dyn, q, ex::kKp, ex::kKd); }
     ));
-    mj_kdl::update(&env_);
+    mjkdl::update(&env_);
     EXPECT_GT(cube->pose.p.z(), 0.28) << "cube was not lifted (measured 0.312 m)";
 }
 

@@ -2,14 +2,14 @@
  * Copyright (c) 2026 Vamsi Kalagaturu
  * See LICENSE for details. */
 
-#include "mj_kdl_wrapper/camera_ros.hpp"
-#include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "mjkdl/camera_ros.hpp"
+#include "mjkdl/mjkdl.hpp"
 
 #include <cmath>
 #include <cstring>
 #include <utility>
 
-namespace mj_kdl {
+namespace mjkdl {
 
 CameraRosPublisher::CameraRosPublisher(rclcpp::Node &node, const mjModel *model, CameraConf conf)
   : conf_(std::move(conf)), period_s_(conf_.rate_hz > 0.0 ? 1.0 / conf_.rate_hz : 0.0)
@@ -81,4 +81,4 @@ void CameraRosPublisher::publish(const std::uint8_t *rgb, double sim_t)
     info_pub_->publish(info_);
 }
 
-} // namespace mj_kdl
+} // namespace mjkdl

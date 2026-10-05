@@ -4,7 +4,7 @@
  * required spec fields, the floor height, offscreen rendering and the recorder's output path.
  * Tests that need the bundled Gen3 self-skip without it. */
 
-#include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "mjkdl/mjkdl.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
 
@@ -15,29 +15,29 @@
 #include <string>
 #include <vector>
 
-namespace ex = mj_kdl_examples;
+namespace ex = mjkdl_examples;
 namespace fs = std::filesystem;
 
 static std::string gen3_path() { return ex::find_asset("kinova_gen3/gen3.xml"); }
 
-static mj_kdl::SceneSpec arm_scene(const std::string &mjcf, const std::string &prefix = "")
+static mjkdl::SceneSpec arm_scene(const std::string &mjcf, const std::string &prefix = "")
 {
-    mj_kdl::SceneSpec sc;
+    mjkdl::SceneSpec sc;
     sc.timestep   = 0.002;
     sc.add_floor  = true;
     sc.add_skybox = false;
-    mj_kdl::RobotSpec r;
+    mjkdl::RobotSpec r;
     r.path   = mjcf;
     r.prefix = prefix;
     sc.robots.push_back(r);
     return sc;
 }
 
-static mj_kdl::SceneObject small_cube()
+static mjkdl::SceneObject small_cube()
 {
-    mj_kdl::SceneObject cube;
+    mjkdl::SceneObject cube;
     cube.name  = "cube";
-    cube.shape = mj_kdl::Shape::BOX;
+    cube.shape = mjkdl::Shape::BOX;
     cube.mass  = 0.1;
     for (int k = 0; k < 3; ++k) cube.size[k] = 0.02;
     for (int k = 0; k < 4; ++k) cube.rgba[k] = 1.0f;
@@ -50,17 +50,17 @@ static mj_kdl::SceneObject small_cube()
 class InitTest : public testing::Test
 {
   protected:
-    mj_kdl::SceneSpec sc_;
-    mj_kdl::Env       env_;
-    mj_kdl::Robot     s;
+    mjkdl::SceneSpec sc_;
+    mjkdl::Env       env_;
+    mjkdl::Robot     s;
 
     void SetUp() override
     {
         const std::string mjcf = gen3_path();
         if (!fs::exists(mjcf)) GTEST_SKIP() << mjcf << " not found";
         sc_ = arm_scene(mjcf);
-        ASSERT_TRUE(mj_kdl::init_env(&env_, &sc_));
-        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&s, &env_, "base_link", "bracelet_link"));
+        ASSERT_TRUE(mjkdl::init_env(&env_, &sc_));
+        ASSERT_TRUE(mjkdl::init_robot_from_mjcf(&s, &env_, "base_link", "bracelet_link"));
     }
 
     int joint(int i) const { return mj_name2id(env_.model, mjOBJ_JOINT, s.joint_names[i].c_str()); }
@@ -84,9 +84,9 @@ TEST_F(InitTest, BasicDOF)
 
 TEST_F(InitTest, SimulationAdvance)
 {
-    mj_kdl::set_joint_pos(&s, ex::home_q(7));
+    mjkdl::set_joint_pos(&s, ex::home_q(7));
     const double t0 = env_.data->time;
-    for (int k = 0; k < 100; ++k) mj_kdl::step(&env_);
+    for (int k = 0; k < 100; ++k) mjkdl::step(&env_);
     EXPECT_NEAR(env_.data->time - t0, 100 * sc_.timestep, 1e-9);
 }
 
@@ -95,10 +95,10 @@ TEST_F(InitTest, ResetRestoresTheKeyframePose)
     ASSERT_GT(env_.model->nkey, 0) << "the bundled Gen3 has a home keyframe";
     KDL::JntArray q_displaced = ex::home_q(7);
     for (unsigned i = 0; i < 7; ++i) q_displaced(i) += 0.3;
-    mj_kdl::set_joint_pos(&s, q_displaced);
-    for (int k = 0; k < 50; ++k) mj_kdl::step(&env_);
+    mjkdl::set_joint_pos(&s, q_displaced);
+    for (int k = 0; k < 50; ++k) mjkdl::step(&env_);
 
-    mj_kdl::reset(&env_);
+    mjkdl::reset(&env_);
     for (int i = 0; i < s.n_joints; ++i) {
         const int adr = env_.model->jnt_qposadr[joint(i)];
         EXPECT_DOUBLE_EQ(qpos(i), env_.model->key_qpos[adr]) << "joint " << i;
@@ -109,9 +109,9 @@ TEST_F(InitTest, ResetRestoresTheKeyframePose)
 TEST_F(InitTest, ResetOptionsPickTheKeyframeOrTheModelDefault)
 {
     ASSERT_GE(env_.model->nkey, 2) << "the bundled Gen3 has home and retract keyframes";
-    mj_kdl::ResetOptions options;
+    mjkdl::ResetOptions options;
     options.keyframe       = 1;
-    mj_kdl::ResetInfo info = mj_kdl::reset(&env_, &options);
+    mjkdl::ResetInfo info = mjkdl::reset(&env_, &options);
     EXPECT_TRUE(info.used_keyframe);
     EXPECT_EQ(info.keyframe, 1);
     for (int i = 0; i < s.n_joints; ++i) {
@@ -121,7 +121,7 @@ TEST_F(InitTest, ResetOptionsPickTheKeyframeOrTheModelDefault)
     }
 
     options.use_keyframe = false;
-    info                 = mj_kdl::reset(&env_, &options);
+    info                 = mjkdl::reset(&env_, &options);
     EXPECT_FALSE(info.used_keyframe);
     EXPECT_EQ(info.keyframe, -1);
     for (int i = 0; i < s.n_joints; ++i) {
@@ -137,7 +137,7 @@ TEST_F(InitTest, ResetSyncsCmdPorts)
         s.jnt_trq_cmd[i] = 42.0;
     }
 
-    mj_kdl::reset(&env_);
+    mjkdl::reset(&env_);
 
     for (int i = 0; i < s.n_joints; ++i) {
         EXPECT_DOUBLE_EQ(s.jnt_pos_cmd[i], qpos(i));
@@ -155,7 +155,7 @@ TEST_F(InitTest, ResetRestoresEveryPort)
         s.jnt_saturated[i] = 1;
     }
 
-    mj_kdl::reset(&env_);
+    mjkdl::reset(&env_);
 
     for (int i = 0; i < s.n_joints; ++i) {
         EXPECT_DOUBLE_EQ(s.jnt_pos_msr[i], qpos(i));
@@ -170,8 +170,8 @@ TEST_F(InitTest, ResetRestoresEveryPort)
 TEST_F(InitTest, ResetInvokesOnResetCallback)
 {
     int call_count = 0;
-    env_.on_reset  = [&](mj_kdl::ResetContext *) { ++call_count; };
-    mj_kdl::reset(&env_);
+    env_.on_reset  = [&](mjkdl::ResetContext *) { ++call_count; };
+    mjkdl::reset(&env_);
 
     EXPECT_EQ(call_count, 1) << "on_reset was not called by reset()";
 }
@@ -180,7 +180,7 @@ TEST_F(InitTest, ResetWithoutAHookStillReseedsTheRobot)
 {
     ASSERT_FALSE(env_.on_reset);
     s.jnt_pos_cmd[0]             = 99.0;
-    const mj_kdl::ResetInfo info = mj_kdl::reset(&env_);
+    const mjkdl::ResetInfo info = mjkdl::reset(&env_);
     EXPECT_TRUE(info.used_keyframe);
     EXPECT_DOUBLE_EQ(s.jnt_pos_cmd[0], qpos(0));
 }
@@ -188,7 +188,7 @@ TEST_F(InitTest, ResetWithoutAHookStillReseedsTheRobot)
 TEST_F(InitTest, EnvResetInvokesHookAndSyncsRobot)
 {
     int call_count = 0;
-    env_.on_reset  = [&](mj_kdl::ResetContext *ctx) {
+    env_.on_reset  = [&](mjkdl::ResetContext *ctx) {
         ++call_count;
         EXPECT_EQ(ctx->env, &env_);
         EXPECT_EQ(ctx->model, env_.model);
@@ -201,7 +201,7 @@ TEST_F(InitTest, EnvResetInvokesHookAndSyncsRobot)
         env_.data->qfrc_applied[dof(i)] = 12.0;
     }
 
-    mj_kdl::ResetInfo info = mj_kdl::reset(&env_);
+    mjkdl::ResetInfo info = mjkdl::reset(&env_);
 
     EXPECT_EQ(call_count, 1);
     EXPECT_TRUE(info.used_keyframe);
@@ -216,22 +216,22 @@ TEST_F(InitTest, EnvResetInvokesHookAndSyncsRobot)
 
 TEST_F(InitTest, ResetKeepsARequestedControlMode)
 {
-    s.ctrl_mode = mj_kdl::CtrlMode::TORQUE;
-    mj_kdl::reset(&env_);
-    EXPECT_EQ(s.ctrl_mode, mj_kdl::CtrlMode::TORQUE);
+    s.ctrl_mode = mjkdl::CtrlMode::TORQUE;
+    mjkdl::reset(&env_);
+    EXPECT_EQ(s.ctrl_mode, mjkdl::CtrlMode::TORQUE);
 
-    mj_kdl::update(&env_);
+    mjkdl::update(&env_);
     EXPECT_TRUE(env_.model->opt.disableactuator & (1 << 1)) << "POSITION group off";
     EXPECT_FALSE(env_.model->opt.disableactuator & (1 << 2)) << "TORQUE group on";
 }
 
 TEST_F(InitTest, OnResetPrimesCommandsAndMovesAreReadBack)
 {
-    env_.on_reset = [&](mj_kdl::ResetContext *ctx) {
+    env_.on_reset = [&](mjkdl::ResetContext *ctx) {
         s.jnt_trq_cmd[0] = 1.5;
         ctx->data->qpos[ctx->model->jnt_qposadr[joint(1)]] += 0.2;
     };
-    mj_kdl::reset(&env_);
+    mjkdl::reset(&env_);
     EXPECT_DOUBLE_EQ(s.jnt_trq_cmd[0], 1.5) << "primed in the hook, not overwritten";
     EXPECT_DOUBLE_EQ(s.jnt_pos_msr[1], qpos(1)) << "a move in the hook is read back";
 }
@@ -240,36 +240,36 @@ TEST_F(InitTest, CleanupRobotUnregistersIt)
 {
     const int a = servo(0);
     ASSERT_GE(a, 0);
-    mj_kdl::cleanup(&s);
+    mjkdl::cleanup(&s);
     EXPECT_TRUE(env_.robots.empty());
 
     env_.data->ctrl[a] = 0.123;
     s.jnt_pos_cmd.assign(7, 1.0);
-    mj_kdl::update(&env_);
+    mjkdl::update(&env_);
     EXPECT_EQ(env_.data->ctrl[a], 0.123) << "update() no longer commands the robot";
 }
 
 TEST_F(InitTest, ChainFromOutsideDrivesTheSameJoints)
 {
-    mj_kdl::Robot given;
-    ASSERT_TRUE(mj_kdl::init_robot_from_chain(&given, &env_, s.chain, s.joint_names));
+    mjkdl::Robot given;
+    ASSERT_TRUE(mjkdl::init_robot_from_chain(&given, &env_, s.chain, s.joint_names));
     EXPECT_EQ(env_.robots.size(), 2u);
     EXPECT_EQ(given.n_joints, s.n_joints);
     EXPECT_EQ(given.chain.getNrOfSegments(), s.chain.getNrOfSegments());
 
     KDL::JntArray q = ex::home_q(7);
     q(1) += 0.1;
-    mj_kdl::set_joint_pos(&given, q);
-    mj_kdl::update(&env_);
+    mjkdl::set_joint_pos(&given, q);
+    mjkdl::update(&env_);
     for (int i = 0; i < 7; ++i) {
         EXPECT_DOUBLE_EQ(given.jnt_pos_msr[i], q(i));
         EXPECT_DOUBLE_EQ(s.jnt_pos_msr[i], q(i)) << "both robots read the same joints";
     }
 
     std::vector<std::string> short_list(s.joint_names.begin(), s.joint_names.end() - 1);
-    mj_kdl::Robot            wrong;
-    EXPECT_FALSE(mj_kdl::init_robot_from_chain(&wrong, &env_, s.chain, short_list));
-    mj_kdl::cleanup(&given);
+    mjkdl::Robot            wrong;
+    EXPECT_FALSE(mjkdl::init_robot_from_chain(&wrong, &env_, s.chain, short_list));
+    mjkdl::cleanup(&given);
 }
 
 TEST(TwoEnvs, StepIndependently)
@@ -277,32 +277,32 @@ TEST(TwoEnvs, StepIndependently)
     const std::string mjcf = gen3_path();
     if (!fs::exists(mjcf)) GTEST_SKIP() << mjcf << " not found";
 
-    mj_kdl::SceneSpec sc = arm_scene(mjcf);
+    mjkdl::SceneSpec sc = arm_scene(mjcf);
     sc.add_floor         = false;
 
-    mj_kdl::Env   a, b;
-    mj_kdl::Robot ra, rb;
-    ASSERT_TRUE(mj_kdl::init_env(&a, &sc));
-    ASSERT_TRUE(mj_kdl::init_env(&b, &sc));
-    ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&ra, &a, "base_link", "bracelet_link"));
-    ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&rb, &b, "base_link", "bracelet_link"));
+    mjkdl::Env   a, b;
+    mjkdl::Robot ra, rb;
+    ASSERT_TRUE(mjkdl::init_env(&a, &sc));
+    ASSERT_TRUE(mjkdl::init_env(&b, &sc));
+    ASSERT_TRUE(mjkdl::init_robot_from_mjcf(&ra, &a, "base_link", "bracelet_link"));
+    ASSERT_TRUE(mjkdl::init_robot_from_mjcf(&rb, &b, "base_link", "bracelet_link"));
 
     KDL::JntArray q = ex::home_q(7);
-    mj_kdl::set_joint_pos(&ra, q);
+    mjkdl::set_joint_pos(&ra, q);
     q(1) += 0.5;
-    mj_kdl::set_joint_pos(&rb, q);
+    mjkdl::set_joint_pos(&rb, q);
 
     KDL::Frame fa, fb;
-    ASSERT_TRUE(mj_kdl::get_body_frame(&a, "bracelet_link", &fa));
-    ASSERT_TRUE(mj_kdl::get_body_frame(&b, "bracelet_link", &fb));
+    ASSERT_TRUE(mjkdl::get_body_frame(&a, "bracelet_link", &fa));
+    ASSERT_TRUE(mjkdl::get_body_frame(&b, "bracelet_link", &fb));
     EXPECT_GT((fa.p - fb.p).Norm(), 0.05) << "each Env computes its own frames";
 
-    for (int k = 0; k < 20; ++k) mj_kdl::step(&a);
+    for (int k = 0; k < 20; ++k) mjkdl::step(&a);
     EXPECT_GT(a.data->time, 0.0);
     EXPECT_EQ(b.data->time, 0.0) << "stepping one Env leaves the other alone";
 
     KDL::Frame fb_again;
-    ASSERT_TRUE(mj_kdl::get_body_frame(&b, "bracelet_link", &fb_again));
+    ASSERT_TRUE(mjkdl::get_body_frame(&b, "bracelet_link", &fb_again));
     EXPECT_TRUE(KDL::Equal(fb, fb_again, 1e-12));
 }
 
@@ -311,23 +311,23 @@ TEST(EnvSpec, OwnsItsStringsAcrossARebuild)
     const std::string mjcf = gen3_path();
     if (!fs::exists(mjcf)) GTEST_SKIP() << mjcf << " not found";
 
-    mj_kdl::Env   env;
-    mj_kdl::Robot robot;
+    mjkdl::Env   env;
+    mjkdl::Robot robot;
     {
-        const mj_kdl::SceneSpec sc = arm_scene(std::string(mjcf), std::string("arm_"));
-        ASSERT_TRUE(mj_kdl::init_env(&env, &sc));
+        const mjkdl::SceneSpec sc = arm_scene(std::string(mjcf), std::string("arm_"));
+        ASSERT_TRUE(mjkdl::init_env(&env, &sc));
     }
-    ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&robot, &env, "arm_base_link", "arm_bracelet_link"));
+    ASSERT_TRUE(mjkdl::init_robot_from_mjcf(&robot, &env, "arm_base_link", "arm_bracelet_link"));
 
-    const mj_kdl::Status added = mj_kdl::scene_add_object(&env, small_cube());
+    const mjkdl::Status added = mjkdl::scene_add_object(&env, small_cube());
     ASSERT_TRUE(added) << added.error;
     EXPECT_EQ(env.spec.robots[0].prefix, "arm_");
 
-    for (int k = 0; k < 10; ++k) ASSERT_TRUE(mj_kdl::step(&env));
-    mj_kdl::update(&env);
+    for (int k = 0; k < 10; ++k) ASSERT_TRUE(mjkdl::step(&env));
+    mjkdl::update(&env);
     EXPECT_GT(env.data->time, 0.0);
     EXPECT_EQ(robot.n_joints, 7);
-    mj_kdl::cleanup(&env);
+    mjkdl::cleanup(&env);
 }
 
 TEST(EnvAdopt, RunsOnTheCallersPairAndNeverFreesIt)
@@ -336,36 +336,36 @@ TEST(EnvAdopt, RunsOnTheCallersPairAndNeverFreesIt)
     if (!fs::exists(mjcf)) GTEST_SKIP() << mjcf << " not found";
 
     std::vector<std::pair<mjModel *, mjData *>> owned;
-    mj_kdl::Env                                 env;
-    mj_kdl::Robot                               robot;
+    mjkdl::Env                                 env;
+    mjkdl::Robot                               robot;
     env.adopt = [&](mjModel *m, mjData *d) {
         mjModel *om = mj_copyModel(nullptr, m);
         mjData  *od = mj_makeData(om);
         mj_copyData(od, m, d);
-        mj_kdl::destroy_scene(m, d);
+        mjkdl::destroy_scene(m, d);
         owned.emplace_back(om, od);
         return owned.back();
     };
 
-    const mj_kdl::SceneSpec sc = arm_scene(mjcf);
-    ASSERT_TRUE(mj_kdl::init_env(&env, &sc));
+    const mjkdl::SceneSpec sc = arm_scene(mjcf);
+    ASSERT_TRUE(mjkdl::init_env(&env, &sc));
     ASSERT_EQ(owned.size(), 1u);
     EXPECT_EQ(env.model, owned[0].first);
-    ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link"));
-    for (int k = 0; k < 10; ++k) ASSERT_TRUE(mj_kdl::step(&env));
+    ASSERT_TRUE(mjkdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link"));
+    for (int k = 0; k < 10; ++k) ASSERT_TRUE(mjkdl::step(&env));
 
-    ASSERT_TRUE(mj_kdl::scene_add_object(&env, small_cube()));
+    ASSERT_TRUE(mjkdl::scene_add_object(&env, small_cube()));
     ASSERT_EQ(owned.size(), 2u);
     EXPECT_EQ(env.model, owned[1].first);
     EXPECT_EQ(robot.model, owned[1].first);
     EXPECT_GT(owned[1].first->nbody, owned[0].first->nbody);
-    for (int k = 0; k < 10; ++k) ASSERT_TRUE(mj_kdl::step(&env));
+    for (int k = 0; k < 10; ++k) ASSERT_TRUE(mjkdl::step(&env));
 
-    const fs::path xml = fs::temp_directory_path() / "mj_kdl_adopted.xml";
-    EXPECT_TRUE(mj_kdl::save_model_xml(env.model, xml.c_str())) << "the spec follows the pair";
+    const fs::path xml = fs::temp_directory_path() / "mjkdl_adopted.xml";
+    EXPECT_TRUE(mjkdl::save_model_xml(env.model, xml.c_str())) << "the spec follows the pair";
     fs::remove(xml);
 
-    mj_kdl::cleanup(&env);
+    mjkdl::cleanup(&env);
     // Both pairs are still the caller's: usable here, freed once here (ASan sees a double free).
     for (auto &[m, d] : owned) {
         mj_step(m, d);
@@ -376,7 +376,7 @@ TEST(EnvAdopt, RunsOnTheCallersPairAndNeverFreesIt)
 
 TEST(SceneFloor, PlacedAtFloorZ)
 {
-    mj_kdl::SceneSpec sc;
+    mjkdl::SceneSpec sc;
     sc.timestep   = 0.002;
     sc.add_floor  = true;
     sc.floor_z    = -0.72;
@@ -384,7 +384,7 @@ TEST(SceneFloor, PlacedAtFloorZ)
 
     mjModel *model = nullptr;
     mjData  *data  = nullptr;
-    ASSERT_TRUE(mj_kdl::build_scene(&model, &data, &sc));
+    ASSERT_TRUE(mjkdl::build_scene(&model, &data, &sc));
 
     // By type, not by name: the ground plane is deliberately unnamed so it cannot collide
     // with an asset that has a geom called "floor".
@@ -395,29 +395,29 @@ TEST(SceneFloor, PlacedAtFloorZ)
     ASSERT_GE(floor_id, 0);
     EXPECT_DOUBLE_EQ(model->geom_pos[3 * floor_id + 2], -0.72);
 
-    mj_kdl::destroy_scene(model, data);
+    mjkdl::destroy_scene(model, data);
 }
 
 TEST(Recorder, OutputPathReachesFfmpegVerbatim)
 {
-    mj_kdl::SceneSpec sc;
+    mjkdl::SceneSpec sc;
     sc.timestep   = 0.002;
     sc.add_floor  = true;
     sc.add_skybox = false;
-    mj_kdl::Env env;
-    ASSERT_TRUE(mj_kdl::init_env(&env, &sc));
+    mjkdl::Env env;
+    ASSERT_TRUE(mjkdl::init_env(&env, &sc));
 
-    const fs::path dir = fs::temp_directory_path() / "mj_kdl_rec_test";
+    const fs::path dir = fs::temp_directory_path() / "mjkdl_rec_test";
     fs::remove_all(dir);
     fs::create_directories(dir);
     const fs::path out    = dir / "a \"quoted\" $(touch injected) name.mp4";
     const fs::path marker = dir / "injected";
 
-    mj_kdl::VideoRecorder vr;
-    if (!mj_kdl::init_video_recorder(&vr, env.model, out.c_str(), 64, 48, 10))
+    mjkdl::VideoRecorder vr;
+    if (!mjkdl::init_video_recorder(&vr, env.model, out.c_str(), 64, 48, 10))
         GTEST_SKIP() << "no EGL or ffmpeg";
-    for (int i = 0; i < 5; ++i) ASSERT_TRUE(mj_kdl::record_frame(&vr, &env));
-    mj_kdl::cleanup(&vr);
+    for (int i = 0; i < 5; ++i) ASSERT_TRUE(mjkdl::record_frame(&vr, &env));
+    mjkdl::cleanup(&vr);
 
     EXPECT_TRUE(fs::exists(out)) << out;
     EXPECT_GT(fs::file_size(out), 0u);
@@ -428,19 +428,19 @@ TEST(Recorder, OutputPathReachesFfmpegVerbatim)
 
 TEST(Offscreen, RendersTheSceneIntoABuffer)
 {
-    mj_kdl::SceneSpec sc;
+    mjkdl::SceneSpec sc;
     sc.timestep   = 0.002;
     sc.add_floor  = true;
     sc.add_skybox = true;
-    mj_kdl::Env env;
-    ASSERT_TRUE(mj_kdl::init_env(&env, &sc));
+    mjkdl::Env env;
+    ASSERT_TRUE(mjkdl::init_env(&env, &sc));
 
     constexpr int         kW = 64, kH = 48;
-    mj_kdl::VideoRecorder vr;
-    if (!mj_kdl::init_offscreen(&vr, env.model, kW, kH)) GTEST_SKIP() << "no EGL";
+    mjkdl::VideoRecorder vr;
+    if (!mjkdl::init_offscreen(&vr, env.model, kW, kH)) GTEST_SKIP() << "no EGL";
     std::vector<std::uint8_t> rgb(kW * kH * 3, 0);
-    ASSERT_TRUE(mj_kdl::render_rgb(&vr, &env, rgb.data()));
-    mj_kdl::cleanup(&vr);
+    ASSERT_TRUE(mjkdl::render_rgb(&vr, &env, rgb.data()));
+    mjkdl::cleanup(&vr);
 
     std::size_t lit = 0;
     for (std::uint8_t c : rgb) lit += c != 0;
@@ -449,62 +449,62 @@ TEST(Offscreen, RendersTheSceneIntoABuffer)
 
 TEST_F(InitTest, AFailureSaysWhy)
 {
-    mj_kdl::Robot  other;
-    mj_kdl::Status s = mj_kdl::init_robot_from_mjcf(&other, &env_, "no_such_body", "bracelet_link");
+    mjkdl::Robot  other;
+    mjkdl::Status s = mjkdl::init_robot_from_mjcf(&other, &env_, "no_such_body", "bracelet_link");
     EXPECT_FALSE(s);
     EXPECT_NE(s.error.find("no_such_body"), std::string::npos) << s.error;
 
-    mj_kdl::SceneObject cube;
+    mjkdl::SceneObject cube;
     cube.name  = "unweighed_cube";
-    cube.shape = mj_kdl::Shape::BOX;
-    s          = mj_kdl::scene_add_object(&env_, cube);
+    cube.shape = mjkdl::Shape::BOX;
+    s          = mjkdl::scene_add_object(&env_, cube);
     EXPECT_FALSE(s);
     EXPECT_NE(s.error.find("unweighed_cube"), std::string::npos) << s.error;
-    s = mj_kdl::scene_remove_object(&env_, "no_such_object");
+    s = mjkdl::scene_remove_object(&env_, "no_such_object");
     EXPECT_FALSE(s);
     EXPECT_NE(s.error.find("no_such_object"), std::string::npos) << s.error;
 }
 
 TEST(SceneSpecRequired, AnUnsetFieldFailsTheBuild)
 {
-    const auto builds = [](const mj_kdl::SceneSpec &sc) {
+    const auto builds = [](const mjkdl::SceneSpec &sc) {
         mjModel   *model = nullptr;
         mjData    *data  = nullptr;
-        const bool ok    = static_cast<bool>(mj_kdl::build_scene(&model, &data, &sc));
-        mj_kdl::destroy_scene(model, data);
+        const bool ok    = static_cast<bool>(mjkdl::build_scene(&model, &data, &sc));
+        mjkdl::destroy_scene(model, data);
         return ok;
     };
-    mj_kdl::SceneSpec base;
+    mjkdl::SceneSpec base;
     base.timestep   = 0.002;
     base.add_floor  = false;
     base.add_skybox = false;
 
-    mj_kdl::SceneObject cube = small_cube();
+    mjkdl::SceneObject cube = small_cube();
     cube.friction[0]         = 1.0;
     cube.friction[1]         = 0.005;
     cube.friction[2]         = 0.0001;
 
-    mj_kdl::SceneSpec complete = base;
+    mjkdl::SceneSpec complete = base;
     complete.objects           = { cube };
     EXPECT_TRUE(builds(complete));
 
-    mj_kdl::SceneSpec no_mass = complete;
+    mjkdl::SceneSpec no_mass = complete;
     no_mass.objects[0].mass   = NAN;
     EXPECT_FALSE(builds(no_mass));
 
-    mj_kdl::SceneSpec no_friction      = complete;
+    mjkdl::SceneSpec no_friction      = complete;
     no_friction.objects[0].friction[1] = NAN;
     EXPECT_FALSE(builds(no_friction));
 
-    mj_kdl::CameraSpec cam;
+    mjkdl::CameraSpec cam;
     cam.name   = "cam";
     cam.pos[0] = cam.pos[1]   = 0.0;
     cam.pos[2]                = 1.0;
-    mj_kdl::SceneSpec no_fovy = base;
+    mjkdl::SceneSpec no_fovy = base;
     no_fovy.cameras.push_back(cam);
     EXPECT_FALSE(builds(no_fovy));
 
-    mj_kdl::SceneSpec no_timestep = base;
+    mjkdl::SceneSpec no_timestep = base;
     no_timestep.timestep          = NAN;
     EXPECT_FALSE(builds(no_timestep));
 }

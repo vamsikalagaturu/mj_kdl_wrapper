@@ -14,7 +14,7 @@ install_manifest.txt
 Makefile
 .cache/
 
-# Generated temp files from mj_kdl_wrapper
+# Generated temp files from mjkdl
 MUJOCO_LOG.TXT
 
 # Third-party dependencies and local workspace installs

@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import math
 
-import mj_kdl_wrapper as mjk
+import mjkdl
 
 HOME_POSE = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 TARGET_POSE = [0.3, 0.5, 2.9, -2.0, 0.3, 1.2, 1.3]
@@ -25,19 +25,19 @@ def main() -> int:
     parser.add_argument("--gui", action="store_true")
     args = parser.parse_args()
 
-    spec = mjk.SceneSpec()
+    spec = mjkdl.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
     spec.add_skybox = True
-    robot_spec = mjk.RobotSpec()
-    robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
-    velocity = mjk.CtrlModeSpec()
-    velocity.mode = mjk.CtrlMode.VELOCITY
+    robot_spec = mjkdl.RobotSpec()
+    robot_spec.path = str(mjkdl.ASSETS_DIR / "kinova_gen3/gen3.xml")
+    velocity = mjkdl.CtrlModeSpec()
+    velocity.mode = mjkdl.CtrlMode.VELOCITY
     velocity.kv = VEL_GAIN
     robot_spec.modes = [velocity]
     spec.robots = [robot_spec]
 
-    env = mjk.Env.build(spec)
+    env = mjkdl.Env.build(spec)
     try:
         robot = env.create_robot("base_link", "bracelet_link")
         state = {"restart": False}
@@ -58,7 +58,7 @@ def main() -> int:
         while True:
             if state["restart"]:
                 state["restart"] = False
-                robot.set_control_mode(mjk.CtrlMode.POSITION)
+                robot.set_control_mode(mjkdl.CtrlMode.POSITION)
                 motion, t_start = "position", env.data.time
                 pos_err = vel_err = math.inf
             env.update()
@@ -69,7 +69,7 @@ def main() -> int:
                 max_err = max(abs(g - q) for g, q in zip(TARGET_POSE, robot.jnt_pos_msr))
                 if t >= MOTION_DURATION + HOLD_TIME:
                     pos_err = max_err
-                    robot.set_control_mode(mjk.CtrlMode.VELOCITY)
+                    robot.set_control_mode(mjkdl.CtrlMode.VELOCITY)
                     motion, t_start = "velocity", env.data.time
                     continue
             else:

@@ -7,25 +7,25 @@ find_dependency(glfw3)
 find_dependency(Eigen3 NO_MODULE)
 
 # A bundled fork is taken from this prefix only, never a system KDL of the same name.
-set(_mj_kdl_kdl_in_prefix @_MJ_KDL_KDL_IN_PREFIX@)
-if(_mj_kdl_kdl_in_prefix)
+set(_mjkdl_kdl_in_prefix @_MJKDL_KDL_IN_PREFIX@)
+if(_mjkdl_kdl_in_prefix)
   find_dependency(orocos_kdl PATHS "${PACKAGE_PREFIX_DIR}" NO_DEFAULT_PATH)
 else()
   find_dependency(orocos_kdl)
 endif()
-unset(_mj_kdl_kdl_in_prefix)
+unset(_mjkdl_kdl_in_prefix)
 
 # The camera_ros target is only in the export when the install was built with ROS; consumers
-# test for it with if(TARGET mj_kdl_wrapper::camera_ros).
-set(MJ_KDL_WRAPPER_WITH_ROS @MJ_KDL_ROS_ENABLED@)
-if(MJ_KDL_WRAPPER_WITH_ROS)
+# test for it with if(TARGET mjkdl::camera_ros).
+set(MJKDL_WITH_ROS @MJKDL_ROS_ENABLED@)
+if(MJKDL_WITH_ROS)
   find_dependency(rclcpp)
   find_dependency(sensor_msgs)
 endif()
 
-# Recreated, not exported: an IMPORTED target cannot travel in mj_kdl_wrapperTargets.cmake.
-set(MJ_KDL_MUJOCO_DIR "@MJ_KDL_MUJOCO_DIR@")
-set(MJ_KDL_MUJOCO_VERSION "@MJ_KDL_MUJOCO_VERSION@")
+# Recreated, not exported: an IMPORTED target cannot travel in mjkdlTargets.cmake.
+set(MJKDL_MUJOCO_DIR "@MJKDL_MUJOCO_DIR@")
+set(MJKDL_MUJOCO_VERSION "@MJKDL_MUJOCO_VERSION@")
 if(NOT TARGET mujoco::mujoco)
   add_library(mujoco::mujoco SHARED IMPORTED)
   set_target_properties(mujoco::mujoco PROPERTIES
@@ -33,6 +33,6 @@ if(NOT TARGET mujoco::mujoco)
     INTERFACE_INCLUDE_DIRECTORIES "@MUJOCO_INCLUDE_DIR@")
 endif()
 
-include("${CMAKE_CURRENT_LIST_DIR}/mj_kdl_wrapperTargets.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/mjkdlTargets.cmake")
 
-check_required_components(mj_kdl_wrapper)
+check_required_components(mjkdl)

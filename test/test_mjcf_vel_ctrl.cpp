@@ -3,7 +3,7 @@
  * RobotSpec::modes drive the arm from home to a target under a clamped proportional velocity
  * command, as ex_joint_ctrl's second motion does. */
 
-#include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "mjkdl/mjkdl.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
 
@@ -14,7 +14,7 @@
 #include <filesystem>
 #include <string>
 
-namespace ex = mj_kdl_examples;
+namespace ex = mjkdl_examples;
 namespace fs = std::filesystem;
 
 static constexpr double kTargetPose[7] = { 0.3, 0.5, 2.9, -2.0, 0.3, 1.2, 1.3 };
@@ -29,25 +29,25 @@ TEST(MjcfVelCtrlTest, ConvergesInVelocityMode)
     const std::string arm = ex::find_asset("kinova_gen3/gen3.xml");
     if (!fs::exists(arm)) GTEST_SKIP() << arm << " not found";
 
-    mj_kdl::RobotSpec rs;
+    mjkdl::RobotSpec rs;
     rs.path  = arm;
-    rs.modes = { { .mode = mj_kdl::CtrlMode::VELOCITY, .joints = {}, .kv = kVelGain } };
-    mj_kdl::SceneSpec sc;
+    rs.modes = { { .mode = mjkdl::CtrlMode::VELOCITY, .joints = {}, .kv = kVelGain } };
+    mjkdl::SceneSpec sc;
     sc.timestep   = 0.002;
     sc.add_floor  = true;
     sc.add_skybox = false;
     sc.robots.push_back(rs);
 
-    mj_kdl::Env   env;
-    mj_kdl::Robot robot;
-    ASSERT_TRUE(mj_kdl::init_env(&env, &sc));
-    ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link"));
-    mj_kdl::set_joint_pos(&robot, ex::home_q(7));
-    ASSERT_TRUE(mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::VELOCITY));
+    mjkdl::Env   env;
+    mjkdl::Robot robot;
+    ASSERT_TRUE(mjkdl::init_env(&env, &sc));
+    ASSERT_TRUE(mjkdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link"));
+    mjkdl::set_joint_pos(&robot, ex::home_q(7));
+    ASSERT_TRUE(mjkdl::set_control_mode(&robot, mjkdl::CtrlMode::VELOCITY));
 
     double max_err = 0.0;
     while (env.data->time < kTimeout) {
-        mj_kdl::update(&env);
+        mjkdl::update(&env);
         max_err = 0.0;
         for (int i = 0; i < 7; ++i) {
             const double err     = kTargetPose[i] - robot.jnt_pos_msr[i];
@@ -55,7 +55,7 @@ TEST(MjcfVelCtrlTest, ConvergesInVelocityMode)
             robot.jnt_vel_cmd[i] = ex::clamp_abs(kKv * err, kMaxVel);
         }
         if (max_err < kTol) break;
-        mj_kdl::step(&env);
+        mjkdl::step(&env);
     }
     EXPECT_LT(max_err, kTol);
     EXPECT_LT(env.data->time, 2.5) << "measured 1.93 s";

@@ -16,7 +16,7 @@ import math
 import mujoco
 import numpy as np
 import PyKDL as kdl
-import mj_kdl_wrapper as mjk
+import mjkdl
 
 HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 # [m] TCP start in the base frame, flange down; the base stands on the table, so z is its height.
@@ -42,23 +42,23 @@ TCP_SITE = "pinch_site"  # the flange face, z out of the arm
 APPROACH, PRESS, SLIDE = "approach", "press", "slide"
 
 
-def build_env() -> tuple[mjk.Env, mjk.Robot]:
-    table = mjk.SceneObject()
+def build_env() -> tuple[mjkdl.Env, mjkdl.Robot]:
+    table = mjkdl.SceneObject()
     table.name = "table"
-    table.mjcf_path = str(mjk.ASSETS_DIR / "table.xml")
+    table.mjcf_path = str(mjkdl.ASSETS_DIR / "table.xml")
     table.pos = [0.0, 0.0, TABLE_Z]
     table.fixed = True
-    spec = mjk.SceneSpec()
+    spec = mjkdl.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
     spec.add_skybox = True
     spec.objects = [table]
-    robot_spec = mjk.RobotSpec()
-    robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
+    robot_spec = mjkdl.RobotSpec()
+    robot_spec.path = str(mjkdl.ASSETS_DIR / "kinova_gen3/gen3.xml")
     robot_spec.pos = [0.0, 0.0, TABLE_Z]
     spec.robots = [robot_spec]
-    env = mjk.Env.build(spec)
-    tool = mjk.ToolFrameSpec()
+    env = mjkdl.Env.build(spec)
+    tool = mjkdl.ToolFrameSpec()
     tool.tcp_site = TCP_SITE
     robot = env.create_robot("base_link", "bracelet_link", tool=tool)
     return env, robot
@@ -152,7 +152,7 @@ def alpha_no_linear_z() -> kdl.Jacobian:
 class Slide:
     """The ACHD controller and the press measurement; restart() replays it from the current pose."""
 
-    def __init__(self, env: mjk.Env, robot: mjk.Robot):
+    def __init__(self, env: mjkdl.Env, robot: mjkdl.Robot):
         self.env, self.robot = env, robot
         self.chain = robot.kdl_chain()
         self.fk = kdl.ChainFkSolverPos_recursive(self.chain)
@@ -282,7 +282,7 @@ def main() -> int:
 
         env.on_reset = on_reset
         env.reset()
-        robot.set_control_mode(mjk.CtrlMode.TORQUE)
+        robot.set_control_mode(mjkdl.CtrlMode.TORQUE)
         slide = Slide(env, robot)
 
         if args.gui:

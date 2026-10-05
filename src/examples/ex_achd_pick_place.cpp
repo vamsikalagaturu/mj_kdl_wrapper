@@ -33,7 +33,7 @@
 #include <string>
 #include <vector>
 
-namespace ex = mj_kdl_examples;
+namespace ex = mjkdl_examples;
 
 static constexpr double kMaxPlaceErr  = 0.005; // [m] in the table plane
 static constexpr double kMaxElbowDrop = 0.10;  // [m] below the support reference
@@ -75,7 +75,7 @@ struct Phase
 
 struct AchdController
 {
-    explicit AchdController(const mj_kdl::Robot &r, double gravity_z)
+    explicit AchdController(const mjkdl::Robot &r, double gravity_z)
       : robot(r), n(r.chain.getNrOfJoints()), fk_pos(r.chain), fk_vel(r.chain),
         achd(r.chain, KDL::Twist(KDL::Vector(0.0, 0.0, -gravity_z), KDL::Vector::Zero()), 6),
         rnea(r.chain, KDL::Vector(0.0, 0.0, gravity_z)), q(n), qdot(n), qddot(n), ff_tau(n),
@@ -101,7 +101,7 @@ struct AchdController
     }
 
     // ACHD qddot for the TCP target, priced by RNEA into jnt_trq_cmd; false if a solver failed.
-    bool control(mj_kdl::Robot &out, const KDL::Frame &target, const KDL::Twist &target_twist)
+    bool control(mjkdl::Robot &out, const KDL::Frame &target, const KDL::Twist &target_twist)
     {
         KDL::FrameVel tcp_vel;
         fk_vel.JntToCart(KDL::JntArrayVel(q, qdot), tcp_vel);
@@ -134,7 +134,7 @@ struct AchdController
         return true;
     }
 
-    const mj_kdl::Robot            &robot;
+    const mjkdl::Robot            &robot;
     unsigned                        n;
     KDL::ChainFkSolverPos_recursive fk_pos;
     KDL::ChainFkSolverVel_recursive fk_vel;
@@ -153,26 +153,26 @@ int main(int argc, char *argv[])
     const ex::Args args     = ex::parse_args(argc, argv, "achd_pick_place.mp4");
     const bool     headless = args.headless;
 
-    mj_kdl::RobotSpec robot_spec;
+    mjkdl::RobotSpec robot_spec;
     robot_spec.path   = ex::asset("kinova_gen3/gen3.xml");
     robot_spec.pos[2] = ex::kTableZ;
     robot_spec.attachments.push_back(ex::gripper_attachment(ex::asset("robotiq_2f85/2f85.xml")));
 
-    mj_kdl::SceneSpec scene = ex::scene_spec();
+    mjkdl::SceneSpec scene = ex::scene_spec();
     scene.robots.push_back(robot_spec);
     scene.objects.push_back(ex::table_object(ex::asset("table.xml"), ex::kTableZ));
     scene.objects.push_back(ex::cube_object(ex::kPickXY[0], ex::kPickXY[1], ex::kTableZ));
 
-    mj_kdl::Env   env;
-    mj_kdl::Robot robot;
-    if (!mj_kdl::init_env(&env, &scene)) return 1;
-    const mj_kdl::ToolFrameSpec tool = ex::gripper_tool();
-    if (!mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool))
+    mjkdl::Env   env;
+    mjkdl::Robot robot;
+    if (!mjkdl::init_env(&env, &scene)) return 1;
+    const mjkdl::ToolFrameSpec tool = ex::gripper_tool();
+    if (!mjkdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool))
         return 1;
-    if (!mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::TORQUE)) return 1;
-    mj_kdl::SceneActuatorSlot *fingers =
-      mj_kdl::bind_scene_actuator(&env.scene, "g_fingers_actuator");
-    mj_kdl::SceneFreeBodySlot *cube = mj_kdl::bind_scene_free_body(&env.scene, "cube");
+    if (!mjkdl::set_control_mode(&robot, mjkdl::CtrlMode::TORQUE)) return 1;
+    mjkdl::SceneActuatorSlot *fingers =
+      mjkdl::bind_scene_actuator(&env.scene, "g_fingers_actuator");
+    mjkdl::SceneFreeBodySlot *cube = mjkdl::bind_scene_free_body(&env.scene, "cube");
     if (!fingers || !cube) return 1;
 
     int support_segment = -1;
@@ -213,21 +213,21 @@ int main(int argc, char *argv[])
     // clang-format on
 
     bool restart = false;
-    env.on_reset = [&](mj_kdl::ResetContext *ctx) {
-        mj_kdl::set_joint_pos(&robot, q_home);
+    env.on_reset = [&](mjkdl::ResetContext *ctx) {
+        mjkdl::set_joint_pos(&robot, q_home);
         ex::place_cube(env);
         ctx->data->ctrl[fingers->ctrl_id] = 0.0;
         ex::prime_gravity(robot, dyn, q_home);
         restart = true;
     };
-    mj_kdl::reset(&env);
-    if (!headless && !mj_kdl::open_viewer(&env)) return 1;
+    mjkdl::reset(&env);
+    if (!headless && !mjkdl::open_viewer(&env)) return 1;
 
-    mj_kdl::VideoRecorder recorder;
+    mjkdl::VideoRecorder recorder;
     bool                  recording = false;
     if (args.record) {
-        const mj_kdl::Status s = mj_kdl::init_video_recorder(
-          &recorder, env.model, args.record_path.c_str(), mj_kdl::VideoResolution::R720p, kRecordFps
+        const mjkdl::Status s = mjkdl::init_video_recorder(
+          &recorder, env.model, args.record_path.c_str(), mjkdl::VideoResolution::R720p, kRecordFps
         );
         if (!s) {
             std::cerr << "init_video_recorder() failed: " << s.error << "\n";
@@ -268,7 +268,7 @@ int main(int argc, char *argv[])
             ctrl.new_phase();
             KDL::Frame prev_target = phase_start;
             while (true) {
-                mj_kdl::update(&env);
+                mjkdl::update(&env);
                 const KDL::Frame &tcp   = ctrl.measure();
                 const double      t_rel = env.data->time - t_enter;
                 const double      dt    = env.model->opt.timestep;
@@ -307,25 +307,25 @@ int main(int argc, char *argv[])
                     break;
                 }
 
-                if (!mj_kdl::step(&env)) {
+                if (!mjkdl::step(&env)) {
                     aborted = true;
                     break;
                 }
                 if (restart) break;
-                mj_kdl::pace_realtime(&env);
+                mjkdl::pace_realtime(&env);
                 if (recording && ++sim_step % steps_per_frame == 0
-                    && !mj_kdl::record_frame(&recorder, &env)) {
+                    && !mjkdl::record_frame(&recorder, &env)) {
                     std::cerr << "record_frame() failed at step " << sim_step << "\n";
-                    mj_kdl::cleanup(&recorder);
+                    mjkdl::cleanup(&recorder);
                     recording     = false;
                     record_failed = true;
                 }
             }
         }
     } while (restart);
-    mj_kdl::update(&env);
+    mjkdl::update(&env);
     if (recording) {
-        mj_kdl::cleanup(&recorder);
+        mjkdl::cleanup(&recorder);
         std::cout << "Saved recording: " << args.record_path << "\n";
     }
 
@@ -337,7 +337,7 @@ int main(int argc, char *argv[])
               << kMaxPlaceErr * 1000.0 << " mm)" << (on_table ? "" : ", not on the table") << "\n";
     std::cout << "elbow drop: " << elbow_drop * 1000.0 << " mm (limit " << kMaxElbowDrop * 1000.0
               << " mm)\n";
-    mj_kdl::cleanup(&env);
+    mjkdl::cleanup(&env);
     const bool ok = !aborted && !solver_failed && !record_failed && on_table
                     && place_xy <= kMaxPlaceErr && elbow_drop <= kMaxElbowDrop;
     return headless ? ex::verdict(ok, "the cube was placed with the elbow held up") : 0;

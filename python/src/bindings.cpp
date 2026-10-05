@@ -1,4 +1,4 @@
-#include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "mjkdl/mjkdl.hpp"
 
 #include <mujoco/mujoco.h>
 #include <pybind11/functional.h>
@@ -19,21 +19,21 @@
 namespace py = pybind11;
 
 // Version is injected by CMake from the single source of truth (pyproject.toml).
-#ifndef MJ_KDL_WRAPPER_VERSION
-#define MJ_KDL_WRAPPER_VERSION "0.0.0+unknown"
+#ifndef MJKDL_VERSION
+#define MJKDL_VERSION "0.0.0+unknown"
 #endif
 
 namespace {
 
-using mj_kdl::AttachKind;
-using mj_kdl::AttachTarget;
-using mj_kdl::CameraSpec;
-using mj_kdl::Condim;
-using mj_kdl::CtrlMode;
-using mj_kdl::RobotSpec;
-using mj_kdl::SceneObject;
-using mj_kdl::SceneSpec;
-using mj_kdl::Shape;
+using mjkdl::AttachKind;
+using mjkdl::AttachTarget;
+using mjkdl::CameraSpec;
+using mjkdl::Condim;
+using mjkdl::CtrlMode;
+using mjkdl::RobotSpec;
+using mjkdl::SceneObject;
+using mjkdl::SceneSpec;
+using mjkdl::Shape;
 
 struct PyAttachTarget
 {
@@ -48,7 +48,7 @@ struct PyAttachmentSpec
     std::string                                      prefix;
     std::array<double, 3>                            pos  = { 0.0, 0.0, 0.0 };
     std::array<double, 4>                            quat = { 0.0, 0.0, 0.0, 1.0 };
-    std::vector<mj_kdl::CtrlModeSpec>                modes;
+    std::vector<mjkdl::CtrlModeSpec>                modes;
     std::vector<std::pair<std::string, std::string>> contact_exclusions;
 };
 
@@ -60,7 +60,7 @@ struct PyRobotSpec
     std::array<double, 3>             pos  = { 0.0, 0.0, 0.0 };
     std::array<double, 4>             quat = { 0.0, 0.0, 0.0, 1.0 };
     std::vector<PyAttachmentSpec>     attachments;
-    std::vector<mj_kdl::CtrlModeSpec> modes = mj_kdl::RobotSpec{}.modes;
+    std::vector<mjkdl::CtrlModeSpec> modes = mjkdl::RobotSpec{}.modes;
 };
 
 struct PySceneObject
@@ -136,9 +136,9 @@ AttachTarget to_cpp(const PyAttachTarget &src)
     return out;
 }
 
-mj_kdl::AttachmentSpec to_cpp(const PyAttachmentSpec &src)
+mjkdl::AttachmentSpec to_cpp(const PyAttachmentSpec &src)
 {
-    mj_kdl::AttachmentSpec out;
+    mjkdl::AttachmentSpec out;
     out.mjcf_path = src.mjcf_path;
     out.attach_to = to_cpp(src.attach_to);
     out.prefix    = src.prefix;
@@ -226,7 +226,7 @@ SceneSpec to_cpp(const PySceneSpec &src)
     for (const auto &item : src.objects) out.objects.push_back(to_cpp(item));
     out.sites.reserve(src.sites.size());
     for (const auto &item : src.sites) {
-        mj_kdl::SiteSpec site;
+        mjkdl::SiteSpec site;
         site.body = item.body;
         site.name = item.name;
         std::copy(item.pos.begin(), item.pos.end(), site.pos);
@@ -326,18 +326,18 @@ template<typename T, py::object T::*Ref> py::custom_type_setup gc_keeps(bool cle
 
 struct PyResetContext
 {
-    mj_kdl::ResetOptions options;
-    mj_kdl::ResetInfo    info;
+    mjkdl::ResetOptions options;
+    mjkdl::ResetInfo    info;
 };
 
-mj_kdl::ToolFrameSpec to_cpp(const PyToolFrameSpec &src)
+mjkdl::ToolFrameSpec to_cpp(const PyToolFrameSpec &src)
 {
-    mj_kdl::ToolFrameSpec out;
+    mjkdl::ToolFrameSpec out;
     out.tool_body = src.tool_body;
     out.tcp_site  = src.tcp_site;
     out.ft_sensors.reserve(src.ft_sensors.size());
     for (const auto &item : src.ft_sensors) {
-        out.ft_sensors.push_back(mj_kdl::ForceTorqueSensorSpec{
+        out.ft_sensors.push_back(mjkdl::ForceTorqueSensorSpec{
           .name          = item.name,
           .force_sensor  = item.force_sensor,
           .torque_sensor = item.torque_sensor,
@@ -350,7 +350,7 @@ mj_kdl::ToolFrameSpec to_cpp(const PyToolFrameSpec &src)
 struct PyEnv : std::enable_shared_from_this<PyEnv>
 {
     PySceneSpec spec;
-    mj_kdl::Env env;
+    mjkdl::Env env;
     py::object  reset_callback;        // Python callable invoked by reset(), or None
     py::object  model_obj, data_obj;   // mujoco.MjModel / MjData the Env runs on
     py::object  next_model, next_data; // made by adopt during a (re)build, taken after it
@@ -365,7 +365,7 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
 
     void wire_reset_hook()
     {
-        env.on_reset = [this](mj_kdl::ResetContext *ctx) {
+        env.on_reset = [this](mjkdl::ResetContext *ctx) {
             py::gil_scoped_acquire gil;
             if (!reset_callback || reset_callback.is_none()) return;
             try {
@@ -404,7 +404,7 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
             // An .mjb drops the compiler signature, which save_model_xml's mj_copyBack checks.
             am->signature = m->signature;
             mj_copyData(ad, m, d);
-            mj_kdl::destroy_scene(m, d);
+            mjkdl::destroy_scene(m, d);
             return std::pair{ am, ad };
         };
     }
@@ -423,10 +423,10 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         out->spec          = spec;
         SceneSpec cpp_spec = to_cpp(out->spec);
         out->wire_adopt();
-        mj_kdl::Status s;
+        mjkdl::Status s;
         {
             py::gil_scoped_release nogil;
-            s = mj_kdl::init_env(&out->env, &cpp_spec);
+            s = mjkdl::init_env(&out->env, &cpp_spec);
         }
         if (!s) throw std::runtime_error(s.error);
         out->take_next();
@@ -439,7 +439,7 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
     {
         {
             py::gil_scoped_release nogil;
-            mj_kdl::cleanup(&env);
+            mjkdl::cleanup(&env);
         }
         model_obj      = py::object();
         data_obj       = py::object();
@@ -460,13 +460,13 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
       const PyToolFrameSpec          *tool
     );
 
-    mj_kdl::ResetInfo reset(const mj_kdl::ResetOptions *options)
+    mjkdl::ResetInfo reset(const mjkdl::ResetOptions *options)
     {
         ensure_open();
-        mj_kdl::ResetInfo info;
+        mjkdl::ResetInfo info;
         {
             py::gil_scoped_release nogil;
-            info = mj_kdl::reset(&env, options);
+            info = mjkdl::reset(&env, options);
         }
         raise_reset_error();
         return info;
@@ -479,7 +479,7 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         bool running = false;
         {
             py::gil_scoped_release nogil;
-            running = mj_kdl::step(&env);
+            running = mjkdl::step(&env);
         }
         raise_reset_error();
         return running;
@@ -489,22 +489,22 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
     {
         ensure_open();
         py::gil_scoped_release nogil;
-        mj_kdl::update(&env);
+        mjkdl::update(&env);
     }
 
     void pace()
     {
         ensure_open();
-        mj_kdl::pace_realtime(&env);
+        mjkdl::pace_realtime(&env);
     }
 
     void open_viewer(const std::string &title)
     {
         ensure_open();
-        mj_kdl::Status s;
+        mjkdl::Status s;
         {
             py::gil_scoped_release nogil;
-            s = mj_kdl::open_viewer(&env, title.c_str());
+            s = mjkdl::open_viewer(&env, title.c_str());
         }
         if (!s) throw std::runtime_error(s.error);
     }
@@ -512,7 +512,7 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
     void add_object(const PySceneObject &object)
     {
         ensure_open();
-        if (mj_kdl::Status s = mj_kdl::scene_add_object(&env, to_cpp(object)); !s)
+        if (mjkdl::Status s = mjkdl::scene_add_object(&env, to_cpp(object)); !s)
             throw std::runtime_error(s.error);
         take_next();
         spec.objects.push_back(object);
@@ -521,7 +521,7 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
     void remove_object(const std::string &name)
     {
         ensure_open();
-        if (mj_kdl::Status s = mj_kdl::scene_remove_object(&env, name); !s)
+        if (mjkdl::Status s = mjkdl::scene_remove_object(&env, name); !s)
             throw std::runtime_error(s.error);
         take_next();
         auto it = std::find_if(spec.objects.begin(), spec.objects.end(), [&](const auto &obj) {
@@ -533,10 +533,10 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
     void set_control_mode(int robot, CtrlMode mode)
     {
         ensure_open();
-        mj_kdl::Status s;
+        mjkdl::Status s;
         {
             py::gil_scoped_release nogil;
-            s = mj_kdl::set_control_mode(&env, robot, mode);
+            s = mjkdl::set_control_mode(&env, robot, mode);
         }
         if (!s) throw std::runtime_error(s.error);
     }
@@ -548,7 +548,7 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         bool       found = false;
         {
             py::gil_scoped_release nogil;
-            found = mj_kdl::get_body_frame(&env, name.c_str(), &frame);
+            found = mjkdl::get_body_frame(&env, name.c_str(), &frame);
         }
         if (!found) throw std::runtime_error("body not found");
         return to_pykdl(frame);
@@ -561,7 +561,7 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         bool       found = false;
         {
             py::gil_scoped_release nogil;
-            found = mj_kdl::get_site_frame(&env, name.c_str(), &frame);
+            found = mjkdl::get_site_frame(&env, name.c_str(), &frame);
         }
         if (!found) throw std::runtime_error("site not found");
         return to_pykdl(frame);
@@ -575,7 +575,7 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
     {
         ensure_open();
         py::gil_scoped_release nogil;
-        mj_kdl::set_body_pose(
+        mjkdl::set_body_pose(
           &env, name.c_str(), pos.data(), quat_xyzw ? quat_xyzw->data() : nullptr
         );
     }
@@ -583,7 +583,7 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
     void save_model_xml(const std::string &path) const
     {
         ensure_open();
-        if (mj_kdl::Status s = mj_kdl::save_model_xml(env.model, path.c_str()); !s)
+        if (mjkdl::Status s = mjkdl::save_model_xml(env.model, path.c_str()); !s)
             throw std::runtime_error(s.error);
     }
 };
@@ -592,7 +592,7 @@ struct PyRobot
 {
     // The Python Env, declared before robot so the robot unregisters while the Env still exists.
     py::object    env_owner;
-    mj_kdl::Robot robot;
+    mjkdl::Robot robot;
 
     void ensure_active() const
     {
@@ -632,7 +632,7 @@ struct PyRobot
         throw std::runtime_error("FT sensor not found: " + name);
     }
 
-    void set_port(std::vector<double> mj_kdl::RobotPorts::*port, const std::vector<double> &values)
+    void set_port(std::vector<double> mjkdl::RobotPorts::*port, const std::vector<double> &values)
     {
         ensure_active();
         if (static_cast<int>(values.size()) != robot.n_joints) {
@@ -655,12 +655,12 @@ std::shared_ptr<PyRobot> PyEnv::create_robot(
     ensure_open();
     auto out       = std::make_shared<PyRobot>();
     out->env_owner = py::cast(shared_from_this());
-    mj_kdl::ToolFrameSpec cpp_tool;
+    mjkdl::ToolFrameSpec cpp_tool;
     if (tool) cpp_tool = to_cpp(*tool);
-    mj_kdl::Status s;
+    mjkdl::Status s;
     {
         py::gil_scoped_release nogil;
-        s = mj_kdl::init_robot_from_mjcf(
+        s = mjkdl::init_robot_from_mjcf(
           &out->robot,
           &env,
           base_body.c_str(),
@@ -683,12 +683,12 @@ std::shared_ptr<PyRobot> PyEnv::create_robot_from_chain(
     ensure_open();
     auto out       = std::make_shared<PyRobot>();
     out->env_owner = py::cast(shared_from_this());
-    mj_kdl::ToolFrameSpec cpp_tool;
+    mjkdl::ToolFrameSpec cpp_tool;
     if (tool) cpp_tool = to_cpp(*tool);
-    mj_kdl::Status s;
+    mjkdl::Status s;
     {
         py::gil_scoped_release nogil;
-        s = mj_kdl::init_robot_from_chain(
+        s = mjkdl::init_robot_from_chain(
           &out->robot, &env, chain, joint_names, prefix.c_str(), tool ? &cpp_tool : nullptr
         );
     }
@@ -703,30 +703,30 @@ struct PyViewer
     py::object owner; // the Python Env, which keeps env alive
     PyEnv     *env = nullptr;
 
-    mj_kdl::Viewer *viewer() const { return &env->env.viewer; }
+    mjkdl::Viewer *viewer() const { return &env->env.viewer; }
 
     bool is_running() const
     {
         py::gil_scoped_release nogil;
-        return mj_kdl::is_running(viewer());
+        return mjkdl::is_running(viewer());
     }
 
     bool key_pressed(int glfw_key) const
     {
         py::gil_scoped_release nogil;
-        return mj_kdl::key_pressed(viewer(), glfw_key);
+        return mjkdl::key_pressed(viewer(), glfw_key);
     }
 
     void capture_key(int glfw_key, bool capture)
     {
         py::gil_scoped_release nogil;
-        mj_kdl::capture_key(viewer(), glfw_key, capture);
+        mjkdl::capture_key(viewer(), glfw_key, capture);
     }
 
     void clear_trace()
     {
         py::gil_scoped_release nogil;
-        mj_kdl::clear_trace(viewer());
+        mjkdl::clear_trace(viewer());
     }
 
     void add_trace_segment(
@@ -738,14 +738,14 @@ struct PyViewer
         KDL::Vector            ka(a[0], a[1], a[2]);
         KDL::Vector            kb(b[0], b[1], b[2]);
         py::gil_scoped_release nogil;
-        mj_kdl::add_trace_segment(viewer(), ka, kb, rgba ? rgba->data() : nullptr);
+        mjkdl::add_trace_segment(viewer(), ka, kb, rgba ? rgba->data() : nullptr);
     }
 
     bool use_camera(const std::string &name)
     {
         env->ensure_open();
         py::gil_scoped_release nogil;
-        return mj_kdl::use_camera(viewer(), env->env.model, name.empty() ? nullptr : name.c_str());
+        return mjkdl::use_camera(viewer(), env->env.model, name.empty() ? nullptr : name.c_str());
     }
 
     void set_free_camera(
@@ -756,13 +756,13 @@ struct PyViewer
     )
     {
         py::gil_scoped_release nogil;
-        mj_kdl::set_free_camera(viewer(), distance, azimuth, elevation, lookat);
+        mjkdl::set_free_camera(viewer(), distance, azimuth, elevation, lookat);
     }
 };
 
 struct PyVideoRecorder
 {
-    mj_kdl::VideoRecorder recorder;
+    mjkdl::VideoRecorder recorder;
     py::object            owner; // the Python Env, which keeps env alive
     PyEnv                *env    = nullptr;
     bool                  active = false;
@@ -786,10 +786,10 @@ struct PyVideoRecorder
         auto     out = std::shared_ptr<PyVideoRecorder>(new PyVideoRecorder());
         out->owner   = py::cast(env);
         out->env     = env.get();
-        const mj_kdl::Status s =
+        const mjkdl::Status s =
           out_path.empty()
-            ? mj_kdl::init_offscreen(&out->recorder, m, width, height)
-            : mj_kdl::init_video_recorder(&out->recorder, m, out_path.c_str(), width, height, fps);
+            ? mjkdl::init_offscreen(&out->recorder, m, width, height)
+            : mjkdl::init_video_recorder(&out->recorder, m, out_path.c_str(), width, height, fps);
         if (!s) throw std::runtime_error(s.error);
         out->active = true;
         out->width  = width;
@@ -810,7 +810,7 @@ struct PyVideoRecorder
         bool                      ok     = false;
         {
             py::gil_scoped_release nogil;
-            ok = mj_kdl::render_rgb(&recorder, &env->env, pixels);
+            ok = mjkdl::render_rgb(&recorder, &env->env, pixels);
         }
         if (!ok) throw std::runtime_error("render_rgb failed");
         return out;
@@ -820,7 +820,7 @@ struct PyVideoRecorder
     {
         ensure_open();
         py::gil_scoped_release nogil;
-        return mj_kdl::record_frame(&recorder, &env->env);
+        return mjkdl::record_frame(&recorder, &env->env);
     }
 
     bool use_camera(const std::string &name)
@@ -857,7 +857,7 @@ struct PyVideoRecorder
     void close()
     {
         if (!active) return;
-        mj_kdl::cleanup(&recorder);
+        mjkdl::cleanup(&recorder);
         active = false;
         owner  = py::object();
         env    = nullptr;
@@ -866,19 +866,19 @@ struct PyVideoRecorder
 
 } // namespace
 
-PYBIND11_MODULE(_mj_kdl_wrapper, m)
+PYBIND11_MODULE(_mjkdl, m)
 {
-    m.doc()                      = "Python bindings for mj_kdl_wrapper";
-    m.attr("__version__")        = MJ_KDL_WRAPPER_VERSION;
+    m.doc()                      = "Python bindings for mjkdl";
+    m.attr("__version__")        = MJKDL_VERSION;
     m.attr("__mujoco_version__") = mj_versionString();
 
-    py::enum_<mj_kdl::LogLevel>(
+    py::enum_<mjkdl::LogLevel>(
       m, "LogLevel", "Log threshold: messages at or above it print; NONE prints nothing."
     )
-      .value("INFO", mj_kdl::LogLevel::INFO)
-      .value("WARN", mj_kdl::LogLevel::WARN)
-      .value("ERROR", mj_kdl::LogLevel::ERROR)
-      .value("NONE", mj_kdl::LogLevel::NONE);
+      .value("INFO", mjkdl::LogLevel::INFO)
+      .value("WARN", mjkdl::LogLevel::WARN)
+      .value("ERROR", mjkdl::LogLevel::ERROR)
+      .value("NONE", mjkdl::LogLevel::NONE);
 
     py::enum_<AttachKind>(m, "AttachKind")
       .value("World", AttachKind::World)
@@ -902,30 +902,30 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .value("TORQUE", CtrlMode::TORQUE)
       .value("VELOCITY", CtrlMode::VELOCITY);
 
-    py::class_<mj_kdl::CtrlModeSpec>(
+    py::class_<mjkdl::CtrlModeSpec>(
       m, "CtrlModeSpec", "A control mode build_scene adds to a robot, on its own actuator group."
     )
       .def(
         py::init([](CtrlMode mode, std::vector<std::string> joints, double kv) {
-            return mj_kdl::CtrlModeSpec{ mode, std::move(joints), kv };
+            return mjkdl::CtrlModeSpec{ mode, std::move(joints), kv };
         }),
         py::arg("mode")   = CtrlMode::TORQUE,
         py::arg("joints") = std::vector<std::string>{},
         py::arg("kv")     = 0.0
       )
-      .def_readwrite("mode", &mj_kdl::CtrlModeSpec::mode)
+      .def_readwrite("mode", &mjkdl::CtrlModeSpec::mode)
       .def_readwrite(
-        "joints", &mj_kdl::CtrlModeSpec::joints, "Joints to give the mode; empty = all actuated."
+        "joints", &mjkdl::CtrlModeSpec::joints, "Joints to give the mode; empty = all actuated."
       )
-      .def_readwrite("kv", &mj_kdl::CtrlModeSpec::kv, "VELOCITY actuator gain [N m s/rad].");
+      .def_readwrite("kv", &mjkdl::CtrlModeSpec::kv, "VELOCITY actuator gain [N m s/rad].");
 
-    py::enum_<mj_kdl::VideoResolution>(m, "VideoResolution")
-      .value("R360p", mj_kdl::VideoResolution::R360p)
-      .value("R480p", mj_kdl::VideoResolution::R480p)
-      .value("R720p", mj_kdl::VideoResolution::R720p)
-      .value("R1080p", mj_kdl::VideoResolution::R1080p)
-      .value("R2K", mj_kdl::VideoResolution::R2K)
-      .value("R4K", mj_kdl::VideoResolution::R4K);
+    py::enum_<mjkdl::VideoResolution>(m, "VideoResolution")
+      .value("R360p", mjkdl::VideoResolution::R360p)
+      .value("R480p", mjkdl::VideoResolution::R480p)
+      .value("R720p", mjkdl::VideoResolution::R720p)
+      .value("R1080p", mjkdl::VideoResolution::R1080p)
+      .value("R2K", mjkdl::VideoResolution::R2K)
+      .value("R4K", mjkdl::VideoResolution::R4K);
 
     py::class_<PyAttachTarget>(
       m,
@@ -1094,14 +1094,14 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "Logical force-torque sensors attached to this robot."
       );
 
-    py::class_<mj_kdl::ResetOptions>(m, "ResetOptions")
+    py::class_<mjkdl::ResetOptions>(m, "ResetOptions")
       .def(py::init<>())
-      .def_readwrite("keyframe", &mj_kdl::ResetOptions::keyframe)
-      .def_readwrite("use_keyframe", &mj_kdl::ResetOptions::use_keyframe);
+      .def_readwrite("keyframe", &mjkdl::ResetOptions::keyframe)
+      .def_readwrite("use_keyframe", &mjkdl::ResetOptions::use_keyframe);
 
-    py::class_<mj_kdl::ResetInfo>(m, "ResetInfo")
-      .def_readonly("used_keyframe", &mj_kdl::ResetInfo::used_keyframe)
-      .def_readonly("keyframe", &mj_kdl::ResetInfo::keyframe);
+    py::class_<mjkdl::ResetInfo>(m, "ResetInfo")
+      .def_readonly("used_keyframe", &mjkdl::ResetInfo::used_keyframe)
+      .def_readonly("keyframe", &mjkdl::ResetInfo::keyframe);
 
     py::class_<PyResetContext>(
       m, "ResetContext", "A copy of the reset's options and result, passed to Env.on_reset."
@@ -1121,7 +1121,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
             self.ensure_active();
             const KDL::JntArray    joints = to_jnt_array(q, self.robot.n_joints);
             py::gil_scoped_release nogil;
-            mj_kdl::set_joint_pos(&self.robot, joints);
+            mjkdl::set_joint_pos(&self.robot, joints);
         },
         py::arg("q"),
         "Write MuJoCo joint positions; frames read afterwards follow them."
@@ -1186,7 +1186,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
             return read_only_array<double>(self.robot.jnt_pos_msr);
         },
         [](PyRobot &self, const std::vector<double> &values) {
-            self.set_port(&mj_kdl::RobotPorts::jnt_pos_msr, values);
+            self.set_port(&mjkdl::RobotPorts::jnt_pos_msr, values);
         }
       )
       .def_property(
@@ -1196,7 +1196,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
             return read_only_array<double>(self.robot.jnt_vel_msr);
         },
         [](PyRobot &self, const std::vector<double> &values) {
-            self.set_port(&mj_kdl::RobotPorts::jnt_vel_msr, values);
+            self.set_port(&mjkdl::RobotPorts::jnt_vel_msr, values);
         }
       )
       .def_property(
@@ -1206,7 +1206,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
             return read_only_array<double>(self.robot.jnt_trq_msr);
         },
         [](PyRobot &self, const std::vector<double> &values) {
-            self.set_port(&mj_kdl::RobotPorts::jnt_trq_msr, values);
+            self.set_port(&mjkdl::RobotPorts::jnt_trq_msr, values);
         }
       )
       .def_property(
@@ -1216,7 +1216,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
             return read_only_array<double>(self.robot.jnt_pos_cmd);
         },
         [](PyRobot &self, const std::vector<double> &values) {
-            self.set_port(&mj_kdl::RobotPorts::jnt_pos_cmd, values);
+            self.set_port(&mjkdl::RobotPorts::jnt_pos_cmd, values);
         }
       )
       .def_property(
@@ -1226,7 +1226,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
             return read_only_array<double>(self.robot.jnt_vel_cmd);
         },
         [](PyRobot &self, const std::vector<double> &values) {
-            self.set_port(&mj_kdl::RobotPorts::jnt_vel_cmd, values);
+            self.set_port(&mjkdl::RobotPorts::jnt_vel_cmd, values);
         }
       )
       .def_property(
@@ -1236,7 +1236,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
             return read_only_array<double>(self.robot.jnt_trq_cmd);
         },
         [](PyRobot &self, const std::vector<double> &values) {
-            self.set_port(&mj_kdl::RobotPorts::jnt_trq_cmd, values);
+            self.set_port(&mjkdl::RobotPorts::jnt_trq_cmd, values);
         }
       )
       .def_property_readonly(
@@ -1250,10 +1250,10 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "set_control_mode",
         [](PyRobot &self, CtrlMode mode) {
             self.ensure_active();
-            mj_kdl::Status s;
+            mjkdl::Status s;
             {
                 py::gil_scoped_release nogil;
-                s = mj_kdl::set_control_mode(&self.robot, mode);
+                s = mjkdl::set_control_mode(&self.robot, mode);
             }
             if (!s) throw std::runtime_error(s.error);
         },
@@ -1280,7 +1280,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "joint_force_limits",
         [](const PyRobot &self, double fallback) {
             self.ensure_active();
-            return read_only_array<double>(mj_kdl::joint_force_limits(&self.robot, fallback));
+            return read_only_array<double>(mjkdl::joint_force_limits(&self.robot, fallback));
         },
         py::arg("fallback") = 1e6,
         "Per-joint force/torque limit of the active mode's actuators; fallback where unlimited."
@@ -1392,7 +1392,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         [](
           const std::shared_ptr<PyEnv> &env,
           const std::string            &out,
-          mj_kdl::VideoResolution       res,
+          mjkdl::VideoResolution       res,
           int                           fps
         ) {
             if (out.empty()) throw std::invalid_argument("out_path must be set");
@@ -1403,7 +1403,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         },
         py::arg("env"),
         py::arg("out_path"),
-        py::arg("resolution") = mj_kdl::VideoResolution::R720p,
+        py::arg("resolution") = mjkdl::VideoResolution::R720p,
         py::arg("fps")        = 60,
         "Open an offscreen recorder for an Env with a resolution preset."
       )
@@ -1539,8 +1539,8 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def(
         "reset",
         [](PyEnv &self, const py::object &options) {
-            std::optional<mj_kdl::ResetOptions> cpp_options;
-            if (!options.is_none()) cpp_options = options.cast<mj_kdl::ResetOptions>();
+            std::optional<mjkdl::ResetOptions> cpp_options;
+            if (!options.is_none()) cpp_options = options.cast<mjkdl::ResetOptions>();
             return self.reset(cpp_options ? &*cpp_options : nullptr);
         },
         py::arg("options") = py::none(),
@@ -1624,9 +1624,9 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
 
     m.def(
       "set_log_level",
-      &mj_kdl::set_log_level,
+      &mjkdl::set_log_level,
       py::arg("level"),
       "Print wrapper messages at level and above; NONE prints nothing."
     );
-    m.def("get_log_level", &mj_kdl::get_log_level, "Return the wrapper log threshold.");
+    m.def("get_log_level", &mjkdl::get_log_level, "Return the wrapper log threshold.");
 }

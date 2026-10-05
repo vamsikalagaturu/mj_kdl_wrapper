@@ -5,9 +5,9 @@ initialize a KDL-backed robot handle, run position and torque control, add
 attachments, objects, cameras, reset hooks, the Simulate UI, recording, and a
 small tabletop task structure.
 
-Installation stays in the README. The snippets below assume `mj_kdl_wrapper`,
+Installation stays in the README. The snippets below assume `mjkdl`,
 `PyKDL`, and the matching `mujoco` package import successfully; the models come from
-the package's bundled assets, `mjk.ASSETS_DIR`.
+the package's bundled assets, `mjkdl.ASSETS_DIR`.
 
 ## How To Read This Tutorial
 
@@ -34,7 +34,7 @@ Most applications follow this flow:
 ## Complete Runnable Script
 
 The code below is a complete interactive script. Saved as `python_tutorial_demo.py` and run
-from any directory in an environment where `mj_kdl_wrapper` is installed, it builds a table
+from any directory in an environment where `mjkdl` is installed, it builds a table
 scene, initializes a tool-aware KDL robot, opens the Simulate UI, and runs gravity
 compensation.
 Pass `--headless` to run the same controller without a window for CI or remote
@@ -50,7 +50,7 @@ import argparse
 
 import PyKDL as kdl
 
-import mj_kdl_wrapper as mjk
+import mjkdl
 
 
 HOME_POSE = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
@@ -65,38 +65,38 @@ def joints(values) -> kdl.JntArray:
     return q
 
 
-def make_gripper() -> mjk.AttachmentSpec:
-    gripper = mjk.AttachmentSpec()
-    gripper.mjcf_path = str(mjk.ASSETS_DIR / "robotiq_2f85/2f85.xml")
-    gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
+def make_gripper() -> mjkdl.AttachmentSpec:
+    gripper = mjkdl.AttachmentSpec()
+    gripper.mjcf_path = str(mjkdl.ASSETS_DIR / "robotiq_2f85/2f85.xml")
+    gripper.attach_to = mjkdl.AttachTarget(mjkdl.AttachKind.Site, "pinch_site")
     gripper.prefix = "g_"
     return gripper
 
 
-def make_table() -> mjk.SceneObject:
-    table = mjk.SceneObject()
+def make_table() -> mjkdl.SceneObject:
+    table = mjkdl.SceneObject()
     table.name = "table"
-    table.mjcf_path = str(mjk.ASSETS_DIR / "table.xml")
+    table.mjcf_path = str(mjkdl.ASSETS_DIR / "table.xml")
     table.pos = [0.0, 0.0, SURFACE_Z]
     table.fixed = True
     return table
 
 
-def make_cube() -> mjk.SceneObject:
-    cube = mjk.SceneObject()
+def make_cube() -> mjkdl.SceneObject:
+    cube = mjkdl.SceneObject()
     cube.name = "cube"
-    cube.shape = mjk.Shape.BOX
+    cube.shape = mjkdl.Shape.BOX
     cube.size = [CUBE_HALF, CUBE_HALF, CUBE_HALF]
     cube.pos = [0.35, 0.10, SURFACE_Z + CUBE_HALF]
     cube.rgba = [0.1, 0.25, 1.0, 1.0]
     cube.mass = 0.1
-    cube.condim = mjk.Condim.Torsional
+    cube.condim = mjkdl.Condim.Torsional
     cube.friction = [0.8, 0.02, 0.001]
     return cube
 
 
-def build_env() -> tuple[mjk.Env, mjk.Robot]:
-    spec = mjk.SceneSpec()
+def build_env() -> tuple[mjkdl.Env, mjkdl.Robot]:
+    spec = mjkdl.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
     spec.add_skybox = True
@@ -104,13 +104,13 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     table = make_table()
     spec.objects = [table, make_cube()]
 
-    arm = mjk.RobotSpec()
-    arm.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
-    arm.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "table_top")
+    arm = mjkdl.RobotSpec()
+    arm.path = str(mjkdl.ASSETS_DIR / "kinova_gen3/gen3.xml")
+    arm.attach_to = mjkdl.AttachTarget(mjkdl.AttachKind.Site, "table_top")
     arm.attachments = [make_gripper()]
     spec.robots = [arm]
 
-    camera = mjk.CameraSpec()
+    camera = mjkdl.CameraSpec()
     camera.name = "task"
     camera.pos = [0.1, -0.9, 1.45]
     # extrinsic XYZ (35, 0, 5) deg: tilt down, yaw slightly right
@@ -118,16 +118,16 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     camera.fovy = 45.0
     spec.cameras = [camera]
 
-    env = mjk.Env.build(spec)
+    env = mjkdl.Env.build(spec)
 
-    tool = mjk.ToolFrameSpec()
+    tool = mjkdl.ToolFrameSpec()
     tool.tool_body = "g_base_mount"
     tool.tcp_site = "g_pinch"
     robot = env.create_robot("base_link", "bracelet_link", tool=tool)
     return env, robot
 
 
-def run_controller(env: mjk.Env, robot: mjk.Robot, dyn: kdl.ChainDynParam) -> None:
+def run_controller(env: mjkdl.Env, robot: mjkdl.Robot, dyn: kdl.ChainDynParam) -> None:
     env.update()
     g = kdl.JntArray(robot.n_joints)
     dyn.JntToGravity(joints(robot.jnt_pos_msr), g)
@@ -143,9 +143,9 @@ def main() -> int:
 
     env, robot = build_env()
     try:
-        robot.ctrl_mode = mjk.CtrlMode.TORQUE
+        robot.ctrl_mode = mjkdl.CtrlMode.TORQUE
 
-        def on_reset(ctx: mjk.ResetContext) -> None:
+        def on_reset(ctx: mjkdl.ResetContext) -> None:
             robot.set_joint_pos(HOME_POSE)
             env.set_body_pose("cube", [0.35, 0.10, SURFACE_Z + CUBE_HALF])
 
@@ -178,7 +178,7 @@ def main() -> int:
         end_xyz = tcp_xyz()
         drift = math.sqrt(sum((b - a) ** 2 for a, b in zip(start_xyz, end_xyz)))
         cameras = [env.model.camera(i).name for i in range(env.model.ncam)]
-        print(f"MuJoCo {mjk.__mujoco_version__}")
+        print(f"MuJoCo {mjkdl.__mujoco_version__}")
         print(f"joints: {robot.n_joints}")
         print(f"cameras: {' '.join(cameras)}")
         print(f"EE drift: {drift:.6f} m")
@@ -199,25 +199,25 @@ places the ground plane along the world z axis, for a scene whose world frame
 sits above ground level.
 
 ```python
-import mj_kdl_wrapper as mjk
+import mjkdl
 
-spec = mjk.SceneSpec()
+spec = mjkdl.SceneSpec()
 spec.timestep = 0.002
 spec.add_floor = True
 spec.add_skybox = True
 
-robot_spec = mjk.RobotSpec()
-robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
+robot_spec = mjkdl.RobotSpec()
+robot_spec.path = str(mjkdl.ASSETS_DIR / "kinova_gen3/gen3.xml")
 spec.robots = [robot_spec]
 
-env = mjk.Env.build(spec)
+env = mjkdl.Env.build(spec)
 ```
 
 `Env` owns native MuJoCo resources. Call `env.close()` when you want deterministic
 cleanup, or use the `Env` as a context manager:
 
 ```python
-with mjk.Env.build(spec) as env:
+with mjkdl.Env.build(spec) as env:
     ...
 ```
 
@@ -254,7 +254,7 @@ In position mode, write `jnt_pos_cmd`. `env.update()` reads measured state for
 every robot and applies their command ports to MuJoCo.
 
 ```python
-robot.ctrl_mode = mjk.CtrlMode.POSITION
+robot.ctrl_mode = mjkdl.CtrlMode.POSITION
 
 end_time = env.data.time + 2.0
 while env.data.time < end_time:
@@ -292,7 +292,7 @@ def gravity() -> list[float]:
     dyn.JntToGravity(joints(robot.jnt_pos_msr), g)
     return [g[i] for i in range(robot.n_joints)]
 
-robot.ctrl_mode = mjk.CtrlMode.TORQUE
+robot.ctrl_mode = mjkdl.CtrlMode.TORQUE
 
 while env.data.time < end_time:
     env.step()
@@ -312,17 +312,17 @@ Attachments are MJCF assets attached under a body, site, or frame in the
 accumulated robot spec. They are applied in order.
 
 ```python
-gripper = mjk.AttachmentSpec()
-gripper.mjcf_path = str(mjk.ASSETS_DIR / "robotiq_2f85/2f85.xml")
-gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
+gripper = mjkdl.AttachmentSpec()
+gripper.mjcf_path = str(mjkdl.ASSETS_DIR / "robotiq_2f85/2f85.xml")
+gripper.attach_to = mjkdl.AttachTarget(mjkdl.AttachKind.Site, "pinch_site")
 gripper.prefix = "g_"
 
-robot_spec = mjk.RobotSpec()
-robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
+robot_spec = mjkdl.RobotSpec()
+robot_spec.path = str(mjkdl.ASSETS_DIR / "kinova_gen3/gen3.xml")
 robot_spec.attachments = [gripper]
 
 spec.robots = [robot_spec]
-env = mjk.Env.build(spec)
+env = mjkdl.Env.build(spec)
 ```
 
 If the model has no useful mount site, attach by body name and add offsets.
@@ -330,7 +330,7 @@ Assign the whole list -- `pos` and `quat` return a copy, so item assignment
 such as `gripper.pos[2] = -0.061525` is silently discarded:
 
 ```python
-gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Body, "bracelet_link")
+gripper.attach_to = mjkdl.AttachTarget(mjkdl.AttachKind.Body, "bracelet_link")
 gripper.pos = [0.0, 0.0, -0.061525]
 gripper.quat = [1.0, 0.0, 0.0, 0.0]  # 180 deg about x, [x, y, z, w]
 ```
@@ -338,7 +338,7 @@ gripper.quat = [1.0, 0.0, 0.0, 0.0]  # 180 deg about x, [x, y, z, w]
 Tell KDL about the attached tool when creating the robot:
 
 ```python
-tool = mjk.ToolFrameSpec()
+tool = mjkdl.ToolFrameSpec()
 tool.tool_body = "g_base_mount"
 tool.tcp_site = "g_pinch"
 
@@ -359,20 +359,20 @@ to `tool.ft_sensors`; `robot.ft_sensor(name)` returns a `PyKDL.Wrench`.
 unless `fixed`.
 
 ```python
-table = mjk.SceneObject()
+table = mjkdl.SceneObject()
 table.name = "table"
-table.mjcf_path = str(mjk.ASSETS_DIR / "table.xml")
+table.mjcf_path = str(mjkdl.ASSETS_DIR / "table.xml")
 table.pos = [0.0, 0.0, 0.7]
 table.fixed = True
 
-cube = mjk.SceneObject()
+cube = mjkdl.SceneObject()
 cube.name = "cube"
-cube.shape = mjk.Shape.BOX
+cube.shape = mjkdl.Shape.BOX
 cube.size = [0.025, 0.025, 0.025]
 cube.pos = [0.35, 0.10, 0.725]
 cube.rgba = [0.1, 0.25, 1.0, 1.0]
 cube.mass = 0.1
-cube.condim = mjk.Condim.Torsional
+cube.condim = mjkdl.Condim.Torsional
 cube.friction = [0.8, 0.02, 0.001]
 
 spec.objects = [table, cube]
@@ -383,13 +383,13 @@ mount to a site exported by a previous object:
 
 ```python
 mount = "table_top"   # the asset's own site name; SceneObject.prefix would prepend to it
-robot_spec.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, mount)
+robot_spec.attach_to = mjkdl.AttachTarget(mjkdl.AttachKind.Site, mount)
 ```
 
 After build, read authored object sites as frames:
 
 ```python
-env = mjk.Env.build(spec)
+env = mjkdl.Env.build(spec)
 world_t_table_top = env.site_frame("table_top")
 surface_z = world_t_table_top.p.z()
 ```
@@ -400,7 +400,7 @@ top-level bodies.
 `spec.robots` can be empty. An object-only `Env` opens the viewer the same way:
 
 ```python
-env = mjk.Env.build(spec)
+env = mjkdl.Env.build(spec)
 env.open_viewer("object scene")
 ```
 
@@ -410,7 +410,7 @@ Add fixed scene cameras with `CameraSpec`. `pos` and `fovy` are required;
 `quat` is `[x, y, z, w]` and defaults to identity `[0, 0, 0, 1]`.
 
 ```python
-camera = mjk.CameraSpec()
+camera = mjkdl.CameraSpec()
 camera.name = "task"
 camera.pos = [0.1, -0.9, 1.45]
 # extrinsic XYZ (35, 0, 5) deg: tilt down, yaw slightly right
@@ -441,7 +441,7 @@ its `jnt_pos_cmd` set there too. The Simulate UI's reset button does the same. T
 home = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 cube_start = [0.35, 0.10, 0.725]
 
-def on_reset(ctx: mjk.ResetContext) -> None:
+def on_reset(ctx: mjkdl.ResetContext) -> None:
     robot.set_joint_pos(home)
     env.set_body_pose("cube", cube_start)
     task_state["name"] = "HOME"
@@ -449,7 +449,7 @@ def on_reset(ctx: mjk.ResetContext) -> None:
 
 env.on_reset = on_reset
 
-opts = mjk.ResetOptions()
+opts = mjkdl.ResetOptions()
 opts.keyframe = 0
 opts.use_keyframe = True
 info = env.reset(opts)
@@ -511,10 +511,10 @@ Headless recording uses `VideoRecorder`. Call `record_frame()` after stepping
 the simulation state you want captured.
 
 ```python
-recorder = mjk.VideoRecorder.open_preset(
+recorder = mjkdl.VideoRecorder.open_preset(
     env,
     "episode.mp4",
-    mjk.VideoResolution.R720p,
+    mjkdl.VideoResolution.R720p,
     fps=60,
 )
 recorder.use_camera("task")
@@ -545,40 +545,40 @@ A pick-place task is the same pieces assembled with a small state machine:
 ### 11.1 Build The Scene
 
 ```python
-spec = mjk.SceneSpec()
+spec = mjkdl.SceneSpec()
 spec.timestep = 0.002
 spec.add_floor = True
 spec.add_skybox = True
 
-table = mjk.SceneObject()
+table = mjkdl.SceneObject()
 table.name = "table"
-table.mjcf_path = str(mjk.ASSETS_DIR / "table.xml")
+table.mjcf_path = str(mjkdl.ASSETS_DIR / "table.xml")
 table.pos = [0.0, 0.0, 0.7]
 table.fixed = True
 
-cube = mjk.SceneObject()
+cube = mjkdl.SceneObject()
 cube.name = "cube"
-cube.shape = mjk.Shape.BOX
+cube.shape = mjkdl.Shape.BOX
 cube.size = [0.025, 0.025, 0.025]
 cube.pos = [0.35, 0.10, 0.725]
 cube.rgba = [0.1, 0.25, 1.0, 1.0]
 cube.mass = 0.1
-cube.condim = mjk.Condim.Torsional
+cube.condim = mjkdl.Condim.Torsional
 cube.friction = [0.8, 0.02, 0.001]
 spec.objects = [table, cube]
 
-gripper = mjk.AttachmentSpec()
-gripper.mjcf_path = str(mjk.ASSETS_DIR / "robotiq_2f85/2f85.xml")
-gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
+gripper = mjkdl.AttachmentSpec()
+gripper.mjcf_path = str(mjkdl.ASSETS_DIR / "robotiq_2f85/2f85.xml")
+gripper.attach_to = mjkdl.AttachTarget(mjkdl.AttachKind.Site, "pinch_site")
 gripper.prefix = "g_"
 
-arm = mjk.RobotSpec()
-arm.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
-arm.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "table_top")
+arm = mjkdl.RobotSpec()
+arm.path = str(mjkdl.ASSETS_DIR / "kinova_gen3/gen3.xml")
+arm.attach_to = mjkdl.AttachTarget(mjkdl.AttachKind.Site, "table_top")
 arm.attachments = [gripper]
 spec.robots = [arm]
 
-camera = mjk.CameraSpec()
+camera = mjkdl.CameraSpec()
 camera.name = "task"
 camera.pos = [0.1, -0.9, 1.45]
 # extrinsic XYZ (35, 0, 5) deg: tilt down, yaw slightly right
@@ -586,17 +586,17 @@ camera.quat = [0.300420, 0.013117, 0.041601, 0.952809]
 camera.fovy = 45.0
 spec.cameras = [camera]
 
-env = mjk.Env.build(spec)
+env = mjkdl.Env.build(spec)
 ```
 
 ### 11.2 Initialize Tool And Solvers
 
 ```python
-tool = mjk.ToolFrameSpec()
+tool = mjkdl.ToolFrameSpec()
 tool.tool_body = "g_base_mount"
 tool.tcp_site = "g_pinch"
 robot = env.create_robot("base_link", "bracelet_link", tool=tool)
-robot.ctrl_mode = mjk.CtrlMode.TORQUE
+robot.ctrl_mode = mjkdl.CtrlMode.TORQUE
 
 chain = robot.kdl_chain()
 fk = kdl.ChainFkSolverPos_recursive(chain)
@@ -648,7 +648,7 @@ env.data.actuator("g_fingers_actuator").ctrl[0] = state["gripper"]
 ### 11.4 Reset And Validate
 
 ```python
-def on_reset(ctx: mjk.ResetContext) -> None:
+def on_reset(ctx: mjkdl.ResetContext) -> None:
     robot.set_joint_pos(q_home)
     env.set_body_pose("cube", [0.35, 0.10, 0.725])
     task["index"] = 0
@@ -671,21 +671,21 @@ Before treating a task as working, validate:
 Use prefixes to disambiguate the second robot:
 
 ```python
-left = mjk.RobotSpec()
-left.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
+left = mjkdl.RobotSpec()
+left.path = str(mjkdl.ASSETS_DIR / "kinova_gen3/gen3.xml")
 left.pos = [-0.7, 0.0, 0.0]
 left.attachments = [gripper]
 
-right = mjk.RobotSpec()
-right.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
+right = mjkdl.RobotSpec()
+right.path = str(mjkdl.ASSETS_DIR / "kinova_gen3/gen3.xml")
 right.prefix = "r2_"
 right.pos = [0.7, 0.0, 0.0]
 right.attachments = [gripper]
 
 spec.robots = [left, right]
-env = mjk.Env.build(spec)
+env = mjkdl.Env.build(spec)
 
-right_tool = mjk.ToolFrameSpec()
+right_tool = mjkdl.ToolFrameSpec()
 right_tool.tool_body = "r2_g_base_mount"
 right_tool.tcp_site = "r2_g_pinch"
 
@@ -703,9 +703,9 @@ with `"r2_"`; passing already-prefixed names with no prefix, as above, is the sa
 `Env.add_object()` and `Env.remove_object()` rebuild the native model/data. Use them for task setup and coarse changes, not per-frame spawning.
 
 ```python
-obstacle = mjk.SceneObject()
+obstacle = mjkdl.SceneObject()
 obstacle.name = "obstacle"
-obstacle.shape = mjk.Shape.BOX
+obstacle.shape = mjkdl.Shape.BOX
 obstacle.size = [0.05, 0.05, 0.20]
 obstacle.pos = [0.25, -0.25, 0.90]
 obstacle.rgba = [0.8, 0.2, 0.2, 1.0]
@@ -735,5 +735,5 @@ The Python examples mirror the C++ ones:
 - `ex_achd_pick_place`, `ex_achd_table_slide`: ACHD torque control.
 - `ex_admittance_ft`: F/T admittance around an RNEA task-space inner loop.
 
-They live in `python/mj_kdl_wrapper/examples/` (installed as `mj_kdl_wrapper.examples`) and
+They live in `python/mjkdl/examples/` (installed as `mjkdl.examples`) and
 end by themselves. They run headless by default and accept `--gui`.

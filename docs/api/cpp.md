@@ -2,9 +2,9 @@
 
 This page collects the C++ wrapper usage notes that are too detailed for the
 README. For complete function signatures, see the generated Doxygen API pages
-for `include/mj_kdl_wrapper/mj_kdl_wrapper.hpp`.
+for `include/mjkdl/mjkdl.hpp`.
 
-Coming from 0.4? See [Migrating to 0.5](@ref sec_migrate_mj_kdl_wrapper).
+Coming from 0.4 (`mj_kdl_wrapper`)? See [Migrating to 0.5](@ref sec_migrate_mjkdl).
 From 0.3.x, the `Env` also took over the loop; see [Migrating to 0.4](@ref sec_migrate_env).
 From 0.2.x, placement orientation also moved from `euler` to `quat` `[x, y, z, w]`; see
 [Migrating from 0.2.x](@ref sec_migrate_quat). Units, frames and what persists between
@@ -12,11 +12,11 @@ calls: [Conventions](@ref page_conventions).
 
 ## Errors
 
-Every call that can fail on its input returns `mj_kdl::Status`. It converts to `true` on
+Every call that can fail on its input returns `mjkdl::Status`. It converts to `true` on
 success; on failure `error` says why (the same text is logged):
 
 ```cpp
-if (mj_kdl::Status s = mj_kdl::init_env(&env, &sc); !s) {
+if (mjkdl::Status s = mjkdl::init_env(&env, &sc); !s) {
     std::cerr << "init_env failed: " << s.error << "\n";
     return 1;
 }
@@ -29,14 +29,14 @@ Per-cycle getters (`get_body_frame()`, `get_site_frame()`) return `bool`, and th
 
 The examples and tests resolve paths through `example_paths.hpp` (a header-only
 helper under `src/examples/`) against the source `assets/` directory, compiled in as
-`MJ_KDL_ASSETS_DIR`:
+`MJKDL_ASSETS_DIR`:
 
-- `mj_kdl_examples::asset("kinova_gen3/gen3.xml")` returns the bundled file's path and
+- `mjkdl_examples::asset("kinova_gen3/gen3.xml")` returns the bundled file's path and
   throws when it is missing.
-- `mj_kdl_examples::find_asset(...)` returns `""` instead, which is how tests self-skip.
+- `mjkdl_examples::find_asset(...)` returns `""` instead, which is how tests self-skip.
 
-The Python counterpart is `mjk.ASSETS_DIR / "kinova_gen3/gen3.xml"`. `cmake --install` copies
-the same files into `~/.cache/mj_kdl_wrapper/assets` for programs outside this tree. Any other MJCF
+The Python counterpart is `mjkdl.ASSETS_DIR / "kinova_gen3/gen3.xml"`. `cmake --install` copies
+the same files into `~/.cache/mjkdl/assets` for programs outside this tree. Any other MJCF
 (e.g. MuJoCo Menagerie's) goes into `RobotSpec::path`; one that brings its own floor needs
 `add_floor = false`.
 
@@ -51,18 +51,18 @@ scenes are valid. `floor_z` places the ground plane along the world z axis
 
 ```cpp
 #include "example_paths.hpp"
-#include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "mjkdl/mjkdl.hpp"
 
-mj_kdl::SceneSpec sc;
+mjkdl::SceneSpec sc;
 sc.timestep   = 0.002;   // [s]; required, must be > 0
 sc.add_floor  = true;
 sc.add_skybox = true;
-sc.robots.push_back(mj_kdl::RobotSpec{
-    .path = mj_kdl_examples::asset("kinova_gen3/gen3.xml")
+sc.robots.push_back(mjkdl::RobotSpec{
+    .path = mjkdl_examples::asset("kinova_gen3/gen3.xml")
 });
 
-mj_kdl::Env env;   // owns the model/data; not copied or moved
-mj_kdl::init_env(&env, &sc);
+mjkdl::Env env;   // owns the model/data; not copied or moved
+mjkdl::init_env(&env, &sc);
 ```
 
 Every control mode writes its command to actuators, so each robot joint needs one in the MJCF.
@@ -74,13 +74,13 @@ For an object-only scene, add MJCF or primitive `SceneObject` entries and leave
 `sc.robots` empty:
 
 ```cpp
-mj_kdl::SceneObject cabinet{
+mjkdl::SceneObject cabinet{
     .name      = "cabinet",
-    .mjcf_path = mj_kdl_examples::asset("cabinet/cabinet.xml"),
+    .mjcf_path = mjkdl_examples::asset("cabinet/cabinet.xml"),
     .fixed     = true,
 };
 sc.objects.push_back(cabinet);
-mj_kdl::init_env(&env, &sc);
+mjkdl::init_env(&env, &sc);
 ```
 
 `save_model_xml(model, path)` writes a live model from `build_scene()` or `init_env()` back to
@@ -90,7 +90,7 @@ combined scene once and reload the merged model later through MuJoCo.
 `destroy_scene(model, data)` frees it.
 
 ```cpp
-mj_kdl::save_model_xml(env.model, "combined_scene.xml");
+mjkdl::save_model_xml(env.model, "combined_scene.xml");
 mj_saveModel(env.model, "combined_scene.mjb", nullptr, 0);
 ```
 
@@ -110,7 +110,7 @@ its level is at or above the threshold. The default, `INFO`, prints everything; 
 warnings and errors, `ERROR` errors only, `NONE` nothing. It is one library-wide setting:
 
 ```cpp
-mj_kdl::set_log_level(mj_kdl::LogLevel::WARN);   // quiet the scene-construction INFO lines
+mjkdl::set_log_level(mjkdl::LogLevel::WARN);   // quiet the scene-construction INFO lines
 ```
 
 Your own code can log through the same threshold with `MJ_LOG_INFO()`, `MJ_LOG_WARN()` and
@@ -124,8 +124,8 @@ MJ_LOG_WARN("joint " << i << " saturated");
 ## Init A KDL Chain
 
 ```cpp
-mj_kdl::Robot robot;
-mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link");
+mjkdl::Robot robot;
+mjkdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link");
 
 unsigned n = robot.n_joints;  // 7 for Kinova GEN3
 KDL::ChainDynParam dyn(robot.chain, KDL::Vector(0, 0, -9.81));
@@ -144,8 +144,8 @@ for the 2F-85 that is `g_base_mount`, whose mass (inferred from its mesh) KDL wo
 miss. The inertia is lumped at the pose the model is in when the robot is initialized:
 
 ```cpp
-const mj_kdl::ToolFrameSpec tool{ .tool_body = "g_base_mount", .tcp_site = "g_pinch" };
-mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool);
+const mjkdl::ToolFrameSpec tool{ .tool_body = "g_base_mount", .tcp_site = "g_pinch" };
+mjkdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool);
 
 KDL::ChainDynParam dyn(robot.chain, KDL::Vector(0, 0, -9.81));
 KDL::JntArray q(n), g(n);
@@ -156,19 +156,19 @@ For a wrist force-torque sensor, attach the sensor MJCF first, then attach the
 gripper to a site exported by that sensor asset:
 
 ```cpp
-mj_kdl::AttachmentSpec ft_sensor{
-    .mjcf_path = mj_kdl_examples::asset("ft_sensor.xml"),
-    .attach_to = { mj_kdl::AttachKind::Site, "pinch_site" },
+mjkdl::AttachmentSpec ft_sensor{
+    .mjcf_path = mjkdl_examples::asset("ft_sensor.xml"),
+    .attach_to = { mjkdl::AttachKind::Site, "pinch_site" },
 };
 
-mj_kdl::AttachmentSpec gripper{
-    .mjcf_path = mj_kdl_examples::asset("robotiq_2f85/2f85.xml"),
-    .attach_to = { mj_kdl::AttachKind::Site, "wrist_ft_site" },
+mjkdl::AttachmentSpec gripper{
+    .mjcf_path = mjkdl_examples::asset("robotiq_2f85/2f85.xml"),
+    .attach_to = { mjkdl::AttachKind::Site, "wrist_ft_site" },
     .prefix    = "g_",
 };
 
-mj_kdl::RobotSpec robot_spec;
-robot_spec.path = mj_kdl_examples::asset("kinova_gen3/gen3.xml");
+mjkdl::RobotSpec robot_spec;
+robot_spec.path = mjkdl_examples::asset("kinova_gen3/gen3.xml");
 robot_spec.attachments = { ft_sensor, gripper };
 ```
 
@@ -177,14 +177,14 @@ stores it as separate `<force>` and `<torque>` sensors; the wrapper combines one
 pair into a `KDL::Wrench`.
 
 ```cpp
-mj_kdl::ForceTorqueSensorSpec ft{ .name = "wrist_ft", .frame_site = "wrist_ft_site" };
-mj_kdl::ToolFrameSpec tool{
+mjkdl::ForceTorqueSensorSpec ft{ .name = "wrist_ft", .frame_site = "wrist_ft_site" };
+mjkdl::ToolFrameSpec tool{
     .tool_body  = "g_base_mount",
     .tcp_site   = "g_pinch",
     .ft_sensors = { ft },
 };
 
-mj_kdl::update(&env);
+mjkdl::update(&env);
 KDL::Wrench wrench = robot.ft_sensors[0].wrench;   // robot.ft_sensors, in ToolFrameSpec order
 ```
 
@@ -196,7 +196,7 @@ authored dynamics), pass it instead of deriving it; `joint_names` are the MuJoCo
 order, and no tool inertia is lumped onto it:
 
 ```cpp
-mj_kdl::init_robot_from_chain(&robot, &env, chain, joint_names, "", &tool);
+mjkdl::init_robot_from_chain(&robot, &env, chain, joint_names, "", &tool);
 ```
 
 ## Attach MJCF Bodies
@@ -207,23 +207,23 @@ which already encodes the tool offset and flip, so a gripper attaches with no
 manual `pos` or `quat`:
 
 ```cpp
-mj_kdl::AttachmentSpec gripper{
-    .mjcf_path          = mj_kdl_examples::asset("robotiq_2f85/2f85.xml"),
-    .attach_to          = { mj_kdl::AttachKind::Site, "pinch_site" },
+mjkdl::AttachmentSpec gripper{
+    .mjcf_path          = mjkdl_examples::asset("robotiq_2f85/2f85.xml"),
+    .attach_to          = { mjkdl::AttachKind::Site, "pinch_site" },
     .prefix             = "g_",
     .contact_exclusions = {},
 };
 
-mj_kdl::RobotSpec robot_spec;
-robot_spec.path = mj_kdl_examples::asset("kinova_gen3/gen3.xml");
+mjkdl::RobotSpec robot_spec;
+robot_spec.path = mjkdl_examples::asset("kinova_gen3/gen3.xml");
 robot_spec.attachments.push_back(gripper);
 
-mj_kdl::SceneSpec sc;
+mjkdl::SceneSpec sc;
 sc.timestep   = 0.002;
 sc.add_floor  = true;
 sc.add_skybox = true;
 sc.robots.push_back(robot_spec);
-mj_kdl::init_env(&env, &sc);
+mjkdl::init_env(&env, &sc);
 ```
 
 Optional `pos` and `quat` on the attachment spec are composed with the parent
@@ -242,7 +242,7 @@ gripper.quat[3] = 0.991445;
 If a model has no suitable site, attach by body name instead:
 
 ```cpp
-gripper.attach_to = { mj_kdl::AttachKind::Body, "bracelet_link" };
+gripper.attach_to = { mjkdl::AttachKind::Body, "bracelet_link" };
 gripper.pos[2]    = -0.061525;
 // 180 deg about x is exactly [x, y, z, w] = { 1, 0, 0, 0 }
 gripper.quat[0]   = 1.0;
@@ -256,19 +256,19 @@ any body, site, or frame added by prior entries.
 ## Multi-Robot Scene
 
 ```cpp
-mj_kdl::SceneSpec sc;
+mjkdl::SceneSpec sc;
 sc.timestep   = 0.002;
 sc.add_floor  = true;
 sc.add_skybox = true;
 sc.robots = {
-    mj_kdl::RobotSpec{ .path = "gen3.xml", .pos = { -0.5, 0.0, 0.0 } },
-    mj_kdl::RobotSpec{ .path = "gen3.xml", .prefix = "r2_", .pos = { 0.5, 0.0, 0.0 } },
+    mjkdl::RobotSpec{ .path = "gen3.xml", .pos = { -0.5, 0.0, 0.0 } },
+    mjkdl::RobotSpec{ .path = "gen3.xml", .prefix = "r2_", .pos = { 0.5, 0.0, 0.0 } },
 };
-mj_kdl::init_env(&env, &sc);
+mjkdl::init_env(&env, &sc);
 
-mj_kdl::Robot robot1, robot2;
-mj_kdl::init_robot_from_mjcf(&robot1, &env, "base_link", "bracelet_link");
-mj_kdl::init_robot_from_mjcf(&robot2, &env, "r2_base_link", "r2_bracelet_link");
+mjkdl::Robot robot1, robot2;
+mjkdl::init_robot_from_mjcf(&robot1, &env, "base_link", "bracelet_link");
+mjkdl::init_robot_from_mjcf(&robot2, &env, "r2_base_link", "r2_bracelet_link");
 ```
 
 The `prefix` argument is prepended to every name the call resolves: base and tip bodies, tool
@@ -297,14 +297,14 @@ they are ignored (`rgba` with `has_rgba` recolours the asset). For primitives,
 - `mass` is unset or not positive on a non-fixed primitive.
 
 ```cpp
-mj_kdl::SceneSpec sc;
+mjkdl::SceneSpec sc;
 sc.timestep   = 0.002;
 sc.add_floor  = true;
 sc.add_skybox = true;
 
-mj_kdl::SceneObject table{
+mjkdl::SceneObject table{
     .name      = "table",
-    .mjcf_path = mj_kdl_examples::asset("table.xml"),  // ships a table_top site
+    .mjcf_path = mjkdl_examples::asset("table.xml"),  // ships a table_top site
     .pos       = { 0.0, 0.0, 0.7 },
     .fixed     = true,
 };
@@ -312,31 +312,31 @@ sc.objects.push_back(table);
 
 std::string mount = "table_top";   // the asset's own site name; SceneObject::prefix would prepend to it
 
-sc.robots.push_back(mj_kdl::RobotSpec{
-    .path      = mj_kdl_examples::asset("kinova_gen3/gen3.xml"),
-    .attach_to = { mj_kdl::AttachKind::Site, mount },
+sc.robots.push_back(mjkdl::RobotSpec{
+    .path      = mjkdl_examples::asset("kinova_gen3/gen3.xml"),
+    .attach_to = { mjkdl::AttachKind::Site, mount },
 });
 
-sc.objects.push_back(mj_kdl::SceneObject{
+sc.objects.push_back(mjkdl::SceneObject{
     .name      = "fixture",
     .mjcf_path = "fixture.xml",
-    .attach_to = { mj_kdl::AttachKind::Body, "table" },
+    .attach_to = { mjkdl::AttachKind::Body, "table" },
     .pos       = { 0.0, 0.0, 0.0 },
     .fixed     = true,
 });
 
-sc.objects.push_back(mj_kdl::SceneObject{
+sc.objects.push_back(mjkdl::SceneObject{
     .name     = "red_cube",
-    .shape    = mj_kdl::Shape::BOX,
+    .shape    = mjkdl::Shape::BOX,
     .size     = { 0.03, 0.03, 0.03 },
     .pos      = { 0.35, 0.10, 0.73 },
     .rgba     = { 1.0f, 0.0f, 0.0f, 1.0f },
     .mass     = 0.1,
-    .condim   = mj_kdl::Condim::Torsional,
+    .condim   = mjkdl::Condim::Torsional,
     .friction = { 0.8, 0.02, 0.001 },
 });
 
-mj_kdl::init_env(&env, &sc);
+mjkdl::init_env(&env, &sc);
 ```
 
 MuJoCo restricts free joints to top-level bodies, so a non-fixed primitive with
@@ -348,7 +348,7 @@ Add fixed world cameras through `SceneSpec::cameras`. `pos` and `fovy` are
 required; `quat` is `[x, y, z, w]` and defaults to identity `{ 0, 0, 0, 1 }`.
 
 ```cpp
-sc.cameras.push_back(mj_kdl::CameraSpec{
+sc.cameras.push_back(mjkdl::CameraSpec{
     .name = "overview",
     .pos  = { 1.8, -2.0, 1.4 },
     .fovy = 45.0,
@@ -363,7 +363,7 @@ free camera. A recorder's camera is its `vr.cam`, written directly:
 for (int i = 0; i < env.model->ncam; ++i) {
     MJ_LOG_INFO("camera: " << mj_id2name(env.model, mjOBJ_CAMERA, i));
 }
-mj_kdl::use_camera(&env.viewer, env.model, "overview");
+mjkdl::use_camera(&env.viewer, env.model, "overview");
 vr.cam.type       = mjCAMERA_FIXED;
 vr.cam.fixedcamid = mj_name2id(env.model, mjOBJ_CAMERA, "overview");
 ```
@@ -377,11 +377,11 @@ direct `qpos` write is picked up with no extra call.
 
 ```cpp
 KDL::Frame tcp;
-mj_kdl::get_site_frame(&env, "g_pinch", &tcp);
+mjkdl::get_site_frame(&env, "g_pinch", &tcp);
 
 const double pos[3]  = { 0.45, 0.0, 0.75 };
 const double quat[4] = { 0.0, 0.0, 0.0, 1.0 };   // [x, y, z, w]: identity
-mj_kdl::set_body_pose(&env, "red_cube", pos, quat);
+mjkdl::set_body_pose(&env, "red_cube", pos, quat);
 ```
 
 A joint no `Robot` owns is read through a slot: `bind_scene_joint(&env.scene, name)` once,
@@ -391,19 +391,19 @@ joint's `jnt_qposadr` directly.
 ## Control Loop
 
 ```cpp
-mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::TORQUE);   // seeds the torque ports, no jump
+mjkdl::set_control_mode(&robot, mjkdl::CtrlMode::TORQUE);   // seeds the torque ports, no jump
 
-mj_kdl::open_viewer(&env);   // optional; the loop is the same headless
+mjkdl::open_viewer(&env);   // optional; the loop is the same headless
 
 KDL::JntArray q(n), g(n);
-while (env.data->time < 5.0 && mj_kdl::step(&env)) {   // step() is false only on window close
-    mj_kdl::update(&env);
+while (env.data->time < 5.0 && mjkdl::step(&env)) {   // step() is false only on window close
+    mjkdl::update(&env);
     for (unsigned i = 0; i < n; ++i) q(i) = robot.jnt_pos_msr[i];
     dyn.JntToGravity(q, g);
     for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = g(i);
 }
 
-mj_kdl::cleanup(&env);   // closes the viewer, frees model/data
+mjkdl::cleanup(&env);   // closes the viewer, frees model/data
 ```
 
 `step(&env)` advances one timestep (`mj_step2()` then `mj_step1()`), so joint
@@ -429,7 +429,7 @@ Scene slots cover what no `Robot` chain owns: bind them once with
 them. A gripper drive is an actuator slot:
 
 ```cpp
-auto *fingers = mj_kdl::bind_scene_actuator(&env.scene, "g_fingers_actuator");
+auto *fingers = mjkdl::bind_scene_actuator(&env.scene, "g_fingers_actuator");
 fingers->command = 0.82;   // ctrl units (the 2F-85's driver angle, closed); next update(&env)
 ```
 
@@ -439,7 +439,7 @@ frames read afterwards follow the new positions.
 ```cpp
 KDL::JntArray q_home(robot.n_joints);
 for (unsigned i = 0; i < robot.n_joints; ++i) q_home(i) = 0.0;
-mj_kdl::set_joint_pos(&robot, q_home);
+mjkdl::set_joint_pos(&robot, q_home);
 ```
 
 ## Reset
@@ -452,17 +452,17 @@ hook runs after the re-seed, it can prime commands, and a pose it sets is what t
 read. Use it to put objects, controllers, and task state back at their episode start values:
 
 ```cpp
-mj_kdl::Robot robot;
-mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link");
+mjkdl::Robot robot;
+mjkdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link");
 
-env.on_reset = [&](mj_kdl::ResetContext *ctx) {
-    mj_kdl::set_joint_pos(&robot, q_home);
+env.on_reset = [&](mjkdl::ResetContext *ctx) {
+    mjkdl::set_joint_pos(&robot, q_home);
     episode_step = 0;
 };
 
-mj_kdl::ResetOptions opts;
+mjkdl::ResetOptions opts;
 opts.keyframe = 0;
-mj_kdl::ResetInfo info = mj_kdl::reset(&env, &opts);
+mjkdl::ResetInfo info = mjkdl::reset(&env, &opts);
 ```
 
 Each part's runtime state is one struct (`ForceTorqueReading`, and the
@@ -480,32 +480,32 @@ which are not deleted.
 
 ```cpp
 // Requires BUILD_RECORDER=ON (default) and ffmpeg in PATH.
-mj_kdl::VideoRecorder vr;
-mj_kdl::init_video_recorder(
-    &vr, env.model, "sim.mp4", mj_kdl::VideoResolution::R1080p);
+mjkdl::VideoRecorder vr;
+mjkdl::init_video_recorder(
+    &vr, env.model, "sim.mp4", mjkdl::VideoResolution::R1080p);
 
 vr.cam.azimuth   = 135.0;
 vr.cam.elevation = -20.0;
 vr.cam.distance  = 2.5;
 
 for (int i = 0; i < 3000; ++i) {
-    mj_kdl::step(&env);
-    mj_kdl::update(&env);
-    mj_kdl::record_frame(&vr, &env);
+    mjkdl::step(&env);
+    mjkdl::update(&env);
+    mjkdl::record_frame(&vr, &env);
 }
 
-mj_kdl::cleanup(&vr);
+mjkdl::cleanup(&vr);
 ```
 
 To get frames into memory instead of a file, initialize offscreen rendering only and read each
 frame as top-down RGB8:
 
 ```cpp
-mj_kdl::VideoRecorder vr;
-mj_kdl::init_offscreen(&vr, env.model, 640, 480);
+mjkdl::VideoRecorder vr;
+mjkdl::init_offscreen(&vr, env.model, 640, 480);
 std::vector<std::uint8_t> rgb(640 * 480 * 3);
-mj_kdl::render_rgb(&vr, &env, rgb.data());
-mj_kdl::cleanup(&vr);
+mjkdl::render_rgb(&vr, &env, rgb.data());
+mjkdl::cleanup(&vr);
 ```
 
 Interactive recording is available from the Simulate UI:
@@ -537,8 +537,8 @@ camera the GUI is being driven with, frame by frame.
 ## Runtime Add And Remove Objects
 
 ```cpp
-mj_kdl::scene_add_object(&env, cube);
-mj_kdl::scene_remove_object(&env, "red_cube");
+mjkdl::scene_add_object(&env, cube);
+mjkdl::scene_remove_object(&env, "red_cube");
 ```
 
 Both append to or erase from `env.spec.objects` and rebuild. The model/data are

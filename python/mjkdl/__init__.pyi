@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ._mj_kdl_wrapper import *
+from ._mjkdl import *
 
 __version__: str
 __mujoco_version__: str

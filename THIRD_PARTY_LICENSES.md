@@ -10,7 +10,7 @@ This project depends on and/or vendors the following third-party components.
 | Robotiq 2F-85 Menagerie asset | `assets/robotiq_2f85/` is derived from MuJoCo Menagerie's Robotiq 2F-85 model and modified for this project. | BSD 2-Clause style license, copyright ROS-Industrial | https://github.com/google-deepmind/mujoco_menagerie/tree/main/robotiq_2f85 |
 | Kinova Gen3 Menagerie asset | `assets/kinova_gen3/` is derived from MuJoCo Menagerie's Kinova Gen3 model and modified for this project. | BSD 3-Clause License, copyright Kinova inc. | https://github.com/google-deepmind/mujoco_menagerie/tree/main/kinova_gen3 |
 The wheel copies the applicable license texts next to its bundled shared libraries; the CMake
-install puts them, with `LICENSE`, `NOTICE` and this file, in `share/doc/mj_kdl_wrapper/`:
+install puts them, with `LICENSE`, `NOTICE` and this file, in `share/doc/mjkdl/`:
 
 - `LGPL-2.1.txt` and `KDL_SOURCE.txt` accompany bundled `liborocos-kdl.so*` and `PyKDL*.so`.
 - `Apache-2.0.txt` accompanies binaries that include the vendored and modified MuJoCo simulate code.

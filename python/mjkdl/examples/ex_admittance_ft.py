@@ -11,7 +11,7 @@ import argparse
 import math
 
 import PyKDL as kdl
-import mj_kdl_wrapper as mjk
+import mjkdl
 
 HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 TABLE_Z = 0.70
@@ -80,51 +80,51 @@ def frame_point(frame: kdl.Frame, point: kdl.Vector) -> list[float]:
     return xyz(frame * point)
 
 
-def ft_attachment() -> mjk.AttachmentSpec:
-    spec = mjk.AttachmentSpec()
-    spec.mjcf_path = str(mjk.ASSETS_DIR / "ft_sensor.xml")
-    spec.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
+def ft_attachment() -> mjkdl.AttachmentSpec:
+    spec = mjkdl.AttachmentSpec()
+    spec.mjcf_path = str(mjkdl.ASSETS_DIR / "ft_sensor.xml")
+    spec.attach_to = mjkdl.AttachTarget(mjkdl.AttachKind.Site, "pinch_site")
     return spec
 
 
-def gripper_attachment() -> mjk.AttachmentSpec:
-    spec = mjk.AttachmentSpec()
-    spec.mjcf_path = str(mjk.ASSETS_DIR / "robotiq_2f85/2f85.xml")
-    spec.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "wrist_ft_site")
+def gripper_attachment() -> mjkdl.AttachmentSpec:
+    spec = mjkdl.AttachmentSpec()
+    spec.mjcf_path = str(mjkdl.ASSETS_DIR / "robotiq_2f85/2f85.xml")
+    spec.attach_to = mjkdl.AttachTarget(mjkdl.AttachKind.Site, "wrist_ft_site")
     spec.prefix = "g_"
     return spec
 
 
-def table_object() -> mjk.SceneObject:
-    table = mjk.SceneObject()
+def table_object() -> mjkdl.SceneObject:
+    table = mjkdl.SceneObject()
     table.name = "table"
-    table.mjcf_path = str(mjk.ASSETS_DIR / "table.xml")
+    table.mjcf_path = str(mjkdl.ASSETS_DIR / "table.xml")
     table.pos = [0.0, 0.0, TABLE_Z]
     table.fixed = True
     return table
 
 
-def build_env() -> tuple[mjk.Env, mjk.Robot]:
+def build_env() -> tuple[mjkdl.Env, mjkdl.Robot]:
     table = table_object()
-    spec = mjk.SceneSpec()
+    spec = mjkdl.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
     spec.add_skybox = True
     spec.objects = [table]
 
-    robot_spec = mjk.RobotSpec()
-    robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
-    robot_spec.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "table_top")
+    robot_spec = mjkdl.RobotSpec()
+    robot_spec.path = str(mjkdl.ASSETS_DIR / "kinova_gen3/gen3.xml")
+    robot_spec.attach_to = mjkdl.AttachTarget(mjkdl.AttachKind.Site, "table_top")
     robot_spec.attachments = [ft_attachment(), gripper_attachment()]
     spec.robots = [robot_spec]
 
-    env = mjk.Env.build(spec)
+    env = mjkdl.Env.build(spec)
 
-    ft = mjk.ForceTorqueSensorSpec()
+    ft = mjkdl.ForceTorqueSensorSpec()
     ft.name = "wrist_ft"
     ft.frame_site = FT_SITE
 
-    tool = mjk.ToolFrameSpec()
+    tool = mjkdl.ToolFrameSpec()
     tool.tool_body = "g_base_mount"
     tool.tcp_site = "g_pinch"
     tool.ft_sensors = [ft]
@@ -133,7 +133,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     return env, robot
 
 
-def tcp_frame(robot: mjk.Robot, state: dict) -> kdl.Frame:
+def tcp_frame(robot: mjkdl.Robot, state: dict) -> kdl.Frame:
     frame = kdl.Frame()
     state["fk"].JntToCart(jnt(robot.jnt_pos_msr), frame)
     return frame
@@ -143,7 +143,7 @@ def jacobian_twist(jac: kdl.Jacobian, qdot: kdl.JntArray) -> list[float]:
     return [sum(jac[row, col] * qdot[col] for col in range(qdot.rows())) for row in range(6)]
 
 
-def rnea_track(env: mjk.Env, robot: mjk.Robot, state: dict, target: kdl.Frame) -> None:
+def rnea_track(env: mjkdl.Env, robot: mjkdl.Robot, state: dict, target: kdl.Frame) -> None:
     """Task-space computed torque: Cartesian PD -> qddot + null-space posture -> RNEA torque."""
     q = jnt(robot.jnt_pos_msr)
     qdot = jnt(robot.jnt_vel_msr)
@@ -181,11 +181,11 @@ def rnea_track(env: mjk.Env, robot: mjk.Robot, state: dict, target: kdl.Frame) -
     robot.jnt_trq_cmd = [tau[i] for i in range(robot.n_joints)]
 
 
-def close_gripper(env: mjk.Env) -> None:
+def close_gripper(env: mjkdl.Env) -> None:
     env.data.actuator(GRIPPER_ACTUATOR).ctrl[0] = GRIPPER_CLOSED
 
 
-def settle_and_tare(env: mjk.Env, robot: mjk.Robot, state: dict) -> list[float]:
+def settle_and_tare(env: mjkdl.Env, robot: mjkdl.Robot, state: dict) -> list[float]:
     """Hold home while the gripper closes, then tare: its ~10 N load only appears once closed."""
     env.update()
     home = tcp_frame(robot, state)
@@ -200,7 +200,7 @@ def settle_and_tare(env: mjk.Env, robot: mjk.Robot, state: dict) -> list[float]:
     return tare_force(env, robot)
 
 
-def measured_force(env: mjk.Env, robot: mjk.Robot, state: dict) -> list[float]:
+def measured_force(env: mjkdl.Env, robot: mjkdl.Robot, state: dict) -> list[float]:
     """External force on the tool in the world frame: the tared reading, deadbanded."""
     wrench = robot.ft_sensor("wrist_ft")
     f_world = xyz(env.site_frame(FT_SITE).M * wrench.force)
@@ -212,7 +212,7 @@ def measured_force(env: mjk.Env, robot: mjk.Robot, state: dict) -> list[float]:
     return f_ext
 
 
-def tare_force(env: mjk.Env, robot: mjk.Robot) -> list[float]:
+def tare_force(env: mjkdl.Env, robot: mjkdl.Robot) -> list[float]:
     return xyz(env.site_frame(FT_SITE).M * robot.ft_sensor("wrist_ft").force)
 
 
@@ -249,7 +249,7 @@ def admittance_step(env, robot, nominal, state, force):
     return target
 
 
-def run_gui(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dict) -> None:
+def run_gui(env: mjkdl.Env, robot: mjkdl.Robot, nominal: kdl.Frame, state: dict) -> None:
     """The same sequence with the viewer; after the helix the mouse pushes the tool."""
     env.open_viewer("ex_admittance_ft.py")
     viewer = env.viewer
@@ -302,11 +302,11 @@ def run_gui(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dict) -> 
         env.data.body(TOOL_BODY).xfrc_applied[:] = 0.0
 
 
-def elbow_height(env: mjk.Env) -> float:
+def elbow_height(env: mjkdl.Env) -> float:
     return env.body_frame(ELBOW_BODY).p.z() - TABLE_Z
 
 
-def run_selfcheck(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dict) -> dict:
+def run_selfcheck(env: mjkdl.Env, robot: mjkdl.Robot, nominal: kdl.Frame, state: dict) -> dict:
     """The helix, the tare, then a scripted push on the tool sensed by the F/T; returns metrics."""
     elbow_start = elbow_min = elbow_height(env)
     t0 = env.data.time
@@ -413,7 +413,7 @@ def main() -> int:
         chain = robot.kdl_chain()
         acc_ik = kdl.ChainIkSolverVel_wdls(chain)
         acc_ik.setLambda(0.10)
-        robot.set_control_mode(mjk.CtrlMode.TORQUE)  # RNEA computed-torque inner loop
+        robot.set_control_mode(mjkdl.CtrlMode.TORQUE)  # RNEA computed-torque inner loop
 
         state = {
             "bias": [0.0, 0.0, 0.0],

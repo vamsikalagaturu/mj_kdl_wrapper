@@ -22,7 +22,7 @@ jobs:
       image: ros:${{ matrix.ros_distro }}
     env:
       MUJOCO_VERSION: 3.14.0
-      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.14.0
+      MJKDL_MUJOCO_DIR: /tmp/mujoco-3.14.0
     steps:
       # System build dependencies (KDL/MuJoCo are not installed from apt).
       - name: Install dependencies
@@ -44,11 +44,11 @@ jobs:
       - name: Checkout the wrapper into the workspace
         uses: actions/checkout@v4
         with:
-          path: ws/src/mj_kdl_wrapper
+          path: ws/src/mjkdl
 
       # The secorolab Orocos KDL fork is a workspace package, at ws/src/third_party/.
       - name: Import the Orocos KDL fork
-        run: vcs import ws/src < ws/src/mj_kdl_wrapper/mj_kdl_wrapper.repos
+        run: vcs import ws/src < ws/src/mjkdl/mjkdl.repos
 
       # Build the shared KDL first, then the wrapper against it (FROM_PACKAGE).
       - name: colcon build (KDL first, then the wrapper against it)
@@ -58,10 +58,10 @@ jobs:
           cd ws
           colcon build --packages-select orocos_kdl --cmake-args -DENABLE_TESTS=OFF
           source install/setup.bash
-          colcon build --packages-select mj_kdl_wrapper \
-            --cmake-args -DMJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON \
-                         -DMJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}" \
-                         -DMJ_KDL_WITH_ROS=ON \
+          colcon build --packages-select mjkdl \
+            --cmake-args -DMJKDL_OROCOS_KDL_FROM_PACKAGE=ON \
+                         -DMJKDL_MUJOCO_DIR="${MJKDL_MUJOCO_DIR}" \
+                         -DMJKDL_WITH_ROS=ON \
                          -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF
 
       # Only the ROS camera publisher's test; tests.yml runs the rest.
@@ -70,5 +70,5 @@ jobs:
         run: |
           source /opt/ros/${{ matrix.ros_distro }}/setup.bash
           source ws/install/setup.bash
-          ctest --test-dir ws/build/mj_kdl_wrapper -R '^CameraRosTest\.' \
+          ctest --test-dir ws/build/mjkdl -R '^CameraRosTest\.' \
             --no-tests=error --output-on-failure

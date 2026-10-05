@@ -3,24 +3,24 @@ import weakref
 
 import pytest
 
-import mj_kdl_wrapper as mjk
+import mjkdl
 
 
-def _scene_spec() -> mjk.SceneSpec:
-    spec = mjk.SceneSpec()
+def _scene_spec() -> mjkdl.SceneSpec:
+    spec = mjkdl.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
     spec.add_skybox = True
-    robot_spec = mjk.RobotSpec()
-    robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
+    robot_spec = mjkdl.RobotSpec()
+    robot_spec.path = str(mjkdl.ASSETS_DIR / "kinova_gen3/gen3.xml")
     spec.robots = [robot_spec]
     return spec
 
 
-def _cube(name: str = "cube") -> mjk.SceneObject:
-    obj = mjk.SceneObject()
+def _cube(name: str = "cube") -> mjkdl.SceneObject:
+    obj = mjkdl.SceneObject()
     obj.name = name
-    obj.shape = mjk.Shape.BOX
+    obj.shape = mjkdl.Shape.BOX
     obj.size = [0.02, 0.02, 0.02]
     obj.pos = [0.4, 0.0, 0.8]
     obj.rgba = [1.0, 0.0, 0.0, 1.0]
@@ -30,7 +30,7 @@ def _cube(name: str = "cube") -> mjk.SceneObject:
 
 
 def test_build_env_and_step_robot():
-    env = mjk.Env.build(_scene_spec())
+    env = mjkdl.Env.build(_scene_spec())
     try:
         robot = env.create_robot("base_link", "bracelet_link")
         env.update()
@@ -46,7 +46,7 @@ def test_build_env_and_step_robot():
 def test_pykdl_chain_frame_and_joint_array_interop():
     kdl = pytest.importorskip("PyKDL")
 
-    env = mjk.Env.build(_scene_spec())
+    env = mjkdl.Env.build(_scene_spec())
     try:
         robot = env.create_robot("base_link", "bracelet_link")
         chain = robot.kdl_chain()
@@ -64,7 +64,7 @@ def test_pykdl_chain_frame_and_joint_array_interop():
 def test_solver_on_a_temporary_chain_stays_valid():
     kdl = pytest.importorskip("PyKDL")
 
-    env = mjk.Env.build(_scene_spec())
+    env = mjkdl.Env.build(_scene_spec())
     try:
         robot = env.create_robot("base_link", "bracelet_link")
         gravity = kdl.Vector(0.0, 0.0, -9.81)
@@ -86,7 +86,7 @@ def test_solver_on_a_temporary_chain_stays_valid():
 
 
 def test_add_remove_object_keeps_robot_handle_valid():
-    env = mjk.Env.build(_scene_spec())
+    env = mjkdl.Env.build(_scene_spec())
     try:
         robot = env.create_robot("base_link", "bracelet_link")
         env.add_object(_cube())
@@ -104,7 +104,7 @@ def test_add_remove_object_keeps_robot_handle_valid():
 
 
 def test_env_close_invalidates_robot_handles():
-    env = mjk.Env.build(_scene_spec())
+    env = mjkdl.Env.build(_scene_spec())
     robot = env.create_robot("base_link", "bracelet_link")
     env.close()
     with pytest.raises(RuntimeError, match="env is closed"):
@@ -116,14 +116,14 @@ def test_env_close_invalidates_robot_handles():
 
 
 def test_control_modes_switch_and_opt_out():
-    assert [m.mode for m in mjk.RobotSpec().modes] == [mjk.CtrlMode.TORQUE]
-    env = mjk.Env.build(_scene_spec())
+    assert [m.mode for m in mjkdl.RobotSpec().modes] == [mjkdl.CtrlMode.TORQUE]
+    env = mjkdl.Env.build(_scene_spec())
     try:
         robot = env.create_robot("base_link", "bracelet_link")
-        assert robot.ctrl_mode == mjk.CtrlMode.POSITION
+        assert robot.ctrl_mode == mjkdl.CtrlMode.POSITION
         env.update()
-        robot.set_control_mode(mjk.CtrlMode.TORQUE)
-        assert robot.ctrl_mode == mjk.CtrlMode.TORQUE
+        robot.set_control_mode(mjkdl.CtrlMode.TORQUE)
+        assert robot.ctrl_mode == mjkdl.CtrlMode.TORQUE
         assert robot.jnt_trq_cmd.tolist() == [0.0] * robot.n_joints
         assert len(robot.jnt_vel_cmd) == robot.n_joints
         assert not robot.jnt_saturated.any()
@@ -131,41 +131,41 @@ def test_control_modes_switch_and_opt_out():
         env.update()
         assert robot.jnt_saturated.all()
         with pytest.raises(RuntimeError, match="control mode"):
-            robot.set_control_mode(mjk.CtrlMode.VELOCITY)
-        env.set_control_mode(0, mjk.CtrlMode.POSITION)
+            robot.set_control_mode(mjkdl.CtrlMode.VELOCITY)
+        env.set_control_mode(0, mjkdl.CtrlMode.POSITION)
     finally:
         env.close()
 
     spec = _scene_spec()
     spec.robots[0].modes = []
-    env = mjk.Env.build(spec)
+    env = mjkdl.Env.build(spec)
     try:
         robot = env.create_robot("base_link", "bracelet_link")
         with pytest.raises(RuntimeError, match="control mode"):
-            robot.set_control_mode(mjk.CtrlMode.TORQUE)
+            robot.set_control_mode(mjkdl.CtrlMode.TORQUE)
     finally:
         env.close()
 
 
 def test_an_attached_arm_switches_mode_apart_from_its_robot():
-    assert mjk.AttachmentSpec().modes == []
+    assert mjkdl.AttachmentSpec().modes == []
     spec = _scene_spec()
-    attached = mjk.AttachmentSpec()
-    attached.mjcf_path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
+    attached = mjkdl.AttachmentSpec()
+    attached.mjcf_path = str(mjkdl.ASSETS_DIR / "kinova_gen3/gen3.xml")
     attached.prefix = "a_"
-    attached.attach_to.kind = mjk.AttachKind.Body
+    attached.attach_to.kind = mjkdl.AttachKind.Body
     attached.attach_to.name = "base_link"
     attached.pos = [1.0, 0.0, 0.0]
-    attached.modes = [mjk.CtrlModeSpec(mjk.CtrlMode.TORQUE)]
+    attached.modes = [mjkdl.CtrlModeSpec(mjkdl.CtrlMode.TORQUE)]
     spec.robots[0].attachments = [attached]
-    env = mjk.Env.build(spec)
+    env = mjkdl.Env.build(spec)
     try:
         root = env.create_robot("base_link", "bracelet_link")
         arm = env.create_robot("base_link", "bracelet_link", "a_")
-        arm.set_control_mode(mjk.CtrlMode.TORQUE)
+        arm.set_control_mode(mjkdl.CtrlMode.TORQUE)
         env.update()
-        assert arm.ctrl_mode == mjk.CtrlMode.TORQUE
-        assert root.ctrl_mode == mjk.CtrlMode.POSITION
+        assert arm.ctrl_mode == mjkdl.CtrlMode.TORQUE
+        assert root.ctrl_mode == mjkdl.CtrlMode.POSITION
     finally:
         env.close()
 
@@ -175,7 +175,7 @@ def test_set_body_pose_accepts_python_xyzw_quaternion():
 
     spec = _scene_spec()
     spec.objects = [_cube()]
-    env = mjk.Env.build(spec)
+    env = mjkdl.Env.build(spec)
     try:
         quat_xyzw = [0.7071067811865476, 0.0, 0.0, 0.7071067811865476]
         env.set_body_pose("cube", [0.1, 0.2, 0.3], quat_xyzw)
@@ -191,7 +191,7 @@ def test_set_body_pose_accepts_python_xyzw_quaternion():
 def test_reset_restores_commands_and_clears_wrenches():
     spec = _scene_spec()
     spec.objects = [_cube()]
-    env = mjk.Env.build(spec)
+    env = mjkdl.Env.build(spec)
     try:
         robot = env.create_robot("base_link", "bracelet_link")
         robot.jnt_pos_cmd = [0.3] * robot.n_joints
@@ -212,7 +212,7 @@ def test_reset_restores_commands_and_clears_wrenches():
 
 
 def test_ports_are_written_whole_not_in_place():
-    env = mjk.Env.build(_scene_spec())
+    env = mjkdl.Env.build(_scene_spec())
     try:
         robot = env.create_robot("base_link", "bracelet_link")
         with pytest.raises(ValueError, match="read-only"):
@@ -229,13 +229,13 @@ def test_ports_are_written_whole_not_in_place():
 
 
 def test_site_spec_quat_takes_four_values():
-    site = mjk.SiteSpec()
+    site = mjkdl.SiteSpec()
     with pytest.raises(TypeError):
         site.quat = [0.0, 0.0, 0.0, 1.0, 0.0]
 
 
 def test_env_is_a_context_manager_and_saves_its_model(tmp_path):
-    with mjk.Env.build(_scene_spec()) as env:
+    with mjkdl.Env.build(_scene_spec()) as env:
         robot = env.create_robot("base_link", "bracelet_link")
         env.save_model_xml(str(tmp_path / "scene.xml"))
     assert (tmp_path / "scene.xml").stat().st_size > 0
@@ -244,7 +244,7 @@ def test_env_is_a_context_manager_and_saves_its_model(tmp_path):
 
 
 def test_robot_from_a_given_chain_matches_the_derived_one():
-    with mjk.Env.build(_scene_spec()) as env:
+    with mjkdl.Env.build(_scene_spec()) as env:
         derived = env.create_robot("base_link", "bracelet_link")
         env.reset()
         chain = derived.kdl_chain()
@@ -255,18 +255,18 @@ def test_robot_from_a_given_chain_matches_the_derived_one():
 
 
 def test_joint_force_limits_follow_the_active_mode():
-    with mjk.Env.build(_scene_spec()) as env:
+    with mjkdl.Env.build(_scene_spec()) as env:
         robot = env.create_robot("base_link", "bracelet_link")
-        robot.set_control_mode(mjk.CtrlMode.TORQUE)
+        robot.set_control_mode(mjkdl.CtrlMode.TORQUE)
         limits = robot.joint_force_limits()
         assert limits.shape == (robot.n_joints,)
         assert (limits > 0).all() and (limits < 1e6).all()
 
 
 def test_offscreen_render_returns_an_image():
-    with mjk.Env.build(_scene_spec()) as env:
+    with mjkdl.Env.build(_scene_spec()) as env:
         try:
-            rec = mjk.VideoRecorder.open_offscreen(env, 64, 48)
+            rec = mjkdl.VideoRecorder.open_offscreen(env, 64, 48)
         except RuntimeError as exc:
             pytest.skip(f"no offscreen rendering: {exc}")
         with rec:
@@ -278,7 +278,7 @@ def test_offscreen_render_returns_an_image():
 def test_env_runs_on_real_mujoco_objects():
     mujoco = pytest.importorskip("mujoco")
 
-    with mjk.Env.build(_scene_spec()) as env:
+    with mjkdl.Env.build(_scene_spec()) as env:
         robot = env.create_robot("base_link", "bracelet_link")
         assert isinstance(env.model, mujoco.MjModel)
         assert isinstance(env.data, mujoco.MjData)
@@ -298,16 +298,16 @@ def test_env_runs_on_real_mujoco_objects():
 
 
 def test_on_reset_gets_a_context_copy_it_can_keep():
-    with mjk.Env.build(_scene_spec()) as env:
+    with mjkdl.Env.build(_scene_spec()) as env:
         assert env.on_reset is None
         seen = []
         env.on_reset = seen.append
-        opts = mjk.ResetOptions()
+        opts = mjkdl.ResetOptions()
         opts.keyframe = 1
         info = env.reset(opts)
         env.reset()
         first = seen[0]
-        assert isinstance(first, mjk.ResetContext)
+        assert isinstance(first, mjkdl.ResetContext)
         assert first.options.keyframe == 1 and first.options.use_keyframe
         assert first.info.used_keyframe == info.used_keyframe == (env.model.nkey > 1)
         assert first.info.keyframe == info.keyframe
@@ -320,7 +320,7 @@ def test_on_reset_gets_a_context_copy_it_can_keep():
 
 def test_env_holding_a_callback_that_holds_its_robot_is_collected():
     def run() -> weakref.ref:
-        env = mjk.Env.build(_scene_spec())
+        env = mjkdl.Env.build(_scene_spec())
         robot = env.create_robot("base_link", "bracelet_link")
 
         def on_reset(ctx):
@@ -334,14 +334,14 @@ def test_env_holding_a_callback_that_holds_its_robot_is_collected():
     gc.collect()
     assert callback() is None
 
-    env = mjk.Env.build(_scene_spec())
+    env = mjkdl.Env.build(_scene_spec())
     env.on_reset = lambda ctx: None
     env.close()
     assert env.on_reset is None
 
 
 def test_on_reset_error_comes_out_after_the_read_back():
-    with mjk.Env.build(_scene_spec()) as env:
+    with mjkdl.Env.build(_scene_spec()) as env:
         robot = env.create_robot("base_link", "bracelet_link")
         home = [0.1] * robot.n_joints
 
@@ -358,11 +358,11 @@ def test_on_reset_error_comes_out_after_the_read_back():
 
 
 def test_env_spec_is_a_read_only_copy():
-    with mjk.Env.build(_scene_spec()) as env:
+    with mjkdl.Env.build(_scene_spec()) as env:
         env.spec.timestep = 1.0
         assert env.spec.timestep == 0.002
         with pytest.raises(AttributeError):
-            env.spec = mjk.SceneSpec()
+            env.spec = mjkdl.SceneSpec()
         env.add_object(_cube())
         assert [o.name for o in env.spec.objects] == ["cube"]
         with pytest.raises(RuntimeError, match="'ghost'"):
@@ -372,22 +372,22 @@ def test_env_spec_is_a_read_only_copy():
 
 
 def test_assigning_ctrl_mode_switches_on_the_next_update():
-    with mjk.Env.build(_scene_spec()) as env:
+    with mjkdl.Env.build(_scene_spec()) as env:
         robot = env.create_robot("base_link", "bracelet_link")
-        robot.ctrl_mode = mjk.CtrlMode.TORQUE
+        robot.ctrl_mode = mjkdl.CtrlMode.TORQUE
         robot.jnt_trq_cmd = [1000.0] * robot.n_joints
         env.update()
-        assert robot.ctrl_mode == mjk.CtrlMode.TORQUE
+        assert robot.ctrl_mode == mjkdl.CtrlMode.TORQUE
         assert robot.jnt_saturated.all()
 
 
 def test_velocity_mode_tracks_the_commanded_velocity():
     spec = _scene_spec()
-    spec.robots[0].modes = [mjk.CtrlModeSpec(mjk.CtrlMode.VELOCITY, kv=20.0)]
-    with mjk.Env.build(spec) as env:
+    spec.robots[0].modes = [mjkdl.CtrlModeSpec(mjkdl.CtrlMode.VELOCITY, kv=20.0)]
+    with mjkdl.Env.build(spec) as env:
         robot = env.create_robot("base_link", "bracelet_link")
         env.update()
-        robot.set_control_mode(mjk.CtrlMode.VELOCITY)
+        robot.set_control_mode(mjkdl.CtrlMode.VELOCITY)
         start = robot.jnt_pos_msr[0]
         robot.jnt_vel_cmd = [0.3] + [0.0] * (robot.n_joints - 1)
         for _ in range(250):
@@ -399,7 +399,7 @@ def test_velocity_mode_tracks_the_commanded_velocity():
 
 
 def test_paused_robot_holds_headless_step_and_pace_is_a_no_op():
-    with mjk.Env.build(_scene_spec()) as env:
+    with mjkdl.Env.build(_scene_spec()) as env:
         robot = env.create_robot("base_link", "bracelet_link")
         robot.paused = True
         t0 = env.data.time
@@ -414,7 +414,7 @@ def test_paused_robot_holds_headless_step_and_pace_is_a_no_op():
 def test_frames_and_ports_come_back_exactly():
     kdl = pytest.importorskip("PyKDL")
 
-    with mjk.Env.build(_scene_spec()) as env:
+    with mjkdl.Env.build(_scene_spec()) as env:
         robot = env.create_robot("base_link", "bracelet_link")
         robot.set_joint_pos([0.2] * robot.n_joints)
         frame = env.body_frame("bracelet_link")
@@ -429,7 +429,7 @@ def test_frames_and_ports_come_back_exactly():
 
 
 def test_headless_viewer_is_inert():
-    with mjk.Env.build(_scene_spec()) as env:
+    with mjkdl.Env.build(_scene_spec()) as env:
         viewer = env.viewer
         assert not viewer.is_running()
         assert not viewer.key_pressed(32)

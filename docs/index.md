@@ -9,16 +9,22 @@
 - [Torque Control and Tool Inertia](@ref page_howto_torque_control)
 - [Loop Pacing and the Real-Time Factor](@ref page_howto_pacing)
 
-## Migrating to 0.5 {#sec_migrate_mj_kdl_wrapper}
+## Migrating to 0.5 {#sec_migrate_mjkdl}
 
-The project no longer fetches anything but MuJoCo:
+The project is renamed from `mj_kdl_wrapper` to `mjkdl`, and it no longer fetches anything but
+MuJoCo:
 
 | 0.4 | 0.5 |
 |-----|-----|
-| CMake cloned the Orocos KDL fork (`MJ_KDL_FETCH_OROCOS_KDL`) | run `vcs import < mj_kdl_wrapper.repos` before configuring; the fork tracks branch `vereshchagin-driver-weighting` |
+| CMake `find_package(mj_kdl_wrapper 0.4)`, target `mj_kdl_wrapper::mj_kdl_wrapper` | `find_package(mjkdl 0.5)`, `mjkdl::mjkdl` (`mjkdl::camera_ros`) |
+| `#include <mj_kdl_wrapper/mj_kdl_wrapper.hpp>`, namespace `mj_kdl` | `#include <mjkdl/mjkdl.hpp>`, namespace `mjkdl` |
+| CMake options and defines `MJ_KDL_*` | `MJKDL_*` |
+| Python `import mj_kdl_wrapper as mjk`, pip `mj-kdl-wrapper` | `import mjkdl`, pip `mjkdl` |
+| Cache `~/.cache/mj_kdl_wrapper` | `~/.cache/mjkdl` |
+| CMake cloned the Orocos KDL fork (`MJ_KDL_FETCH_OROCOS_KDL`) | run `vcs import < mjkdl.repos` before configuring; the fork tracks branch `vereshchagin-driver-weighting` |
 | `MJ_KDL_FETCH_MENAGERIE`, `mj-kdl-fetch-menagerie`, `mj-kdl-fetch-examples` | removed; the bundled `assets/` are the only models shipped. Point `RobotSpec.path` at any other MJCF, e.g. a MuJoCo Menagerie checkout |
-| Python `mjk.menagerie.model_path()` / `asset_path()` and their `MJ_KDL_*` env overrides | `mjk.ASSETS_DIR / "kinova_gen3/gen3.xml"` |
-| The asset cache was filled by the Menagerie fetch | `cmake --install` copies `assets/` into `~/.cache/mj_kdl_wrapper/assets` for programs that do not know the source tree |
+| Python `mjk.menagerie.model_path()` / `asset_path()` and their `MJ_KDL_*` env overrides | `mjkdl.ASSETS_DIR / "kinova_gen3/gen3.xml"` |
+| The asset cache was filled by the Menagerie fetch | `cmake --install` copies `assets/` into `~/.cache/mjkdl/assets` for programs that do not know the source tree |
 | F/T `wrench` was MuJoCo's reading (the parent's force on the child) | the load on the sensor, as a physical F/T reports it: the negation |
 
 ## Migrating to 0.4 {#sec_migrate_env}

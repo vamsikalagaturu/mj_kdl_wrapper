@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       MUJOCO_VERSION: 3.14.0
-      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.14.0
+      MJKDL_MUJOCO_DIR: /tmp/mujoco-3.14.0
       FETCHCONTENT_BASE_DIR: ${{ github.workspace }}/.fetchcontent
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       SAN_FLAGS: -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer
@@ -34,7 +34,7 @@ jobs:
         id: cache-mujoco
         uses: actions/cache@v4
         with:
-          path: ${{ env.MJ_KDL_MUJOCO_DIR }}
+          path: ${{ env.MJKDL_MUJOCO_DIR }}
           key: mujoco-${{ runner.os }}-${{ env.MUJOCO_VERSION }}
 
       - name: Install MuJoCo ${{ env.MUJOCO_VERSION }}
@@ -45,7 +45,7 @@ jobs:
           rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
 
       - name: Import the Orocos KDL fork
-        run: vcs import < mj_kdl_wrapper.repos
+        run: vcs import < mjkdl.repos
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -71,7 +71,7 @@ jobs:
             -DCMAKE_CXX_FLAGS="${SAN_FLAGS}" \
             -DCMAKE_EXE_LINKER_FLAGS="${SAN_FLAGS}" \
             -DCMAKE_SHARED_LINKER_FLAGS="${SAN_FLAGS}" \
-            -DMJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}" \
+            -DMJKDL_MUJOCO_DIR="${MJKDL_MUJOCO_DIR}" \
             -DBUILD_TESTS=ON \
             -DBUILD_DOCS=OFF \
             -DFETCHCONTENT_BASE_DIR="${FETCHCONTENT_BASE_DIR}" \
@@ -95,7 +95,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       MUJOCO_VERSION: 3.14.0
-      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.14.0
+      MJKDL_MUJOCO_DIR: /tmp/mujoco-3.14.0
       FETCHCONTENT_BASE_DIR: ${{ github.workspace }}/.fetchcontent
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       SAN_FLAGS: -fsanitize=thread -fno-omit-frame-pointer
@@ -113,7 +113,7 @@ jobs:
         id: cache-mujoco
         uses: actions/cache@v4
         with:
-          path: ${{ env.MJ_KDL_MUJOCO_DIR }}
+          path: ${{ env.MJKDL_MUJOCO_DIR }}
           key: mujoco-${{ runner.os }}-${{ env.MUJOCO_VERSION }}
 
       - name: Install MuJoCo ${{ env.MUJOCO_VERSION }}
@@ -124,7 +124,7 @@ jobs:
           rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
 
       - name: Import the Orocos KDL fork
-        run: vcs import < mj_kdl_wrapper.repos
+        run: vcs import < mjkdl.repos
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -150,7 +150,7 @@ jobs:
             -DCMAKE_CXX_FLAGS="${SAN_FLAGS}" \
             -DCMAKE_EXE_LINKER_FLAGS="${SAN_FLAGS}" \
             -DCMAKE_SHARED_LINKER_FLAGS="${SAN_FLAGS}" \
-            -DMJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}" \
+            -DMJKDL_MUJOCO_DIR="${MJKDL_MUJOCO_DIR}" \
             -DBUILD_TESTS=ON \
             -DBUILD_EXAMPLES=OFF \
             -DBUILD_DOCS=OFF \

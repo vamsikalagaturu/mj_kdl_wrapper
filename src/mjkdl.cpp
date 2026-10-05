@@ -2,7 +2,7 @@
  * Copyright (c) 2026 Vamsi Kalagaturu
  * See LICENSE for details. */
 
-#include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "mjkdl/mjkdl.hpp"
 
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic push
@@ -16,7 +16,7 @@
 
 #include <GLFW/glfw3.h>
 
-#ifdef MJ_KDL_HAS_EGL
+#ifdef MJKDL_HAS_EGL
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #endif
@@ -61,7 +61,7 @@ extern char **environ;
         return Status{ mj_fail_.str() }; \
     } while (0)
 
-namespace mj_kdl {
+namespace mjkdl {
 
 // Next to this library first, so an installed tree keeps its plugins after it is moved.
 static std::string default_mujoco_plugin_dir()
@@ -348,7 +348,7 @@ static void sink_close(FfmpegSink *sink)
     }
 }
 
-#ifdef MJ_KDL_HAS_EGL
+#ifdef MJKDL_HAS_EGL
 // EGL framebuffer attribute values for the headless recorder.
 static constexpr EGLint kEglChannelBits = 8;
 static constexpr EGLint kEglDepthBits   = 24;
@@ -3149,7 +3149,7 @@ static bool step_viewer(Env *env)
 
 // VideoRecorder -- EGL headless offscreen recording via ffmpeg pipe
 
-#ifdef MJ_KDL_HAS_EGL
+#ifdef MJKDL_HAS_EGL
 
 using RgbDone = std::function<void(const std::uint8_t *rgb)>;
 
@@ -3519,7 +3519,7 @@ void cleanup(VideoRecorder *vr)
     vr->_impl = nullptr;
 }
 
-#else // MJ_KDL_HAS_EGL not defined
+#else // MJKDL_HAS_EGL not defined
 
 Status init_video_recorder(VideoRecorder *, mjModel *, const char *, int, int, int)
 {
@@ -3540,7 +3540,7 @@ void cleanup(VideoRecorder *vr)
     if (vr) vr->_impl = nullptr;
 }
 
-#endif // MJ_KDL_HAS_EGL
+#endif // MJKDL_HAS_EGL
 
 Status init_video_recorder(
   VideoRecorder  *vr,
@@ -3556,4 +3556,4 @@ Status init_video_recorder(
     return init_video_recorder(vr, model, out_path, w, h, fps);
 }
 
-} // namespace mj_kdl
+} // namespace mjkdl

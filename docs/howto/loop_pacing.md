@@ -6,7 +6,7 @@ Who decides how fast a simulation runs, and how to keep your control loop on its
 
 ## step() advances physics; it does not sleep
 
-`mj_kdl::step(&env)` advances MuJoCo by one timestep and services the viewer. It does **not** wait
+`mjkdl::step(&env)` advances MuJoCo by one timestep and services the viewer. It does **not** wait
 for wall time to catch up. Pacing belongs to the loop that owns the timing, not to a physics call:
 a `step()` that sleeps spends a time budget it does not own, and does so invisibly at the call
 site, which makes it impossible to compose with an application that already paces itself.
@@ -43,10 +43,10 @@ Call `pace_realtime` once per iteration. This is what the bundled examples do, a
 the behaviour `step()` used to have implicitly:
 
 ```cpp
-while (mj_kdl::step(&env)) {
-    mj_kdl::update(&env);
+while (mjkdl::step(&env)) {
+    mjkdl::update(&env);
     // ... control ...
-    mj_kdl::pace_realtime(&env);
+    mjkdl::pace_realtime(&env);
 }
 ```
 

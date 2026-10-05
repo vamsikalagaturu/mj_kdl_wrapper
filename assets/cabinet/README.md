@@ -1,11 +1,11 @@
 # 3-Drawer Cabinet Asset
 
-A stackable 3-drawer desk organizer for MuJoCo / mj_kdl_wrapper. The frame is
+A stackable 3-drawer desk organizer for MuJoCo / mjkdl. The frame is
 fixed; each drawer is a free body resting on simple support shelves, so it can
 be pulled out the front and fall.
 Every drawer carries a 96 mm bar handle and a grasp site at the handle center.
 `cabinet.xml` is a single-root-body asset, so it drops straight into a
-`mj_kdl_wrapper` scene as a `SceneObject`. Units are meters.
+`mjkdl` scene as a `SceneObject`. Units are meters.
 
 ## Files
 
@@ -26,19 +26,19 @@ side rails, and back stops) and grasp sites `grasp1..3` at the handle centers
 (invisible; for pose queries). A `SceneObject::prefix` is prepended to them when
 set. Drag a drawer forward in the viewer and it can leave the cabinet and fall.
 
-## Use it in mj_kdl_wrapper
+## Use it in mjkdl
 
 In short:
 
 ```python
-import mj_kdl_wrapper as mjk
+import mjkdl
 
-obj = mjk.SceneObject()
+obj = mjkdl.SceneObject()
 obj.name, obj.mjcf_path, obj.pos, obj.fixed = "cabinet", ".../cabinet.xml", [0, 0, 0], True
 
-spec = mjk.SceneSpec()
+spec = mjkdl.SceneSpec()
 spec.timestep, spec.add_floor, spec.add_skybox, spec.objects = 0.002, True, True, [obj]
-with mjk.Env.build(spec) as env:
+with mjkdl.Env.build(spec) as env:
     env.step()
     pose = env.site_frame("grasp1")     # PyKDL.Frame at the handle center
 

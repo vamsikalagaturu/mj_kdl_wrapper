@@ -2,7 +2,7 @@
  * TORQUE mode on the Kinova GEN3 + Robotiq 2F-85: KDL gravity with the gripper's lumped mass,
  * impedance hold, and jnt_trq_msr as the drive torque. */
 
-#include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "mjkdl/mjkdl.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
 
@@ -16,14 +16,14 @@
 #include <filesystem>
 #include <string>
 
-namespace ex = mj_kdl_examples;
+namespace ex = mjkdl_examples;
 namespace fs = std::filesystem;
 
 class MjcfTrqCtrlTest : public testing::Test
 {
   protected:
-    mj_kdl::Env         env_;
-    mj_kdl::Robot       s_;
+    mjkdl::Env         env_;
+    mjkdl::Robot       s_;
     const KDL::JntArray q_home_ = ex::home_q(7);
 
     void SetUp() override
@@ -33,30 +33,30 @@ class MjcfTrqCtrlTest : public testing::Test
         if (!fs::exists(arm_mjcf)) GTEST_SKIP() << arm_mjcf << " not found";
         if (!fs::exists(grp_mjcf)) GTEST_SKIP() << grp_mjcf << " not found";
 
-        mj_kdl::RobotSpec rs;
+        mjkdl::RobotSpec rs;
         rs.path = arm_mjcf;
         rs.attachments.push_back(ex::gripper_attachment(grp_mjcf));
-        mj_kdl::SceneSpec sc;
+        mjkdl::SceneSpec sc;
         sc.timestep   = 0.002;
         sc.add_floor  = true;
         sc.add_skybox = false;
         sc.robots.push_back(rs);
 
-        ASSERT_TRUE(mj_kdl::init_env(&env_, &sc));
-        const mj_kdl::ToolFrameSpec tool = ex::gripper_tool();
+        ASSERT_TRUE(mjkdl::init_env(&env_, &sc));
+        const mjkdl::ToolFrameSpec tool = ex::gripper_tool();
         ASSERT_TRUE(
-          mj_kdl::init_robot_from_mjcf(&s_, &env_, "base_link", "bracelet_link", "", &tool)
+          mjkdl::init_robot_from_mjcf(&s_, &env_, "base_link", "bracelet_link", "", &tool)
         );
-        mj_kdl::set_joint_pos(&s_, q_home_);
+        mjkdl::set_joint_pos(&s_, q_home_);
     }
 
-    int dof(const mj_kdl::Robot &r, unsigned i) const
+    int dof(const mjkdl::Robot &r, unsigned i) const
     {
         const int jid = mj_name2id(env_.model, mjOBJ_JOINT, r.joint_names[i].c_str());
         return env_.model->jnt_dofadr[jid];
     }
 
-    double max_gravity_error(const mj_kdl::Robot &r)
+    double max_gravity_error(const mjkdl::Robot &r)
     {
         KDL::ChainDynParam dyn(r.chain, KDL::Vector(0, 0, -9.81));
         KDL::JntArray      g(7);
@@ -74,10 +74,10 @@ TEST_F(MjcfTrqCtrlTest, GravityIncludesTheGripperMass)
     mj_forward(env_.model, env_.data);
     EXPECT_LE(max_gravity_error(s_), 1e-9) << "measured 2e-14 Nm";
 
-    mj_kdl::Robot bare;
-    ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&bare, &env_, "base_link", "bracelet_link"));
+    mjkdl::Robot bare;
+    ASSERT_TRUE(mjkdl::init_robot_from_mjcf(&bare, &env_, "base_link", "bracelet_link"));
     EXPECT_GT(max_gravity_error(bare), 1.0) << "without the tool the chain misses ~5 Nm";
-    mj_kdl::cleanup(&bare);
+    mjkdl::cleanup(&bare);
 }
 
 TEST_F(MjcfTrqCtrlTest, ImpedanceDrift)
@@ -87,24 +87,24 @@ TEST_F(MjcfTrqCtrlTest, ImpedanceDrift)
     KDL::Frame                      ee_init;
     fk.JntToCart(q_home_, ee_init);
 
-    ASSERT_TRUE(mj_kdl::set_control_mode(&s_, mj_kdl::CtrlMode::TORQUE));
+    ASSERT_TRUE(mjkdl::set_control_mode(&s_, mjkdl::CtrlMode::TORQUE));
     ex::prime_gravity(s_, dyn, q_home_);
     for (int i = 0; i < 500; ++i) {
-        mj_kdl::update(&env_);
+        mjkdl::update(&env_);
         ex::pd_gravity(s_, dyn, q_home_, ex::kKp, ex::kKd);
-        mj_kdl::step(&env_);
+        mjkdl::step(&env_);
     }
-    mj_kdl::update(&env_);
+    mjkdl::update(&env_);
     EXPECT_LE((ex::tcp_frame(fk, s_).p - ee_init.p).Norm(), 1e-5) << "measured 7e-7 m";
 }
 
 TEST_F(MjcfTrqCtrlTest, TrqMsrReadsQfrcActuator)
 {
-    ASSERT_TRUE(mj_kdl::set_control_mode(&s_, mj_kdl::CtrlMode::TORQUE));
+    ASSERT_TRUE(mjkdl::set_control_mode(&s_, mjkdl::CtrlMode::TORQUE));
     for (unsigned i = 0; i < 7; ++i) s_.jnt_trq_cmd[i] = 1.0 + i;
-    mj_kdl::update(&env_);
-    mj_kdl::step(&env_);
-    mj_kdl::update(&env_);
+    mjkdl::update(&env_);
+    mjkdl::step(&env_);
+    mjkdl::update(&env_);
 
     for (unsigned i = 0; i < 7; ++i) {
         const double actuator = env_.data->qfrc_actuator[dof(s_, i)];

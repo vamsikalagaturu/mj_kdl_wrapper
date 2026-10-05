@@ -12,7 +12,7 @@ import math
 from dataclasses import dataclass
 
 import PyKDL as kdl
-import mj_kdl_wrapper as mjk
+import mjkdl
 
 HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 TABLE_Z = 0.70
@@ -48,24 +48,24 @@ class ResetRequested(Exception):
     """Raised when the simulate UI reset is detected, to restart the sequence."""
 
 
-def gripper_attachment(gripper_path: str) -> mjk.AttachmentSpec:
-    attach = mjk.AttachmentSpec()
+def gripper_attachment(gripper_path: str) -> mjkdl.AttachmentSpec:
+    attach = mjkdl.AttachmentSpec()
     attach.mjcf_path = gripper_path
-    attach.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
+    attach.attach_to = mjkdl.AttachTarget(mjkdl.AttachKind.Site, "pinch_site")
     attach.prefix = "g_"
     return attach
 
 
-def bottle_attachment(bottle_path: str) -> mjk.AttachmentSpec:
-    attach = mjk.AttachmentSpec()
+def bottle_attachment(bottle_path: str) -> mjkdl.AttachmentSpec:
+    attach = mjkdl.AttachmentSpec()
     attach.mjcf_path = bottle_path
-    attach.attach_to = mjk.AttachTarget(mjk.AttachKind.Body, "g_base")
+    attach.attach_to = mjkdl.AttachTarget(mjkdl.AttachKind.Body, "g_base")
     attach.prefix = "pour_"
     return attach
 
 
-def table_object(table_path: str) -> mjk.SceneObject:
-    table = mjk.SceneObject()
+def table_object(table_path: str) -> mjkdl.SceneObject:
+    table = mjkdl.SceneObject()
     table.name = "table"
     table.mjcf_path = table_path
     table.pos = [0.0, 0.0, TABLE_Z]
@@ -73,49 +73,49 @@ def table_object(table_path: str) -> mjk.SceneObject:
     return table
 
 
-def receiver_object(receiver_path: str) -> mjk.SceneObject:
-    recv = mjk.SceneObject()
+def receiver_object(receiver_path: str) -> mjkdl.SceneObject:
+    recv = mjkdl.SceneObject()
     recv.name = "recv"
     recv.mjcf_path = receiver_path
     recv.pos = [JUG_X, JUG_Y, TABLE_Z]
     return recv
 
 
-def ball_object(index: int) -> mjk.SceneObject:
-    ball = mjk.SceneObject()
+def ball_object(index: int) -> mjkdl.SceneObject:
+    ball = mjkdl.SceneObject()
     ball.name = f"grain_{index:02d}"
-    ball.shape = mjk.Shape.SPHERE
+    ball.shape = mjkdl.Shape.SPHERE
     ball.size = [BALL_RADIUS, 0.0, 0.0]
     ball.pos = [0.0, 0.0, TABLE_Z + 0.40 + index * 2.0 * BALL_RADIUS]
     ball.rgba = [1.0, 0.84, 0.30, 1.0]
     ball.mass = 0.006
-    ball.condim = mjk.Condim.Torsional
+    ball.condim = mjkdl.Condim.Torsional
     ball.friction = [0.5, 0.02, 0.001]
     return ball
 
 
-def build_env() -> tuple[mjk.Env, mjk.Robot]:
-    spec = mjk.SceneSpec()
+def build_env() -> tuple[mjkdl.Env, mjkdl.Robot]:
+    spec = mjkdl.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
     spec.add_skybox = True
     spec.objects = [
-        table_object(str(mjk.ASSETS_DIR / "table.xml")),
+        table_object(str(mjkdl.ASSETS_DIR / "table.xml")),
         *[ball_object(i) for i in range(NUM_BALLS)],
-        receiver_object(str(mjk.ASSETS_DIR / "mug_table.xml")),
+        receiver_object(str(mjkdl.ASSETS_DIR / "mug_table.xml")),
     ]
 
-    robot_spec = mjk.RobotSpec()
-    robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
+    robot_spec = mjkdl.RobotSpec()
+    robot_spec.path = str(mjkdl.ASSETS_DIR / "kinova_gen3/gen3.xml")
     robot_spec.pos = [ROBOT_BACK_X, 0.0, TABLE_Z]
     robot_spec.attachments = [
-        gripper_attachment(str(mjk.ASSETS_DIR / "robotiq_2f85/2f85.xml")),
-        bottle_attachment(str(mjk.ASSETS_DIR / "mug.xml")),
+        gripper_attachment(str(mjkdl.ASSETS_DIR / "robotiq_2f85/2f85.xml")),
+        bottle_attachment(str(mjkdl.ASSETS_DIR / "mug.xml")),
     ]
     spec.robots = [robot_spec]
 
-    env = mjk.Env.build(spec)
-    tool = mjk.ToolFrameSpec()
+    env = mjkdl.Env.build(spec)
+    tool = mjkdl.ToolFrameSpec()
     tool.tool_body = "g_base_mount"
     tool.tcp_site = "g_pinch"
     robot = env.create_robot("base_link", "bracelet_link", tool=tool)
@@ -137,7 +137,7 @@ def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
-def joint_limit_arrays(robot: mjk.Robot) -> tuple[kdl.JntArray, kdl.JntArray]:
+def joint_limit_arrays(robot: mjkdl.Robot) -> tuple[kdl.JntArray, kdl.JntArray]:
     q_min = kdl.JntArray(robot.n_joints)
     q_max = kdl.JntArray(robot.n_joints)
     for i, (low, high) in enumerate(robot.joint_limits):
@@ -148,7 +148,7 @@ def joint_limit_arrays(robot: mjk.Robot) -> tuple[kdl.JntArray, kdl.JntArray]:
     return q_min, q_max
 
 
-def build_waypoints(env: mjk.Env, robot: mjk.Robot) -> dict[str, list[float]]:
+def build_waypoints(env: mjkdl.Env, robot: mjkdl.Robot) -> dict[str, list[float]]:
     chain = robot.kdl_chain()
     n = robot.n_joints
     fk = kdl.ChainFkSolverPos_recursive(chain)
@@ -226,7 +226,7 @@ def gravity(dyn: kdl.ChainDynParam, q_values) -> list[float]:
     return [g[i] for i in range(g.rows())]
 
 
-def pd_gravity(robot: mjk.Robot, dyn: kdl.ChainDynParam, target: list[float]) -> None:
+def pd_gravity(robot: mjkdl.Robot, dyn: kdl.ChainDynParam, target: list[float]) -> None:
     q, qd = robot.jnt_pos_msr, robot.jnt_vel_msr
     g = gravity(dyn, q)
     robot.jnt_trq_cmd = [
@@ -234,7 +234,7 @@ def pd_gravity(robot: mjk.Robot, dyn: kdl.ChainDynParam, target: list[float]) ->
     ]
 
 
-def max_abs_joint_err(robot: mjk.Robot, target: list[float]) -> float:
+def max_abs_joint_err(robot: mjkdl.Robot, target: list[float]) -> float:
     return max(abs(target[i] - robot.jnt_pos_msr[i]) for i in range(robot.n_joints))
 
 
@@ -242,7 +242,7 @@ def lerp(start: list[float], target: list[float], alpha: float) -> list[float]:
     return [a + alpha * (b - a) for a, b in zip(start, target)]
 
 
-def place_balls_in_bottle(env: mjk.Env, robot: mjk.Robot) -> None:
+def place_balls_in_bottle(env: mjkdl.Env, robot: mjkdl.Robot) -> None:
     robot.set_joint_pos(HOME)
     center = env.site_frame("pour_center")
     spacing = 2.0 * BALL_RADIUS
@@ -256,7 +256,7 @@ def place_balls_in_bottle(env: mjk.Env, robot: mjk.Robot) -> None:
         env.set_body_pose(f"grain_{i:02d}", [world.x(), world.y(), world.z()])
 
 
-def balls_in_receiver(env: mjk.Env) -> tuple[int, list[float]]:
+def balls_in_receiver(env: mjkdl.Env) -> tuple[int, list[float]]:
     count = 0
     centroid = [0.0, 0.0, 0.0]
     for i in range(NUM_BALLS):
@@ -310,7 +310,7 @@ def main() -> int:
     env, robot = build_env()
     recorder = None
     try:
-        robot.set_control_mode(mjk.CtrlMode.TORQUE)
+        robot.set_control_mode(mjkdl.CtrlMode.TORQUE)
         fingers = env.data.actuator("g_fingers_actuator")
         chain = robot.kdl_chain()
         dyn = kdl.ChainDynParam(chain, kdl.Vector(0.0, 0.0, env.spec.gravity_z))
@@ -341,8 +341,8 @@ def main() -> int:
         ]
 
         if args.record:
-            recorder = mjk.VideoRecorder.open_preset(
-                env, args.record, mjk.VideoResolution.R1080p, fps
+            recorder = mjkdl.VideoRecorder.open_preset(
+                env, args.record, mjkdl.VideoResolution.R1080p, fps
             )
             state["recorder"] = recorder
         if args.gui:

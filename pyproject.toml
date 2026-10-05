@@ -6,9 +6,9 @@ requires = [
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "mj-kdl-wrapper"
+name = "mjkdl"
 dynamic = ["version"]
-description = "Python bindings for mj_kdl_wrapper: MuJoCo physics with Orocos KDL kinematics and dynamics"
+description = "Python bindings for mjkdl: MuJoCo physics with Orocos KDL kinematics and dynamics"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -34,10 +34,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/vamsikalagaturu/mj_kdl_wrapper"
-Repository = "https://github.com/vamsikalagaturu/mj_kdl_wrapper"
-Documentation = "https://github.com/vamsikalagaturu/mj_kdl_wrapper#readme"
-Issues = "https://github.com/vamsikalagaturu/mj_kdl_wrapper/issues"
+Homepage = "https://github.com/vamsikalagaturu/mjkdl"
+Repository = "https://github.com/vamsikalagaturu/mjkdl"
+Documentation = "https://github.com/vamsikalagaturu/mjkdl#readme"
+Issues = "https://github.com/vamsikalagaturu/mjkdl/issues"
 
 [tool.scikit-build]
 cmake.args = [
@@ -51,14 +51,14 @@ sdist.include = [
 ]
 
 [tool.scikit-build.wheel.packages]
-mj_kdl_wrapper = "python/mj_kdl_wrapper"
+mjkdl = "python/mjkdl"
 
 # cmake/Versions.cmake is the one place the version is written.
 [[tool.dynamic-metadata]]
 provider = "scikit_build_core.metadata.regex"
 field = "version"
 input = "cmake/Versions.cmake"
-regex = '^set\(MJ_KDL_VERSION "(?P<value>[^"]+)"\)'
+regex = '^set\(MJKDL_VERSION "(?P<value>[^"]+)"\)'
 
 [tool.ruff]
 line-length = 100

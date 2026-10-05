@@ -1,6 +1,6 @@
 # ROS 2 Installation Guide
 
-Full reference for building `mj_kdl_wrapper` in a ROS 2 (Jazzy) colcon workspace,
+Full reference for building `mjkdl` in a ROS 2 (Jazzy) colcon workspace,
 for both C++ and Python. For non-ROS builds, see the
 [Standalone Installation Guide](standalone.md).
 
@@ -24,8 +24,8 @@ packages with apt (see [System packages](#system-packages)).
 
 It is not registered in the ament index, so `ros2 pkg list` / `ros2 pkg prefix`
 will not show it - expected, and it does not affect linking: dependent packages
-consume it with `find_package(mj_kdl_wrapper)`, and a downstream
-`<depend>mj_kdl_wrapper</depend>` orders the build correctly.
+consume it with `find_package(mjkdl)`, and a downstream
+`<depend>mjkdl</depend>` orders the build correctly.
 
 ## KDL must be shared
 
@@ -37,7 +37,7 @@ process can hold only one copy - the loader keeps the first and silently drops t
 other's symbols.
 
 The fix is to build the secorolab fork as its own workspace package and have every
-package (including `mj_kdl_wrapper`) consume that one shared `liborocos-kdl`. The
+package (including `mjkdl`) consume that one shared `liborocos-kdl`. The
 fork ships `package.xml` for `orocos_kdl` (C++, build type `cmake`) and
 `python_orocos_kdl`, so colcon can build it directly.
 
@@ -58,14 +58,14 @@ non-ROS CI.
 ## ROS 2 C++
 
 Create the workspace, clone the wrapper, import the KDL fork from its
-`mj_kdl_wrapper.repos`, then build KDL first and the wrapper against it:
+`mjkdl.repos`, then build KDL first and the wrapper against it:
 
 ```bash
 # Workspace with the KDL fork and the wrapper as sibling packages
 mkdir -p ~/ros2_ws/src && cd ~/ros2_ws
-git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git src/mj_kdl_wrapper
+git clone https://github.com/vamsikalagaturu/mjkdl.git src/mjkdl
 # the fork lands in src/third_party/orocos_kinematics_dynamics
-vcs import src < src/mj_kdl_wrapper/mj_kdl_wrapper.repos
+vcs import src < src/mjkdl/mjkdl.repos
 
 # Use your distro: jazzy or lyrical
 source /opt/ros/jazzy/setup.bash
@@ -75,12 +75,12 @@ colcon build --packages-select orocos_kdl --cmake-args -DENABLE_TESTS=OFF
 source install/setup.bash
 
 # 2. Build the wrapper against it (no clone, no rebuild, no bundling)
-colcon build --packages-select mj_kdl_wrapper \
-  --cmake-args -DMJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF
+colcon build --packages-select mjkdl \
+  --cmake-args -DMJKDL_OROCOS_KDL_FROM_PACKAGE=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF
 source install/setup.bash
 ```
 
-Result: `mj_kdl_wrapper` links `install/orocos_kdl/lib/liborocos-kdl.so` and ships
+Result: `mjkdl` links `install/orocos_kdl/lib/liborocos-kdl.so` and ships
 no KDL of its own; there is exactly one KDL in the overlay.
 
 The wrapper checkout carries a `third_party/COLCON_IGNORE`, so a fork imported into its
@@ -90,8 +90,8 @@ package.
 ### Consuming it from your own package
 
 ```cmake
-find_package(mj_kdl_wrapper REQUIRED)
-target_link_libraries(my_node mj_kdl_wrapper::mj_kdl_wrapper)
+find_package(mjkdl REQUIRED)
+target_link_libraries(my_node mjkdl::mjkdl)
 # KDL is available too:
 find_package(orocos_kdl REQUIRED)
 target_link_libraries(my_node orocos-kdl)
@@ -100,13 +100,13 @@ target_link_libraries(my_node mujoco::mujoco)
 ```
 
 With `rclcpp` and `sensor_msgs` sourced at configure time, the wrapper also builds
-`mj_kdl_wrapper::camera_ros` (`MJ_KDL_WITH_ROS=AUTO`; `ON` requires ROS, `OFF` skips it). It
+`mjkdl::camera_ros` (`MJKDL_WITH_ROS=AUTO`; `ON` requires ROS, `OFF` skips it). It
 publishes a frame rendered with `render_rgb()` as `sensor_msgs/Image` plus `CameraInfo`
-(`include/mj_kdl_wrapper/camera_ros.hpp`); it creates no node or thread of its own.
+(`include/mjkdl/camera_ros.hpp`); it creates no node or thread of its own.
 
 ```cmake
-if(TARGET mj_kdl_wrapper::camera_ros)
-  target_link_libraries(my_node mj_kdl_wrapper::camera_ros)
+if(TARGET mjkdl::camera_ros)
+  target_link_libraries(my_node mjkdl::camera_ros)
 endif()
 ```
 
@@ -114,12 +114,12 @@ endif()
 
 Step 1 must precede step 2 so the `orocos_kdl` package is on `CMAKE_PREFIX_PATH`
 when the wrapper configures. colcon finds `orocos_kdl` among the wrapper's `find_package()`
-calls, so a single `colcon build` also orders them; the flag `MJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON`
+calls, so a single `colcon build` also orders them; the flag `MJKDL_OROCOS_KDL_FROM_PACKAGE=ON`
 is still needed. A consuming ROS package declares the dependencies in its own `package.xml`:
 
 ```xml
 <depend>orocos_kdl</depend>
-<depend>mj_kdl_wrapper</depend>
+<depend>mjkdl</depend>
 ```
 
 ## ROS 2 Python
@@ -138,10 +138,10 @@ python3 -m venv --system-site-packages ~/ros2_ws/.venv-ros
 source ~/ros2_ws/.venv-ros/bin/activate
 
 # build + install the wheel from a standalone checkout, then verify the combined stack imports
-git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git ~/mj_kdl_wrapper
-cd ~/mj_kdl_wrapper && vcs import < mj_kdl_wrapper.repos
+git clone https://github.com/vamsikalagaturu/mjkdl.git ~/mjkdl
+cd ~/mjkdl && vcs import < mjkdl.repos
 pip install .
-python -c "import rclpy, PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mjk.__mujoco_version__)"
+python -c "import rclpy, PyKDL, mujoco, mjkdl as mjk; print(mjkdl.__mujoco_version__)"
 ```
 
 The wheel bundles its own `PyKDL`, which takes precedence over the system
@@ -170,11 +170,11 @@ source ~/ros2_ws/.venv-ros/bin/activate
 
 | Approach | How | When |
 |----------|-----|------|
-| `find_package` (recommended) | `-DMJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON` | KDL is a colcon package on `CMAKE_PREFIX_PATH` (the overlay) |
-| By prefix | `-DMJ_KDL_OROCOS_KDL_INSTALL_DIR=<prefix>` | KDL is installed at a known prefix |
-| Process isolation | (no build change) | Keep `mj_kdl_wrapper` and system-KDL packages (`kdl_parser`, `tf2_kdl`, `robot_state_publisher`) in separate nodes; ROS 2 is multi-process, so each loads one KDL |
+| `find_package` (recommended) | `-DMJKDL_OROCOS_KDL_FROM_PACKAGE=ON` | KDL is a colcon package on `CMAKE_PREFIX_PATH` (the overlay) |
+| By prefix | `-DMJKDL_OROCOS_KDL_INSTALL_DIR=<prefix>` | KDL is installed at a known prefix |
+| Process isolation | (no build change) | Keep `mjkdl` and system-KDL packages (`kdl_parser`, `tf2_kdl`, `robot_state_publisher`) in separate nodes; ROS 2 is multi-process, so each loads one KDL |
 | Bundled (default) | (no build change) | Single-package use; not safe to mix with system-KDL packages in one process |
 
 For the Python wheel, pass the shared-KDL define through scikit-build-core
-(`--config-settings=cmake.define.MJ_KDL_OROCOS_KDL_INSTALL_DIR=<prefix>`); note the
+(`--config-settings=cmake.define.MJKDL_OROCOS_KDL_INSTALL_DIR=<prefix>`); note the
 prefix must also ship `PyKDL`.

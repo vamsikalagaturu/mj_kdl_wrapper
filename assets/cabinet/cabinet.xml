@@ -1,6 +1,6 @@
 <mujoco model="cabinet">
   <!--
-    Attach-friendly cabinet asset for mj_kdl_wrapper: a single root body so it can be
+    Attach-friendly cabinet asset for mjkdl: a single root body so it can be
     added as a SceneObject (mjs_attach). The parent scene provides floor/lights/option.
     Standalone view (default headlight, no floor): python -m mujoco.viewer with mjcf=cabinet.xml
 

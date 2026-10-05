@@ -1,9 +1,9 @@
 /* test_dual_arm.cpp
- * Two Kinova GEN3 arms in one scene, facing each other, each its own mj_kdl::Robot with its own
+ * Two Kinova GEN3 arms in one scene, facing each other, each its own mjkdl::Robot with its own
  * KDL chain: a prefix names the whole chain, KDL gravity matches MuJoCo's for both, and both hold
  * their pose under KDL gravity compensation. Self-skips when the bundled Gen3 is missing. */
 
-#include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "mjkdl/mjkdl.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
 
@@ -17,14 +17,14 @@
 #include <memory>
 #include <string>
 
-namespace ex = mj_kdl_examples;
+namespace ex = mjkdl_examples;
 namespace fs = std::filesystem;
 
 class DualArmTest : public testing::Test
 {
   protected:
-    mj_kdl::Env                         env;
-    mj_kdl::Robot                       arm1, arm2;
+    mjkdl::Env                         env;
+    mjkdl::Robot                       arm1, arm2;
     std::unique_ptr<KDL::ChainDynParam> dyn1, dyn2;
     const KDL::JntArray                 q_home = ex::home_q(7);
 
@@ -34,11 +34,11 @@ class DualArmTest : public testing::Test
         if (!fs::exists(mjcf)) GTEST_SKIP() << mjcf << " not found";
 
         // arm1 at x = -0.5 m facing +X; arm2 at x = +0.5 m turned 180 deg about Z, prefixed "r2_".
-        mj_kdl::SceneSpec scene;
+        mjkdl::SceneSpec scene;
         scene.timestep   = 0.002;
         scene.add_floor  = true;
         scene.add_skybox = false;
-        mj_kdl::RobotSpec left, right;
+        mjkdl::RobotSpec left, right;
         left.path     = mjcf;
         left.pos[0]   = -0.5;
         right.path    = mjcf;
@@ -48,14 +48,14 @@ class DualArmTest : public testing::Test
         right.quat[3] = 0.0;
         scene.robots  = { left, right };
 
-        ASSERT_TRUE(mj_kdl::init_env(&env, &scene));
-        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&arm1, &env, "base_link", "bracelet_link", ""));
-        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&arm2, &env, "base_link", "bracelet_link", "r2_"));
+        ASSERT_TRUE(mjkdl::init_env(&env, &scene));
+        ASSERT_TRUE(mjkdl::init_robot_from_mjcf(&arm1, &env, "base_link", "bracelet_link", ""));
+        ASSERT_TRUE(mjkdl::init_robot_from_mjcf(&arm2, &env, "base_link", "bracelet_link", "r2_"));
         dyn1 = std::make_unique<KDL::ChainDynParam>(arm1.chain, KDL::Vector(0, 0, -9.81));
         dyn2 = std::make_unique<KDL::ChainDynParam>(arm2.chain, KDL::Vector(0, 0, -9.81));
     }
 
-    int dof(const mj_kdl::Robot &r, int j) const
+    int dof(const mjkdl::Robot &r, int j) const
     {
         return env.model->jnt_dofadr[mj_name2id(env.model, mjOBJ_JOINT, r.joint_names[j].c_str())];
     }
@@ -63,18 +63,18 @@ class DualArmTest : public testing::Test
 
 TEST_F(DualArmTest, PrefixNamesTheWholeChain)
 {
-    mj_kdl::Robot named;
-    ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&named, &env, "r2_base_link", "r2_bracelet_link"));
+    mjkdl::Robot named;
+    ASSERT_TRUE(mjkdl::init_robot_from_mjcf(&named, &env, "r2_base_link", "r2_bracelet_link"));
     EXPECT_EQ(arm2.joint_names, named.joint_names);
     EXPECT_EQ(arm2.joint_names.front(), "r2_joint_1");
     EXPECT_EQ(arm2.chain.getNrOfSegments(), named.chain.getNrOfSegments());
-    mj_kdl::cleanup(&named);
+    mjkdl::cleanup(&named);
 }
 
 TEST_F(DualArmTest, KdlGravityMatchesMujocoForBothArms)
 {
-    mj_kdl::set_joint_pos(&arm1, q_home);
-    mj_kdl::set_joint_pos(&arm2, q_home);
+    mjkdl::set_joint_pos(&arm1, q_home);
+    mjkdl::set_joint_pos(&arm2, q_home);
     mj_forward(env.model, env.data);
 
     // At rest qfrc_bias is the gravity torque; measured difference 1e-14 Nm.
@@ -89,10 +89,10 @@ TEST_F(DualArmTest, KdlGravityMatchesMujocoForBothArms)
 
 TEST_F(DualArmTest, DualArmDrift)
 {
-    mj_kdl::set_joint_pos(&arm1, q_home);
-    mj_kdl::set_joint_pos(&arm2, q_home);
-    ASSERT_TRUE(mj_kdl::set_control_mode(&arm1, mj_kdl::CtrlMode::TORQUE));
-    ASSERT_TRUE(mj_kdl::set_control_mode(&arm2, mj_kdl::CtrlMode::TORQUE));
+    mjkdl::set_joint_pos(&arm1, q_home);
+    mjkdl::set_joint_pos(&arm2, q_home);
+    ASSERT_TRUE(mjkdl::set_control_mode(&arm1, mjkdl::CtrlMode::TORQUE));
+    ASSERT_TRUE(mjkdl::set_control_mode(&arm2, mjkdl::CtrlMode::TORQUE));
     ex::prime_gravity(arm1, *dyn1, q_home);
     ex::prime_gravity(arm2, *dyn2, q_home);
 
@@ -101,12 +101,12 @@ TEST_F(DualArmTest, DualArmDrift)
     fk1.JntToCart(q_home, ee_init);
 
     for (int i = 0; i < 500; ++i) {
-        mj_kdl::update(&env);
+        mjkdl::update(&env);
         ex::pd_gravity(arm1, *dyn1, q_home);
         ex::pd_gravity(arm2, *dyn2, q_home);
-        mj_kdl::step(&env);
+        mjkdl::step(&env);
     }
-    mj_kdl::update(&env);
+    mjkdl::update(&env);
 
     // Measured drift: 3e-18 m.
     EXPECT_LE((ex::tcp_frame(fk1, arm1).p - ee_init.p).Norm(), 1e-6);

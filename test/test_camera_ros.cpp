@@ -1,8 +1,8 @@
 /* test_camera_ros.cpp
  * The CameraInfo a sim camera publishes, and the gate that keeps an unwatched topic free.
- * Built only when the camera_ros target is (MJ_KDL_WITH_ROS). */
+ * Built only when the camera_ros target is (MJKDL_WITH_ROS). */
 
-#include "mj_kdl_wrapper/camera_ros.hpp"
+#include "mjkdl/camera_ros.hpp"
 
 #include <gtest/gtest.h>
 
@@ -25,11 +25,11 @@ class CameraRosTest : public testing::Test
   protected:
     mjModel                *model_ = nullptr;
     rclcpp::Node::SharedPtr node_;
-    mj_kdl::CameraConf      conf_;
+    mjkdl::CameraConf      conf_;
 
     void SetUp() override
     {
-        const auto path = fs::temp_directory_path() / "mj_kdl_camera_ros_test.xml";
+        const auto path = fs::temp_directory_path() / "mjkdl_camera_ros_test.xml";
         std::ofstream(path) << kMjcf;
 
         char error[1024] = { 0 };
@@ -37,7 +37,7 @@ class CameraRosTest : public testing::Test
         fs::remove(path);
         ASSERT_NE(model_, nullptr) << error;
 
-        node_ = std::make_shared<rclcpp::Node>("mj_kdl_camera_ros_test");
+        node_ = std::make_shared<rclcpp::Node>("mjkdl_camera_ros_test");
 
         conf_.camera   = "wrist";
         conf_.frame_id = "wrist_optical";
@@ -56,7 +56,7 @@ class CameraRosTest : public testing::Test
 
 TEST_F(CameraRosTest, IntrinsicsComeFromTheModelFovy)
 {
-    mj_kdl::CameraRosPublisher pub(*node_, model_, conf_);
+    mjkdl::CameraRosPublisher pub(*node_, model_, conf_);
     const auto                &k = pub.camera_info().k;
 
     EXPECT_NEAR(k[0], 579.4112549695428, 1e-9);
@@ -71,7 +71,7 @@ TEST_F(CameraRosTest, IntrinsicsComeFromTheModelFovy)
 
 TEST_F(CameraRosTest, NobodyWatchingCostsNothing)
 {
-    mj_kdl::CameraRosPublisher pub(*node_, model_, conf_);
+    mjkdl::CameraRosPublisher pub(*node_, model_, conf_);
 
     // Due by rate at both times; with no subscriber neither asks for a frame.
     EXPECT_FALSE(pub.wants_frame(0.0));

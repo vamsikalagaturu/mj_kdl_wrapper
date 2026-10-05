@@ -1,4 +1,4 @@
-# Doxyfile.in -- CMake-configured Doxygen settings for mj-kdl-wrapper.
+# Doxyfile.in -- CMake-configured Doxygen settings for mjkdl.
 # Processed by configure_file(); variables like @VAR@ are substituted.
 #
 # Generate docs:
@@ -30,7 +30,7 @@ INPUT                  = @CMAKE_CURRENT_SOURCE_DIR@/include \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/conventions.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/howto/torque_control.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/howto/loop_pacing.md \
-                         @CMAKE_CURRENT_SOURCE_DIR@/python/mj_kdl_wrapper \
+                         @CMAKE_CURRENT_SOURCE_DIR@/python/mjkdl \
                          @CMAKE_CURRENT_SOURCE_DIR@/src/examples \
                          @CMAKE_CURRENT_SOURCE_DIR@/test
 RECURSIVE              = YES
@@ -58,7 +58,7 @@ INLINE_SOURCES         = NO
 STRIP_CODE_COMMENTS    = NO
 REFERENCED_BY_RELATION = YES
 REFERENCES_RELATION    = YES
-TAGFILES               = @MJ_KDL_DOXYGEN_TAGFILES@
+TAGFILES               = @MJKDL_DOXYGEN_TAGFILES@
 EXTERNAL_GROUPS        = NO
 EXTERNAL_PAGES         = NO
 
@@ -89,7 +89,7 @@ GENERATE_XML           = NO
 ENABLE_PREPROCESSING   = YES
 MACRO_EXPANSION        = YES
 EXPAND_ONLY_PREDEF     = NO
-PREDEFINED             = MJ_KDL_HAS_EGL
+PREDEFINED             = MJKDL_HAS_EGL
 
 # --- Diagrams ---
 HAVE_DOT               = NO

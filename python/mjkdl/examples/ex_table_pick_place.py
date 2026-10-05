@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 import PyKDL as kdl
 
-import mj_kdl_wrapper as mjk
+import mjkdl
 
 HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 SURFACE_Z = 0.70
@@ -52,38 +52,38 @@ class Phase:
     gripper: float
 
 
-def build_env() -> tuple[mjk.Env, mjk.Robot]:
-    table = mjk.SceneObject()
+def build_env() -> tuple[mjkdl.Env, mjkdl.Robot]:
+    table = mjkdl.SceneObject()
     table.name = "table"
-    table.mjcf_path = str(mjk.ASSETS_DIR / "table.xml")
+    table.mjcf_path = str(mjkdl.ASSETS_DIR / "table.xml")
     table.pos = [0.0, 0.0, SURFACE_Z]
     table.fixed = True
-    cube = mjk.SceneObject()
+    cube = mjkdl.SceneObject()
     cube.name = "cube"
-    cube.shape = mjk.Shape.BOX
+    cube.shape = mjkdl.Shape.BOX
     cube.size = [CUBE_HS, CUBE_HS, CUBE_HS]
     cube.pos = CUBE_START[:]
     cube.rgba = [0.1, 0.35, 1.0, 1.0]
     cube.mass = 0.1
-    cube.condim = mjk.Condim.Torsional
+    cube.condim = mjkdl.Condim.Torsional
     cube.friction = [0.8, 0.02, 0.001]
-    gripper = mjk.AttachmentSpec()
-    gripper.mjcf_path = str(mjk.ASSETS_DIR / "robotiq_2f85/2f85.xml")
-    gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
+    gripper = mjkdl.AttachmentSpec()
+    gripper.mjcf_path = str(mjkdl.ASSETS_DIR / "robotiq_2f85/2f85.xml")
+    gripper.attach_to = mjkdl.AttachTarget(mjkdl.AttachKind.Site, "pinch_site")
     gripper.prefix = "g_"
-    robot_spec = mjk.RobotSpec()
-    robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
+    robot_spec = mjkdl.RobotSpec()
+    robot_spec.path = str(mjkdl.ASSETS_DIR / "kinova_gen3/gen3.xml")
     robot_spec.pos = [0.0, 0.0, SURFACE_Z]
     robot_spec.attachments = [gripper]
 
-    spec = mjk.SceneSpec()
+    spec = mjkdl.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
     spec.add_skybox = True
     spec.objects = [table, cube]
     spec.robots = [robot_spec]
-    env = mjk.Env.build(spec)
-    tool = mjk.ToolFrameSpec()
+    env = mjkdl.Env.build(spec)
+    tool = mjkdl.ToolFrameSpec()
     tool.tool_body = "g_base_mount"
     tool.tcp_site = "g_pinch"
     return env, env.create_robot("base_link", "bracelet_link", tool=tool)
@@ -133,7 +133,7 @@ def solve_near_seed(chain, limits, seed: list[float], target: kdl.Frame) -> list
     return [q[i] for i in range(q.rows())]
 
 
-def pick_place_phases(robot: mjk.Robot) -> list[Phase]:
+def pick_place_phases(robot: mjkdl.Robot) -> list[Phase]:
     chain = robot.kdl_chain()
     seed = HOME[:]
 
@@ -257,7 +257,7 @@ def main() -> int:
 
     env, robot = build_env()
     try:
-        robot.set_control_mode(mjk.CtrlMode.TORQUE)
+        robot.set_control_mode(mjkdl.CtrlMode.TORQUE)
         fingers = env.data.actuator("g_fingers_actuator")
         chain = robot.kdl_chain()
         dyn = kdl.ChainDynParam(chain, kdl.Vector(0.0, 0.0, env.spec.gravity_z))

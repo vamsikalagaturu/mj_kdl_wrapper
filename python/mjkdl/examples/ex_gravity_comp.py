@@ -7,7 +7,7 @@ import argparse
 
 import PyKDL as kdl
 
-import mj_kdl_wrapper as mjk
+import mjkdl
 
 HOME_POSE = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 STEPS = 7500  # 15 s
@@ -32,18 +32,18 @@ def main() -> int:
     parser.add_argument("--gui", action="store_true")
     args = parser.parse_args()
 
-    spec = mjk.SceneSpec()
+    spec = mjkdl.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
     spec.add_skybox = True
-    robot_spec = mjk.RobotSpec()
-    robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
+    robot_spec = mjkdl.RobotSpec()
+    robot_spec.path = str(mjkdl.ASSETS_DIR / "kinova_gen3/gen3.xml")
     spec.robots = [robot_spec]
 
-    env = mjk.Env.build(spec)
+    env = mjkdl.Env.build(spec)
     try:
         robot = env.create_robot("base_link", "bracelet_link")
-        robot.set_control_mode(mjk.CtrlMode.TORQUE)
+        robot.set_control_mode(mjkdl.CtrlMode.TORQUE)
         chain = robot.kdl_chain()
         fk = kdl.ChainFkSolverPos_recursive(chain)
         dyn = kdl.ChainDynParam(chain, kdl.Vector(0.0, 0.0, spec.gravity_z))

@@ -22,7 +22,7 @@
 #include <vector>
 #include <chrono>
 
-namespace mj_kdl {
+namespace mjkdl {
 
 /**
  * @ingroup grp_logging
@@ -42,19 +42,19 @@ inline void set_log_level(LogLevel level) { g_log_level = level; }
  *  Get the library-wide log verbosity. */
 inline LogLevel get_log_level() { return g_log_level; }
 
-} // namespace mj_kdl
+} // namespace mjkdl
 
 // Log through the library's threshold; expr may stream: MJ_LOG_INFO("count=" << n).
 #define MJ_FILENAME_ (::strrchr(__FILE__, '/') ? ::strrchr(__FILE__, '/') + 1 : __FILE__)
 
 #define MJ_LOG_(lvl_enum, color, label, expr)                         \
     do {                                                              \
-        if (::mj_kdl::LogLevel::lvl_enum >= ::mj_kdl::g_log_level) {  \
+        if (::mjkdl::LogLevel::lvl_enum >= ::mjkdl::g_log_level) {  \
             std::ostringstream _mj_oss;                               \
             _mj_oss << expr; /* NOLINT(bugprone-macro-parentheses) */ \
             std::fprintf(                                             \
               stderr,                                                 \
-              color "[mj_kdl " label "] %s:%d (%s): %s\033[0m\n",     \
+              color "[mjkdl " label "] %s:%d (%s): %s\033[0m\n",     \
               MJ_FILENAME_,                                           \
               __LINE__,                                               \
               __func__,                                               \
@@ -67,7 +67,7 @@ inline LogLevel get_log_level() { return g_log_level; }
 #define MJ_LOG_WARN(expr) MJ_LOG_(WARN, "\033[33m", "WARN ", expr)
 #define MJ_LOG_ERROR(expr) MJ_LOG_(ERROR, "\033[31m", "ERROR", expr)
 
-namespace mj_kdl {
+namespace mjkdl {
 
 /**
  * @ingroup grp_types
@@ -1103,4 +1103,4 @@ void set_free_camera(
   const std::array<double, 3> &lookat
 );
 
-} // namespace mj_kdl
+} // namespace mjkdl

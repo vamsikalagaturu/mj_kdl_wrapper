@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 import PyKDL as kdl
 
-import mj_kdl_wrapper as mjk
+import mjkdl
 
 HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 SURFACE_Z = 0.70
@@ -31,11 +31,11 @@ MAX_DISTURB = 0.001  # [m] free-object displacement
 BASES = [(-0.70, -0.12, 0.0), (0.70, 0.12, math.pi)]
 PREFIXES = ["", "r2_"]
 FREE_OBJECTS = [
-    ("red_box", mjk.Shape.BOX, 0.0, 0.42, 0.03, (1.0, 0.2, 0.2)),
-    ("green_box", mjk.Shape.BOX, 0.0, -0.42, 0.03, (0.2, 1.0, 0.2)),
-    ("yellow_box", mjk.Shape.BOX, -0.45, 0.42, 0.04, (1.0, 0.85, 0.1)),
-    ("orange_sphere", mjk.Shape.SPHERE, 0.45, -0.42, 0.035, (1.0, 0.55, 0.0)),
-    ("purple_sphere", mjk.Shape.SPHERE, 0.0, 0.0, 0.025, (0.7, 0.0, 0.9)),
+    ("red_box", mjkdl.Shape.BOX, 0.0, 0.42, 0.03, (1.0, 0.2, 0.2)),
+    ("green_box", mjkdl.Shape.BOX, 0.0, -0.42, 0.03, (0.2, 1.0, 0.2)),
+    ("yellow_box", mjkdl.Shape.BOX, -0.45, 0.42, 0.04, (1.0, 0.85, 0.1)),
+    ("orange_sphere", mjkdl.Shape.SPHERE, 0.45, -0.42, 0.035, (1.0, 0.55, 0.0)),
+    ("purple_sphere", mjkdl.Shape.SPHERE, 0.0, 0.0, 0.025, (0.7, 0.0, 0.9)),
 ]
 # Both look at the table centre: overview from -y above, side from +y.
 CAMERAS = [
@@ -68,24 +68,24 @@ def cube_spot(arm: int, xy) -> kdl.Vector:
     return world_T_base(arm) * kdl.Vector(xy[0], xy[1], CUBE_HS)
 
 
-def cube_object(name: str, spot: kdl.Vector) -> mjk.SceneObject:
-    cube = mjk.SceneObject()
+def cube_object(name: str, spot: kdl.Vector) -> mjkdl.SceneObject:
+    cube = mjkdl.SceneObject()
     cube.name = name
-    cube.shape = mjk.Shape.BOX
+    cube.shape = mjkdl.Shape.BOX
     cube.size = [CUBE_HS, CUBE_HS, CUBE_HS]
     cube.pos = [spot.x(), spot.y(), spot.z()]
     cube.rgba = [0.1, 0.35, 1.0, 1.0]
     cube.mass = 0.1
-    cube.condim = mjk.Condim.Torsional
+    cube.condim = mjkdl.Condim.Torsional
     cube.friction = [0.8, 0.02, 0.001]
     return cube
 
 
-def free_object(name, shape, x, y, half, rgb) -> mjk.SceneObject:
-    obj = mjk.SceneObject()
+def free_object(name, shape, x, y, half, rgb) -> mjkdl.SceneObject:
+    obj = mjkdl.SceneObject()
     obj.name = name
     obj.shape = shape
-    box = shape == mjk.Shape.BOX
+    box = shape == mjkdl.Shape.BOX
     obj.size = [half, half if box else 0.0, half if box else 0.0]
     obj.pos = [x, y, SURFACE_Z + half]
     obj.rgba = [*rgb, 1.0]
@@ -94,8 +94,8 @@ def free_object(name, shape, x, y, half, rgb) -> mjk.SceneObject:
     return obj
 
 
-def camera(name, pos, quat, fovy) -> mjk.CameraSpec:
-    cam = mjk.CameraSpec()
+def camera(name, pos, quat, fovy) -> mjkdl.CameraSpec:
+    cam = mjkdl.CameraSpec()
     cam.name = name
     cam.pos = pos
     cam.quat = quat
@@ -103,27 +103,27 @@ def camera(name, pos, quat, fovy) -> mjk.CameraSpec:
     return cam
 
 
-def build_env() -> tuple[mjk.Env, list[mjk.Robot]]:
-    table = mjk.SceneObject()
+def build_env() -> tuple[mjkdl.Env, list[mjkdl.Robot]]:
+    table = mjkdl.SceneObject()
     table.name = "table"
-    table.mjcf_path = str(mjk.ASSETS_DIR / "table.xml")
+    table.mjcf_path = str(mjkdl.ASSETS_DIR / "table.xml")
     table.pos = [0.0, 0.0, SURFACE_Z]
     table.fixed = True
-    gripper = mjk.AttachmentSpec()
-    gripper.mjcf_path = str(mjk.ASSETS_DIR / "robotiq_2f85/2f85.xml")
-    gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
+    gripper = mjkdl.AttachmentSpec()
+    gripper.mjcf_path = str(mjkdl.ASSETS_DIR / "robotiq_2f85/2f85.xml")
+    gripper.attach_to = mjkdl.AttachTarget(mjkdl.AttachKind.Site, "pinch_site")
     gripper.prefix = "g_"
     robot_specs = []
     for (x, y, yaw), prefix in zip(BASES, PREFIXES):
-        robot_spec = mjk.RobotSpec()
-        robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
+        robot_spec = mjkdl.RobotSpec()
+        robot_spec.path = str(mjkdl.ASSETS_DIR / "kinova_gen3/gen3.xml")
         robot_spec.prefix = prefix
         robot_spec.pos = [x, y, SURFACE_Z]
         robot_spec.quat = [0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0)]
         robot_spec.attachments = [gripper]
         robot_specs.append(robot_spec)
 
-    spec = mjk.SceneSpec()
+    spec = mjkdl.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
     spec.add_skybox = True
@@ -134,8 +134,8 @@ def build_env() -> tuple[mjk.Env, list[mjk.Robot]]:
         *(free_object(*o) for o in FREE_OBJECTS),
     ]
     spec.cameras = [camera(*c) for c in CAMERAS]
-    env = mjk.Env.build(spec)
-    tool = mjk.ToolFrameSpec()
+    env = mjkdl.Env.build(spec)
+    tool = mjkdl.ToolFrameSpec()
     tool.tool_body = "g_base_mount"
     tool.tcp_site = "g_pinch"
     robots = [env.create_robot("base_link", "bracelet_link", p, tool=tool) for p in PREFIXES]
@@ -186,7 +186,7 @@ def solve_near_seed(chain, limits, seed: list[float], target: kdl.Frame) -> list
     return [q[i] for i in range(q.rows())]
 
 
-def pick_place_phases(robot: mjk.Robot) -> list[Phase]:
+def pick_place_phases(robot: mjkdl.Robot) -> list[Phase]:
     """Joint waypoints in the arm's base frame, so they serve every arm placed like this one."""
     chain = robot.kdl_chain()
     seed = HOME[:]
@@ -290,7 +290,7 @@ def main() -> int:
         gravity_vec = kdl.Vector(0.0, 0.0, env.spec.gravity_z)
         solvers, dyns = [], []
         for robot in robots:
-            robot.set_control_mode(mjk.CtrlMode.TORQUE)
+            robot.set_control_mode(mjkdl.CtrlMode.TORQUE)
             chain = robot.kdl_chain()
             solvers.append((kdl.ChainIdSolver_RNE(chain, gravity_vec), chain.getNrOfSegments()))
             dyns.append(kdl.ChainDynParam(chain, gravity_vec))

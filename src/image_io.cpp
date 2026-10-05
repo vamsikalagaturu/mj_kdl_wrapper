@@ -2,7 +2,7 @@
  * Copyright (c) 2026 Vamsi Kalagaturu
  * See LICENSE for details. */
 
-#include "mj_kdl_wrapper/image_io.hpp"
+#include "mjkdl/image_io.hpp"
 
 #include <cerrno>
 #include <csignal>
@@ -16,7 +16,7 @@
 
 extern char **environ;
 
-namespace mj_kdl {
+namespace mjkdl {
 
 bool write_png_rgb(const std::string &path, const std::uint8_t *rgb, int width, int height)
 {
@@ -63,4 +63,4 @@ bool write_png_rgb(const std::string &path, const std::uint8_t *rgb, int width, 
     return left == 0 && WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0;
 }
 
-} // namespace mj_kdl
+} // namespace mjkdl

@@ -23,7 +23,7 @@
 #include <iostream>
 #include <string>
 
-namespace ex = mj_kdl_examples;
+namespace ex = mjkdl_examples;
 
 static constexpr double kMaxPlaceErr = 0.005; // [m] in the table plane
 
@@ -62,27 +62,27 @@ int main(int argc, char *argv[])
 {
     const bool headless = ex::parse_args(argc, argv).headless;
 
-    mj_kdl::RobotSpec robot_spec;
+    mjkdl::RobotSpec robot_spec;
     robot_spec.path   = ex::asset("kinova_gen3/gen3.xml");
     robot_spec.pos[2] = ex::kTableZ;
     robot_spec.attachments.push_back(ex::gripper_attachment(ex::asset("robotiq_2f85/2f85.xml")));
 
-    mj_kdl::SceneSpec scene = ex::scene_spec();
+    mjkdl::SceneSpec scene = ex::scene_spec();
     scene.robots.push_back(robot_spec);
     scene.objects.push_back(ex::table_object(ex::asset("table.xml"), ex::kTableZ));
     scene.objects.push_back(ex::cube_object(ex::kPickXY[0], ex::kPickXY[1], ex::kTableZ));
 
-    mj_kdl::Env   env;
-    mj_kdl::Robot robot;
-    if (!mj_kdl::init_env(&env, &scene)) return 1;
-    const mj_kdl::ToolFrameSpec tool = ex::gripper_tool();
-    if (!mj_kdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool))
+    mjkdl::Env   env;
+    mjkdl::Robot robot;
+    if (!mjkdl::init_env(&env, &scene)) return 1;
+    const mjkdl::ToolFrameSpec tool = ex::gripper_tool();
+    if (!mjkdl::init_robot_from_mjcf(&robot, &env, "base_link", "bracelet_link", "", &tool))
         return 1;
-    if (!mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::TORQUE)) return 1;
-    mj_kdl::SceneActuatorSlot *fingers =
-      mj_kdl::bind_scene_actuator(&env.scene, "g_fingers_actuator");
-    mj_kdl::SceneFreeBodySlot *cube = mj_kdl::bind_scene_free_body(&env.scene, "cube");
-    mj_kdl::SceneWrenchSlot   *push = mj_kdl::bind_scene_wrench(&env.scene, kPushBody);
+    if (!mjkdl::set_control_mode(&robot, mjkdl::CtrlMode::TORQUE)) return 1;
+    mjkdl::SceneActuatorSlot *fingers =
+      mjkdl::bind_scene_actuator(&env.scene, "g_fingers_actuator");
+    mjkdl::SceneFreeBodySlot *cube = mjkdl::bind_scene_free_body(&env.scene, "cube");
+    mjkdl::SceneWrenchSlot   *push = mjkdl::bind_scene_wrench(&env.scene, kPushBody);
     if (!fingers || !cube || !push) return 1;
 
     ex::PickPlaceWaypoints wp;
@@ -98,16 +98,16 @@ int main(int argc, char *argv[])
     Metrics                         m;
 
     bool restart = false;
-    env.on_reset = [&](mj_kdl::ResetContext *ctx) {
-        mj_kdl::set_joint_pos(&robot, wp.home);
+    env.on_reset = [&](mjkdl::ResetContext *ctx) {
+        mjkdl::set_joint_pos(&robot, wp.home);
         ex::place_cube(env);
         ctx->data->ctrl[fingers->ctrl_id] = 0.0;
         ex::prime_gravity(robot, dyn, wp.home);
         m       = {};
         restart = true;
     };
-    mj_kdl::reset(&env);
-    if (!headless && !mj_kdl::open_viewer(&env)) return 1;
+    mjkdl::reset(&env);
+    if (!headless && !mjkdl::open_viewer(&env)) return 1;
 
     const auto control = [&](std::size_t, const KDL::JntArray &q_des) {
         q_ref = q_des;
@@ -116,7 +116,7 @@ int main(int argc, char *argv[])
     // Measured against the reference of the same cycle; the push lands at the next update().
     const auto after_step = [&](const ex::Phase &phase, double t_rel) {
         KDL::Frame elbow;
-        mj_kdl::get_body_frame(&env, "forearm_link", &elbow);
+        mjkdl::get_body_frame(&env, "forearm_link", &elbow);
         m.elbow_min               = std::min(m.elbow_min, elbow.p.z());
         const bool        pushing = std::string(phase.name) == kPushPhase;
         const KDL::Vector force   = push_dir * (pushing ? kPushForce * push_scale(t_rel) : 0.0);
@@ -150,7 +150,7 @@ int main(int argc, char *argv[])
     const bool completed = ex::run_phases(
       env, { { &robot, fingers } }, ex::pick_place_phases(wp), restart, control, after_step
     );
-    mj_kdl::update(&env);
+    mjkdl::update(&env);
 
     const KDL::Vector c        = cube->pose.p;
     const double      place_xy = std::hypot(c.x() - ex::kPlaceXY[0], c.y() - ex::kPlaceXY[1]);
@@ -170,7 +170,7 @@ int main(int argc, char *argv[])
               << kMaxCubeSlip * 1000.0 << " mm)\n"
               << "lowest elbow above the table: " << elbow_h * 1000.0 << " mm (limit "
               << kMinElbowHeight * 1000.0 << " mm)\n";
-    mj_kdl::cleanup(&env);
+    mjkdl::cleanup(&env);
     const bool ok = completed && on_table && place_xy <= kMaxPlaceErr && m.peak >= kMinDeflection
                     && ratio >= kDeflectionRatio[0] && ratio <= kDeflectionRatio[1]
                     && m.residual >= 0.0 && m.residual <= kMaxResidual

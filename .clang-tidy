@@ -13,4 +13,4 @@ Checks: >
   -performance-enum-size
 WarningsAsErrors: ''
 FormatStyle: file
-HeaderFilterRegex: include/mj_kdl_wrapper/.*
+HeaderFilterRegex: include/mjkdl/.*

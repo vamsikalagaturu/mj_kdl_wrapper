@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-EXAMPLES = Path(__file__).resolve().parents[1] / "mj_kdl_wrapper" / "examples"
+EXAMPLES = Path(__file__).resolve().parents[1] / "mjkdl" / "examples"
 
 
 @pytest.mark.parametrize("example", sorted(p.name for p in EXAMPLES.glob("ex_*.py")))

@@ -3,9 +3,9 @@
 Tests use GoogleTest and are registered with CTest.  Build and run:
 
 ```bash
-git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
-cd mj_kdl_wrapper
-vcs import < mj_kdl_wrapper.repos
+git clone https://github.com/vamsikalagaturu/mjkdl.git
+cd mjkdl
+vcs import < mjkdl.repos
 
 cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTS=ON
 cmake --build build --parallel $(nproc)
@@ -216,7 +216,7 @@ Fixes from the 0.4.0 audit; headless, self-skips without the bundled Gen3.
 
 ### test_camera_ros
 
-Built only when the wrapper is configured with ROS (`mj_kdl_wrapper::camera_ros` exists).
+Built only when the wrapper is configured with ROS (`mjkdl::camera_ros` exists).
 
 - **IntrinsicsComeFromTheModelFovy** -- the published `CameraInfo` K matrix follows the camera's
   `fovy` and image size, in the camera's optical frame.

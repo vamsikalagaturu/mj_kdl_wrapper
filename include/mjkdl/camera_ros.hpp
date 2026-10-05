@@ -12,7 +12,7 @@
 #include <cstdint>
 #include <string>
 
-namespace mj_kdl {
+namespace mjkdl {
 
 /**
  * @ingroup grp_recorder
@@ -69,4 +69,4 @@ class CameraRosPublisher
     double                                                     next_due_s_ = 0.0;
 };
 
-} // namespace mj_kdl
+} // namespace mjkdl
