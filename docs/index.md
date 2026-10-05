@@ -7,7 +7,6 @@
 - [Examples](@ref page_examples)
 - [Conventions: units, frames, quaternions, what persists](@ref page_conventions)
 - [Torque Control and Tool Inertia](@ref page_howto_torque_control)
-- [Importing a URDF Robot](@ref page_howto_urdf)
 - [Loop Pacing and the Real-Time Factor](@ref page_howto_pacing)
 
 ## Migrating to 0.5 {#sec_migrate_mj_kdl_wrapper}

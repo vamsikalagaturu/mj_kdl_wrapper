@@ -120,8 +120,7 @@ ctest --test-dir build --output-on-failure      # see test/README.md
 - [C++ tutorial](docs/tutorials/cpp.md) and [C++ API guide](docs/api/cpp.md)
 - [Python tutorial](docs/tutorials/python.md) and [Python API guide](docs/api/python.md)
 - [Conventions](docs/conventions.md) -- units, frames, quaternion order, F/T sign, what persists
-- [Torque control](docs/howto/torque_control.md), [loop pacing](docs/howto/loop_pacing.md),
-  [URDF to MJCF](docs/howto/urdf_to_mjcf.md)
+- [Torque control](docs/howto/torque_control.md), [loop pacing](docs/howto/loop_pacing.md)
 - Migration notes between versions: [docs/index.md](docs/index.md)
 - Generated API reference: `cmake -B build -DBUILD_DOCS=ON && cmake --build build --target docs`,
   then `build/docs/html/index.html`

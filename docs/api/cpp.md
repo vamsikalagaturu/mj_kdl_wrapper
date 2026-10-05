@@ -65,6 +65,11 @@ mj_kdl::Env env;   // owns the model/data; not copied or moved
 mj_kdl::init_env(&env, &sc);
 ```
 
+Every control mode writes its command to actuators, so each robot joint needs one in the MJCF.
+`build_scene()` adds the actuators for the extra modes in `RobotSpec::modes` from the one each
+joint already has; a joint with none (a raw URDF import, say) gets none, and
+`set_control_mode()` refuses the mode.
+
 For an object-only scene, add MJCF or primitive `SceneObject` entries and leave
 `sc.robots` empty:
 
