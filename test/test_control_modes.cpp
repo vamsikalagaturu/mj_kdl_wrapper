@@ -2,8 +2,8 @@
  * Control modes through actuator groups: the actuators build_scene adds, switching without a
  * jump, torque limits, an arm tracking jnt_vel_cmd in VELOCITY, two robots in different modes, a
  * gripper that stays in POSITION while its arm switches, and a motor-driven wheel in VELOCITY and
- * TORQUE (the Eddie case) driven through the Env's scene slots. Arm tests (Gen3, UR5e) self-skip
- * without Menagerie. */
+ * TORQUE (the Eddie case) driven through the Env's scene slots. Arm tests self-skip without the
+ * bundled Gen3. */
 
 #include <gtest/gtest.h>
 
@@ -60,13 +60,6 @@ static const ArmCase kArms[] = {
       { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 },
       1,
       105.0 },
-    { "UR5e",
-      "universal_robots_ur5e/ur5e.xml",
-      "base",
-      "wrist_3_link",
-      { -1.5708, -1.5708, 1.5708, -1.5708, -1.5708, 0.0 },
-      1,
-      150.0 },
 };
 
 class ArmModesTest : public testing::TestWithParam<ArmCase>
@@ -83,7 +76,7 @@ class ArmModesTest : public testing::TestWithParam<ArmCase>
     void SetUp() override
     {
         const ArmCase &c = GetParam();
-        mjcf_            = mj_kdl_examples::find_menagerie_model(c.mjcf);
+        mjcf_            = mj_kdl_examples::find_asset(c.mjcf);
         if (!fs::exists(mjcf_)) GTEST_SKIP() << c.mjcf << " not found";
         spec_.timestep   = 0.002;
         spec_.add_floor  = true;
@@ -294,7 +287,7 @@ INSTANTIATE_TEST_SUITE_P(Arms, ArmModesTest, testing::ValuesIn(kArms), [](const 
 
 TEST(GripperModesTest, GripperStaysInPositionWhileTheArmSwitches)
 {
-    const std::string arm_mjcf = mj_kdl_examples::find_menagerie_model("kinova_gen3/gen3.xml");
+    const std::string arm_mjcf = mj_kdl_examples::find_asset("kinova_gen3/gen3.xml");
     const std::string grp_mjcf = mj_kdl_examples::find_asset("robotiq_2f85/2f85.xml");
     if (!fs::exists(arm_mjcf)) GTEST_SKIP() << "kinova_gen3/gen3.xml not found";
     if (!fs::exists(grp_mjcf)) GTEST_SKIP() << "robotiq_2f85/2f85.xml not found";
@@ -465,7 +458,7 @@ class AttachedArmModesTest : public testing::Test
 
     void SetUp() override
     {
-        const std::string mjcf = mj_kdl_examples::find_menagerie_model("kinova_gen3/gen3.xml");
+        const std::string mjcf = mj_kdl_examples::find_asset("kinova_gen3/gen3.xml");
         if (!fs::exists(mjcf)) GTEST_SKIP() << "kinova_gen3/gen3.xml not found";
         spec_.timestep   = 0.002;
         spec_.add_floor  = false;

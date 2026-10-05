@@ -82,14 +82,14 @@ def frame_point(frame: kdl.Frame, point: kdl.Vector) -> list[float]:
 
 def ft_attachment() -> mjk.AttachmentSpec:
     spec = mjk.AttachmentSpec()
-    spec.mjcf_path = mjk.menagerie.asset_path("ft_sensor.xml", env_var="MJ_KDL_FT_SENSOR")
+    spec.mjcf_path = str(mjk.ASSETS_DIR / "ft_sensor.xml")
     spec.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
     return spec
 
 
 def gripper_attachment() -> mjk.AttachmentSpec:
     spec = mjk.AttachmentSpec()
-    spec.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml", env_var="MJ_KDL_GRIPPER")
+    spec.mjcf_path = str(mjk.ASSETS_DIR / "robotiq_2f85/2f85.xml")
     spec.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "wrist_ft_site")
     spec.prefix = "g_"
     return spec
@@ -98,7 +98,7 @@ def gripper_attachment() -> mjk.AttachmentSpec:
 def table_object() -> mjk.SceneObject:
     table = mjk.SceneObject()
     table.name = "table"
-    table.mjcf_path = mjk.menagerie.asset_path("table.xml", env_var="MJ_KDL_TABLE")
+    table.mjcf_path = str(mjk.ASSETS_DIR / "table.xml")
     table.pos = [0.0, 0.0, TABLE_Z]
     table.fixed = True
     return table
@@ -113,7 +113,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     spec.objects = [table]
 
     robot_spec = mjk.RobotSpec()
-    robot_spec.path = mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
+    robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
     robot_spec.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "table_top")
     robot_spec.attachments = [ft_attachment(), gripper_attachment()]
     spec.robots = [robot_spec]

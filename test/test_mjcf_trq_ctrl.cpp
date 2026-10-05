@@ -28,7 +28,7 @@ class MjcfTrqCtrlTest : public testing::Test
 
     void SetUp() override
     {
-        const std::string arm_mjcf = ex::find_menagerie_model("kinova_gen3/gen3.xml");
+        const std::string arm_mjcf = ex::find_asset("kinova_gen3/gen3.xml");
         const std::string grp_mjcf = ex::find_asset("robotiq_2f85/2f85.xml");
         if (!fs::exists(arm_mjcf)) GTEST_SKIP() << arm_mjcf << " not found";
         if (!fs::exists(grp_mjcf)) GTEST_SKIP() << grp_mjcf << " not found";

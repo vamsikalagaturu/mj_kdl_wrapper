@@ -42,7 +42,7 @@ class RebuildTest : public testing::Test
 
     void SetUp() override
     {
-        const std::string gen3 = mj_kdl_examples::find_menagerie_model("kinova_gen3/gen3.xml");
+        const std::string gen3 = mj_kdl_examples::find_asset("kinova_gen3/gen3.xml");
         if (gen3.empty()) GTEST_SKIP() << "kinova_gen3/gen3.xml not found";
         spec_.timestep   = 0.002;
         spec_.add_floor  = true;

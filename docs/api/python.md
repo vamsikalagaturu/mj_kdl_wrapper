@@ -4,6 +4,8 @@ This page collects the Python wrapper usage notes that are too detailed for the
 README. For complete function signatures, see the generated stubs in
 `python/mj_kdl_wrapper/*.pyi`.
 
+Coming from 0.4? The models are in `mjk.ASSETS_DIR`; see
+[Migrating to 0.5](@ref sec_migrate_mj_kdl_wrapper).
 Coming from 0.2.x? Placement orientation moved from `.euler` to `.quat`
 `[x, y, z, w]`; see [Migrating from 0.2.x](@ref sec_migrate_quat). Units, frames and what
 persists between calls: [Conventions](@ref page_conventions).
@@ -24,31 +26,12 @@ as a separate Python distribution with its own `.dist-info`.
 
 ## Model Paths
 
-`mj_kdl_wrapper.menagerie.model_path(name)` resolves the models the examples use
-(`kinova_gen3`, `robotiq_2f85`, `universal_robots_ur5e`, `universal_robots_ur10e`)
-without hard-coding a checkout location, in this order:
-
-1. The file named by `env_var`, when the caller passes one (`model_path("kinova_gen3",
-   env_var="MJ_KDL_MODEL")`) and that variable is set.
-2. `MJ_KDL_MENAGERIE` - a MuJoCo Menagerie checkout root.
-3. The bundled assets in `~/.cache/mj_kdl_wrapper/assets`: a bundled model derived from
-   Menagerie's (`kinova_gen3/gen3.xml`, with armature) replaces the upstream copy.
-4. The Menagerie checkout in `~/.cache/mj_kdl_wrapper/menagerie`, populated by
-   `mj-kdl-fetch-menagerie`.
-
-`menagerie.asset_path(rel)` resolves bundled assets (gripper, table, mug, cabinet, F/T
-sensor): an optional per-asset `env_var` override, otherwise the user cache
-`~/.cache/mj_kdl_wrapper/assets`, which it refreshes from the installed package when it is
-missing or out of date. `mj-kdl-fetch-menagerie` populates both caches, and the same cache
-backs the C++ examples (see the C++ guide). It refuses a `--dest` that is neither empty nor a
-Menagerie checkout, and a failed fetch leaves nothing behind.
-
-**Overrides:** the example scripts pass these per-file env vars -- `MJ_KDL_MODEL`
-(arm), `MJ_KDL_GRIPPER`, `MJ_KDL_TABLE`, `MJ_KDL_BOTTLE`, `MJ_KDL_RECEIVER`, `MJ_KDL_CABINET`,
-`MJ_KDL_FT`. Each must point at an existing file or resolution raises a clear error.
-
-For other MJCF sources, set the relevant environment variable or assign
-`RobotSpec.path` directly.
+`mj_kdl_wrapper.ASSETS_DIR` is a `pathlib.Path` to the models installed with the package
+(Kinova Gen3, Robotiq 2F-85, table, mug, cabinet, cube, F/T sensor, door latch); the
+examples and tests load them as `str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")`. For other
+MJCF sources (e.g. a MuJoCo Menagerie checkout), assign `RobotSpec.path` or `mjcf_path`
+directly; a model that brings its own floor (Menagerie's `scene.xml`) needs `add_floor = False`,
+or the two `groundplane` textures collide.
 
 ## Load From MJCF
 
@@ -65,7 +48,7 @@ spec.add_floor = True
 spec.add_skybox = True
 
 robot_spec = mjk.RobotSpec()
-robot_spec.path = mjk.menagerie.model_path("kinova_gen3")
+robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
 spec.robots = [robot_spec]
 
 env = mjk.Env.build(spec)
@@ -77,7 +60,7 @@ leave `spec.robots` empty:
 ```python
 cabinet = mjk.SceneObject()
 cabinet.name = "cabinet"
-cabinet.mjcf_path = mjk.menagerie.asset_path("cabinet/cabinet.xml")
+cabinet.mjcf_path = str(mjk.ASSETS_DIR / "cabinet/cabinet.xml")
 cabinet.fixed = True
 
 spec.objects = [cabinet]
@@ -168,16 +151,16 @@ gripper to a site exported by that sensor asset:
 
 ```python
 ft_sensor = mjk.AttachmentSpec()
-ft_sensor.mjcf_path = mjk.menagerie.asset_path("ft_sensor.xml")
+ft_sensor.mjcf_path = str(mjk.ASSETS_DIR / "ft_sensor.xml")
 ft_sensor.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
 
 gripper = mjk.AttachmentSpec()
-gripper.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml")
+gripper.mjcf_path = str(mjk.ASSETS_DIR / "robotiq_2f85/2f85.xml")
 gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "wrist_ft_site")
 gripper.prefix = "g_"
 
 robot_spec = mjk.RobotSpec()
-robot_spec.path = mjk.menagerie.model_path("kinova_gen3")
+robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
 robot_spec.attachments = [ft_sensor, gripper]
 ```
 
@@ -211,12 +194,12 @@ without manual pose offsets:
 
 ```python
 gripper = mjk.AttachmentSpec()
-gripper.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml")
+gripper.mjcf_path = str(mjk.ASSETS_DIR / "robotiq_2f85/2f85.xml")
 gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
 gripper.prefix = "g_"
 
 robot_spec = mjk.RobotSpec()
-robot_spec.path = mjk.menagerie.model_path("kinova_gen3")
+robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
 robot_spec.attachments = [gripper]
 ```
 
@@ -245,11 +228,11 @@ build the same robot.
 
 ```python
 left = mjk.RobotSpec()
-left.path = mjk.menagerie.model_path("kinova_gen3")
+left.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
 left.pos = [-0.5, 0.0, 0.0]
 
 right = mjk.RobotSpec()
-right.path = mjk.menagerie.model_path("kinova_gen3")
+right.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
 right.prefix = "r2_"
 right.pos = [0.5, 0.0, 0.0]
 
@@ -273,14 +256,14 @@ primitive geometry fields are ignored at runtime.
 ```python
 table = mjk.SceneObject()
 table.name = "table"
-table.mjcf_path = mjk.menagerie.asset_path("table.xml")
+table.mjcf_path = str(mjk.ASSETS_DIR / "table.xml")
 table.pos = [0.0, 0.0, 0.7]
 table.fixed = True
 
 mount = "table_top"   # the asset's own site name; SceneObject.prefix would prepend to it
 
 robot_spec = mjk.RobotSpec()
-robot_spec.path = mjk.menagerie.model_path("kinova_gen3")
+robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
 robot_spec.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, mount)
 
 cube = mjk.SceneObject()

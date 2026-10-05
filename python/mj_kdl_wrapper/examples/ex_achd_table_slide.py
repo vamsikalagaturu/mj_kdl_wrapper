@@ -45,7 +45,7 @@ APPROACH, PRESS, SLIDE = "approach", "press", "slide"
 def build_env() -> tuple[mjk.Env, mjk.Robot]:
     table = mjk.SceneObject()
     table.name = "table"
-    table.mjcf_path = mjk.menagerie.asset_path("table.xml", env_var="MJ_KDL_TABLE")
+    table.mjcf_path = str(mjk.ASSETS_DIR / "table.xml")
     table.pos = [0.0, 0.0, TABLE_Z]
     table.fixed = True
     spec = mjk.SceneSpec()
@@ -54,7 +54,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     spec.add_skybox = True
     spec.objects = [table]
     robot_spec = mjk.RobotSpec()
-    robot_spec.path = mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
+    robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
     robot_spec.pos = [0.0, 0.0, TABLE_Z]
     spec.robots = [robot_spec]
     env = mjk.Env.build(spec)

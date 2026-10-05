@@ -33,10 +33,6 @@ dependencies = [
   "mujoco==3.14.0",
 ]
 
-[project.scripts]
-mj-kdl-fetch-menagerie = "mj_kdl_wrapper.menagerie:main"
-mj-kdl-fetch-examples = "mj_kdl_wrapper.fetch_examples:main"
-
 [project.urls]
 Homepage = "https://github.com/vamsikalagaturu/mj_kdl_wrapper"
 Repository = "https://github.com/vamsikalagaturu/mj_kdl_wrapper"

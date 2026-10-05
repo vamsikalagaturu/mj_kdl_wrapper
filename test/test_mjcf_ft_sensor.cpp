@@ -22,7 +22,7 @@ class MjcfFtSensorTest : public testing::Test
 
     void SetUp() override
     {
-        const std::string arm     = ex::find_menagerie_model("kinova_gen3/gen3.xml");
+        const std::string arm     = ex::find_asset("kinova_gen3/gen3.xml");
         const std::string ft      = ex::find_asset("ft_sensor.xml");
         const std::string gripper = ex::find_asset("robotiq_2f85/2f85.xml");
         if (!fs::exists(arm)) GTEST_SKIP() << arm << " not found";

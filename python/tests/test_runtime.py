@@ -6,20 +6,13 @@ import pytest
 import mj_kdl_wrapper as mjk
 
 
-def _model_path() -> str:
-    try:
-        return mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
-    except RuntimeError as exc:
-        pytest.skip(str(exc))
-
-
 def _scene_spec() -> mjk.SceneSpec:
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
     spec.add_floor = True
     spec.add_skybox = True
     robot_spec = mjk.RobotSpec()
-    robot_spec.path = _model_path()
+    robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
     spec.robots = [robot_spec]
     return spec
 
@@ -36,13 +29,7 @@ def _cube(name: str = "cube") -> mjk.SceneObject:
     return obj
 
 
-def _skip_without_model() -> None:
-    _model_path()
-
-
 def test_build_env_and_step_robot():
-    _skip_without_model()
-
     env = mjk.Env.build(_scene_spec())
     try:
         robot = env.create_robot("base_link", "bracelet_link")
@@ -57,7 +44,6 @@ def test_build_env_and_step_robot():
 
 
 def test_pykdl_chain_frame_and_joint_array_interop():
-    _skip_without_model()
     kdl = pytest.importorskip("PyKDL")
 
     env = mjk.Env.build(_scene_spec())
@@ -76,7 +62,6 @@ def test_pykdl_chain_frame_and_joint_array_interop():
 
 
 def test_solver_on_a_temporary_chain_stays_valid():
-    _skip_without_model()
     kdl = pytest.importorskip("PyKDL")
 
     env = mjk.Env.build(_scene_spec())
@@ -101,8 +86,6 @@ def test_solver_on_a_temporary_chain_stays_valid():
 
 
 def test_add_remove_object_keeps_robot_handle_valid():
-    _skip_without_model()
-
     env = mjk.Env.build(_scene_spec())
     try:
         robot = env.create_robot("base_link", "bracelet_link")
@@ -121,8 +104,6 @@ def test_add_remove_object_keeps_robot_handle_valid():
 
 
 def test_env_close_invalidates_robot_handles():
-    _skip_without_model()
-
     env = mjk.Env.build(_scene_spec())
     robot = env.create_robot("base_link", "bracelet_link")
     env.close()
@@ -135,8 +116,6 @@ def test_env_close_invalidates_robot_handles():
 
 
 def test_control_modes_switch_and_opt_out():
-    _skip_without_model()
-
     assert [m.mode for m in mjk.RobotSpec().modes] == [mjk.CtrlMode.TORQUE]
     env = mjk.Env.build(_scene_spec())
     try:
@@ -169,12 +148,10 @@ def test_control_modes_switch_and_opt_out():
 
 
 def test_an_attached_arm_switches_mode_apart_from_its_robot():
-    _skip_without_model()
-
     assert mjk.AttachmentSpec().modes == []
     spec = _scene_spec()
     attached = mjk.AttachmentSpec()
-    attached.mjcf_path = _model_path()
+    attached.mjcf_path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
     attached.prefix = "a_"
     attached.attach_to.kind = mjk.AttachKind.Body
     attached.attach_to.name = "base_link"
@@ -194,7 +171,6 @@ def test_an_attached_arm_switches_mode_apart_from_its_robot():
 
 
 def test_set_body_pose_accepts_python_xyzw_quaternion():
-    _skip_without_model()
     kdl = pytest.importorskip("PyKDL")
 
     spec = _scene_spec()
@@ -213,8 +189,6 @@ def test_set_body_pose_accepts_python_xyzw_quaternion():
 
 
 def test_reset_restores_commands_and_clears_wrenches():
-    _skip_without_model()
-
     spec = _scene_spec()
     spec.objects = [_cube()]
     env = mjk.Env.build(spec)
@@ -238,8 +212,6 @@ def test_reset_restores_commands_and_clears_wrenches():
 
 
 def test_ports_are_written_whole_not_in_place():
-    _skip_without_model()
-
     env = mjk.Env.build(_scene_spec())
     try:
         robot = env.create_robot("base_link", "bracelet_link")
@@ -263,8 +235,6 @@ def test_site_spec_quat_takes_four_values():
 
 
 def test_env_is_a_context_manager_and_saves_its_model(tmp_path):
-    _skip_without_model()
-
     with mjk.Env.build(_scene_spec()) as env:
         robot = env.create_robot("base_link", "bracelet_link")
         env.save_model_xml(str(tmp_path / "scene.xml"))
@@ -274,8 +244,6 @@ def test_env_is_a_context_manager_and_saves_its_model(tmp_path):
 
 
 def test_robot_from_a_given_chain_matches_the_derived_one():
-    _skip_without_model()
-
     with mjk.Env.build(_scene_spec()) as env:
         derived = env.create_robot("base_link", "bracelet_link")
         env.reset()
@@ -287,8 +255,6 @@ def test_robot_from_a_given_chain_matches_the_derived_one():
 
 
 def test_joint_force_limits_follow_the_active_mode():
-    _skip_without_model()
-
     with mjk.Env.build(_scene_spec()) as env:
         robot = env.create_robot("base_link", "bracelet_link")
         robot.set_control_mode(mjk.CtrlMode.TORQUE)
@@ -298,8 +264,6 @@ def test_joint_force_limits_follow_the_active_mode():
 
 
 def test_offscreen_render_returns_an_image():
-    _skip_without_model()
-
     with mjk.Env.build(_scene_spec()) as env:
         try:
             rec = mjk.VideoRecorder.open_offscreen(env, 64, 48)
@@ -312,7 +276,6 @@ def test_offscreen_render_returns_an_image():
 
 
 def test_env_runs_on_real_mujoco_objects():
-    _skip_without_model()
     mujoco = pytest.importorskip("mujoco")
 
     with mjk.Env.build(_scene_spec()) as env:
@@ -335,8 +298,6 @@ def test_env_runs_on_real_mujoco_objects():
 
 
 def test_on_reset_gets_a_context_copy_it_can_keep():
-    _skip_without_model()
-
     with mjk.Env.build(_scene_spec()) as env:
         assert env.on_reset is None
         seen = []
@@ -358,8 +319,6 @@ def test_on_reset_gets_a_context_copy_it_can_keep():
 
 
 def test_env_holding_a_callback_that_holds_its_robot_is_collected():
-    _skip_without_model()
-
     def run() -> weakref.ref:
         env = mjk.Env.build(_scene_spec())
         robot = env.create_robot("base_link", "bracelet_link")
@@ -382,8 +341,6 @@ def test_env_holding_a_callback_that_holds_its_robot_is_collected():
 
 
 def test_on_reset_error_comes_out_after_the_read_back():
-    _skip_without_model()
-
     with mjk.Env.build(_scene_spec()) as env:
         robot = env.create_robot("base_link", "bracelet_link")
         home = [0.1] * robot.n_joints
@@ -401,8 +358,6 @@ def test_on_reset_error_comes_out_after_the_read_back():
 
 
 def test_env_spec_is_a_read_only_copy():
-    _skip_without_model()
-
     with mjk.Env.build(_scene_spec()) as env:
         env.spec.timestep = 1.0
         assert env.spec.timestep == 0.002
@@ -417,8 +372,6 @@ def test_env_spec_is_a_read_only_copy():
 
 
 def test_assigning_ctrl_mode_switches_on_the_next_update():
-    _skip_without_model()
-
     with mjk.Env.build(_scene_spec()) as env:
         robot = env.create_robot("base_link", "bracelet_link")
         robot.ctrl_mode = mjk.CtrlMode.TORQUE
@@ -429,8 +382,6 @@ def test_assigning_ctrl_mode_switches_on_the_next_update():
 
 
 def test_velocity_mode_tracks_the_commanded_velocity():
-    _skip_without_model()
-
     spec = _scene_spec()
     spec.robots[0].modes = [mjk.CtrlModeSpec(mjk.CtrlMode.VELOCITY, kv=20.0)]
     with mjk.Env.build(spec) as env:
@@ -448,8 +399,6 @@ def test_velocity_mode_tracks_the_commanded_velocity():
 
 
 def test_paused_robot_holds_headless_step_and_pace_is_a_no_op():
-    _skip_without_model()
-
     with mjk.Env.build(_scene_spec()) as env:
         robot = env.create_robot("base_link", "bracelet_link")
         robot.paused = True
@@ -463,7 +412,6 @@ def test_paused_robot_holds_headless_step_and_pace_is_a_no_op():
 
 
 def test_frames_and_ports_come_back_exactly():
-    _skip_without_model()
     kdl = pytest.importorskip("PyKDL")
 
     with mjk.Env.build(_scene_spec()) as env:
@@ -481,8 +429,6 @@ def test_frames_and_ports_come_back_exactly():
 
 
 def test_headless_viewer_is_inert():
-    _skip_without_model()
-
     with mjk.Env.build(_scene_spec()) as env:
         viewer = env.viewer
         assert not viewer.is_running()

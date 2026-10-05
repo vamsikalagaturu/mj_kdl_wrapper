@@ -27,7 +27,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y \
-            ccache ninja-build pkg-config \
+            ccache ninja-build pkg-config vcstool \
             libeigen3-dev libglfw3-dev libgl-dev libegl-dev
 
       # Native MuJoCo release (cached between runs).
@@ -45,15 +45,8 @@ jobs:
           tar xzf "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz" -C /tmp
           rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
 
-      # After the MuJoCo install, so its header number is checked too.
-      - name: Check version metadata
-        run: python3 scripts/check_versions.py
-
-      - name: Cache the Orocos KDL checkout
-        uses: actions/cache@v4
-        with:
-          path: third_party/orocos_kinematics_dynamics
-          key: orocos-kdl-${{ hashFiles('cmake/Versions.cmake') }}
+      - name: Import the Orocos KDL fork
+        run: vcs import < mj_kdl_wrapper.repos
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -73,8 +66,7 @@ jobs:
             -DMJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}" \
             -DBUILD_TESTS=OFF \
             -DBUILD_EXAMPLES=OFF \
-            -DBUILD_DOCS=OFF \
-            -DMJ_KDL_FETCH_MENAGERIE=OFF
+            -DBUILD_DOCS=OFF
 
       - name: Build and install
         run: |

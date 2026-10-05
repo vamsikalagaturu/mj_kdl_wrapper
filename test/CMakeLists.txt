@@ -9,7 +9,6 @@ FetchContent_MakeAvailable(googletest)
 enable_testing()
 include(GoogleTest)
 
-# Tests on Menagerie or bundled models self-skip via GTEST_SKIP() when the cache lacks them.
 set(ALL_TESTS
   test_init
   test_dual_arm
@@ -31,10 +30,9 @@ foreach(test_name ${ALL_TESTS})
   target_include_directories(${test_name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src/examples")
   target_compile_options(${test_name} PRIVATE -Wall -Wextra)
   # RUN_SERIAL avoids conflicts over shared temp files and MuJoCo global XML state.
+  target_compile_definitions(${test_name} PRIVATE
+    MJ_KDL_ASSETS_DIR="${PROJECT_SOURCE_DIR}/assets")
   gtest_discover_tests(${test_name} DISCOVERY_TIMEOUT 60 PROPERTIES RUN_SERIAL TRUE)
-  if(TARGET mj_kdl_cache_assets)
-    add_dependencies(${test_name} mj_kdl_cache_assets)
-  endif()
 endforeach()
 foreach(test_name test_control_modes test_mjcf_load)
   target_compile_definitions(${test_name} PRIVATE

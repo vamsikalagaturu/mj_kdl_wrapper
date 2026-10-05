@@ -164,7 +164,7 @@ int main(int argc, char **argv)
     const bool headless = ex::parse_args(argc, argv).headless;
 
     mj_kdl::RobotSpec robot_spec;
-    robot_spec.path   = ex::menagerie_model("kinova_gen3/gen3.xml");
+    robot_spec.path   = ex::asset("kinova_gen3/gen3.xml");
     robot_spec.pos[2] = kTableZ;
 
     mj_kdl::SceneSpec scene = ex::scene_spec();

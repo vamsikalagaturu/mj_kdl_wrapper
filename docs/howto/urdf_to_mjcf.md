@@ -51,7 +51,8 @@ For a 7-DOF position-controlled arm, add inside `<actuator>`:
 ```
 
 `kp` is the proportional gain (stiffness), `kv` is the derivative gain (damping).
-The Kinova GEN3 Menagerie model uses `kp=2000, kv=100` as a starting point.
+The bundled Kinova GEN3 model (derived from Menagerie's) uses `kp=2000, kv=100` as a
+starting point.
 
 For velocity control, use `<velocity>` actuators instead:
 
@@ -161,5 +162,4 @@ after MuJoCo compilation, so they always match the simulation.
 
 - MuJoCo model specification: https://mujoco.readthedocs.io/en/stable/XMLreference.html
 - MuJoCo Menagerie (reference MJCF models): https://github.com/google-deepmind/mujoco_menagerie
-- Kinova GEN3 Menagerie model: `kinova_gen3/gen3.xml` in the user cache populated by
-  `mj-kdl-fetch-menagerie` (`~/.cache/mj_kdl_wrapper/menagerie/kinova_gen3/gen3.xml`)
+- Bundled Kinova GEN3 model: `assets/kinova_gen3/gen3.xml`

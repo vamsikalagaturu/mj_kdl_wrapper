@@ -1,7 +1,7 @@
 /* test_dual_arm.cpp
  * Two Kinova GEN3 arms in one scene, facing each other, each its own mj_kdl::Robot with its own
  * KDL chain: a prefix names the whole chain, KDL gravity matches MuJoCo's for both, and both hold
- * their pose under KDL gravity compensation. Self-skips when Menagerie is absent. */
+ * their pose under KDL gravity compensation. Self-skips when the bundled Gen3 is missing. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "common.hpp"
@@ -30,7 +30,7 @@ class DualArmTest : public testing::Test
 
     void SetUp() override
     {
-        const std::string mjcf = ex::find_menagerie_model("kinova_gen3/gen3.xml");
+        const std::string mjcf = ex::find_asset("kinova_gen3/gen3.xml");
         if (!fs::exists(mjcf)) GTEST_SKIP() << mjcf << " not found";
 
         // arm1 at x = -0.5 m facing +X; arm2 at x = +0.5 m turned 180 deg about Z, prefixed "r2_".

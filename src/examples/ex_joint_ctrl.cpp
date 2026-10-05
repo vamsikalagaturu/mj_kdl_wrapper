@@ -43,7 +43,7 @@ int main(int argc, char *argv[])
 
     mj_kdl::SceneSpec sc = ex::scene_spec();
     mj_kdl::RobotSpec r;
-    r.path  = ex::menagerie_model("kinova_gen3/gen3.xml");
+    r.path  = ex::asset("kinova_gen3/gen3.xml");
     r.modes = { { .mode = mj_kdl::CtrlMode::VELOCITY, .joints = {}, .kv = kVelGain } };
     sc.robots.push_back(r);
 

@@ -29,7 +29,7 @@ class MjcfPosCtrlTest : public testing::Test
 
     void SetUp() override
     {
-        const std::string arm = ex::find_menagerie_model("kinova_gen3/gen3.xml");
+        const std::string arm = ex::find_asset("kinova_gen3/gen3.xml");
         if (!fs::exists(arm)) GTEST_SKIP() << arm << " not found";
 
         mj_kdl::RobotSpec rs;

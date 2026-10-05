@@ -7,13 +7,11 @@ Regression tests for two fixes in build_scene:
     it is freed, so the scene compile can resolve them).
 """
 
-from pathlib import Path
-
 import pytest
 
 import mj_kdl_wrapper as mjk
 
-CABINET = Path(mjk.menagerie.asset_path("cabinet/cabinet.xml"))
+CABINET = mjk.ASSETS_DIR / "cabinet/cabinet.xml"
 
 
 def test_bundled_asset_path_resolves():
