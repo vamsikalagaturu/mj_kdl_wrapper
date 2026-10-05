@@ -59,6 +59,12 @@ python -m mujoco.viewer --mjcf=cabinet.xml
 - **Mesh visuals do not collide.** MuJoCo collides meshes as convex hulls, so
   the asset uses simple translucent box geoms for drawer, shelf, side-rail, and
   back-stop contact.
+- Collision geoms sit in geom group 3, hidden in the viewer by default; toggle
+  "Geom 3" to show them.
+- Drawer 2 runs stiffer than the others (rail friction 1.0 against 0.6). The
+  `base_pad` sole is slippery (0.23), so a free-standing cabinet slides when
+  drawer 2 is pulled; MuJoCo takes the larger friction of a contact pair, so
+  the surface it stands on must be at or below that for it to slide.
 - Handles have explicit translucent capsule collision geoms for the grasp bar
   and mounting posts. Use the grasp sites for approach targets; the capsule
   geoms provide contact for closing fingers around the handle.

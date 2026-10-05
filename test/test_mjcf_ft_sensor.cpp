@@ -22,7 +22,7 @@ class MjcfFtSensorTest : public testing::Test
 
     void SetUp() override
     {
-        const std::string arm     = ex::find_menagerie_model("kinova_gen3/gen3.xml");
+        const std::string arm     = ex::find_asset("kinova_gen3/gen3.xml");
         const std::string ft      = ex::find_asset("ft_sensor.xml");
         const std::string gripper = ex::find_asset("robotiq_2f85/2f85.xml");
         if (!fs::exists(arm)) GTEST_SKIP() << arm << " not found";
@@ -82,10 +82,10 @@ TEST_F(MjcfFtSensorTest, ReadsNamedWrench)
     mj_kdl::update(&env_);
     const double *f = env_.data->sensordata + sensor.force_adr;
     const double *t = env_.data->sensordata + sensor.torque_adr;
-    EXPECT_EQ(sensor.wrench.force, KDL::Vector(f[0], f[1], f[2]));
-    EXPECT_EQ(sensor.wrench.torque, KDL::Vector(t[0], t[1], t[2]));
+    EXPECT_EQ(sensor.wrench.force, -KDL::Vector(f[0], f[1], f[2]));
+    EXPECT_EQ(sensor.wrench.torque, -KDL::Vector(t[0], t[1], t[2]));
 
-    // At rest it carries the weight of everything below it (measured to 6e-8 N).
+    // At rest it reads the weight of everything below it, pointing down (measured to 6e-8 N).
     KDL::Frame world_T_site;
     ASSERT_TRUE(mj_kdl::get_site_frame(&env_, "wrist_ft_site", &world_T_site));
     const KDL::Vector world_f = world_T_site.M * sensor.wrench.force;
@@ -93,7 +93,7 @@ TEST_F(MjcfFtSensorTest, ReadsNamedWrench)
     const double      weight  = env_.model->body_subtreemass[body] * 9.81;
     EXPECT_NEAR(world_f.x(), 0.0, 1e-5);
     EXPECT_NEAR(world_f.y(), 0.0, 1e-5);
-    EXPECT_NEAR(world_f.z(), weight, 1e-5);
+    EXPECT_NEAR(world_f.z(), -weight, 1e-5);
 }
 
 TEST_F(MjcfFtSensorTest, ResetReReadsTheWrench)
@@ -110,8 +110,8 @@ TEST_F(MjcfFtSensorTest, ResetReReadsTheWrench)
     const mj_kdl::ForceTorqueSensor &sensor = robot.ft_sensors[0];
     const double                    *f      = env_.data->sensordata + sensor.force_adr;
     const double                    *t      = env_.data->sensordata + sensor.torque_adr;
-    EXPECT_EQ(sensor.wrench.force, KDL::Vector(f[0], f[1], f[2]));
-    EXPECT_EQ(sensor.wrench.torque, KDL::Vector(t[0], t[1], t[2]));
+    EXPECT_EQ(sensor.wrench.force, -KDL::Vector(f[0], f[1], f[2]));
+    EXPECT_EQ(sensor.wrench.torque, -KDL::Vector(t[0], t[1], t[2]));
 }
 
 TEST_F(MjcfFtSensorTest, RejectsMissingTorqueSensor)

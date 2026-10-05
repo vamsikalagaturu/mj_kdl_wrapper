@@ -17,10 +17,10 @@ for both C++ and Python. For non-ROS builds, see the
 
 ## How colcon builds this package
 
-This is a plain CMake project, not `ament_cmake`. Its `package.xml` declares build type
-`cmake` and the dependencies (`orocos_kdl`, Eigen, GLFW, OpenGL, ffmpeg), so colcon orders
-it after the `orocos_kdl` package and `rosdep install --from-paths src` resolves the system
-packages; `libegl-dev` has no rosdep key, install it with apt.
+This is a plain CMake project, not a ROS package: it has no `package.xml`. colcon identifies it
+from `CMakeLists.txt` and reads its dependencies from the `find_package()` calls, so it orders
+the wrapper after the `orocos_kdl` package. rosdep has nothing to resolve; install the system
+packages with apt (see [System packages](#system-packages)).
 
 It is not registered in the ament index, so `ros2 pkg list` / `ros2 pkg prefix`
 will not show it - expected, and it does not affect linking: dependent packages
@@ -46,7 +46,7 @@ fork ships `package.xml` for `orocos_kdl` (C++, build type `cmake`) and
 ```bash
 sudo apt update
 sudo apt install \
-  cmake g++ git python3-dev python3-venv \
+  cmake g++ git python3-dev python3-venv python3-vcstool \
   libeigen3-dev libglfw3-dev libgl-dev libegl-dev ffmpeg
 ```
 
@@ -57,16 +57,15 @@ non-ROS CI.
 
 ## ROS 2 C++
 
-Create the workspace, clone the KDL fork and the wrapper, then build KDL first and
-the wrapper against it:
+Create the workspace, clone the wrapper, import the KDL fork from its
+`mj_kdl_wrapper.repos`, then build KDL first and the wrapper against it:
 
 ```bash
 # Workspace with the KDL fork and the wrapper as sibling packages
 mkdir -p ~/ros2_ws/src && cd ~/ros2_ws
-git clone https://github.com/secorolab/orocos_kinematics_dynamics.git src/orocos_kinematics_dynamics
-# The pinned commit: MJ_KDL_OROCOS_KDL_GIT_SHA in cmake/Versions.cmake
-git -C src/orocos_kinematics_dynamics checkout c86af053388aa78d2c5ad2fa6afe1fd556621ce8
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git src/mj_kdl_wrapper
+# the fork lands in src/third_party/orocos_kinematics_dynamics
+vcs import src < src/mj_kdl_wrapper/mj_kdl_wrapper.repos
 
 # Use your distro: jazzy or lyrical
 source /opt/ros/jazzy/setup.bash
@@ -84,9 +83,9 @@ source install/setup.bash
 Result: `mj_kdl_wrapper` links `install/orocos_kdl/lib/liborocos-kdl.so` and ships
 no KDL of its own; there is exactly one KDL in the overlay.
 
-The wrapper checkout carries a `third_party/COLCON_IGNORE`, so the fork it may
-clone into `third_party/` for standalone builds is never picked up as a duplicate
-workspace package.
+The wrapper checkout carries a `third_party/COLCON_IGNORE`, so a fork imported into its
+own `third_party/` for standalone builds is never picked up as a duplicate workspace
+package.
 
 ### Consuming it from your own package
 
@@ -114,9 +113,9 @@ endif()
 ### Build ordering
 
 Step 1 must precede step 2 so the `orocos_kdl` package is on `CMAKE_PREFIX_PATH`
-when the wrapper configures. The wrapper's `package.xml` depends on `orocos_kdl`, so a
-single `colcon build` also orders them; the flag `MJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON` is
-still needed. A consuming package declares the dependencies in its own `package.xml`:
+when the wrapper configures. colcon finds `orocos_kdl` among the wrapper's `find_package()`
+calls, so a single `colcon build` also orders them; the flag `MJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON`
+is still needed. A consuming ROS package declares the dependencies in its own `package.xml`:
 
 ```xml
 <depend>orocos_kdl</depend>
@@ -138,8 +137,10 @@ source /opt/ros/jazzy/setup.bash
 python3 -m venv --system-site-packages ~/ros2_ws/.venv-ros
 source ~/ros2_ws/.venv-ros/bin/activate
 
-# build + install the wheel, then verify the combined stack imports
-pip install "git+https://github.com/vamsikalagaturu/mj_kdl_wrapper.git"
+# build + install the wheel from a standalone checkout, then verify the combined stack imports
+git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git ~/mj_kdl_wrapper
+cd ~/mj_kdl_wrapper && vcs import < mj_kdl_wrapper.repos
+pip install .
 python -c "import rclpy, PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mjk.__mujoco_version__)"
 ```
 

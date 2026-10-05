@@ -1,16 +1,16 @@
 # Examples {#page_examples}
 
-Most examples use the Kinova GEN3 7-DOF arm from MuJoCo Menagerie and the
-bundled Robotiq 2F-85 gripper under `assets/robotiq_2f85`. Configure with
-`-DMJ_KDL_FETCH_MENAGERIE=ON` to fetch the Kinova model automatically.
+Most examples use the bundled Kinova GEN3 7-DOF arm under `assets/kinova_gen3` and the
+bundled Robotiq 2F-85 gripper under `assets/robotiq_2f85`.
 
 Build from the repo root:
 
 ```bash
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
 cd mj_kdl_wrapper
+vcs import < mj_kdl_wrapper.repos
 
-cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMJ_KDL_FETCH_MENAGERIE=ON
+cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build --parallel $(nproc)
 ```
 
@@ -276,8 +276,8 @@ null-space term 0.246).
 
 ```bash
 ./build/src/examples/ex_admittance_ft --headless
-python examples/ex_admittance_ft.py            # headless self-check
-python examples/ex_admittance_ft.py --gui
+python -m mj_kdl_wrapper.examples.ex_admittance_ft         # headless self-check
+python -m mj_kdl_wrapper.examples.ex_admittance_ft --gui
 ```
 
 ---

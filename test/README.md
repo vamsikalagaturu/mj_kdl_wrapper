@@ -5,8 +5,9 @@ Tests use GoogleTest and are registered with CTest.  Build and run:
 ```bash
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
 cd mj_kdl_wrapper
+vcs import < mj_kdl_wrapper.repos
 
-cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTS=ON -DMJ_KDL_FETCH_MENAGERIE=ON
+cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTS=ON
 cmake --build build --parallel $(nproc)
 
 # Run all tests
@@ -16,12 +17,8 @@ ctest --test-dir build --output-on-failure
 ./build/test/test_init
 ```
 
-Tests on a Menagerie model or a bundled asset self-skip when the user cache lacks it; the
-fixture tests (`test/fixtures/`) always run. Fetch the models into the user cache with:
-
-```bash
-cmake -B build -DMJ_KDL_FETCH_MENAGERIE=ON
-```
+Tests load the bundled models from `assets/` and self-skip when one is missing there; the
+fixture tests (`test/fixtures/`) always run.
 
 The Python examples run headless under pytest (`python/tests/test_examples.py`), each checked
 for exit code 0; the two that always open a window are left out.
@@ -31,7 +28,7 @@ for exit code 0; the two that always open a window are left out.
 | `test_init` | `Env`/`Robot` lifecycle: init, `reset` (hook, ports, options), cleanup, adoption, a chain from outside, offscreen rendering |
 | `test_dual_arm` | two prefixed arms, independent KDL chains, gravity per arm |
 | `test_table_scene` | MJCF table asset, `SceneObject` quat and prefix, runtime add/remove |
-| `test_mjcf_load` | chains vs model frames, joint limits, cameras, sites, contact exclusions, attach targets, joint edge cases |
+| `test_mjcf_load` | the TCP chain vs the pinch site, cameras, sites, contact exclusions, attach targets, joint edge cases |
 | `test_mjcf_pos_ctrl` | POSITION trajectory tracking, ctrlrange clamping |
 | `test_mjcf_vel_ctrl` | VELOCITY convergence on the arm |
 | `test_mjcf_trq_ctrl` | gravity with the gripper's mass, impedance drift, `jnt_trq_msr` |
@@ -83,8 +80,6 @@ The opt-in viewer test (`DISABLED_` prefix, see test_scene_state) opens a Simula
 - **AFailureSaysWhy** -- a failed call returns a `Status` whose `error` names the cause.
 - **SceneSpecRequired.AnUnsetFieldFailsTheBuild** -- unset mass, friction, camera `fovy` or
   timestep fails `build_scene()`.
-- **ExamplePaths.StaleMenagerieEnvFallsBackToCache** -- a Menagerie env override pointing
-  nowhere falls back to the user cache.
 
 ### test_dual_arm
 
@@ -108,9 +103,6 @@ The opt-in viewer test (`DISABLED_` prefix, see test_scene_state) opens a Simula
 
 ### test_mjcf_load
 
-- **MjcfLoadTest** (arm from Menagerie's `scene.xml`): KDL FK equals the MuJoCo frame of
-  `bracelet_link`; `joint_limits` follow the model (+-inf for a continuous joint);
-  `save_model_xml()` output loads back with the same `nq`/`nbody` and a runtime mass change.
 - **MjcfGripperTest** (arm + 2F-85): the TCP chain equals the `g_pinch` site; the driver joint
   range is 0..0.8 rad and the actuator's ctrlrange tops out at 0.82; `bind_scene_joint()` by
   name; `AttachmentSpec::contact_exclusions` adds the pair; attaching to a body with an offset;
@@ -191,10 +183,10 @@ clamped proportional velocity command brings the arm to the target within 0.01 r
 
 Each mode is an actuator group switched with `opt.disableactuator`.
 
-- **ArmModesTest** (GEN3 `<position>` servos, Menagerie UR5e `<general>` servos): the
+- **ArmModesTest** (GEN3 `<position>` servos): the
   `<joint>_torque` motors are added in a disabled group; POSITION tracks a 0.2 rad ramp within
   0.05 rad; POSITION -> TORQUE -> POSITION holds the pose within 0.01 rad; TORQUE saturates at
-  the servo's `forcerange` (GEN3 105 Nm, UR5e 150 Nm); VELOCITY tracks `jnt_vel_cmd` within
+  the servo's `forcerange` (105 Nm); VELOCITY tracks `jnt_vel_cmd` within
   2e-3 rad/s; `update()` and mode switches never write `qfrc_applied`; two arms run different
   modes.
 - **GripperModesTest** (GEN3 + 2F-85): the gripper gets no torque actuator and stays in group 0;
@@ -203,6 +195,9 @@ Each mode is an actuator group switched with `opt.disableactuator`.
   `<velocity>` actuator, the pivot is left alone; VELOCITY tracks 5 rad/s through `env.scene`,
   then TORQUE takes over without a jump; a scene actuator slot flags a clamped command; a
   motor-driven robot starts in TORQUE and `joint_force_limits()` follows the active mode.
+- **AttachedArmModesTest** (`fixtures/arm_mount.xml` + two attached GEN3s): each arm gets mode
+  groups of its own; one switches to TORQUE and holds within 0.01 rad while the other holds in
+  POSITION; an attachment without `modes` gets no actuators.
 
 ### test_regressions
 
@@ -211,8 +206,10 @@ Fixes from the 0.4.0 audit; headless, self-skips without the bundled Gen3.
 - **RebuildTest** -- `scene_add_object()` keeps the physics state and the commands; a failed
   `scene_remove_object()` keeps the object order; removing a robot's joint fails and leaves the
   Env; a failed re-init leaves the robot as it was; an `on_reset` set before `init_env()` is
-  kept; recorders follow a rebuild and outlive each other; a viewer that cannot open returns an
-  error.
+  kept; recorders follow a rebuild and outlive each other; a frame shows the state it was taken
+  at, delivered on the recorder's thread; one recorder keeps every frame it is given; an
+  attachment left at the world is refused rather than dropped; a pointer held to a port element
+  still commands and reads the robot after `reset()`; a viewer that cannot open returns an error.
 - **LogLevel.IsASeverityThreshold** -- each level shows its own and more severe messages.
 - **Screenshot.PathReachesFfmpegVerbatimAndAMissingFfmpegIsAFailure** -- the screenshot writer
   takes its path verbatim and reports a missing ffmpeg.

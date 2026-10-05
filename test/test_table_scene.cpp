@@ -1,7 +1,7 @@
 /* test_table_scene.cpp
  * The bundled table as an MJCF-backed SceneObject: its quat and prefix, a Kinova GEN3 standing on
  * its top site holding its pose under KDL gravity compensation, and runtime scene_add_object /
- * scene_remove_object. Self-skips when Menagerie or the bundled assets are absent. */
+ * scene_remove_object. Self-skips when a bundled asset is missing. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "common.hpp"
@@ -128,7 +128,7 @@ class TableSceneTest : public testing::Test
 
     void SetUp() override
     {
-        const std::string mjcf       = ex::find_menagerie_model("kinova_gen3/gen3.xml");
+        const std::string mjcf       = ex::find_asset("kinova_gen3/gen3.xml");
         const std::string table_mjcf = ex::find_asset("table.xml");
         if (!fs::exists(mjcf)) GTEST_SKIP() << mjcf << " not found";
         if (!fs::exists(table_mjcf)) GTEST_SKIP() << "table.xml not found";

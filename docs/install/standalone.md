@@ -25,7 +25,8 @@ Instructions target Ubuntu/Debian. CMake checks `mjVERSION_HEADER` and stops if
 | Dependency | Version / source | Notes |
 |------------|------------------|-------|
 | MuJoCo | `3.14.0` from `cmake/Versions.cmake` | Native library and pinned `mujoco` Python package must match |
-| Orocos KDL | secorolab fork at `MJ_KDL_OROCOS_KDL_GIT_SHA` from `cmake/Versions.cmake` | Built from source; system `liborocos-kdl` is not used |
+| Orocos KDL | secorolab fork, branch `vereshchagin-driver-weighting`, from `mj_kdl_wrapper.repos` | Built from source; system `liborocos-kdl` is not used |
+| vcstool | any | Checks out the KDL fork (`vcs import < mj_kdl_wrapper.repos`) |
 | CMake | `>=3.16` | Required to configure the C++ build |
 | C++ compiler | C++20-capable | `CMAKE_CXX_STANDARD` is set to 20 |
 | Python | `>=3.10` | Required for the Python package |
@@ -37,19 +38,20 @@ Instructions target Ubuntu/Debian. CMake checks `mjVERSION_HEADER` and stops if
 ```bash
 sudo apt update
 sudo apt install \
-  cmake g++ git python3-dev python3-pip python3-venv \
+  cmake g++ git python3-dev python3-pip python3-venv vcstool \
   libeigen3-dev libglfw3-dev libgl-dev libegl-dev \
   ffmpeg doxygen
 ```
 
 `doxygen` is only needed for the docs target; `python3-dev`/`python3-venv` only
-for the Python package.
+for the Python package. `vcstool` is also on PyPI (`pip install vcstool`); ROS apt sources
+name it `python3-vcstool`.
 
 ## C++ (CMake)
 
 A standard CMake project. The default build is self-contained: it downloads
-MuJoCo, clones and builds the Orocos KDL fork, and (with the menagerie flag)
-fetches the robot models. No system MuJoCo or KDL is ever used.
+MuJoCo and builds the Orocos KDL fork that `vcs import` checked out; the robot models
+ship in `assets/`. No system MuJoCo or KDL is ever used.
 
 ### Default build
 
@@ -57,8 +59,11 @@ fetches the robot models. No system MuJoCo or KDL is ever used.
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
 cd mj_kdl_wrapper
 
-# configure (downloads MuJoCo, builds the KDL fork, fetches Menagerie models)
-cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMJ_KDL_FETCH_MENAGERIE=ON
+# check out the KDL fork into third_party/orocos_kinematics_dynamics
+vcs import < mj_kdl_wrapper.repos
+
+# configure (downloads MuJoCo, builds the KDL fork)
+cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
 
 # compile
 cmake --build build --parallel $(nproc)
@@ -72,16 +77,13 @@ What happens during configure/build:
 - **MuJoCo** is downloaded into the user cache (`MJ_KDL_FETCH_MUJOCO=ON`) unless
   `MJ_KDL_MUJOCO_DIR` already holds a matching install. No system paths are
   searched; set `MJ_KDL_MUJOCO_DIR` to use an install elsewhere.
-- **Orocos KDL** (the secorolab fork) is cloned into
-  `MJ_KDL_OROCOS_KDL_DIR` (default `third_party/orocos_kinematics_dynamics`) and
-  built via `ExternalProject` into `build/orocos_kdl_install`. The checkout
-  persists across builds and is reused (no re-clone) on later configures.
-- **Menagerie** robot models (at configure) and the bundled `assets/` (Gen3, Robotiq
-  gripper, table, mug, ...; copied on every build) go into the user cache
-  `~/.cache/mj_kdl_wrapper` only with `-DMJ_KDL_FETCH_MENAGERIE=ON`. The C++ examples and
-  tests resolve both from that cache via `example_paths.hpp`; for a model the bundled copy
-  wins over Menagerie's, and `$MJ_KDL_MENAGERIE` overrides both. Tests self-skip when the
-  cache is empty.
+- **Orocos KDL** (the secorolab fork) is built from `MJ_KDL_OROCOS_KDL_DIR` (default
+  `third_party/orocos_kinematics_dynamics`, where `vcs import` puts it) via
+  `ExternalProject` into `build/orocos_kdl_install`. CMake never clones it; configure stops
+  when the checkout is missing. `vcs pull third_party` updates it.
+- **Robot models** (Gen3, Robotiq gripper, table, mug, ...) ship in `assets/`. The C++
+  examples and tests load them from there via `example_paths.hpp`; tests self-skip when one
+  is missing.
 
 ### Install
 
@@ -159,24 +161,22 @@ To share one KDL, prefer [One shared KDL across several projects](#one-shared-kd
 
 ### Where the dependencies come from
 
-Each dependency is fetched by default, or can point at something you already have:
+Each dependency has a default source, or can point at something you already have:
 
 | To... | Set |
 |-------|-----|
 | Use an existing MuJoCo install | `-DMJ_KDL_MUJOCO_DIR=/opt/mujoco-3.14.0` |
 | Override the MuJoCo download URL | `-DMJ_KDL_MUJOCO_URL=<url>` |
 | Skip the MuJoCo download | `-DMJ_KDL_FETCH_MUJOCO=OFF` (then set `MJ_KDL_MUJOCO_DIR`) |
-| Clone the KDL fork somewhere specific | `-DMJ_KDL_OROCOS_KDL_DIR=~/src/orocos_kinematics_dynamics` |
-| Build a different KDL branch/tag | `-DMJ_KDL_OROCOS_KDL_GIT_TAG=<ref>` |
+| Build a KDL fork checkout from elsewhere | `-DMJ_KDL_OROCOS_KDL_DIR=~/src/orocos_kinematics_dynamics` |
+| Build a different KDL branch/tag | check it out in `third_party/orocos_kinematics_dynamics` |
 | Reuse a prebuilt KDL by prefix | `-DMJ_KDL_OROCOS_KDL_INSTALL_DIR=$HOME/ws` |
 | Consume KDL via its CMake package | `-DMJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON` |
 | Keep bundled KDL out of the install prefix | `-DMJ_KDL_INSTALL_BUNDLED_KDL=OFF` |
-| Fetch Menagerie models | `-DMJ_KDL_FETCH_MENAGERIE=ON` |
 | Choose build / install locations | `cmake -B <build-dir> -DCMAKE_INSTALL_PREFIX=<prefix>` |
 
 KDL precedence when more than one is set: `MJ_KDL_OROCOS_KDL_FROM_PACKAGE` >
-`MJ_KDL_OROCOS_KDL_INSTALL_DIR` > the in-tree build (`MJ_KDL_OROCOS_KDL_DIR` /
-`MJ_KDL_FETCH_OROCOS_KDL`).
+`MJ_KDL_OROCOS_KDL_INSTALL_DIR` > the in-tree build (`MJ_KDL_OROCOS_KDL_DIR`).
 
 ### One shared KDL across several projects
 
@@ -213,8 +213,10 @@ PyKDL is bundled inside the wheel as a top-level extension module. It imports as
 `PyKDL` but does not appear as a separate package in `pip list` / `uv pip list`.
 
 ```bash
-uv pip install "git+https://github.com/vamsikalagaturu/mj_kdl_wrapper.git"  # from GitHub
-uv pip install .                                                            # from a checkout
+git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
+cd mj_kdl_wrapper
+vcs import < mj_kdl_wrapper.repos
+uv pip install .
 ```
 
 Verify:
@@ -237,26 +239,17 @@ All optional, passed via scikit-build-core:
 The shared-KDL option needs a prefix that also ships `PyKDL`; a C++-only install
 prefix has KDL but no `PyKDL`, so the default (bundle) is right for standalone use.
 
-### Menagerie models and examples
+### Models and examples
 
-The examples ship in the wheel; `mj-kdl-fetch-examples` copies them out as an
-`examples/` directory. The scripts resolve MuJoCo Menagerie models and bundled
-assets from the user cache, populated once by `mj-kdl-fetch-menagerie`, so the
-copied scripts run from any directory:
+The wheel ships the `assets/` models (`mj_kdl_wrapper.ASSETS_DIR`) and the examples
+(`mj_kdl_wrapper.examples`), which load the models from there:
 
 ```bash
-mj-kdl-fetch-examples                         # copies into ./mj_kdl_wrapper_examples
-mj-kdl-fetch-menagerie                        # populates the user cache (models + assets)
-cd mj_kdl_wrapper_examples
-python examples/ex_gravity_comp.py
-
-# or point at a custom Menagerie checkout
-mj-kdl-fetch-menagerie --dest /path/to/menagerie
-export MJ_KDL_MENAGERIE=/path/to/menagerie
+python -m mj_kdl_wrapper.examples.ex_gravity_comp
 ```
 
-Model resolution, environment variables, and using other model sources are
-documented in the [Python Bindings API Guide](../api/python.md).
+Model paths and other model sources are documented in the
+[Python Bindings API Guide](../api/python.md).
 
 ## Generate documentation
 
@@ -279,14 +272,9 @@ Paths / sources:
 | `MJ_KDL_MUJOCO_DIR` | `~/.cache/mj_kdl_wrapper/mujoco-${MJ_KDL_MUJOCO_VERSION}` | MuJoCo location: download destination, or an existing install to use |
 | `MJ_KDL_FETCH_MUJOCO` | `ON` | Download MuJoCo into the cache when `MJ_KDL_MUJOCO_DIR` is not present |
 | `MJ_KDL_MUJOCO_URL` | (release) | MuJoCo archive URL to download |
-| `MJ_KDL_FETCH_OROCOS_KDL` | `ON` | Clone and build the secorolab Orocos KDL fork (the only KDL used) |
-| `MJ_KDL_OROCOS_KDL_GIT_REPOSITORY` | secorolab fork | Orocos KDL git source to build |
-| `MJ_KDL_OROCOS_KDL_GIT_TAG` | `MJ_KDL_OROCOS_KDL_GIT_SHA` | Orocos KDL commit, branch or tag to build |
-| `MJ_KDL_OROCOS_KDL_DIR` | `third_party/orocos_kinematics_dynamics` | Fork source/clone destination; built in place if present, else cloned here when fetch is ON |
+| `MJ_KDL_OROCOS_KDL_DIR` | `third_party/orocos_kinematics_dynamics` | Fork source checkout (`vcs import < mj_kdl_wrapper.repos`), built in place |
 | `MJ_KDL_OROCOS_KDL_INSTALL_DIR` | (empty) | Pre-installed Orocos KDL prefix to consume (skips building and bundling the fork) |
 | `MJ_KDL_OROCOS_KDL_FROM_PACKAGE` | `OFF` | Consume Orocos KDL via `find_package(orocos_kdl)` on `CMAKE_PREFIX_PATH`; skips building and bundling the fork |
-| `MJ_KDL_FETCH_MENAGERIE` | `OFF` | Download MuJoCo Menagerie models at configure; copy the bundled `assets/` into the cache on every build |
-| `MJ_KDL_MENAGERIE_DIR` | `~/.cache/mj_kdl_wrapper/menagerie` | Menagerie location / `MJ_KDL_FETCH_MENAGERIE` destination |
 
 Build toggles:
 

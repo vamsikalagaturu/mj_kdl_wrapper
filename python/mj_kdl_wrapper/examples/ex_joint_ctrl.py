@@ -30,7 +30,7 @@ def main() -> int:
     spec.add_floor = True
     spec.add_skybox = True
     robot_spec = mjk.RobotSpec()
-    robot_spec.path = mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
+    robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
     velocity = mjk.CtrlModeSpec()
     velocity.mode = mjk.CtrlMode.VELOCITY
     velocity.kv = VEL_GAIN

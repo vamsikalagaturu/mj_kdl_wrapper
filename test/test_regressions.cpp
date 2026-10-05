@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -41,7 +42,7 @@ class RebuildTest : public testing::Test
 
     void SetUp() override
     {
-        const std::string gen3 = mj_kdl_examples::find_menagerie_model("kinova_gen3/gen3.xml");
+        const std::string gen3 = mj_kdl_examples::find_asset("kinova_gen3/gen3.xml");
         if (gen3.empty()) GTEST_SKIP() << "kinova_gen3/gen3.xml not found";
         spec_.timestep   = 0.002;
         spec_.add_floor  = true;
@@ -174,6 +175,68 @@ TEST_F(RebuildTest, RecordersFollowARebuildAndOutliveEachOther)
     ASSERT_TRUE(mj_kdl::init_offscreen(&a, env_.model, 32, 24)) << "an open recorder re-inits";
     EXPECT_TRUE(mj_kdl::render_rgb(&a, &env_, rgb.data()));
     mj_kdl::cleanup(&a);
+}
+
+TEST_F(RebuildTest, AFrameShowsTheStateItWasTakenAt)
+{
+    mj_kdl::VideoRecorder vr;
+    if (!mj_kdl::init_offscreen(&vr, env_.model, 64, 48)) GTEST_SKIP() << "no EGL";
+    std::vector<std::uint8_t> at_a(64 * 48 * 3), at_b(64 * 48 * 3), called;
+    ASSERT_TRUE(mj_kdl::render_rgb(&vr, &env_, at_a.data()));
+
+    std::thread::id render_thread;
+    ASSERT_TRUE(mj_kdl::render_rgb(&vr, &env_, [&](const std::uint8_t *rgb) {
+        called.assign(rgb, rgb + at_a.size());
+        render_thread = std::this_thread::get_id();
+    }));
+    KDL::JntArray q(robot_.n_joints);
+    for (int i = 0; i < robot_.n_joints; ++i) q(i) = 1.0;
+    mj_kdl::set_joint_pos(&robot_, q);
+    ASSERT_TRUE(mj_kdl::render_rgb(&vr, &env_, at_b.data()));
+    mj_kdl::cleanup(&vr);
+
+    EXPECT_NE(at_a, at_b) << "the arm moved in view";
+    EXPECT_EQ(called, at_a) << "the callback shows the snapshot, not the state it rendered in";
+    EXPECT_NE(render_thread, std::this_thread::get_id());
+}
+
+TEST_F(RebuildTest, OneRecorderKeepsEveryFrameItIsGiven)
+{
+    mj_kdl::VideoRecorder vr;
+    if (!mj_kdl::init_offscreen(&vr, env_.model, 64, 48)) GTEST_SKIP() << "no EGL";
+    int frames = 0;
+    for (int i = 0; i < 50; ++i) {
+        mj_kdl::step(&env_);
+        ASSERT_TRUE(mj_kdl::render_rgb(&vr, &env_, [&frames](const std::uint8_t *) { ++frames; }));
+    }
+    mj_kdl::cleanup(&vr);
+    EXPECT_EQ(frames, 50);
+}
+
+TEST_F(RebuildTest, AnAttachmentLeftAtTheWorldIsRefused)
+{
+    mj_kdl::SceneSpec      spec = spec_;
+    mj_kdl::AttachmentSpec loose;
+    loose.mjcf_path = spec.robots[0].path;
+    loose.prefix    = "loose_";
+    spec.robots[0].attachments.push_back(loose);
+    mj_kdl::Env          env;
+    const mj_kdl::Status s = mj_kdl::init_env(&env, &spec);
+    EXPECT_FALSE(s);
+    EXPECT_NE(s.error.find("attach_to is the world"), std::string::npos) << s.error;
+}
+
+TEST_F(RebuildTest, APortPointerSurvivesAReset)
+{
+    ASSERT_TRUE(mj_kdl::set_control_mode(&robot_, mj_kdl::CtrlMode::TORQUE));
+    double       *torque   = &robot_.jnt_trq_cmd[1];
+    const double *position = &robot_.jnt_pos_msr[1];
+
+    mj_kdl::reset(&env_);
+    *torque = 5.0;
+    mj_kdl::update(&env_);
+    EXPECT_EQ(ctrl("joint_2_torque"), 5.0) << "a command written through a held pointer";
+    EXPECT_EQ(*position, qpos("joint_2")) << "a measurement read through a held pointer";
 }
 
 TEST(LogLevel, IsASeverityThreshold)

@@ -35,6 +35,7 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <limits>
 #include <map>
 #include <memory>
@@ -96,8 +97,8 @@ struct RobotInternals
     Env             *env = nullptr;
     std::vector<int> kdl_to_mj_qpos;
     std::vector<int> kdl_to_mj_dof;
-    std::vector<int> mode_ctrl[3];      // per CtrlMode: the joint's actuator, -1 if none
-    int              robot_index  = -1; // SceneSpec::robots index owning mode groups; -1 none
+    std::vector<int> mode_ctrl[3]; // per CtrlMode: the joint's actuator, -1 if none
+    std::vector<int> mode_owners;  // owners of the joints' mode groups (1 + 3 * owner + mode)
     CtrlMode         applied_mode = CtrlMode::POSITION; // mode whose group is enabled
     bool             mode_applied = false;              // applied_mode is live in the model
     std::string      mj_prefix;                         // re-resolves the joints after a rebuild
@@ -1034,8 +1035,11 @@ static Status resolve_joints(
             const int group = m->actuator_group[ai];
             int       mode  = -1;
             if (group >= 1 && group <= 30) {
-                mode           = (group - 1) % 3;
-                in.robot_index = (group - 1) / 3;
+                mode            = (group - 1) % 3;
+                const int owner = (group - 1) / 3;
+                if (std::find(in.mode_owners.begin(), in.mode_owners.end(), owner)
+                    == in.mode_owners.end())
+                    in.mode_owners.push_back(owner);
             } else {
                 mode = native_mode(
                   m->actuator_gaintype[ai],
@@ -1056,7 +1060,9 @@ static Status resolve_joints(
               return a >= 0;
           });
         const bool enabled =
-          in.robot_index < 0 || !(m->opt.disableactuator & (1 << mode_group(in.robot_index, mode)));
+          std::none_of(in.mode_owners.begin(), in.mode_owners.end(), [&](int owner) {
+              return m->opt.disableactuator & (1 << mode_group(owner, mode));
+          });
         if (driven && enabled) {
             in.applied_mode = static_cast<CtrlMode>(mode);
             in.mode_applied = true;
@@ -1278,10 +1284,28 @@ void cleanup(Env *env)
     env->on_reset = nullptr;
 }
 
-static Status attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
+static Status apply_ctrl_modes(
+  mjSpec                          *arm,
+  const std::vector<CtrlModeSpec> &modes,
+  int                              owner,
+  const std::string               &who,
+  int                             *disable_bits
+);
+
+// owner is the attachment's mode-group owner, used only when it has modes.
+static Status attach_to_spec(
+  mjSpec               *robot_spec,
+  const AttachmentSpec *a,
+  int                   owner,
+  const std::string    &who,
+  int                  *disable_bits
+)
 {
     if (!robot_spec || !a || a->mjcf_path.empty())
         MJ_FAIL("attach_to_spec: null spec or empty mjcf_path");
+    // Only the robot's first root body reaches the scene, so a second root would vanish.
+    if (a->attach_to.kind == AttachKind::World)
+        MJ_FAIL(who << ": attach_to is the world; name a body, site or frame of the robot");
     ensure_plugins_loaded();
     MJ_LOG_INFO(
       "attach_to_spec: parent='" << (a->attach_to.name.empty() ? "(world)" : a->attach_to.name)
@@ -1292,6 +1316,8 @@ static Status attach_to_spec(mjSpec *robot_spec, const AttachmentSpec *a)
     MjSpecPtr att = make_spec_ptr(mj_parseXML(a->mjcf_path.c_str(), nullptr, err, sizeof(err)));
     if (!att) MJ_FAIL("mj_parseXML failed for attachment '" << a->mjcf_path << "': " << err);
     absolutize_asset_files(att.get());
+    // On the attachment's own spec, before the prefix: only its own joints take its modes.
+    if (Status s = apply_ctrl_modes(att.get(), a->modes, owner, who, disable_bits); !s) return s;
 
     mjsBody *att_root = first_root_body(att.get());
     if (!att_root) MJ_FAIL("no root body found in attachment spec '" << a->mjcf_path << "'");
@@ -1315,13 +1341,19 @@ static bool range_limited(mjtLimited flag, const double *range)
 }
 
 /* Give each listed joint one actuator per requested mode, each mode in its own group of this
- * robot; the joint's own actuator joins the group of the mode it gives natively. Collects the
+ * owner; the joint's own actuator joins the group of the mode it gives natively. Collects the
  * groups to start disabled. */
-static Status add_mode_actuators(mjSpec *arm, const RobotSpec &rs, int robot, int *disable_bits)
+static Status apply_ctrl_modes(
+  mjSpec                          *arm,
+  const std::vector<CtrlModeSpec> &modes,
+  int                              owner,
+  const std::string               &who,
+  int                             *disable_bits
+)
 {
-    if (rs.modes.empty()) return {};
-    if (mode_group(robot, static_cast<int>(CtrlMode::VELOCITY)) > 30)
-        MJ_FAIL("robots[" << robot << "]: control-mode groups only reach robot index 9");
+    if (modes.empty()) return {};
+    if (mode_group(owner, static_cast<int>(CtrlMode::VELOCITY)) > 30)
+        MJ_FAIL(who << ": control-mode groups run out after ten robots and moded attachments");
 
     std::map<std::string, std::vector<mjsActuator *>> by_joint;
     for (mjsElement *e = mjs_firstElement(arm, mjOBJ_ACTUATOR); e; e = mjs_nextElement(arm, e)) {
@@ -1330,7 +1362,7 @@ static Status add_mode_actuators(mjSpec *arm, const RobotSpec &rs, int robot, in
     }
 
     int enabled = 0, used = 0;
-    for (const CtrlModeSpec &ms : rs.modes) {
+    for (const CtrlModeSpec &ms : modes) {
         // Every actuated joint when none are named: those that cannot take modes are skipped.
         const bool               all    = ms.joints.empty();
         std::vector<std::string> joints = ms.joints;
@@ -1348,17 +1380,15 @@ static Status add_mode_actuators(mjSpec *arm, const RobotSpec &rs, int robot, in
                   : -1;
             if (native < 0) {
                 if (all) {
-                    MJ_LOG_INFO(
-                      "robots[" << robot << "]: joint '" << joint << "' takes no control modes"
-                    );
+                    MJ_LOG_INFO(who << ": joint '" << joint << "' takes no control modes");
                     continue;
                 }
                 MJ_FAIL(
-                  "robots[" << robot << "]: joint '" << joint
-                            << "' needs exactly one position-servo or motor actuator"
+                  who << ": joint '" << joint
+                      << "' needs exactly one position-servo or motor actuator"
                 );
             }
-            own->group = mode_group(robot, native);
+            own->group = mode_group(owner, native);
             enabled |= 1 << own->group;
             used |= 1 << own->group;
 
@@ -1366,12 +1396,11 @@ static Status add_mode_actuators(mjSpec *arm, const RobotSpec &rs, int robot, in
             if (mode == native) continue;
             if (ms.mode == CtrlMode::POSITION) {
                 MJ_FAIL(
-                  "robots[" << robot << "]: joint '" << joint
-                            << "' is motor-driven; POSITION is not supported"
+                  who << ": joint '" << joint << "' is motor-driven; POSITION is not supported"
                 );
             }
             if (ms.mode == CtrlMode::VELOCITY && ms.kv <= 0.0)
-                MJ_FAIL("robots[" << robot << "]: VELOCITY needs kv > 0");
+                MJ_FAIL(who << ": VELOCITY needs kv > 0");
 
             // Both limits below are in actuator-force units: a servo's forcerange, a motor's ctrl.
             const bool    servo = native == static_cast<int>(CtrlMode::POSITION);
@@ -1382,7 +1411,7 @@ static Status add_mode_actuators(mjSpec *arm, const RobotSpec &rs, int robot, in
             added->trntype     = mjTRN_JOINT;
             mjs_setString(added->target, joint.c_str());
             added->gear[0] = own->gear[0];
-            added->group   = mode_group(robot, mode);
+            added->group   = mode_group(owner, mode);
             used |= 1 << added->group;
             if (ms.mode == CtrlMode::TORQUE) {
                 mjs_setToMotor(added);
@@ -1454,6 +1483,8 @@ Status build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     bool first_arm      = true;
     int  disable_bits   = 0;
     char err[kMjErrBuf] = {};
+    // Robots own mode groups by their index; attachments with modes take the owners after them.
+    int next_owner = static_cast<int>(sc->robots.size());
     for (int ai = 0; ai < (int)sc->robots.size(); ++ai) {
         const RobotSpec &rs = sc->robots[ai];
         if (rs.path.empty()) MJ_FAIL("robots[" << ai << "].path is empty");
@@ -1461,8 +1492,9 @@ Status build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
         MjSpecPtr arm = make_spec_ptr(mj_parseXML(rs.path.c_str(), nullptr, err, sizeof(err)));
         if (!arm) MJ_FAIL("mj_parseXML failed for '" << rs.path << "': " << err);
         absolutize_asset_files(arm.get());
+        const std::string who = "robots[" + std::to_string(ai) + "]";
         // Before the attachments are merged in, so only the robot's own joints take modes.
-        if (Status s = add_mode_actuators(arm.get(), rs, ai, &disable_bits); !s) return s;
+        if (Status s = apply_ctrl_modes(arm.get(), rs.modes, ai, who, &disable_bits); !s) return s;
 
         // Inherit physics options (integrator, solver, etc.) from the first
         // arm, then apply the SceneSpec's user-controlled fields on top.
@@ -1474,8 +1506,12 @@ Status build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
         }
 
         // Apply attachment chain in order (mount, sensor, gripper, etc.).
-        for (const auto &att : rs.attachments) {
-            if (Status s = attach_to_spec(arm.get(), &att); !s) return s;
+        for (size_t k = 0; k < rs.attachments.size(); ++k) {
+            const AttachmentSpec &att     = rs.attachments[k];
+            const int             owner   = att.modes.empty() ? -1 : next_owner++;
+            const std::string     att_who = who + ".attachments[" + std::to_string(k) + "]";
+            if (Status s = attach_to_spec(arm.get(), &att, owner, att_who, &disable_bits); !s)
+                return s;
         }
 
         mjsBody *arm_root = first_root_body(arm.get());
@@ -1755,29 +1791,34 @@ static Status resolve_ft_sensors(Robot *r, const ToolFrameSpec *tool, const std:
     return {};
 }
 
-// Ports that hold the robot where it is, in the mode its model is in.
-static RobotPorts seeded_ports(const Robot &r)
+// The only place the ports are allocated: callers keep pointers into them across reset().
+static void size_ports(RobotPorts &p, int n)
 {
-    const RobotInternals &in = *r._impl;
-    const mjData         *d  = r.data;
-    const int             n  = r.n_joints;
-    RobotPorts            p;
-    p.ctrl_mode = r.ctrl_mode; // a requested switch still happens at the next update()
-    p.jnt_pos_msr.resize(n);
-    p.jnt_vel_msr.resize(n);
-    p.jnt_trq_msr.resize(n);
-    p.jnt_pos_cmd.resize(n);
+    p.jnt_pos_msr.assign(n, 0.0);
+    p.jnt_vel_msr.assign(n, 0.0);
+    p.jnt_trq_msr.assign(n, 0.0);
+    p.jnt_pos_cmd.assign(n, 0.0);
     p.jnt_vel_cmd.assign(n, 0.0);
     p.jnt_trq_cmd.assign(n, 0.0);
     p.jnt_saturated.assign(n, 0);
-    for (int i = 0; i < n; ++i) {
-        const int dof    = in.kdl_to_mj_dof[i];
-        p.jnt_pos_msr[i] = d->qpos[in.kdl_to_mj_qpos[i]];
-        p.jnt_vel_msr[i] = d->qvel[dof];
-        p.jnt_trq_msr[i] = d->qfrc_actuator[dof];
-        p.jnt_pos_cmd[i] = p.jnt_pos_msr[i];
+}
+
+// Ports that hold the robot where it is, written into their storage; ctrl_mode is left as set,
+// so a requested switch still happens at the next update().
+static void seed_ports(Robot &r)
+{
+    const RobotInternals &in = *r._impl;
+    const mjData         *d  = r.data;
+    for (int i = 0; i < r.n_joints; ++i) {
+        const int dof      = in.kdl_to_mj_dof[i];
+        r.jnt_pos_msr[i]   = d->qpos[in.kdl_to_mj_qpos[i]];
+        r.jnt_vel_msr[i]   = d->qvel[dof];
+        r.jnt_trq_msr[i]   = d->qfrc_actuator[dof];
+        r.jnt_pos_cmd[i]   = r.jnt_pos_msr[i];
+        r.jnt_vel_cmd[i]   = 0.0;
+        r.jnt_trq_cmd[i]   = 0.0;
+        r.jnt_saturated[i] = 0;
     }
-    return p;
 }
 
 static void unregister_robot(Robot *r)
@@ -1807,8 +1848,9 @@ static void take_robot(Robot *r, Robot *built, Env *env)
     std::swap(r->_impl, built->_impl);
     if (std::find(env->robots.begin(), env->robots.end(), r) == env->robots.end())
         env->robots.push_back(r);
-    r->_impl->env                 = env;
-    static_cast<RobotPorts &>(*r) = seeded_ports(*r);
+    r->_impl->env = env;
+    size_ports(*r, r->n_joints);
+    seed_ports(*r);
 }
 
 static Status resolve_robot_joints(Robot *r, const std::string &pfx)
@@ -2137,7 +2179,8 @@ static void read_robot(Robot *r)
     for (auto &sensor : r->ft_sensors) {
         const double *f = d->sensordata + sensor.force_adr;
         const double *t = d->sensordata + sensor.torque_adr;
-        sensor.wrench   = KDL::Wrench(KDL::Vector(f[0], f[1], f[2]), KDL::Vector(t[0], t[1], t[2]));
+        // MuJoCo gives the parent's force on the child; a physical sensor reports the load on it.
+        sensor.wrench = -KDL::Wrench(KDL::Vector(f[0], f[1], f[2]), KDL::Vector(t[0], t[1], t[2]));
     }
 }
 
@@ -2163,11 +2206,13 @@ static void read_scene(Env *env)
 
 /* What reset() restores. Each part's runtime state lives in one struct that is assigned afresh,
  * so a field added to it is reset without a line here; a part handed to reset_parts() without a
- * reset_part() overload does not compile. */
+ * reset_part() overload does not compile. A robot's ports are the exception: callers hold
+ * pointers into them, so seed_ports() rewrites them in place and a new field needs a line.
+ */
 static void reset_part(std::vector<Robot *> &robots, Env *env)
 {
     for (Robot *r : robots) {
-        static_cast<RobotPorts &>(*r) = seeded_ports(*r);
+        seed_ports(*r);
         for (auto &sensor : r->ft_sensors)
             static_cast<ForceTorqueReading &>(sensor) = ForceTorqueReading{};
         // Hold the reset pose in whatever mode the robot is in.
@@ -2309,8 +2354,8 @@ static Status switch_control_mode(Robot *r, CtrlMode mode, bool seed_ports)
             );
         }
     }
-    if (in.robot_index >= 0) {
-        if (Status s = switch_group(in.env, in.robot_index, mode); !s) return s;
+    for (const int owner : in.mode_owners) {
+        if (Status s = switch_group(in.env, owner, mode); !s) return s;
     }
     const mjData *d = r->data;
     for (int i = 0; seed_ports && i < r->n_joints; ++i) {
@@ -3106,18 +3151,51 @@ static bool step_viewer(Env *env)
 
 #ifdef MJ_KDL_HAS_EGL
 
+using RgbDone = std::function<void(const std::uint8_t *rgb)>;
+
+// One frame handed to the render thread: a scene already snapshotted, and where its pixels go.
+struct RecorderJob
+{
+    enum class Kind { Record, Rgb, Callback } kind = Kind::Record;
+    std::uint8_t                  *out             = nullptr; // Rgb: the caller's buffer
+    RgbDone                        done;                      // Callback
+    std::shared_ptr<const mjModel> model;                     // the recorder's copy
+    std::uint64_t                  model_gen = 0;
+    std::uint64_t                  seq       = 0;
+};
+
+// Only the render thread touches GL or the sink, and it never reads the (headless: unlocked) Env.
 struct VideoRecorderImpl
 {
     EGLDisplay           egl_dpy = EGL_NO_DISPLAY;
     EGLContext           egl_ctx = EGL_NO_CONTEXT;
-    mjvScene             scn{};
     mjrContext           con{};
+    bool                 con_made = false;
+    std::uint64_t        con_gen  = 0;
     FfmpegSink           sink;
     int                  width  = 0;
     int                  height = 0;
-    std::vector<uint8_t> rgb_buf;
-    bool                 made      = false; // scn and con hold the model of model_gen
-    std::uint64_t        model_gen = 0;
+    std::vector<uint8_t> rgb_buf; // render thread's readback, bottom row first
+
+    mjvScene      scn[2]{};
+    bool          scn_made[2] = { false, false };
+    std::uint64_t scn_gen[2]  = { 0, 0 };
+    int           back        = 0;
+
+    std::shared_ptr<const mjModel> model; // copied at each Env rebuild, on the caller's thread
+    std::uint64_t                  model_gen  = 0;
+    bool                           have_model = false;
+
+    std::thread             thread;
+    std::mutex              mtx;
+    std::condition_variable cv;
+    RecorderJob             job;
+    bool                    pending   = false;
+    bool                    quit      = false;
+    bool                    failed    = false; // sticky: EGL or the ffmpeg pipe gave out
+    std::uint64_t           submitted = 0;
+    std::uint64_t           finished  = 0;
+    bool                    last_ok   = true; // result of job `finished`
 };
 
 static constexpr EGLint kEglMaxDevices = 8;
@@ -3213,6 +3291,73 @@ static void vr_egl_done(VideoRecorderImpl *impl)
     impl->egl_dpy = EGL_NO_DISPLAY;
 }
 
+static void flip_rows(std::uint8_t *rgb, int width, int height)
+{
+    const std::size_t row_bytes = static_cast<std::size_t>(kRgbBytesPerPixel) * width;
+    for (int top = 0, bot = height - 1; top < bot; ++top, --bot) {
+        std::uint8_t *top_row = rgb + top * row_bytes;
+        std::swap_ranges(top_row, top_row + row_bytes, rgb + bot * row_bytes);
+    }
+}
+
+// Runs on the render thread. The render context follows the model the frame was snapshotted from.
+static bool vr_render(VideoRecorderImpl *impl, const RecorderJob &job, int front)
+{
+    if (!impl->con_made || impl->con_gen != job.model_gen) {
+        if (impl->con_made) mjr_freeContext(&impl->con);
+        mjr_defaultContext(&impl->con);
+        mjr_makeContext(job.model.get(), &impl->con, mjFONTSCALE_150);
+        mjr_setBuffer(mjFB_OFFSCREEN, &impl->con);
+        mjr_resizeOffscreen(impl->width, impl->height, &impl->con);
+        impl->con_made = true;
+        impl->con_gen  = job.model_gen;
+    }
+    const mjrRect vp = { 0, 0, impl->width, impl->height };
+    mjr_render(vp, &impl->scn[front], &impl->con);
+    std::uint8_t *px = job.kind == RecorderJob::Kind::Rgb ? job.out : impl->rgb_buf.data();
+    mjr_readPixels(px, nullptr, vp, &impl->con);
+
+    // No flip for the sink: its filter chain turns the frame over on its way into the encoder.
+    if (job.kind == RecorderJob::Kind::Record)
+        return sink_write(&impl->sink, px, impl->rgb_buf.size());
+    // Callers of the public API get the image top-down, as every image format wants it.
+    flip_rows(px, impl->width, impl->height);
+    if (job.kind == RecorderJob::Kind::Callback) job.done(px);
+    return true;
+}
+
+static void vr_run(VideoRecorderImpl *impl, std::promise<Status> ready)
+{
+    Status     started = vr_egl_init(impl);
+    const bool ok      = static_cast<bool>(started);
+    ready.set_value(std::move(started));
+    if (!ok) {
+        vr_egl_done(impl);
+        return;
+    }
+    for (;;) {
+        std::unique_lock<std::mutex> lock(impl->mtx);
+        impl->cv.wait(lock, [impl] { return impl->pending || impl->quit; });
+        if (!impl->pending) break;
+        const int   front = impl->back;
+        RecorderJob job   = std::move(impl->job);
+        impl->back        = 1 - impl->back;
+        impl->pending     = false;
+        lock.unlock();
+        impl->cv.notify_all();
+
+        const bool rendered = vr_render(impl, job, front);
+        lock.lock();
+        impl->failed   = impl->failed || !rendered;
+        impl->last_ok  = rendered;
+        impl->finished = job.seq;
+        lock.unlock();
+        impl->cv.notify_all();
+    }
+    if (impl->con_made) mjr_freeContext(&impl->con);
+    vr_egl_done(impl);
+}
+
 Status init_offscreen(VideoRecorder *vr, mjModel *model, int width, int height)
 {
     if (!vr || !model) MJ_FAIL("init_offscreen: null recorder or model");
@@ -3226,9 +3371,16 @@ Status init_offscreen(VideoRecorder *vr, mjModel *model, int width, int height)
     auto *impl   = new VideoRecorderImpl();
     impl->width  = width;
     impl->height = height;
+    impl->rgb_buf.resize(
+      static_cast<size_t>(width) * static_cast<size_t>(height) * kRgbBytesPerPixel
+    );
 
-    if (Status s = vr_egl_init(impl); !s) {
-        vr_egl_done(impl);
+    // The thread makes the EGL context, so it is current there and nowhere else.
+    std::promise<Status> ready;
+    std::future<Status>  started = ready.get_future();
+    impl->thread                 = std::thread(vr_run, impl, std::move(ready));
+    if (Status s = started.get(); !s) {
+        impl->thread.join();
         delete impl;
         return s;
     }
@@ -3236,22 +3388,63 @@ Status init_offscreen(VideoRecorder *vr, mjModel *model, int width, int height)
     return {};
 }
 
-// The scene and render context belong to a model: made at the first frame, remade on a rebuild.
-static void vr_follow_model(VideoRecorderImpl *impl, const Env *env)
+// Waits only until the render thread has picked up the previous frame.
+static bool vr_submit(VideoRecorder *vr, Env *env, RecorderJob job)
 {
-    if (impl->made && impl->model_gen == env->_impl->model_gen) return;
-    if (impl->made) {
-        mjr_freeContext(&impl->con);
-        mjv_freeScene(&impl->scn);
+    auto                        *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
+    std::unique_lock<std::mutex> lock(impl->mtx);
+    impl->cv.wait(lock, [impl] { return !impl->pending; });
+    if (impl->failed) return false;
+    const int back = impl->back;
+    lock.unlock();
+
+    // The render thread builds its context from this copy, never from the Env's live model.
+    if (!impl->have_model || impl->model_gen != env->_impl->model_gen) {
+        mjModel *copy = mj_copyModel(nullptr, env->model);
+        if (!copy) {
+            MJ_LOG_ERROR("recorder: copying the model failed");
+            return false;
+        }
+        impl->model      = std::shared_ptr<mjModel>(copy, mj_deleteModel);
+        impl->model_gen  = env->_impl->model_gen;
+        impl->have_model = true;
     }
-    mjv_defaultScene(&impl->scn);
-    mjr_defaultContext(&impl->con);
-    mjv_makeScene(env->model, &impl->scn, 4000);
-    mjr_makeContext(env->model, &impl->con, mjFONTSCALE_150);
-    mjr_setBuffer(mjFB_OFFSCREEN, &impl->con);
-    mjr_resizeOffscreen(impl->width, impl->height, &impl->con);
-    impl->made      = true;
-    impl->model_gen = env->_impl->model_gen;
+    mjvScene &scn = impl->scn[back];
+    if (!impl->scn_made[back] || impl->scn_gen[back] != impl->model_gen) {
+        if (impl->scn_made[back]) mjv_freeScene(&scn);
+        mjv_defaultScene(&scn);
+        mjv_makeScene(impl->model.get(), &scn, 4000);
+        impl->scn_made[back] = true;
+        impl->scn_gen[back]  = impl->model_gen;
+    }
+    {
+        const auto env_lock = lock_env(env);
+        ensure_kinematics(env);
+        mjv_updateScene(env->model, env->data, &vr->opt, nullptr, &vr->cam, mjCAT_ALL, &scn);
+    }
+
+    // The overlay geoms a window shows live on the viewer's user scene, and this offscreen
+    // scene is rebuilt from the model every frame -- so append them the same way the UI thread
+    // does (simulate.cc), or a recording loses every trace segment and every arrow.
+    if (env->viewer._sim_ui) {
+        auto                       *ss = static_cast<SimUiState *>(env->viewer._sim_ui);
+        std::lock_guard<std::mutex> lk(ss->user_scn_mtx);
+        const int                   ngeom = std::min(ss->user_scn.ngeom, scn.maxgeom - scn.ngeom);
+        if (ngeom > 0) {
+            std::memcpy(scn.geoms + scn.ngeom, ss->user_scn.geoms, ngeom * sizeof(mjvGeom));
+            scn.ngeom += ngeom;
+        }
+    }
+
+    job.model     = impl->model;
+    job.model_gen = impl->model_gen;
+    lock.lock();
+    job.seq       = ++impl->submitted;
+    impl->job     = std::move(job);
+    impl->pending = true;
+    lock.unlock();
+    impl->cv.notify_all();
+    return true;
 }
 
 Status init_video_recorder(
@@ -3267,10 +3460,6 @@ Status init_video_recorder(
     if (Status s = init_offscreen(vr, model, width, height); !s) return s;
 
     auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
-    impl->rgb_buf.resize(
-      static_cast<size_t>(width) * static_cast<size_t>(height) * kRgbBytesPerPixel
-    );
-
     if (Status s = sink_open(&impl->sink, out_path, width, height, width, height, fps, true); !s) {
         cleanup(vr);
         return s;
@@ -3282,82 +3471,50 @@ Status init_video_recorder(
     return {};
 }
 
-// Renders into `out` the way MuJoCo fills it: bottom row first.
-static bool render_bottom_up(VideoRecorder *vr, Env *env, std::uint8_t *out)
-{
-    if (!vr || !vr->_impl || !env || !env->model || !out) return false;
-    auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
-
-    // One EGL context per recorder: make this one current before rendering.
-    if (!eglMakeCurrent(impl->egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, impl->egl_ctx)) {
-        MJ_LOG_ERROR("EGL: make current failed (error 0x" << std::hex << eglGetError() << ")");
-        return false;
-    }
-    vr_follow_model(impl, env);
-
-    {
-        const auto lock = lock_env(env);
-        ensure_kinematics(env);
-        mjv_updateScene(env->model, env->data, &vr->opt, nullptr, &vr->cam, mjCAT_ALL, &impl->scn);
-    }
-
-    // The overlay geoms a window shows live on the viewer's user scene, and this offscreen
-    // scene is rebuilt from the model every frame -- so append them the same way the UI thread
-    // does (simulate.cc), or a recording loses every trace segment and every arrow.
-    if (env->viewer._sim_ui) {
-        auto                       *ss = static_cast<SimUiState *>(env->viewer._sim_ui);
-        std::lock_guard<std::mutex> lk(ss->user_scn_mtx);
-        const int ngeom = std::min(ss->user_scn.ngeom, impl->scn.maxgeom - impl->scn.ngeom);
-        if (ngeom > 0) {
-            std::memcpy(
-              impl->scn.geoms + impl->scn.ngeom, ss->user_scn.geoms, ngeom * sizeof(mjvGeom)
-            );
-            impl->scn.ngeom += ngeom;
-        }
-    }
-
-    mjrRect vp = { 0, 0, impl->width, impl->height };
-    mjr_render(vp, &impl->scn, &impl->con);
-    mjr_readPixels(out, nullptr, vp, &impl->con);
-    return true;
-}
-
 bool render_rgb(VideoRecorder *vr, Env *env, std::uint8_t *out)
 {
-    if (!render_bottom_up(vr, env, out)) return false;
-    auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
+    if (!vr || !vr->_impl || !env || !env->model || !out) return false;
+    auto       *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
+    RecorderJob job;
+    job.kind = RecorderJob::Kind::Rgb;
+    job.out  = out;
+    if (!vr_submit(vr, env, std::move(job))) return false;
+    std::unique_lock<std::mutex> lock(impl->mtx);
+    const std::uint64_t          seq = impl->submitted;
+    impl->cv.wait(lock, [impl, seq] { return impl->finished >= seq; });
+    return impl->last_ok;
+}
 
-    // Callers of the public API get the image top-down, as every image format wants it.
-    const std::size_t row_bytes = static_cast<std::size_t>(kRgbBytesPerPixel) * impl->width;
-    for (int top = 0, bot = impl->height - 1; top < bot; ++top, --bot) {
-        std::uint8_t *top_row = out + top * row_bytes;
-        std::swap_ranges(top_row, top_row + row_bytes, out + bot * row_bytes);
-    }
-    return true;
+bool render_rgb(VideoRecorder *vr, Env *env, std::function<void(const std::uint8_t *rgb)> done)
+{
+    if (!vr || !vr->_impl || !env || !env->model || !done) return false;
+    RecorderJob job;
+    job.kind = RecorderJob::Kind::Callback;
+    job.done = std::move(done);
+    return vr_submit(vr, env, std::move(job));
 }
 
 bool record_frame(VideoRecorder *vr, Env *env)
 {
-    if (!vr || !vr->_impl) return false;
-    auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
-    if (!impl->sink.pipe) return false;
-    // No flip here: the sink's filter chain turns the frame over on its way into the encoder.
-    if (!render_bottom_up(vr, env, impl->rgb_buf.data())) return false;
-    return sink_write(&impl->sink, impl->rgb_buf.data(), impl->rgb_buf.size());
+    if (!vr || !vr->_impl || !env || !env->model) return false;
+    if (!static_cast<VideoRecorderImpl *>(vr->_impl)->sink.pipe) return false;
+    return vr_submit(vr, env, RecorderJob{});
 }
 
 void cleanup(VideoRecorder *vr)
 {
     if (!vr || !vr->_impl) return;
     auto *impl = static_cast<VideoRecorderImpl *>(vr->_impl);
-    sink_close(&impl->sink);
-    if (impl->made) {
-        // Its GL objects live in its own context, which another recorder may have replaced.
-        if (eglMakeCurrent(impl->egl_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, impl->egl_ctx))
-            mjr_freeContext(&impl->con);
-        mjv_freeScene(&impl->scn);
+    {
+        // The frame still waiting is rendered before the thread ends.
+        const std::lock_guard<std::mutex> lock(impl->mtx);
+        impl->quit = true;
     }
-    vr_egl_done(impl);
+    impl->cv.notify_all();
+    if (impl->thread.joinable()) impl->thread.join();
+    sink_close(&impl->sink);
+    for (int i = 0; i < 2; ++i)
+        if (impl->scn_made[i]) mjv_freeScene(&impl->scn[i]);
     delete impl;
     vr->_impl = nullptr;
 }
@@ -3374,6 +3531,10 @@ Status init_offscreen(VideoRecorder *, mjModel *, int, int)
     MJ_FAIL("offscreen rendering requires EGL; rebuild with -DBUILD_RECORDER=ON");
 }
 bool render_rgb(VideoRecorder *, Env *, std::uint8_t *) { return false; }
+bool render_rgb(VideoRecorder *, Env *, std::function<void(const std::uint8_t *rgb)>)
+{
+    return false;
+}
 void cleanup(VideoRecorder *vr)
 {
     if (vr) vr->_impl = nullptr;

@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y \
-            ccache \
+            ccache vcstool \
             libeigen3-dev libglfw3-dev libgl-dev libegl-dev
 
       - name: Cache ccache
@@ -39,17 +39,13 @@ jobs:
           restore-keys: |
             ccache-python-${{ matrix.python-version }}-${{ runner.os }}-
 
-      # The build clones the pinned KDL fork here (ExternalProject, not FetchContent).
-      - name: Cache the Orocos KDL checkout
-        uses: actions/cache@v4
-        with:
-          path: third_party/orocos_kinematics_dynamics
-          key: orocos-kdl-${{ hashFiles('cmake/Versions.cmake') }}
-
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+
+      - name: Import the Orocos KDL fork
+        run: vcs import < mj_kdl_wrapper.repos
 
       - name: Cache MuJoCo
         id: cache-mujoco
@@ -65,14 +61,6 @@ jobs:
           tar xzf "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz" -C /tmp
           rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
 
-      # Keyed on the pins, no fallback: a kept checkout is never moved to a new pin.
-      # mj-kdl-fetch-menagerie (run below) fetches it on a miss and copies the bundled assets.
-      - name: Cache MuJoCo Menagerie
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/mj_kdl_wrapper/menagerie
-          key: menagerie-${{ runner.os }}-${{ hashFiles('cmake/Versions.cmake') }}
-
       - name: Build and test the Python bindings
         run: |
           pip install uv
@@ -83,8 +71,6 @@ jobs:
             --config-settings=cmake.define.CMAKE_CXX_COMPILER_LAUNCHER=ccache \
             --config-settings=cmake.define.CMAKE_C_COMPILER_LAUNCHER=ccache
           uv pip install pytest
-          mj-kdl-fetch-menagerie
-          test -f ~/.cache/mj_kdl_wrapper/menagerie/kinova_gen3/gen3.xml
           python -c "import PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mujoco.mj_versionString(), mjk.__mujoco_version__)"
           set -o pipefail
           pytest -q -rs python/tests | tee pytest.log

@@ -2,8 +2,8 @@
  * Control modes through actuator groups: the actuators build_scene adds, switching without a
  * jump, torque limits, an arm tracking jnt_vel_cmd in VELOCITY, two robots in different modes, a
  * gripper that stays in POSITION while its arm switches, and a motor-driven wheel in VELOCITY and
- * TORQUE (the Eddie case) driven through the Env's scene slots. Arm tests (Gen3, UR5e) self-skip
- * without Menagerie. */
+ * TORQUE (the Eddie case) driven through the Env's scene slots. Arm tests self-skip without the
+ * bundled Gen3. */
 
 #include <gtest/gtest.h>
 
@@ -60,13 +60,6 @@ static const ArmCase kArms[] = {
       { 0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708 },
       1,
       105.0 },
-    { "UR5e",
-      "universal_robots_ur5e/ur5e.xml",
-      "base",
-      "wrist_3_link",
-      { -1.5708, -1.5708, 1.5708, -1.5708, -1.5708, 0.0 },
-      1,
-      150.0 },
 };
 
 class ArmModesTest : public testing::TestWithParam<ArmCase>
@@ -83,7 +76,7 @@ class ArmModesTest : public testing::TestWithParam<ArmCase>
     void SetUp() override
     {
         const ArmCase &c = GetParam();
-        mjcf_            = mj_kdl_examples::find_menagerie_model(c.mjcf);
+        mjcf_            = mj_kdl_examples::find_asset(c.mjcf);
         if (!fs::exists(mjcf_)) GTEST_SKIP() << c.mjcf << " not found";
         spec_.timestep   = 0.002;
         spec_.add_floor  = true;
@@ -294,7 +287,7 @@ INSTANTIATE_TEST_SUITE_P(Arms, ArmModesTest, testing::ValuesIn(kArms), [](const 
 
 TEST(GripperModesTest, GripperStaysInPositionWhileTheArmSwitches)
 {
-    const std::string arm_mjcf = mj_kdl_examples::find_menagerie_model("kinova_gen3/gen3.xml");
+    const std::string arm_mjcf = mj_kdl_examples::find_asset("kinova_gen3/gen3.xml");
     const std::string grp_mjcf = mj_kdl_examples::find_asset("robotiq_2f85/2f85.xml");
     if (!fs::exists(arm_mjcf)) GTEST_SKIP() << "kinova_gen3/gen3.xml not found";
     if (!fs::exists(grp_mjcf)) GTEST_SKIP() << "robotiq_2f85/2f85.xml not found";
@@ -441,6 +434,110 @@ TEST_F(MotorWheelModesTest, ForceLimitsFollowTheActiveMode)
 
     model_->actuator_forcerange[2 * actuator("wheel_velocity") + 1] = 20.0;
     EXPECT_DOUBLE_EQ(mj_kdl::joint_force_limits(&wheel)[0], 20.0);
+}
+
+// Two Gen3 arms attached to one root that actuates nothing: owners 1 and 2, after robot 0.
+class AttachedArmModesTest : public testing::Test
+{
+  protected:
+    static constexpr int kLeftPos = 4, kLeftTrq = 5, kRightPos = 7, kRightTrq = 8;
+
+    mj_kdl::SceneSpec spec_;
+    mj_kdl::Env       env_;
+    mj_kdl::Robot     left_, right_;
+
+    static mj_kdl::AttachmentSpec arm(const std::string &mjcf, const char *site, const char *pfx)
+    {
+        mj_kdl::AttachmentSpec a;
+        a.mjcf_path = mjcf;
+        a.attach_to = { mj_kdl::AttachKind::Site, site };
+        a.prefix    = pfx;
+        a.modes     = { mj_kdl::CtrlModeSpec{} };
+        return a;
+    }
+
+    void SetUp() override
+    {
+        const std::string mjcf = mj_kdl_examples::find_asset("kinova_gen3/gen3.xml");
+        if (!fs::exists(mjcf)) GTEST_SKIP() << "kinova_gen3/gen3.xml not found";
+        spec_.timestep   = 0.002;
+        spec_.add_floor  = false;
+        spec_.add_skybox = false;
+        mj_kdl::RobotSpec rs;
+        rs.path = std::string(MJ_KDL_TEST_FIXTURES) + "/arm_mount.xml";
+        rs.attachments.push_back(arm(mjcf, "left_mount", "l_"));
+        rs.attachments.push_back(arm(mjcf, "right_mount", "r_"));
+        spec_.robots.push_back(rs);
+        ASSERT_TRUE(mj_kdl::init_env(&env_, &spec_));
+        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&left_, &env_, "base_link", "bracelet_link", "l_")
+        );
+        ASSERT_TRUE(mj_kdl::init_robot_from_mjcf(&right_, &env_, "base_link", "bracelet_link", "r_")
+        );
+        KDL::JntArray q(7);
+        for (int i = 0; i < 7; ++i) q(i) = kArms[0].home[i];
+        mj_kdl::set_joint_pos(&left_, q);
+        mj_kdl::set_joint_pos(&right_, q);
+    }
+};
+
+TEST_F(AttachedArmModesTest, EachArmGetsGroupsOfItsOwn)
+{
+    for (int i = 0; i < 7; ++i) {
+        EXPECT_GE(actuator_of(env_.model, left_.joint_names[i], kLeftPos), 0) << "left " << i;
+        EXPECT_GE(actuator_of(env_.model, left_.joint_names[i], kLeftTrq), 0) << "left " << i;
+        EXPECT_GE(actuator_of(env_.model, right_.joint_names[i], kRightPos), 0) << "right " << i;
+        EXPECT_GE(actuator_of(env_.model, right_.joint_names[i], kRightTrq), 0) << "right " << i;
+    }
+    EXPECT_GE(mj_name2id(env_.model, mjOBJ_ACTUATOR, "l_joint_1_torque"), 0);
+    EXPECT_TRUE(group_enabled(env_.model, kLeftPos));
+    EXPECT_FALSE(group_enabled(env_.model, kLeftTrq));
+    EXPECT_EQ(left_.ctrl_mode, mj_kdl::CtrlMode::POSITION);
+}
+
+TEST_F(AttachedArmModesTest, OneArmSwitchesAndHoldsWhileTheOtherStaysInPosition)
+{
+    ASSERT_TRUE(mj_kdl::set_control_mode(&left_, mj_kdl::CtrlMode::TORQUE));
+    EXPECT_FALSE(group_enabled(env_.model, kLeftPos));
+    EXPECT_TRUE(group_enabled(env_.model, kLeftTrq));
+    EXPECT_TRUE(group_enabled(env_.model, kRightPos)) << "the right arm stays in POSITION";
+    EXPECT_FALSE(group_enabled(env_.model, kRightTrq));
+
+    KDL::ChainDynParam dyn(left_.chain, KDL::Vector(0, 0, spec_.gravity_z));
+    KDL::JntArray      q(7), g(7);
+    mj_kdl::update(&env_);
+    const std::vector<double> left_ref  = left_.jnt_pos_msr;
+    const std::vector<double> right_ref = right_.jnt_pos_msr;
+    right_.jnt_pos_cmd                  = right_ref;
+    double left_err = 0.0, right_err = 0.0;
+    for (int k = 0; k < 300; ++k) {
+        mj_kdl::update(&env_);
+        for (int i = 0; i < 7; ++i) q(i) = left_.jnt_pos_msr[i];
+        dyn.JntToGravity(q, g);
+        for (int i = 0; i < 7; ++i) {
+            left_.jnt_trq_cmd[i] =
+              g(i) + 50.0 * (left_ref[i] - left_.jnt_pos_msr[i]) - 5.0 * left_.jnt_vel_msr[i];
+        }
+        mj_kdl::update(&env_);
+        mj_kdl::step(&env_);
+        for (int i = 0; i < 7; ++i) {
+            left_err  = std::max(left_err, std::abs(left_.jnt_pos_msr[i] - left_ref[i]));
+            right_err = std::max(right_err, std::abs(right_.jnt_pos_msr[i] - right_ref[i]));
+        }
+    }
+    EXPECT_LT(left_err, 0.01) << "torque hold on the attached arm";
+    EXPECT_LT(right_err, 0.01) << "position hold on the other";
+}
+
+TEST_F(AttachedArmModesTest, AnAttachmentWithoutModesGetsNone)
+{
+    mj_kdl::SceneSpec spec              = spec_;
+    spec.robots[0].attachments[1].modes = {};
+    mj_kdl::Env env;
+    ASSERT_TRUE(mj_kdl::init_env(&env, &spec));
+    EXPECT_LT(mj_name2id(env.model, mjOBJ_ACTUATOR, "r_joint_1_torque"), 0);
+    const int servo = mj_name2id(env.model, mjOBJ_ACTUATOR, "r_joint_1");
+    ASSERT_GE(servo, 0);
+    EXPECT_EQ(env.model->actuator_group[servo], 0) << "its own actuators stay ungrouped";
 }
 
 int main(int argc, char *argv[])

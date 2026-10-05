@@ -3,27 +3,20 @@ import pytest
 import mj_kdl_wrapper as mjk
 
 
-def _model_path() -> str:
-    try:
-        return mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
-    except RuntimeError as exc:
-        pytest.skip(str(exc))
-
-
 def test_ft_sensor_returns_pykdl_wrench():
     kdl = pytest.importorskip("PyKDL")
 
     ft = mjk.AttachmentSpec()
-    ft.mjcf_path = mjk.menagerie.asset_path("ft_sensor.xml")
+    ft.mjcf_path = str(mjk.ASSETS_DIR / "ft_sensor.xml")
     ft.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
 
     gripper = mjk.AttachmentSpec()
-    gripper.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml")
+    gripper.mjcf_path = str(mjk.ASSETS_DIR / "robotiq_2f85/2f85.xml")
     gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "wrist_ft_site")
     gripper.prefix = "g_"
 
     robot_spec = mjk.RobotSpec()
-    robot_spec.path = _model_path()
+    robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
     robot_spec.attachments = [ft, gripper]
 
     spec = mjk.SceneSpec()

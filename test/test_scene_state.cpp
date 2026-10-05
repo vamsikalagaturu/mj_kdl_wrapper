@@ -1,7 +1,7 @@
 /* test_scene_state.cpp
  * Env scene slots: free-body poses sampled from qpos rather than the derived body frames, scalar
  * scene joints, wrench and actuator slots, what update() reads and applies, and what reset()
- * restores. Self-skips when Menagerie is absent. */
+ * restores. Self-skips when a bundled asset is missing. */
 
 #include <gtest/gtest.h>
 
@@ -49,10 +49,10 @@ class SceneStateTest : public testing::Test
 
     void SetUp() override
     {
-        const std::string mjcf = mj_kdl_examples::find_menagerie_model("kinova_gen3/gen3.xml");
+        const std::string mjcf = mj_kdl_examples::find_asset("kinova_gen3/gen3.xml");
         const std::string cube = mj_kdl_examples::find_asset("cube.xml");
         if (!fs::exists(mjcf) || !fs::exists(cube)) {
-            GTEST_SKIP() << "menagerie or bundled assets not found";
+            GTEST_SKIP() << "kinova_gen3/gen3.xml or cube.xml missing from assets/";
             return;
         }
 

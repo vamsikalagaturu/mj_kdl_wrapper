@@ -72,7 +72,7 @@ def test_recorder_switches_cameras():
 def test_recorder_follows_a_rebuild():
     cabinet = mjk.SceneObject()
     cabinet.name = "cabinet"
-    cabinet.mjcf_path = mjk.menagerie.asset_path("cabinet/cabinet.xml")
+    cabinet.mjcf_path = str(mjk.ASSETS_DIR / "cabinet/cabinet.xml")
     cabinet.pos = [0.0, 0.6, 0.0]
     cabinet.fixed = True
     with _env() as env:

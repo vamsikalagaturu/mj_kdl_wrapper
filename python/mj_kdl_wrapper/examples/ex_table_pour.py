@@ -100,19 +100,17 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     spec.add_floor = True
     spec.add_skybox = True
     spec.objects = [
-        table_object(mjk.menagerie.asset_path("table.xml", env_var="MJ_KDL_TABLE")),
+        table_object(str(mjk.ASSETS_DIR / "table.xml")),
         *[ball_object(i) for i in range(NUM_BALLS)],
-        receiver_object(mjk.menagerie.asset_path("mug_table.xml", env_var="MJ_KDL_RECEIVER")),
+        receiver_object(str(mjk.ASSETS_DIR / "mug_table.xml")),
     ]
 
     robot_spec = mjk.RobotSpec()
-    robot_spec.path = mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
+    robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
     robot_spec.pos = [ROBOT_BACK_X, 0.0, TABLE_Z]
     robot_spec.attachments = [
-        gripper_attachment(
-            mjk.menagerie.asset_path("robotiq_2f85/2f85.xml", env_var="MJ_KDL_GRIPPER")
-        ),
-        bottle_attachment(mjk.menagerie.asset_path("mug.xml", env_var="MJ_KDL_BOTTLE")),
+        gripper_attachment(str(mjk.ASSETS_DIR / "robotiq_2f85/2f85.xml")),
+        bottle_attachment(str(mjk.ASSETS_DIR / "mug.xml")),
     ]
     spec.robots = [robot_spec]
 

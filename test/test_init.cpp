@@ -2,7 +2,7 @@
  * Env and Robot lifecycle on the Kinova GEN3: init, reset (hook, ports, options), cleanup, an
  * adopted model pair, a chain adopted from outside, two Envs side by side, what a failure says,
  * required spec fields, the floor height, offscreen rendering and the recorder's output path.
- * Tests that need Menagerie self-skip without it. */
+ * Tests that need the bundled Gen3 self-skip without it. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "common.hpp"
@@ -11,16 +11,14 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
-#include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <string>
 #include <vector>
 
 namespace ex = mj_kdl_examples;
 namespace fs = std::filesystem;
 
-static std::string gen3_path() { return ex::find_menagerie_model("kinova_gen3/gen3.xml"); }
+static std::string gen3_path() { return ex::find_asset("kinova_gen3/gen3.xml"); }
 
 static mj_kdl::SceneSpec arm_scene(const std::string &mjcf, const std::string &prefix = "")
 {
@@ -47,31 +45,6 @@ static mj_kdl::SceneObject small_cube()
     cube.pos[0] = 0.5;
     cube.pos[2] = 0.02;
     return cube;
-}
-
-TEST(ExamplePaths, StaleMenagerieEnvFallsBackToCache)
-{
-    const auto tmp = fs::temp_directory_path() / "mj_kdl_wrapper_paths_test";
-    fs::remove_all(tmp);
-    fs::create_directories(tmp / "cache" / "mj_kdl_wrapper" / "menagerie" / "kinova_gen3");
-
-    const auto model = tmp / "cache" / "mj_kdl_wrapper" / "menagerie" / "kinova_gen3" / "gen3.xml";
-    std::ofstream(model) << "<mujoco/>";
-
-    const char       *old_xdg         = std::getenv("XDG_CACHE_HOME");
-    const char       *old_menagerie   = std::getenv("MJ_KDL_MENAGERIE");
-    const std::string saved_xdg       = old_xdg ? old_xdg : "";
-    const std::string saved_menagerie = old_menagerie ? old_menagerie : "";
-
-    setenv("XDG_CACHE_HOME", (tmp / "cache").c_str(), 1);
-    setenv("MJ_KDL_MENAGERIE", (tmp / "missing").c_str(), 1);
-
-    EXPECT_EQ(ex::find_menagerie_model("kinova_gen3/gen3.xml"), model.string());
-
-    old_xdg ? setenv("XDG_CACHE_HOME", saved_xdg.c_str(), 1) : unsetenv("XDG_CACHE_HOME");
-    old_menagerie ? setenv("MJ_KDL_MENAGERIE", saved_menagerie.c_str(), 1)
-                  : unsetenv("MJ_KDL_MENAGERIE");
-    fs::remove_all(tmp);
 }
 
 class InitTest : public testing::Test
