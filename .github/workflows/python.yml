@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y \
-            ccache \
+            ccache vcstool \
             libeigen3-dev libglfw3-dev libgl-dev libegl-dev
 
       - name: Cache ccache
@@ -45,9 +45,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Import the Orocos KDL fork
-        run: |
-          pip install vcstool
-          vcs import < mj_kdl_wrapper.repos
+        run: vcs import < mj_kdl_wrapper.repos
 
       - name: Cache MuJoCo
         id: cache-mujoco
