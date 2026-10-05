@@ -14,39 +14,15 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
-# An existing checkout is used as is, so say when it is not the pinned commit.
-function(mj_kdl_warn_off_pin what dir pin)
-    if(NOT pin MATCHES "^[0-9a-f]+$" OR NOT EXISTS "${dir}/.git")
-        return()
-    endif()
-    find_package(Git QUIET)
-    if(NOT GIT_FOUND)
-        return()
-    endif()
-    execute_process(
-      COMMAND "${GIT_EXECUTABLE}" -C "${dir}" rev-parse HEAD
-      OUTPUT_VARIABLE _head
-      OUTPUT_STRIP_TRAILING_WHITESPACE
-      RESULT_VARIABLE _rc
-    )
-    if(_rc EQUAL 0 AND NOT _head STREQUAL pin)
-        message(WARNING "${what} at ${dir} is at ${_head}, not the pinned ${pin}.")
-    endif()
-endfunction()
-
-# Shared cache root for downloaded MuJoCo, MuJoCo Menagerie, and bundled assets.
-# Mirrors python/mj_kdl_wrapper/menagerie.py:_cache_root and
-# src/examples/example_paths.hpp:cache_root; keep all three in sync.
+# The downloaded MuJoCo release and the installed bundled models are cached here.
 if(DEFINED ENV{XDG_CACHE_HOME} AND NOT "$ENV{XDG_CACHE_HOME}" STREQUAL "")
     set(_MJ_KDL_CACHE_ROOT "$ENV{XDG_CACHE_HOME}/mj_kdl_wrapper")
 elseif(DEFINED ENV{HOME} AND NOT "$ENV{HOME}" STREQUAL "")
     set(_MJ_KDL_CACHE_ROOT "$ENV{HOME}/.cache/mj_kdl_wrapper")
 endif()
 set(MJ_KDL_MUJOCO_DEFAULT_DIR "")
-set(MJ_KDL_MENAGERIE_DEFAULT_DIR "")
 if(_MJ_KDL_CACHE_ROOT)
     set(MJ_KDL_MUJOCO_DEFAULT_DIR "${_MJ_KDL_CACHE_ROOT}/mujoco-${MJ_KDL_MUJOCO_VERSION}")
-    set(MJ_KDL_MENAGERIE_DEFAULT_DIR "${_MJ_KDL_CACHE_ROOT}/menagerie")
 endif()
 
 # MuJoCo: downloaded into the cache by default. Point MJ_KDL_MUJOCO_DIR at an
@@ -58,44 +34,20 @@ option(
 )
 set(MJ_KDL_MUJOCO_URL "" CACHE STRING "Override MuJoCo release archive URL")
 
-# Orocos KDL is always the pinned secorolab fork built from source - it is the
-# only KDL this project uses; no system liborocos-kdl is ever consulted. When ON
-# (default) the pinned git source is cloned; set it OFF and point
-# MJ_KDL_OROCOS_KDL_DIR at a local fork checkout to build that instead.
-option(
-  MJ_KDL_FETCH_OROCOS_KDL
-  "Clone and build the pinned secorolab Orocos KDL fork (the only KDL used)"
-  ON
-)
-set(
-  MJ_KDL_OROCOS_KDL_GIT_REPOSITORY
-  "https://github.com/secorolab/orocos_kinematics_dynamics.git"
-  CACHE STRING
-  "Orocos KDL fork to build"
-)
-set(
-  MJ_KDL_OROCOS_KDL_GIT_TAG
-  "${MJ_KDL_OROCOS_KDL_GIT_SHA}"
-  CACHE STRING
-  "Orocos KDL fork branch, tag, or commit to build"
-)
-# Source/clone destination for the fork. Defaults to a persistent checkout under
-# third_party/ (like the Menagerie checkout). If this directory already holds the
-# fork source it is built in place with no clone; otherwise, when
-# MJ_KDL_FETCH_OROCOS_KDL is ON, the git source is cloned into it. Point it
-# elsewhere (e.g. ~/test/src) to clone/build there instead.
+# Orocos KDL is always the secorolab fork built from source - it is the only KDL this
+# project uses; no system liborocos-kdl is ever consulted. `vcs import <
+# mj_kdl_wrapper.repos` checks it out at the default location.
 set(
   MJ_KDL_OROCOS_KDL_DIR "${CMAKE_SOURCE_DIR}/third_party/orocos_kinematics_dynamics"
   CACHE PATH
-  "Orocos KDL fork source/clone destination (cloned here if absent and fetch is ON)"
+  "Orocos KDL fork source checkout"
 )
 # Consume an already-installed Orocos KDL prefix instead of building the fork.
 # Intended for ROS 2 / colcon, where the secorolab fork is a workspace package
 # and a single shared liborocos-kdl (and PyKDL) must be used everywhere to avoid
 # loading two copies with the same SONAME in one process. When set, no
 # ExternalProject build runs and nothing is bundled; the prefix must contain the
-# secorolab fork. Takes precedence over MJ_KDL_OROCOS_KDL_DIR and
-# MJ_KDL_FETCH_OROCOS_KDL.
+# secorolab fork. Takes precedence over MJ_KDL_OROCOS_KDL_DIR.
 set(
   MJ_KDL_OROCOS_KDL_INSTALL_DIR ""
   CACHE PATH
@@ -261,35 +213,15 @@ else()
 set(_MJ_KDL_BUILD_OROCOS_KDL TRUE)
 set(_MJ_KDL_OROCOS_PREFIX "${CMAKE_BINARY_DIR}/orocos_kdl_install")
 set(_MJ_KDL_OROCOS_SRC "${MJ_KDL_OROCOS_KDL_DIR}")
-if(EXISTS "${_MJ_KDL_OROCOS_SRC}/orocos_kdl/CMakeLists.txt")
-  # Source already present (manual checkout or an earlier fetch): build in place,
-  # no clone.
-  set(_MJ_KDL_OROCOS_DOWNLOAD DOWNLOAD_COMMAND "")
-  message(STATUS "Orocos KDL: building existing source ${_MJ_KDL_OROCOS_SRC}")
-  mj_kdl_warn_off_pin("Orocos KDL" "${_MJ_KDL_OROCOS_SRC}" "${MJ_KDL_OROCOS_KDL_GIT_TAG}")
-elseif(MJ_KDL_FETCH_OROCOS_KDL)
-  # Clone the fork into MJ_KDL_OROCOS_KDL_DIR (default: third_party/...), then
-  # build it. The checkout persists across builds like the Menagerie checkout.
-  # Not shallow: a shallow clone can only check out a branch or tag, not the pinned commit.
-  set(_MJ_KDL_OROCOS_DOWNLOAD
-    GIT_REPOSITORY "${MJ_KDL_OROCOS_KDL_GIT_REPOSITORY}"
-    GIT_TAG        "${MJ_KDL_OROCOS_KDL_GIT_TAG}"
-    GIT_SHALLOW    FALSE
-    UPDATE_DISCONNECTED TRUE
-  )
-  message(
-    STATUS
-    "Orocos KDL: cloning ${MJ_KDL_OROCOS_KDL_GIT_REPOSITORY} "
-    "(${MJ_KDL_OROCOS_KDL_GIT_TAG}) into ${_MJ_KDL_OROCOS_SRC}"
-  )
-else()
+if(NOT EXISTS "${_MJ_KDL_OROCOS_SRC}/orocos_kdl/CMakeLists.txt")
   message(FATAL_ERROR
-    "No Orocos KDL source at ${_MJ_KDL_OROCOS_SRC} and MJ_KDL_FETCH_OROCOS_KDL "
-    "is OFF. Enable the fetch, point MJ_KDL_OROCOS_KDL_DIR at a fork checkout, "
-    "or set MJ_KDL_OROCOS_KDL_INSTALL_DIR. No system KDL is used.")
+    "No Orocos KDL source at ${_MJ_KDL_OROCOS_SRC}. Run "
+    "'vcs import < mj_kdl_wrapper.repos', point MJ_KDL_OROCOS_KDL_DIR at a "
+    "fork checkout, or set MJ_KDL_OROCOS_KDL_INSTALL_DIR. No system KDL is used.")
 endif()
+message(STATUS "Orocos KDL: building ${_MJ_KDL_OROCOS_SRC}")
 ExternalProject_Add(orocos_kdl_ep
-  ${_MJ_KDL_OROCOS_DOWNLOAD}
+  DOWNLOAD_COMMAND ""
   SOURCE_DIR     "${_MJ_KDL_OROCOS_SRC}"
   SOURCE_SUBDIR  orocos_kdl
   CMAKE_ARGS
@@ -560,8 +492,7 @@ if(BUILD_PYTHON_BINDINGS)
     # Installed, not mapped in by pyproject: a wheel mapping above this package leaks sys.path.
     install(DIRECTORY assets/
       DESTINATION mj_kdl_wrapper/assets
-    )
-    # libmujoco is intentionally not bundled: the wheel depends on the matching
+    )    # libmujoco is intentionally not bundled: the wheel depends on the matching
     # `mujoco` pip package and links its shared library at runtime via the
     # $ORIGIN/../mujoco rpath set above. This avoids shipping a second copy.
     if(EXISTS "${MJ_KDL_MUJOCO_DIR}/bin/mujoco_plugin")
@@ -570,53 +501,6 @@ if(BUILD_PYTHON_BINDINGS)
         FILES_MATCHING PATTERN "*.so"
       )
     endif()
-endif()
-
-# MuJoCo Menagerie (robot model zoo - used by the examples and tests)
-option(MJ_KDL_FETCH_MENAGERIE "Download MuJoCo Menagerie into MJ_KDL_MENAGERIE_DIR" OFF)
-set(
-  MJ_KDL_MENAGERIE_DIR "${MJ_KDL_MENAGERIE_DEFAULT_DIR}"
-  CACHE PATH
-  "MuJoCo Menagerie location (used as the MJ_KDL_FETCH_MENAGERIE destination)"
-)
-if(MJ_KDL_FETCH_MENAGERIE)
-    if(NOT MJ_KDL_MENAGERIE_DIR)
-        message(FATAL_ERROR "Set XDG_CACHE_HOME or HOME for the default Menagerie cache, "
-          "or pass MJ_KDL_MENAGERIE_DIR explicitly.")
-    endif()
-    set(MENAGERIE_SOURCE_DIR "${MJ_KDL_MENAGERIE_DIR}")
-    if(EXISTS ${MENAGERIE_SOURCE_DIR}/README.md)
-        message(STATUS "Menagerie: already present at ${MENAGERIE_SOURCE_DIR}")
-        mj_kdl_warn_off_pin("Menagerie" "${MENAGERIE_SOURCE_DIR}" "${MJ_KDL_MENAGERIE_GIT_SHA}")
-    else()
-        find_package(Git REQUIRED)
-        message(STATUS
-          "Menagerie: fetching ${MJ_KDL_MENAGERIE_GIT_SHA} into ${MENAGERIE_SOURCE_DIR}")
-        # One commit, shallow: FetchContent shallow-clones only branches and tags, and the full
-        # history is several GB.
-        file(MAKE_DIRECTORY "${MENAGERIE_SOURCE_DIR}")
-        function(_mj_kdl_menagerie_git)
-            execute_process(
-              COMMAND "${GIT_EXECUTABLE}" -C "${MENAGERIE_SOURCE_DIR}" ${ARGN}
-              RESULT_VARIABLE _rc
-            )
-            if(NOT _rc EQUAL 0)
-                message(FATAL_ERROR "Menagerie: 'git ${ARGN}' failed in ${MENAGERIE_SOURCE_DIR}")
-            endif()
-        endfunction()
-        _mj_kdl_menagerie_git(init -q)
-        _mj_kdl_menagerie_git(fetch -q --depth 1
-          https://github.com/google-deepmind/mujoco_menagerie.git ${MJ_KDL_MENAGERIE_GIT_SHA})
-        _mj_kdl_menagerie_git(checkout -q --detach FETCH_HEAD)
-        message(STATUS "Menagerie: ready at ${MENAGERIE_SOURCE_DIR}")
-    endif()
-    # At build time, so an edited asset reaches the tests without a reconfigure.
-    add_custom_target(mj_kdl_cache_assets ALL
-      COMMAND "${CMAKE_COMMAND}" -E copy_directory
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets" "${_MJ_KDL_CACHE_ROOT}/assets"
-      COMMENT "Copying bundled assets into ${_MJ_KDL_CACHE_ROOT}/assets"
-      VERBATIM
-    )
 endif()
 
 # Examples (GUI by default; pass --headless to skip the window)
@@ -749,6 +633,15 @@ if(MJ_KDL_INSTALL_CPP_PACKAGE)
       licenses/Apache-2.0.txt
       DESTINATION ${CMAKE_INSTALL_DOCDIR}
     )
+    # Consumers read the bundled models from the user cache, not the prefix.
+    if(_MJ_KDL_CACHE_ROOT)
+        install(DIRECTORY assets/ DESTINATION "${_MJ_KDL_CACHE_ROOT}/assets")
+        install(FILES
+          licenses/Robotiq-2F85-BSD-2-Clause.txt
+          licenses/Kinova-Gen3-BSD-3-Clause.txt
+          DESTINATION "${_MJ_KDL_CACHE_ROOT}/assets"
+        )
+    endif()
     install(FILES include/mj_kdl_wrapper/mj_kdl_wrapper.hpp
       DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/mj_kdl_wrapper
     )

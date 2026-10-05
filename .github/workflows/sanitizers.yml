@@ -27,7 +27,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y \
-            ccache ninja-build ffmpeg \
+            ccache ninja-build ffmpeg vcstool \
             libeigen3-dev libglfw3-dev libgl-dev libegl-dev
 
       - name: Cache MuJoCo
@@ -44,18 +44,8 @@ jobs:
           tar xzf "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz" -C /tmp
           rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
 
-      # Keyed on the pins, no fallback: a kept checkout is never moved to a new pin.
-      - name: Cache MuJoCo Menagerie
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/mj_kdl_wrapper/menagerie
-          key: menagerie-${{ runner.os }}-${{ hashFiles('cmake/Versions.cmake') }}
-
-      - name: Cache the Orocos KDL checkout
-        uses: actions/cache@v4
-        with:
-          path: third_party/orocos_kinematics_dynamics
-          key: orocos-kdl-${{ hashFiles('cmake/Versions.cmake') }}
+      - name: Import the Orocos KDL fork
+        run: vcs import < mj_kdl_wrapper.repos
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -84,15 +74,11 @@ jobs:
             -DMJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}" \
             -DBUILD_TESTS=ON \
             -DBUILD_DOCS=OFF \
-            -DMJ_KDL_FETCH_MENAGERIE=ON \
             -DFETCHCONTENT_BASE_DIR="${FETCHCONTENT_BASE_DIR}" \
             -DFETCHCONTENT_UPDATES_DISCONNECTED=ON
 
       - name: Build
         run: cmake --build build
-
-      - name: Check Menagerie
-        run: test -f ~/.cache/mj_kdl_wrapper/menagerie/kinova_gen3/gen3.xml
 
       - name: Test
         env:
@@ -120,7 +106,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y \
-            ccache ninja-build xvfb libgl1-mesa-dri \
+            ccache ninja-build vcstool xvfb libgl1-mesa-dri \
             libeigen3-dev libglfw3-dev libgl-dev libegl-dev
 
       - name: Cache MuJoCo
@@ -137,18 +123,8 @@ jobs:
           tar xzf "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz" -C /tmp
           rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
 
-      # Keyed on the pins, no fallback: a kept checkout is never moved to a new pin.
-      - name: Cache MuJoCo Menagerie
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/mj_kdl_wrapper/menagerie
-          key: menagerie-${{ runner.os }}-${{ hashFiles('cmake/Versions.cmake') }}
-
-      - name: Cache the Orocos KDL checkout
-        uses: actions/cache@v4
-        with:
-          path: third_party/orocos_kinematics_dynamics
-          key: orocos-kdl-${{ hashFiles('cmake/Versions.cmake') }}
+      - name: Import the Orocos KDL fork
+        run: vcs import < mj_kdl_wrapper.repos
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -178,15 +154,11 @@ jobs:
             -DBUILD_TESTS=ON \
             -DBUILD_EXAMPLES=OFF \
             -DBUILD_DOCS=OFF \
-            -DMJ_KDL_FETCH_MENAGERIE=ON \
             -DFETCHCONTENT_BASE_DIR="${FETCHCONTENT_BASE_DIR}" \
             -DFETCHCONTENT_UPDATES_DISCONNECTED=ON
 
       - name: Build
         run: cmake --build build --target test_scene_state
-
-      - name: Check Menagerie
-        run: test -f ~/.cache/mj_kdl_wrapper/menagerie/kinova_gen3/gen3.xml
 
       # The viewer test is opt-in (it opens a window); Xvfb gives it one.
       - name: Viewer lock test

@@ -35,7 +35,7 @@ static KDL::Frame in_base(mj_kdl::Env &env, const KDL::Frame &world_T_x)
     return world_T_base.Inverse() * world_T_x;
 }
 
-// The arm alone, from Menagerie's scene.xml (floor, lights and skybox of its own).
+// The bundled arm alone.
 class MjcfLoadTest : public testing::Test
 {
   protected:
@@ -44,7 +44,7 @@ class MjcfLoadTest : public testing::Test
 
     void SetUp() override
     {
-        const std::string mjcf = ex::find_menagerie_model("kinova_gen3/scene.xml");
+        const std::string mjcf = ex::find_asset("kinova_gen3/gen3.xml");
         if (!fs::exists(mjcf)) GTEST_SKIP() << mjcf << " not found";
         mj_kdl::SceneSpec sc = bare_scene();
         mj_kdl::RobotSpec rs;
@@ -118,7 +118,7 @@ class MjcfGripperTest : public testing::Test
 
     void SetUp() override
     {
-        arm_     = ex::find_menagerie_model("kinova_gen3/gen3.xml");
+        arm_     = ex::find_asset("kinova_gen3/gen3.xml");
         gripper_ = ex::find_asset("robotiq_2f85/2f85.xml");
         if (!fs::exists(arm_)) GTEST_SKIP() << arm_ << " not found";
         if (!fs::exists(gripper_)) GTEST_SKIP() << gripper_ << " not found";
@@ -345,7 +345,7 @@ TEST_F(JointEdgeCaseTest, JointSlotRefusesWhatIsNotAScalarJoint)
 
 TEST(AttachToFrame, ARobotStandsOnAnObjectsNamedFrame)
 {
-    const std::string arm = ex::find_menagerie_model("kinova_gen3/gen3.xml");
+    const std::string arm = ex::find_asset("kinova_gen3/gen3.xml");
     if (!fs::exists(arm)) GTEST_SKIP() << arm << " not found";
 
     // Objects are added before robots, so a robot can stand on an object's frame.

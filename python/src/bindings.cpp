@@ -48,6 +48,7 @@ struct PyAttachmentSpec
     std::string                                      prefix;
     std::array<double, 3>                            pos  = { 0.0, 0.0, 0.0 };
     std::array<double, 4>                            quat = { 0.0, 0.0, 0.0, 1.0 };
+    std::vector<mj_kdl::CtrlModeSpec>                modes;
     std::vector<std::pair<std::string, std::string>> contact_exclusions;
 };
 
@@ -143,6 +144,7 @@ mj_kdl::AttachmentSpec to_cpp(const PyAttachmentSpec &src)
     out.prefix    = src.prefix;
     std::copy(src.pos.begin(), src.pos.end(), out.pos);
     std::copy(src.quat.begin(), src.quat.end(), out.quat);
+    out.modes              = src.modes;
     out.contact_exclusions = src.contact_exclusions;
     return out;
 }
@@ -958,6 +960,9 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "pos", &PyAttachmentSpec::pos, "Position offset in the parent frame, in meters."
       )
       .def_readwrite("quat", &PyAttachmentSpec::quat, "Orientation offset [x, y, z, w].")
+      .def_readwrite(
+        "modes", &PyAttachmentSpec::modes, "Control modes for its own joints; [] = native only."
+      )
       .def_readwrite(
         "contact_exclusions",
         &PyAttachmentSpec::contact_exclusions,

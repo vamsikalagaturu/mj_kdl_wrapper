@@ -89,6 +89,8 @@ class AttachmentSpec:
     prefix: str
     pos: list[float]
     quat: list[float]
+    modes: list[CtrlModeSpec]
+    """Control modes for its own joints; [] = native only."""
     contact_exclusions: list[tuple[str, str]]
     def __init__(self) -> None: ...
 

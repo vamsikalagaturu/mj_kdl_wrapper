@@ -39,19 +39,21 @@
       <body name="mod_bottom" pos="-0.065 0.128 -0.6809" quat="0 0.707107 0 0.707107"><geom type="mesh" mesh="frame_mid" material="frame"/></body>
       <body name="mod_middle" pos="-0.065 0.128 -0.5879" quat="0 0.707107 0 0.707107"><geom type="mesh" mesh="frame_mid" material="frame"/></body>
       <body name="mod_top" pos="-0.065 0.128 0.1195" quat="0 0.707107 0 0.707107"><geom type="mesh" mesh="frame_top" material="frame"/></body>
-      <geom name="bay1_shelf" type="box" pos="0 0 0.012" size="0.065 0.090 0.006" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
-      <geom name="bay1_wall_l" type="box" pos="0 0.096 0.062" size="0.065 0.006 0.046" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
-      <geom name="bay1_wall_r" type="box" pos="0 -0.096 0.062" size="0.065 0.006 0.046" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
-      <geom name="bay1_back" type="box" pos="-0.071 0 0.062" size="0.006 0.090 0.046" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
-      <geom name="bay2_shelf" type="box" pos="0 0 0.105" size="0.065 0.090 0.006" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
-      <geom name="bay2_wall_l" type="box" pos="0 0.096 0.155" size="0.065 0.006 0.046" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
-      <geom name="bay2_wall_r" type="box" pos="0 -0.096 0.155" size="0.065 0.006 0.046" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
-      <geom name="bay2_back" type="box" pos="-0.071 0 0.155" size="0.006 0.090 0.046" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
-      <geom name="bay3_shelf" type="box" pos="0 0 0.198" size="0.065 0.090 0.006" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
-      <geom name="bay3_wall_l" type="box" pos="0 0.096 0.248" size="0.065 0.006 0.046" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
-      <geom name="bay3_wall_r" type="box" pos="0 -0.096 0.248" size="0.065 0.006 0.046" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
-      <geom name="bay3_back" type="box" pos="-0.071 0 0.248" size="0.006 0.090 0.046" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
-      <geom name="top_shelf" type="box" pos="0 0 0.291" size="0.065 0.090 0.006" rgba="0 1 0.25 0.55" group="0" contype="1" conaffinity="1"/>
+      <!-- Wide enough that a free-standing cabinet slides rather than tips. -->
+      <geom name="base_pad" type="box" pos="0 0 0.004" size="0.120 0.115 0.004" rgba="0.12 0.12 0.12 1" group="3" contype="1" conaffinity="1" friction="0.23 0.02 0.001"/>
+      <geom name="bay1_shelf" type="box" pos="0 0 0.012" size="0.065 0.090 0.006" rgba="0 1 0.25 0.55" group="3" contype="1" conaffinity="1" friction="0.23 0.02 0.001"/>
+      <geom name="bay1_wall_l" type="box" pos="0 0.096 0.062" size="0.065 0.006 0.046" rgba="0 1 0.25 0.55" group="3" contype="1" conaffinity="1"/>
+      <geom name="bay1_wall_r" type="box" pos="0 -0.096 0.062" size="0.065 0.006 0.046" rgba="0 1 0.25 0.55" group="3" contype="1" conaffinity="1"/>
+      <geom name="bay1_back" type="box" pos="-0.071 0 0.062" size="0.006 0.090 0.046" rgba="0 1 0.25 0.55" group="3" contype="1" conaffinity="1"/>
+      <geom name="bay2_shelf" type="box" pos="0 0 0.105" size="0.065 0.090 0.006" rgba="0 1 0.25 0.55" group="3" contype="1" conaffinity="1"/>
+      <geom name="bay2_wall_l" type="box" pos="0 0.096 0.155" size="0.065 0.006 0.046" rgba="0 1 0.25 0.55" group="3" contype="1" conaffinity="1"/>
+      <geom name="bay2_wall_r" type="box" pos="0 -0.096 0.155" size="0.065 0.006 0.046" rgba="0 1 0.25 0.55" group="3" contype="1" conaffinity="1"/>
+      <geom name="bay2_back" type="box" pos="-0.071 0 0.155" size="0.006 0.090 0.046" rgba="0 1 0.25 0.55" group="3" contype="1" conaffinity="1"/>
+      <geom name="bay3_shelf" type="box" pos="0 0 0.198" size="0.065 0.090 0.006" rgba="0 1 0.25 0.55" group="3" contype="1" conaffinity="1"/>
+      <geom name="bay3_wall_l" type="box" pos="0 0.096 0.248" size="0.065 0.006 0.046" rgba="0 1 0.25 0.55" group="3" contype="1" conaffinity="1"/>
+      <geom name="bay3_wall_r" type="box" pos="0 -0.096 0.248" size="0.065 0.006 0.046" rgba="0 1 0.25 0.55" group="3" contype="1" conaffinity="1"/>
+      <geom name="bay3_back" type="box" pos="-0.071 0 0.248" size="0.006 0.090 0.046" rgba="0 1 0.25 0.55" group="3" contype="1" conaffinity="1"/>
+      <geom name="top_shelf" type="box" pos="0 0 0.291" size="0.065 0.090 0.006" rgba="0 1 0.25 0.55" group="3" contype="1" conaffinity="1"/>
 
       <!-- Drawers are free bodies on simple support shelves: pull out +X and they can fall. -->
       <body name="drawer1" pos="-0.4352 0.1792 0.020663">
@@ -59,24 +61,25 @@
         <joint name="drawer1_y" type="slide" axis="0 1 0" damping="1"/>
         <joint name="drawer1_z" type="slide" axis="0 0 1" damping="1"/>
         <joint name="drawer1_ball" type="ball" damping="0.05"/>
-        <geom name="drawer1_contact" type="box" pos="0.4352 -0.1792 0.04084" size="0.062 0.088 0.038" rgba="0 1 1 0.50" group="0" contype="1" conaffinity="1" friction="0.6 0.02 0.001"/>
-        <geom name="drawer1_handle_bar" type="capsule" fromto="0.52449 -0.2272 0.04084 0.52449 -0.1312 0.04084" size="0.009" rgba="1 0.45 0 0.80" group="0" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
-        <geom name="drawer1_handle_post_l" type="capsule" fromto="0.51049 -0.2192 0.04084 0.52449 -0.2192 0.04084" size="0.006" rgba="1 0.45 0 0.80" group="0" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
-        <geom name="drawer1_handle_post_r" type="capsule" fromto="0.51049 -0.1392 0.04084 0.52449 -0.1392 0.04084" size="0.006" rgba="1 0.45 0 0.80" group="0" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
+        <geom name="drawer1_contact" type="box" pos="0.4352 -0.1792 0.04084" size="0.062 0.088 0.038" rgba="0 1 1 0.50" group="3" contype="1" conaffinity="1" friction="0.6 0.02 0.001"/>
+        <geom name="drawer1_handle_bar" type="capsule" fromto="0.52449 -0.2272 0.04084 0.52449 -0.1312 0.04084" size="0.009" rgba="1 0.45 0 0.80" group="3" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
+        <geom name="drawer1_handle_post_l" type="capsule" fromto="0.51049 -0.2192 0.04084 0.52449 -0.2192 0.04084" size="0.006" rgba="1 0.45 0 0.80" group="3" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
+        <geom name="drawer1_handle_post_r" type="capsule" fromto="0.51049 -0.1392 0.04084 0.52449 -0.1392 0.04084" size="0.006" rgba="1 0.45 0 0.80" group="3" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
         <geom type="mesh" mesh="drawer_mesh" material="drawer"/>
         <geom type="mesh" mesh="handle_cover" material="handle_cover" pos="0.52986 -0.1792 0.04084" quat="-0.5 0.5 0.5 -0.5"/>
         <geom type="mesh" mesh="handle_body"  material="handle_body"  pos="0.53049 -0.1792 0.04084" quat="-0.5 0.5 0.5 -0.5"/>
         <site name="grasp1" pos="0.51649 -0.1792 0.04084" size="0.008" rgba="1 0.2 0.2 0" group="3"/>
       </body>
       <body name="drawer2" pos="-0.4352 0.1792 0.113663">
-        <joint name="drawer2_x" type="slide" axis="1 0 0" damping="1"/>
+        <!-- A tight drawer: dry friction independent of its weight, above what the cabinet's sole holds. -->
+        <joint name="drawer2_x" type="slide" axis="1 0 0" damping="1" frictionloss="20"/>
         <joint name="drawer2_y" type="slide" axis="0 1 0" damping="1"/>
         <joint name="drawer2_z" type="slide" axis="0 0 1" damping="1"/>
         <joint name="drawer2_ball" type="ball" damping="0.05"/>
-        <geom name="drawer2_contact" type="box" pos="0.4352 -0.1792 0.04084" size="0.062 0.088 0.038" rgba="0 1 1 0.50" group="0" contype="1" conaffinity="1" friction="0.6 0.02 0.001"/>
-        <geom name="drawer2_handle_bar" type="capsule" fromto="0.52449 -0.2272 0.04084 0.52449 -0.1312 0.04084" size="0.009" rgba="1 0.45 0 0.80" group="0" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
-        <geom name="drawer2_handle_post_l" type="capsule" fromto="0.51049 -0.2192 0.04084 0.52449 -0.2192 0.04084" size="0.006" rgba="1 0.45 0 0.80" group="0" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
-        <geom name="drawer2_handle_post_r" type="capsule" fromto="0.51049 -0.1392 0.04084 0.52449 -0.1392 0.04084" size="0.006" rgba="1 0.45 0 0.80" group="0" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
+        <geom name="drawer2_contact" type="box" pos="0.4352 -0.1792 0.04084" size="0.062 0.088 0.038" rgba="0 1 1 0.50" group="3" contype="1" conaffinity="1" friction="0.6 0.02 0.001"/>
+        <geom name="drawer2_handle_bar" type="capsule" fromto="0.52449 -0.2272 0.04084 0.52449 -0.1312 0.04084" size="0.009" rgba="1 0.45 0 0.80" group="3" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
+        <geom name="drawer2_handle_post_l" type="capsule" fromto="0.51049 -0.2192 0.04084 0.52449 -0.2192 0.04084" size="0.006" rgba="1 0.45 0 0.80" group="3" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
+        <geom name="drawer2_handle_post_r" type="capsule" fromto="0.51049 -0.1392 0.04084 0.52449 -0.1392 0.04084" size="0.006" rgba="1 0.45 0 0.80" group="3" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
         <geom type="mesh" mesh="drawer_mesh" material="drawer"/>
         <geom type="mesh" mesh="handle_cover" material="handle_cover" pos="0.52986 -0.1792 0.04084" quat="-0.5 0.5 0.5 -0.5"/>
         <geom type="mesh" mesh="handle_body"  material="handle_body"  pos="0.53049 -0.1792 0.04084" quat="-0.5 0.5 0.5 -0.5"/>
@@ -87,10 +90,10 @@
         <joint name="drawer3_y" type="slide" axis="0 1 0" damping="1"/>
         <joint name="drawer3_z" type="slide" axis="0 0 1" damping="1"/>
         <joint name="drawer3_ball" type="ball" damping="0.05"/>
-        <geom name="drawer3_contact" type="box" pos="0.4352 -0.1792 0.04084" size="0.062 0.088 0.038" rgba="0 1 1 0.50" group="0" contype="1" conaffinity="1" friction="0.6 0.02 0.001"/>
-        <geom name="drawer3_handle_bar" type="capsule" fromto="0.52449 -0.2272 0.04084 0.52449 -0.1312 0.04084" size="0.009" rgba="1 0.45 0 0.80" group="0" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
-        <geom name="drawer3_handle_post_l" type="capsule" fromto="0.51049 -0.2192 0.04084 0.52449 -0.2192 0.04084" size="0.006" rgba="1 0.45 0 0.80" group="0" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
-        <geom name="drawer3_handle_post_r" type="capsule" fromto="0.51049 -0.1392 0.04084 0.52449 -0.1392 0.04084" size="0.006" rgba="1 0.45 0 0.80" group="0" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
+        <geom name="drawer3_contact" type="box" pos="0.4352 -0.1792 0.04084" size="0.062 0.088 0.038" rgba="0 1 1 0.50" group="3" contype="1" conaffinity="1" friction="0.6 0.02 0.001"/>
+        <geom name="drawer3_handle_bar" type="capsule" fromto="0.52449 -0.2272 0.04084 0.52449 -0.1312 0.04084" size="0.009" rgba="1 0.45 0 0.80" group="3" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
+        <geom name="drawer3_handle_post_l" type="capsule" fromto="0.51049 -0.2192 0.04084 0.52449 -0.2192 0.04084" size="0.006" rgba="1 0.45 0 0.80" group="3" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
+        <geom name="drawer3_handle_post_r" type="capsule" fromto="0.51049 -0.1392 0.04084 0.52449 -0.1392 0.04084" size="0.006" rgba="1 0.45 0 0.80" group="3" contype="1" conaffinity="1" friction="1.2 0.05 0.005"/>
         <geom type="mesh" mesh="drawer_mesh" material="drawer"/>
         <geom type="mesh" mesh="handle_cover" material="handle_cover" pos="0.52986 -0.1792 0.04084" quat="-0.5 0.5 0.5 -0.5"/>
         <geom type="mesh" mesh="handle_body"  material="handle_body"  pos="0.53049 -0.1792 0.04084" quat="-0.5 0.5 0.5 -0.5"/>
@@ -108,11 +111,11 @@
     <pair geom1="drawer1_contact" geom2="bay1_wall_r" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
     <pair geom1="drawer1_contact" geom2="bay1_back" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
     <pair geom1="drawer1_contact" geom2="bay2_shelf" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
-    <pair geom1="drawer2_contact" geom2="bay2_shelf" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
-    <pair geom1="drawer2_contact" geom2="bay2_wall_l" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
-    <pair geom1="drawer2_contact" geom2="bay2_wall_r" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
-    <pair geom1="drawer2_contact" geom2="bay2_back" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
-    <pair geom1="drawer2_contact" geom2="bay3_shelf" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
+    <pair geom1="drawer2_contact" geom2="bay2_shelf" friction="1.0 1.0 0.02 0.001 0.001" solref="0.005 1"/>
+    <pair geom1="drawer2_contact" geom2="bay2_wall_l" friction="1.0 1.0 0.02 0.001 0.001" solref="0.005 1"/>
+    <pair geom1="drawer2_contact" geom2="bay2_wall_r" friction="1.0 1.0 0.02 0.001 0.001" solref="0.005 1"/>
+    <pair geom1="drawer2_contact" geom2="bay2_back" friction="1.0 1.0 0.02 0.001 0.001" solref="0.005 1"/>
+    <pair geom1="drawer2_contact" geom2="bay3_shelf" friction="1.0 1.0 0.02 0.001 0.001" solref="0.005 1"/>
     <pair geom1="drawer3_contact" geom2="bay3_shelf" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
     <pair geom1="drawer3_contact" geom2="bay3_wall_l" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>
     <pair geom1="drawer3_contact" geom2="bay3_wall_r" friction="0.6 0.6 0.02 0.001 0.001" solref="0.005 1"/>

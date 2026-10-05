@@ -86,7 +86,6 @@ def main() -> int:
     paths = [
         ROOT / "README.md",
         ROOT / "CLAUDE.md",
-        ROOT / "docs/howto/urdf_to_mjcf.md",
         ROOT / "docs/install/standalone.md",
         ROOT / "docs/install/ros2.md",
         ROOT / "pyproject.toml",

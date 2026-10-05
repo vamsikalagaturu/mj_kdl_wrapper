@@ -130,7 +130,7 @@ static KDL::Vector ft_force_world(const mj_kdl::Robot &robot)
 
 static KDL::Vector external_force(const mj_kdl::Robot &robot, const Admittance &a)
 {
-    const KDL::Vector f = a.bias - ft_force_world(robot);
+    const KDL::Vector f = ft_force_world(robot) - a.bias;
     return norm3(f) < kForceDeadband ? KDL::Vector::Zero() : f;
 }
 
@@ -151,7 +151,7 @@ static bool build_scene(Scene &s)
     ft_spec.attach_to = { mj_kdl::AttachKind::Site, "pinch_site" };
 
     mj_kdl::RobotSpec robot_spec;
-    robot_spec.path      = ex::menagerie_model("kinova_gen3/gen3.xml");
+    robot_spec.path      = ex::asset("kinova_gen3/gen3.xml");
     robot_spec.attach_to = { mj_kdl::AttachKind::Site, "table_top" };
     robot_spec.attachments.push_back(ft_spec);
     robot_spec.attachments.push_back(

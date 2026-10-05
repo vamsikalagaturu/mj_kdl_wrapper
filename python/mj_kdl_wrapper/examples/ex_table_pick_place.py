@@ -55,7 +55,7 @@ class Phase:
 def build_env() -> tuple[mjk.Env, mjk.Robot]:
     table = mjk.SceneObject()
     table.name = "table"
-    table.mjcf_path = mjk.menagerie.asset_path("table.xml", env_var="MJ_KDL_TABLE")
+    table.mjcf_path = str(mjk.ASSETS_DIR / "table.xml")
     table.pos = [0.0, 0.0, SURFACE_Z]
     table.fixed = True
     cube = mjk.SceneObject()
@@ -68,11 +68,11 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     cube.condim = mjk.Condim.Torsional
     cube.friction = [0.8, 0.02, 0.001]
     gripper = mjk.AttachmentSpec()
-    gripper.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml", env_var="MJ_KDL_GRIPPER")
+    gripper.mjcf_path = str(mjk.ASSETS_DIR / "robotiq_2f85/2f85.xml")
     gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
     gripper.prefix = "g_"
     robot_spec = mjk.RobotSpec()
-    robot_spec.path = mjk.menagerie.model_path("kinova_gen3", env_var="MJ_KDL_MODEL")
+    robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
     robot_spec.pos = [0.0, 0.0, SURFACE_Z]
     robot_spec.attachments = [gripper]
 

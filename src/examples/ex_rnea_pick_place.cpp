@@ -138,7 +138,7 @@ int main(int argc, char *argv[])
     mj_kdl::SceneSpec scene = ex::scene_spec();
     for (int a = 0; a < 2; ++a) {
         mj_kdl::RobotSpec spec;
-        spec.path    = ex::menagerie_model("kinova_gen3/gen3.xml");
+        spec.path    = ex::asset("kinova_gen3/gen3.xml");
         spec.prefix  = kPrefix[a];
         spec.pos[0]  = kBase[a][0];
         spec.pos[1]  = kBase[a][1];

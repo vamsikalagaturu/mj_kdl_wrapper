@@ -1,0 +1,10 @@
+<!-- Actuates nothing: every mode group in a scene of arms attached here is an attachment's. -->
+<mujoco model="arm_mount">
+  <worldbody>
+    <body name="mount">
+      <geom type="box" size="0.1 0.4 0.05" mass="10"/>
+      <site name="left_mount" pos="0 0.3 0.05"/>
+      <site name="right_mount" pos="0 -0.3 0.05"/>
+    </body>
+  </worldbody>
+</mujoco>

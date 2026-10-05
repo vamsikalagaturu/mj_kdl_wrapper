@@ -4,8 +4,8 @@ This tutorial builds a C++ simulation application in layers: compile a robot sce
 add KDL control, add reset hooks, add objects and cameras, use the Simulate UI,
 record video, and then extend the scene to more robots and more complex task assets.
 
-The snippets assume the package is built with MuJoCo Menagerie available, because
-the examples use the Kinova GEN3 arm and Robotiq 2F-85 gripper.
+The snippets load the bundled Kinova GEN3 arm and Robotiq 2F-85 gripper from `assets/`
+through `example_paths.hpp`.
 
 ## 1. How To Read This Tutorial
 
@@ -54,7 +54,7 @@ scene.timestep   = 0.002;   // [s]
 scene.add_floor  = true;
 scene.add_skybox = true;
 scene.robots.push_back(mj_kdl::RobotSpec{
-    .path = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
+    .path = mj_kdl_examples::asset("kinova_gen3/gen3.xml"),
 });
 
 mj_kdl::Env env;
@@ -94,7 +94,7 @@ attachment so names stay unique in the compiled model:
 
 ```cpp
 scene.robots.push_back(mj_kdl::RobotSpec{
-    .path   = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
+    .path   = mj_kdl_examples::asset("kinova_gen3/gen3.xml"),
     .prefix = "left_",
     .pos    = { -0.6, 0.0, 0.0 },
 });
@@ -207,7 +207,7 @@ mj_kdl::AttachmentSpec gripper{
 };
 
 mj_kdl::RobotSpec arm{
-    .path        = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
+    .path        = mj_kdl_examples::asset("kinova_gen3/gen3.xml"),
     .attachments = { gripper },
 };
 
@@ -268,7 +268,7 @@ mj_kdl::AttachmentSpec mug{
 };
 
 scene.robots.push_back(mj_kdl::RobotSpec{
-    .path        = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
+    .path        = mj_kdl_examples::asset("kinova_gen3/gen3.xml"),
     .attachments = { gripper, mug },
 });
 ```
@@ -358,7 +358,7 @@ heights:
 const std::string mount = "table_top";
 
 scene.robots.push_back(mj_kdl::RobotSpec{
-    .path      = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
+    .path      = mj_kdl_examples::asset("kinova_gen3/gen3.xml"),
     .attach_to = { mj_kdl::AttachKind::Site, mount },
 });
 ```
@@ -464,6 +464,7 @@ torque, say) is not overwritten, and a pose it sets is what the ports read. Comm
 re-seeded after the hook: a hook that moves a POSITION robot sets its `jnt_pos_cmd` too, or
 the first update drives it back. Each part's runtime state lives in one struct that reset
 assigns afresh, so a field added later is reset too; a part without a reset does not compile.
+A robot's ports are rewritten in place, so a pointer you keep to a port element survives it.
 The Simulate UI's reset button runs the same path.
 
 Use `ResetContext` when your hook needs direct MuJoCo access:
@@ -708,7 +709,7 @@ scene.objects.push_back(cube);
 const std::string mount = "table_top";
 
 scene.robots.push_back(mj_kdl::RobotSpec{
-    .path        = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
+    .path        = mj_kdl_examples::asset("kinova_gen3/gen3.xml"),
     .attach_to   = { mj_kdl::AttachKind::Site, mount },
     .attachments = { gripper },
 });
@@ -992,12 +993,12 @@ Use prefixes to disambiguate the second robot:
 ```cpp
 scene.robots = {
     mj_kdl::RobotSpec{
-        .path = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
+        .path = mj_kdl_examples::asset("kinova_gen3/gen3.xml"),
         .pos  = { -0.7, 0.0, 0.0 },
         .attachments = { gripper },
     },
     mj_kdl::RobotSpec{
-        .path   = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
+        .path   = mj_kdl_examples::asset("kinova_gen3/gen3.xml"),
         .prefix = "r2_",
         .pos    = { 0.7, 0.0, 0.0 },
         .attachments = { gripper },

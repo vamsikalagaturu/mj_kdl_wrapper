@@ -4,7 +4,8 @@ This page collects the C++ wrapper usage notes that are too detailed for the
 README. For complete function signatures, see the generated Doxygen API pages
 for `include/mj_kdl_wrapper/mj_kdl_wrapper.hpp`.
 
-Coming from 0.3.x? The `Env` now owns the loop; see [Migrating to 0.4](@ref sec_migrate_env).
+Coming from 0.4? See [Migrating to 0.5](@ref sec_migrate_mj_kdl_wrapper).
+From 0.3.x, the `Env` also took over the loop; see [Migrating to 0.4](@ref sec_migrate_env).
 From 0.2.x, placement orientation also moved from `euler` to `quat` `[x, y, z, w]`; see
 [Migrating from 0.2.x](@ref sec_migrate_quat). Units, frames and what persists between
 calls: [Conventions](@ref page_conventions).
@@ -27,27 +28,17 @@ Per-cycle getters (`get_body_frame()`, `get_site_frame()`) return `bool`, and th
 ## Resolving Models And Assets
 
 The examples and tests resolve paths through `example_paths.hpp` (a header-only
-helper under `src/examples/`) so no checkout location is hard-coded. It mirrors
-the Python `menagerie` resolver:
+helper under `src/examples/`) against the source `assets/` directory, compiled in as
+`MJ_KDL_ASSETS_DIR`:
 
-- `mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml")` returns a MuJoCo
-  Menagerie model. It checks `$MJ_KDL_MENAGERIE` first, then the bundled assets in the user
-  cache `~/.cache/mj_kdl_wrapper/assets` (the bundled `kinova_gen3/gen3.xml`, with Kinova's
-  joint armature, replaces Menagerie's), then the Menagerie checkout
-  `~/.cache/mj_kdl_wrapper/menagerie`. It throws with a fetch hint when absent;
-  `find_menagerie_model(...)` returns `""` instead, which is how tests self-skip.
-- `mj_kdl_examples::asset("table.xml")` returns a bundled asset from the user
-  cache `~/.cache/mj_kdl_wrapper/assets`; `find_asset(...)` returns `""`.
+- `mj_kdl_examples::asset("kinova_gen3/gen3.xml")` returns the bundled file's path and
+  throws when it is missing.
+- `mj_kdl_examples::find_asset(...)` returns `""` instead, which is how tests self-skip.
 
-Populate the cache with `cmake -DMJ_KDL_FETCH_MENAGERIE=ON` (it clones Menagerie
-and copies the bundled assets into the cache) or the `mj-kdl-fetch-menagerie`
-console script. The same cache backs both the C++ and Python examples.
-
-**Overrides:** export `MJ_KDL_MENAGERIE=/path/to/menagerie` to resolve models
-from a checkout outside the cache. The C++ helper has no per-asset override --
-assets resolve from the cache only. (The Python examples additionally honor
-per-file overrides such as `MJ_KDL_MODEL` and `MJ_KDL_GRIPPER`; see the Python
-guide.)
+The Python counterpart is `mjk.ASSETS_DIR / "kinova_gen3/gen3.xml"`. `cmake --install` copies
+the same files into `~/.cache/mj_kdl_wrapper/assets` for programs outside this tree. Any other MJCF
+(e.g. MuJoCo Menagerie's) goes into `RobotSpec::path`; one that brings its own floor needs
+`add_floor = false`.
 
 ## Load From MJCF
 
@@ -67,12 +58,17 @@ sc.timestep   = 0.002;   // [s]; required, must be > 0
 sc.add_floor  = true;
 sc.add_skybox = true;
 sc.robots.push_back(mj_kdl::RobotSpec{
-    .path = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml")
+    .path = mj_kdl_examples::asset("kinova_gen3/gen3.xml")
 });
 
 mj_kdl::Env env;   // owns the model/data; not copied or moved
 mj_kdl::init_env(&env, &sc);
 ```
+
+Every control mode writes its command to actuators, so each robot joint needs one in the MJCF.
+`build_scene()` adds the actuators for the extra modes in `RobotSpec::modes` from the one each
+joint already has; a joint with none (a raw URDF import, say) gets none, and
+`set_control_mode()` refuses the mode.
 
 For an object-only scene, add MJCF or primitive `SceneObject` entries and leave
 `sc.robots` empty:
@@ -172,7 +168,7 @@ mj_kdl::AttachmentSpec gripper{
 };
 
 mj_kdl::RobotSpec robot_spec;
-robot_spec.path = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
+robot_spec.path = mj_kdl_examples::asset("kinova_gen3/gen3.xml");
 robot_spec.attachments = { ft_sensor, gripper };
 ```
 
@@ -219,7 +215,7 @@ mj_kdl::AttachmentSpec gripper{
 };
 
 mj_kdl::RobotSpec robot_spec;
-robot_spec.path = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml");
+robot_spec.path = mj_kdl_examples::asset("kinova_gen3/gen3.xml");
 robot_spec.attachments.push_back(gripper);
 
 mj_kdl::SceneSpec sc;
@@ -317,7 +313,7 @@ sc.objects.push_back(table);
 std::string mount = "table_top";   // the asset's own site name; SceneObject::prefix would prepend to it
 
 sc.robots.push_back(mj_kdl::RobotSpec{
-    .path      = mj_kdl_examples::menagerie_model("kinova_gen3/gen3.xml"),
+    .path      = mj_kdl_examples::asset("kinova_gen3/gen3.xml"),
     .attach_to = { mj_kdl::AttachKind::Site, mount },
 });
 
@@ -423,7 +419,8 @@ actuators: `POSITION` writes `jnt_pos_cmd`, `VELOCITY` `jnt_vel_cmd`, `TORQUE`
 in `jnt_saturated`). Nothing is written to `qfrc_applied`. `set_control_mode(&robot, mode)`
 switches modes without a jump (setting `robot.ctrl_mode` directly switches at the next
 `update()` without seeding, keeping commands you primed), and `joint_force_limits(&robot)` returns each joint's torque limit in the
-active mode. Which modes a robot offers is set per robot in `RobotSpec::modes`; see
+active mode. Which modes a robot offers is set in `RobotSpec::modes`, and for an attached arm
+in `AttachmentSpec::modes`; see
 [Torque control](@ref page_howto_torque_control).
 
 Scene slots cover what no `Robot` chain owns: bind them once with
@@ -468,10 +465,12 @@ opts.keyframe = 0;
 mj_kdl::ResetInfo info = mj_kdl::reset(&env, &opts);
 ```
 
-Each part's runtime state is one struct (`RobotPorts`, `ForceTorqueReading`, and
-the `Scene*Reading` / `Scene*Command` bases of the slots) that reset assigns afresh,
+Each part's runtime state is one struct (`ForceTorqueReading`, and the
+`Scene*Reading` / `Scene*Command` bases of the slots) that reset assigns afresh,
 so a field added to one is reset without further code; a part without a reset
-overload does not compile. The Simulate UI's reset button runs the same path,
+overload does not compile. `RobotPorts` is rewritten in place instead: its vectors
+are sized once by `init_robot_*()`, so a pointer to a port element stays valid
+across resets. The Simulate UI's reset button runs the same path,
 hook included. `on_reset` may be set before or after `init_env()`.
 
 `cleanup(&env)` closes the viewer, frees the model/data and forgets the robots,

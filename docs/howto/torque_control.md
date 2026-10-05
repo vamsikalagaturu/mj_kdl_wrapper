@@ -29,10 +29,16 @@ POSITION, a `<motor>` is TORQUE) and adds one actuator per extra mode listed in
 torque group. `{}` keeps only what the MJCF declares, and `CtrlModeSpec::joints`
 limits a mode to some joints (e.g. only the wheels of a mobile base).
 
-Robot `r` (its index in `SceneSpec::robots`) owns group `1 + 3*r + mode`
-(POSITION = 0, TORQUE = 1, VELOCITY = 2), so groups 1-30 are reserved and a
-scene holds at most 10 robots with modes. Group 0 is left to actuators the
-wrapper does not manage (a gripper, the pivot of a drive).
+An attachment's own joints take modes through `AttachmentSpec::modes`, which is
+empty by default: an arm attached to a mobile base needs
+`.modes = { mj_kdl::CtrlModeSpec{} }` to get a torque group, and then switches
+apart from the base and from any other arm.
+
+Each owner `o` has group `1 + 3*o + mode` (POSITION = 0, TORQUE = 1,
+VELOCITY = 2). The owners are the robots by their index in `SceneSpec::robots`,
+then every attachment with modes in order, so groups 1-30 are reserved and a
+scene holds at most 10 owners. Group 0 is left to actuators the wrapper does not
+manage (a gripper, the pivot of a drive).
 
 ```cpp
 mj_kdl::RobotSpec arm{ .path = "gen3.xml" };               // POSITION (native) + TORQUE

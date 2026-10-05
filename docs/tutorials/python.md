@@ -6,9 +6,8 @@ attachments, objects, cameras, reset hooks, the Simulate UI, recording, and a
 small tabletop task structure.
 
 Installation stays in the README. The snippets below assume `mj_kdl_wrapper`,
-`PyKDL`, and the matching `mujoco` package import successfully, and that the
-MuJoCo Menagerie models used by the examples are available through
-`mjk.menagerie.model_path()`.
+`PyKDL`, and the matching `mujoco` package import successfully; the models come from
+the package's bundled assets, `mjk.ASSETS_DIR`.
 
 ## How To Read This Tutorial
 
@@ -68,7 +67,7 @@ def joints(values) -> kdl.JntArray:
 
 def make_gripper() -> mjk.AttachmentSpec:
     gripper = mjk.AttachmentSpec()
-    gripper.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml")
+    gripper.mjcf_path = str(mjk.ASSETS_DIR / "robotiq_2f85/2f85.xml")
     gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
     gripper.prefix = "g_"
     return gripper
@@ -77,7 +76,7 @@ def make_gripper() -> mjk.AttachmentSpec:
 def make_table() -> mjk.SceneObject:
     table = mjk.SceneObject()
     table.name = "table"
-    table.mjcf_path = mjk.menagerie.asset_path("table.xml")
+    table.mjcf_path = str(mjk.ASSETS_DIR / "table.xml")
     table.pos = [0.0, 0.0, SURFACE_Z]
     table.fixed = True
     return table
@@ -106,7 +105,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     spec.objects = [table, make_cube()]
 
     arm = mjk.RobotSpec()
-    arm.path = mjk.menagerie.model_path("kinova_gen3")
+    arm.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
     arm.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "table_top")
     arm.attachments = [make_gripper()]
     spec.robots = [arm]
@@ -208,7 +207,7 @@ spec.add_floor = True
 spec.add_skybox = True
 
 robot_spec = mjk.RobotSpec()
-robot_spec.path = mjk.menagerie.model_path("kinova_gen3")
+robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
 spec.robots = [robot_spec]
 
 env = mjk.Env.build(spec)
@@ -314,12 +313,12 @@ accumulated robot spec. They are applied in order.
 
 ```python
 gripper = mjk.AttachmentSpec()
-gripper.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml")
+gripper.mjcf_path = str(mjk.ASSETS_DIR / "robotiq_2f85/2f85.xml")
 gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
 gripper.prefix = "g_"
 
 robot_spec = mjk.RobotSpec()
-robot_spec.path = mjk.menagerie.model_path("kinova_gen3")
+robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
 robot_spec.attachments = [gripper]
 
 spec.robots = [robot_spec]
@@ -362,7 +361,7 @@ unless `fixed`.
 ```python
 table = mjk.SceneObject()
 table.name = "table"
-table.mjcf_path = mjk.menagerie.asset_path("table.xml")
+table.mjcf_path = str(mjk.ASSETS_DIR / "table.xml")
 table.pos = [0.0, 0.0, 0.7]
 table.fixed = True
 
@@ -553,7 +552,7 @@ spec.add_skybox = True
 
 table = mjk.SceneObject()
 table.name = "table"
-table.mjcf_path = mjk.menagerie.asset_path("table.xml")
+table.mjcf_path = str(mjk.ASSETS_DIR / "table.xml")
 table.pos = [0.0, 0.0, 0.7]
 table.fixed = True
 
@@ -569,12 +568,12 @@ cube.friction = [0.8, 0.02, 0.001]
 spec.objects = [table, cube]
 
 gripper = mjk.AttachmentSpec()
-gripper.mjcf_path = mjk.menagerie.asset_path("robotiq_2f85/2f85.xml")
+gripper.mjcf_path = str(mjk.ASSETS_DIR / "robotiq_2f85/2f85.xml")
 gripper.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "pinch_site")
 gripper.prefix = "g_"
 
 arm = mjk.RobotSpec()
-arm.path = mjk.menagerie.model_path("kinova_gen3")
+arm.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
 arm.attach_to = mjk.AttachTarget(mjk.AttachKind.Site, "table_top")
 arm.attachments = [gripper]
 spec.robots = [arm]
@@ -673,12 +672,12 @@ Use prefixes to disambiguate the second robot:
 
 ```python
 left = mjk.RobotSpec()
-left.path = mjk.menagerie.model_path("kinova_gen3")
+left.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
 left.pos = [-0.7, 0.0, 0.0]
 left.attachments = [gripper]
 
 right = mjk.RobotSpec()
-right.path = mjk.menagerie.model_path("kinova_gen3")
+right.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
 right.prefix = "r2_"
 right.pos = [0.7, 0.0, 0.0]
 right.attachments = [gripper]
@@ -736,5 +735,5 @@ The Python examples mirror the C++ ones:
 - `ex_achd_pick_place`, `ex_achd_table_slide`: ACHD torque control.
 - `ex_admittance_ft`: F/T admittance around an RNEA task-space inner loop.
 
-They live in `python/mj_kdl_wrapper/examples/` (or run `mj-kdl-fetch-examples` to copy them
-out) and end by themselves. They run headless by default and accept `--gui`.
+They live in `python/mj_kdl_wrapper/examples/` (installed as `mj_kdl_wrapper.examples`) and
+end by themselves. They run headless by default and accept `--gui`.
