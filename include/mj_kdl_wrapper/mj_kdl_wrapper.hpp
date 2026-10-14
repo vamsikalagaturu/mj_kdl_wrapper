@@ -979,7 +979,9 @@ void capture_key(Viewer *v, int glfw_key, bool capture = true);
  * Robots: qpos -> jnt_pos_msr, qvel -> jnt_vel_msr, qfrc_actuator -> jnt_trq_msr (only the active
  * mode's actuators produce force, so this is the drive torque in every mode), F/T wrenches; then
  * the active mode's command to its actuators' ctrl (gear applied, ctrlrange clamped). If
- * ctrl_mode was changed directly, the switch runs first (set_control_mode()).
+ * ctrl_mode was changed directly, the switch runs first (set_control_mode()). Outside TORQUE,
+ * gravity on the bodies a robot's joints carry is compensated (body_gravcomp), so a servo holds
+ * its setpoint; in TORQUE the command carries gravity itself.
  * Scene slots: joints and free bodies sampled from qpos/qvel; wrenches into xfrc_applied (zeros
  * included), actuator commands into ctrl.
  */

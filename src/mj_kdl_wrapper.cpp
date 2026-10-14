@@ -2376,6 +2376,26 @@ Status set_control_mode(Robot *r, CtrlMode mode)
     return switch_control_mode(r, mode, true);
 }
 
+// Gravity compensation on every body the robot's joints carry, its attachments included.
+static void set_gravity_compensation(Robot *r, bool on)
+{
+    mjModel *m = r->model;
+    if (r->n_joints == 0) return;
+    const int    root  = m->jnt_bodyid[m->dof_jntid[r->_impl->kdl_to_mj_dof[0]]];
+    const mjtNum value = on ? 1.0 : 0.0;
+    // Set once per switch: a rebuilt model starts without it, so the root's value tells.
+    if (m->body_gravcomp[root] == value) return;
+    // A parent's id is below its children's, so the subtree starts at its root.
+    for (int b = root; b < m->nbody; ++b) {
+        int a = b;
+        while (a > root) a = m->body_parentid[a];
+        if (a == root) m->body_gravcomp[b] = value;
+    }
+    m->ngravcomp = 0;
+    for (int b = 0; b < m->nbody; ++b) m->ngravcomp += m->body_gravcomp[b] != 0.0;
+    m->flg_gravcomp = m->ngravcomp > 0;
+}
+
 static void apply_robot(Robot *r)
 {
     RobotInternals &in = *r->_impl;
@@ -2383,6 +2403,8 @@ static void apply_robot(Robot *r)
     if (!in.mode_applied) return;
     if (r->ctrl_mode != in.applied_mode && !switch_control_mode(r, r->ctrl_mode, false))
         r->ctrl_mode = in.applied_mode;
+    // A servo holds its setpoint against gravity; a torque command carries gravity itself.
+    set_gravity_compensation(r, r->ctrl_mode != CtrlMode::TORQUE);
 
     mjModel  *m    = r->model;
     mjData   *d    = r->data;

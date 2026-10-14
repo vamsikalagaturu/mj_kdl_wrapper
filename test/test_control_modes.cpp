@@ -183,6 +183,31 @@ TEST_P(ArmModesTest, SwitchesBetweenPositionAndTorqueWithoutAJump)
     EXPECT_LT(worst, 0.01) << "position hold after switching back";
 }
 
+TEST_P(ArmModesTest, GravityIsCompensatedOnlyOutsideTorque)
+{
+    KDL::ChainDynParam dyn(arm_.chain, KDL::Vector(0, 0, spec_.gravity_z));
+    KDL::JntArray      q(n_), g(n_);
+    for (int i = 0; i < n_; ++i) q(i) = GetParam().home[i];
+    dyn.JntToGravity(q, g);
+
+    mj_kdl::update(&env_);
+    mj_forward(model_, data_);
+    for (int i = 0; i < n_; ++i)
+        EXPECT_NEAR(data_->qfrc_gravcomp[dof(i)], g(i), 1e-6) << "POSITION, joint " << i;
+
+    ASSERT_TRUE(mj_kdl::set_control_mode(&arm_, mj_kdl::CtrlMode::TORQUE));
+    mj_kdl::update(&env_);
+    mj_forward(model_, data_);
+    for (int i = 0; i < n_; ++i)
+        EXPECT_EQ(data_->qfrc_gravcomp[dof(i)], 0.0) << "TORQUE, joint " << i;
+
+    arm_.ctrl_mode = mj_kdl::CtrlMode::POSITION;
+    mj_kdl::update(&env_);
+    mj_forward(model_, data_);
+    for (int i = 0; i < n_; ++i)
+        EXPECT_NEAR(data_->qfrc_gravcomp[dof(i)], g(i), 1e-6) << "back in POSITION, joint " << i;
+}
+
 TEST_P(ArmModesTest, TorqueIsLimitedByTheModelsForcerange)
 {
     const int    j     = GetParam().limited_joint;
