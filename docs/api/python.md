@@ -249,8 +249,9 @@ robot2 = env.create_robot("r2_base_link", "r2_bracelet_link")
 objects can be mounted to sites or bodies created earlier in the scene spec.
 Build order is decorations, objects in declaration order, robots, then cameras.
 
-For primitive objects, `shape`, `size`, `rgba` and `friction` are required, and `mass`
-unless the object is `fixed`. For MJCF-backed objects, `mjcf_path` takes precedence and
+For primitive objects, `shape` and `size` are required, and `mass` and `friction` unless the
+object is `fixed`; an unset `rgba`, `mass` or `friction` takes MuJoCo's default. `Shape.MESH`
+also needs `mesh_path`, with `size` as the mesh's scale; `Shape.ELLIPSOID` takes three radii. For MJCF-backed objects, `mjcf_path` takes precedence and
 primitive geometry fields are ignored at runtime.
 
 ```python

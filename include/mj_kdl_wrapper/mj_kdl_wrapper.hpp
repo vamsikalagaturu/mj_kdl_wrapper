@@ -189,7 +189,7 @@ struct RobotSpec
 /** @ingroup grp_types
  *  Shape type for scene objects. Unspecified is the sentinel value;
  *  build_scene rejects a primitive SceneObject whose shape is Unspecified. */
-enum class Shape { Unspecified, BOX, SPHERE, CYLINDER };
+enum class Shape { Unspecified, BOX, SPHERE, CYLINDER, ELLIPSOID, MESH };
 
 /**
  * @ingroup grp_types
@@ -214,7 +214,14 @@ enum class Condim : int { Tangential = 3, Torsional = 4, Rolling = 6 };
  *   BOX       - half-extents (x, y, z)
  *   SPHERE    - {radius, 0, 0}
  *   CYLINDER  - {radius, half-length, 0}
+ *   ELLIPSOID - radii (x, y, z)
+ *   MESH      - scale (x, y, z) applied to the mesh file's vertices
  *   Ignored when mjcf_path is set.
+ *
+ * mesh_path:
+ *   The mesh file (STL, OBJ or MSH) of a MESH primitive; required for MESH and ignored by
+ *   every other shape. It is added to the scene through mjSpec as a mesh asset named
+ *   `<name>_mesh`; a relative path resolves against the working directory.
  *
  * attach_to:
  *   Parent in the accumulated scene spec. Default is the worldbody. A child
@@ -234,16 +241,21 @@ enum class Condim : int { Tangential = 3, Torsional = 4, Rolling = 6 };
  *   static obstacles or fixtures. If false, an MJCF asset whose root has no joint
  *   gets a freejoint named `<name>_free`.
  *
- * size, rgba, mass and friction start unset (NaN) and must be set explicitly
- * by the caller; build_scene() fails on a primitive that leaves one unset.
- * They are arbitrary visual/material/dynamic choices, not neutral identities,
- * so the API refuses to invent placeholder values. A fixed primitive may leave
- * mass unset.
+ * size, rgba, mass and friction start unset (NaN). The API invents no values of its own:
+ * build_scene() fails on a primitive that leaves size unset, and on a non-fixed primitive
+ * that leaves mass or friction unset. What a primitive may leave unset gets MuJoCo's own
+ * default, not one chosen here:
+ *   rgba     - MuJoCo's default geom colour, on any primitive.
+ *   mass     - fixed primitives only: the geom's mass follows MuJoCo's default density.
+ *              Set 0 for a geom that adds no mass, e.g. one drawn on a body whose inertia
+ *              is already stated.
+ *   friction - fixed primitives only: MuJoCo's default geom friction.
+ * A vector field is either fully set or fully unset; a partly set one is rejected.
  *
  * rgba / has_rgba:
- *   A primitive's colour, required. On an MJCF asset it is optional: with
- *   has_rgba set, every geom under the asset's root body takes it, so a scene
- *   can state the colour an object is drawn in without editing the asset.
+ *   On a primitive, rgba is the colour when its four channels are set. On an MJCF asset,
+ *   has_rgba makes every geom under the asset's root body take rgba, so a scene can state
+ *   the colour an object is drawn in without editing the asset.
  */
 struct SceneObject
 {
@@ -252,16 +264,18 @@ struct SceneObject
     std::string  prefix;    // prepended to the asset's element names; empty = as authored
     AttachTarget attach_to; // placement parent (default: world)
     Shape shape = Shape::Unspecified; // required for primitives; rejected at build time if not set
-    // half-extents (BOX) / {radius, 0, 0} (SPHERE) / {radius, half-len, 0} (CYL)
+    std::string mesh_path;            // mesh file of a MESH primitive; required for MESH
+    // half-extents (BOX) / {radius, 0, 0} (SPHERE) / {radius, half-len, 0} (CYL) /
+    // radii (ELLIPSOID) / scale (MESH)
     double size[3]     = { NAN, NAN, NAN };
     double pos[3]      = { 0.0, 0.0, 0.0 };      // offset in resolved parent frame [m]
     double quat[4]     = { 0.0, 0.0, 0.0, 1.0 }; // orientation offset [x, y, z, w]
-    float  rgba[4]     = { NAN, NAN, NAN, NAN }; // [r, g, b, a]; required for primitives
+    float  rgba[4]     = { NAN, NAN, NAN, NAN }; // [r, g, b, a]; unset = MuJoCo's default
     bool   has_rgba    = false;                  // rgba is set; recolours an asset's geoms
     bool   fixed       = false;
     double mass        = NAN; // [kg]; required for non-fixed primitives
     Condim condim      = Condim::Tangential;
-    double friction[3] = { NAN, NAN, NAN }; // [slide, spin, roll]; required for primitives
+    double friction[3] = { NAN, NAN, NAN }; // [slide, spin, roll]; required unless fixed
 };
 
 /**

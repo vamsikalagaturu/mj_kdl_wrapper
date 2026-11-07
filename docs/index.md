@@ -52,7 +52,7 @@ Also changed in 0.4:
 | Spec string fields (`path`, `prefix`, `mjcf_path`, `tool_body`, ...) are `std::string` | drop `.c_str()`; empty means not set |
 | `set_body_pose()` takes `[x, y, z, w]` (was `[w, x, y, z]`) | reorder the quaternion |
 | Control modes are MuJoCo actuator groups (`RobotSpec::modes`, `set_control_mode()`) | nothing is written to `qfrc_applied` any more |
-| Unset required numbers (`timestep`, primitive `size`/`mass`/`friction`/`rgba`, camera `pos`/`fovy`) fail the build | set them |
+| Unset required numbers (`timestep`, primitive `size`, non-fixed primitive `mass`/`friction`, camera `pos`/`fovy`) fail the build | set them |
 | Earlier docs used `tool_body = "g_base"` for the 2F-85, which leaves the mount's mass out of KDL | use `"g_base_mount"` |
 | Python: joint ports read as read-only numpy arrays | assign whole vectors; `port[i] = x` raises |
 | Python: `Env.save_xml()` -> `save_model_xml()`, `Robot.tip_to_tcp` -> `tip_T_tcp` | rename; there are no aliases |

@@ -1,7 +1,8 @@
 /* test_init.cpp
  * Env and Robot lifecycle on the Kinova GEN3: init, reset (hook, ports, options), cleanup, an
  * adopted model pair, a chain adopted from outside, two Envs side by side, what a failure says,
- * required spec fields, the floor height, offscreen rendering and the recorder's output path.
+ * required spec fields, ellipsoid and mesh objects, the floor height, offscreen rendering and the
+ * recorder's output path.
  * Tests that need the bundled Gen3 self-skip without it. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
@@ -507,6 +508,107 @@ TEST(SceneSpecRequired, AnUnsetFieldFailsTheBuild)
     mj_kdl::SceneSpec no_timestep = base;
     no_timestep.timestep          = NAN;
     EXPECT_FALSE(builds(no_timestep));
+}
+
+static mj_kdl::SceneObject drawn_shape(const std::string &name, mj_kdl::Shape shape)
+{
+    // Fixed, massless and with no colour or friction: what a scene draws on a body.
+    mj_kdl::SceneObject o;
+    o.name  = name;
+    o.shape = shape;
+    o.fixed = true;
+    o.mass  = 0.0;
+    for (int k = 0; k < 3; ++k) o.size[k] = 0.05;
+    return o;
+}
+
+TEST(SceneObjectShapes, EllipsoidAndMeshTakeMuJoCoDefaultsAndAddNoMass)
+{
+    const std::string stl = ex::find_asset("cabinet/cabinet_drawer.stl");
+    if (!fs::exists(stl)) GTEST_SKIP() << stl << " not found";
+
+    mj_kdl::SceneSpec sc;
+    sc.timestep   = 0.002;
+    sc.add_floor  = false;
+    sc.add_skybox = false;
+
+    mj_kdl::SceneObject cube = small_cube();
+    mj_kdl::SceneObject ball = drawn_shape("ball", mj_kdl::Shape::ELLIPSOID);
+    ball.size[2]             = 0.08;
+    ball.attach_to           = { mj_kdl::AttachKind::Body, "cube" };
+    mj_kdl::SceneObject mesh = drawn_shape("drawer", mj_kdl::Shape::MESH);
+    mesh.mesh_path           = stl;
+    for (int k = 0; k < 3; ++k) mesh.size[k] = 1.0;
+    mesh.attach_to             = { mj_kdl::AttachKind::Body, "cube" };
+    mj_kdl::SceneObject scaled = mesh;
+    scaled.name                = "drawer_x2";
+    for (int k = 0; k < 3; ++k) scaled.size[k] = 2.0;
+    sc.objects = { cube, ball, mesh, scaled };
+
+    mjModel       *m = nullptr;
+    mjData        *d = nullptr;
+    mj_kdl::Status s = mj_kdl::build_scene(&m, &d, &sc);
+    ASSERT_TRUE(s) << s.error;
+
+    const int ball_geom   = mj_name2id(m, mjOBJ_GEOM, "ball_geom");
+    const int mesh_geom   = mj_name2id(m, mjOBJ_GEOM, "drawer_geom");
+    const int scaled_geom = mj_name2id(m, mjOBJ_GEOM, "drawer_x2_geom");
+    ASSERT_GE(ball_geom, 0);
+    ASSERT_GE(mesh_geom, 0);
+    ASSERT_GE(scaled_geom, 0);
+    EXPECT_EQ(m->geom_type[ball_geom], mjGEOM_ELLIPSOID);
+    EXPECT_DOUBLE_EQ(m->geom_size[3 * ball_geom + 2], 0.08);
+    EXPECT_EQ(m->geom_type[mesh_geom], mjGEOM_MESH);
+    EXPECT_NEAR(m->geom_rbound[scaled_geom], 2.0 * m->geom_rbound[mesh_geom], 1e-9);
+
+    // Unset colour and friction are MuJoCo's own defaults, read from a default geom.
+    mjSpec  *ref  = mj_makeSpec();
+    mjsGeom *dflt = mjs_addGeom(mjs_findBody(ref, "world"), nullptr);
+    for (int k = 0; k < 4; ++k)
+        EXPECT_FLOAT_EQ(m->geom_rgba[4 * ball_geom + k], static_cast<float>(dflt->rgba[k]));
+    for (int k = 0; k < 3; ++k)
+        EXPECT_DOUBLE_EQ(m->geom_friction[3 * mesh_geom + k], dflt->friction[k]);
+    mj_deleteSpec(ref);
+    // Shapes collide.
+    EXPECT_NE(m->geom_contype[mesh_geom], 0);
+    EXPECT_NE(m->geom_conaffinity[mesh_geom], 0);
+
+    // mass = 0: the cube's subtree weighs what the cube alone states.
+    const int cube_body = mj_name2id(m, mjOBJ_BODY, "cube");
+    ASSERT_GE(cube_body, 0);
+    EXPECT_NEAR(m->body_subtreemass[cube_body], 0.1, 1e-12);
+    mj_kdl::destroy_scene(m, d);
+}
+
+TEST(SceneObjectShapes, IncompleteShapesFailTheBuild)
+{
+    const auto fails_naming = [](const mj_kdl::SceneObject &o) {
+        mj_kdl::SceneSpec sc;
+        sc.timestep      = 0.002;
+        sc.add_floor     = false;
+        sc.add_skybox    = false;
+        sc.objects       = { o };
+        mjModel       *m = nullptr;
+        mjData        *d = nullptr;
+        mj_kdl::Status s = mj_kdl::build_scene(&m, &d, &sc);
+        mj_kdl::destroy_scene(m, d);
+        EXPECT_FALSE(s) << o.name;
+        EXPECT_NE(s.error.find(o.name), std::string::npos) << s.error;
+    };
+
+    fails_naming(drawn_shape("mesh_without_file", mj_kdl::Shape::MESH));
+
+    mj_kdl::SceneObject part_rgba = drawn_shape("part_rgba", mj_kdl::Shape::ELLIPSOID);
+    part_rgba.rgba[0]             = 1.0f;
+    fails_naming(part_rgba);
+
+    mj_kdl::SceneObject part_friction = drawn_shape("part_friction", mj_kdl::Shape::ELLIPSOID);
+    part_friction.friction[0]         = 1.0;
+    fails_naming(part_friction);
+
+    mj_kdl::SceneObject flat = drawn_shape("flat_ellipsoid", mj_kdl::Shape::ELLIPSOID);
+    flat.size[2]             = NAN;
+    fails_naming(flat);
 }
 
 int main(int argc, char *argv[])
