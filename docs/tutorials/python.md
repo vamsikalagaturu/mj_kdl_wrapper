@@ -355,8 +355,9 @@ to `tool.ft_sensors`; `robot.ft_sensor(name)` returns a `PyKDL.Wrench`.
 ## 6. Add Tables, Objects, And Asset Sites
 
 `SceneObject` supports primitive objects and MJCF-backed assets. MJCF assets use
-`mjcf_path`; primitive objects require `shape`, `size`, `rgba` and `friction`, and `mass`
-unless `fixed`.
+`mjcf_path`; primitive objects (`BOX`, `SPHERE`, `CYLINDER`, `ELLIPSOID`, or `MESH` with
+`mesh_path` and `size` as its scale) require `shape` and `size`, and `mass` and `friction`
+unless `fixed`. What a primitive leaves unset, `rgba` included, takes MuJoCo's default.
 
 ```python
 table = mjk.SceneObject()

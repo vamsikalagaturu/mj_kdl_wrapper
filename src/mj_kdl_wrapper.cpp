@@ -584,6 +584,11 @@ template<std::size_t N, class T> static bool all_set(const T (&values)[N])
     return std::none_of(values, values + N, [](T v) { return std::isnan(v); });
 }
 
+template<std::size_t N, class T> static bool none_set(const T (&values)[N])
+{
+    return std::all_of(values, values + N, [](T v) { return std::isnan(v); });
+}
+
 static Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
 {
     for (const auto &obj : objects) {
@@ -654,13 +659,16 @@ static Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &
 
         if (obj.shape == Shape::Unspecified) {
             MJ_FAIL(
-              "primitive SceneObject '"
-              << obj.name << "' has Shape::Unspecified; set .shape explicitly (BOX/SPHERE/CYLINDER)"
+              "primitive SceneObject '" << obj.name
+                                        << "' has Shape::Unspecified; set .shape explicitly "
+                                           "(BOX/SPHERE/CYLINDER/ELLIPSOID/MESH)"
             );
         }
+        if (obj.shape == Shape::MESH && obj.mesh_path.empty())
+            MJ_FAIL("MESH SceneObject '" << obj.name << "' leaves .mesh_path unset");
         // Validate fields the user must set on a primitive (unset is NaN, which fails every > 0).
         // Free-jointed bodies also need mass > 0; a fixed body may leave it unset.
-        const int n_size = obj.shape == Shape::BOX ? 3 : obj.shape == Shape::CYLINDER ? 2 : 1;
+        const int n_size = obj.shape == Shape::SPHERE ? 1 : obj.shape == Shape::CYLINDER ? 2 : 3;
         if (!std::all_of(obj.size, obj.size + n_size, [](double s) { return s > 0.0; })) {
             MJ_FAIL(
               "primitive SceneObject '"
@@ -674,8 +682,19 @@ static Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &
                                         << "; non-fixed bodies require mass > 0"
             );
         }
-        if (!all_set(obj.rgba) || !all_set(obj.friction))
-            MJ_FAIL("primitive SceneObject '" << obj.name << "' leaves .rgba or .friction unset");
+        // Unset leaves MuJoCo's default; a partly set vector is a mistake, not a choice.
+        if (!all_set(obj.rgba) && !none_set(obj.rgba))
+            MJ_FAIL("primitive SceneObject '" << obj.name << "' sets only part of .rgba");
+        if (obj.has_rgba && !all_set(obj.rgba))
+            MJ_FAIL("SceneObject '" << obj.name << "' sets has_rgba but not .rgba");
+        if (!all_set(obj.friction) && (!obj.fixed || !none_set(obj.friction))) {
+            MJ_FAIL(
+              "primitive SceneObject '"
+              << obj.name
+              << "' leaves .friction unset or partly set; only a fixed primitive may leave "
+                 "it unset"
+            );
+        }
 
         // Build the primitive body inside a throwaway spec so it can be attached
         // under any parent kind (body, site, frame, world) via the same helper.
@@ -702,13 +721,34 @@ static Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &
         case Shape::CYLINDER:
             g->type = mjGEOM_CYLINDER;
             break;
+        case Shape::ELLIPSOID:
+            g->type = mjGEOM_ELLIPSOID;
+            break;
+        case Shape::MESH: {
+            // The mesh asset travels with the body when attach_child copies it into the scene.
+            const std::string mesh_name = obj.name + "_mesh";
+            mjsMesh          *mesh      = mjs_addMesh(tmp.get(), nullptr);
+            mjs_setString(mjs_getName(mesh->element), mesh_name.c_str());
+            // Absolute, so the scene's meshdir (set by whichever MJCF came first) cannot move it.
+            mjs_setString(
+              mesh->file, std::filesystem::absolute(obj.mesh_path).lexically_normal().c_str()
+            );
+            for (int k = 0; k < 3; ++k) mesh->scale[k] = obj.size[k];
+            g->type = mjGEOM_MESH;
+            mjs_setString(g->meshname, mesh_name.c_str());
+            break;
+        }
         case Shape::Unspecified:
             break; // unreachable, guarded above
         }
-        for (int k = 0; k < 3; ++k) g->size[k] = k < n_size ? obj.size[k] : 0.0;
+        // A mesh is sized by its asset's scale; the geom's own size is unused.
+        if (obj.shape != Shape::MESH)
+            for (int k = 0; k < 3; ++k) g->size[k] = k < n_size ? obj.size[k] : 0.0;
         if (!std::isnan(obj.mass)) g->mass = obj.mass;
-        for (int k = 0; k < 4; ++k) g->rgba[k] = obj.rgba[k];
-        for (int k = 0; k < 3; ++k) g->friction[k] = obj.friction[k];
+        if (all_set(obj.rgba))
+            for (int k = 0; k < 4; ++k) g->rgba[k] = obj.rgba[k];
+        if (all_set(obj.friction))
+            for (int k = 0; k < 3; ++k) g->friction[k] = obj.friction[k];
         g->contype     = kContactCategoryAll;
         g->conaffinity = kContactCategoryAll;
         g->condim      = static_cast<int>(obj.condim);

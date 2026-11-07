@@ -48,12 +48,38 @@ def test_fixed_primitive_needs_no_mass():
         assert env.step()
 
 
-@pytest.mark.parametrize("field", ["size", "rgba", "mass", "friction"])
+@pytest.mark.parametrize("field", ["size", "mass", "friction"])
 def test_primitive_without_a_required_field_is_refused(field):
     obj = _cube()
     setattr(obj, field, None)
     with pytest.raises(RuntimeError, match=f"SceneObject.{field}"):
         mjk.Env.build(_spec([obj]))
+
+
+def _drawn(name: str, shape: mjk.Shape) -> mjk.SceneObject:
+    """Fixed, massless, with no colour or friction: a shape drawn on a body."""
+    obj = mjk.SceneObject()
+    obj.name = name
+    obj.shape = shape
+    obj.fixed = True
+    obj.mass = 0.0
+    obj.size = [0.05, 0.05, 0.08]
+    return obj
+
+
+def test_ellipsoid_and_mesh_build_on_mujoco_defaults():
+    ball = _drawn("ball", mjk.Shape.ELLIPSOID)
+    drawer = _drawn("drawer", mjk.Shape.MESH)
+    drawer.mesh_path = str(CABINET.parent / "cabinet_drawer.stl")
+    drawer.size = [1.0, 1.0, 1.0]
+    with mjk.Env.build(_spec([ball, drawer])) as env:
+        assert env.step()
+        assert env.model.ngeom >= 2
+
+
+def test_mesh_without_a_file_is_refused():
+    with pytest.raises(RuntimeError, match="mesh_path"):
+        mjk.Env.build(_spec([_drawn("drawer", mjk.Shape.MESH)]))
 
 
 @pytest.mark.parametrize("field", ["pos", "fovy"])

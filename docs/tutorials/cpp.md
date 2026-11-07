@@ -300,9 +300,13 @@ object via its name or one of its sites.
 are ignored at runtime, so leaving them zero-initialised is fine. For
 primitives, `build_scene` runs explicit checks:
 
-- `shape == Shape::Unspecified` -> error, the object is skipped.
+- `shape == Shape::Unspecified`, or a `Shape::MESH` without `mesh_path` -> error, the object
+  is skipped.
 - `size[i] <= 0` for the relevant dimensions of the shape -> error, skipped.
-- `mass <= 0` on a non-fixed primitive -> error, skipped.
+- `mass <= 0` or unset `friction` on a non-fixed primitive -> error, skipped.
+
+A fixed primitive may leave `mass` and `friction` unset, and any primitive may leave `rgba`
+unset; those then take MuJoCo's own defaults.
 
 ```cpp
 mj_kdl::SceneObject table{
@@ -314,7 +318,7 @@ mj_kdl::SceneObject table{
 
 scene.objects.push_back(table);
 
-// Primitives require shape, size, rgba, mass, and friction.
+// A free primitive requires shape, size, mass, and friction.
 scene.objects.push_back(mj_kdl::SceneObject{
     .name     = "cube",
     .shape    = mj_kdl::Shape::BOX,
@@ -1051,7 +1055,7 @@ mj_kdl::SceneObject obstacle{
     .pos   = { 0.3, -0.2, 0.82 },
     .rgba     = { 0.6f, 0.6f, 0.6f, 1.0f },
     .fixed    = true,                             // a fixed primitive may leave mass unset
-    .friction = { 0.8, 0.02, 0.001 },             // required for primitives
+    .friction = { 0.8, 0.02, 0.001 },             // required unless fixed
 };
 
 if (mj_kdl::Status s = mj_kdl::scene_add_object(&env, obstacle); !s) std::cerr << s.error;
