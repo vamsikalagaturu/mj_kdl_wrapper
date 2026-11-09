@@ -37,9 +37,8 @@ class MjcfTrqCtrlTest : public testing::Test
         rs.path = arm_mjcf;
         rs.attachments.push_back(ex::gripper_attachment(grp_mjcf));
         mj_kdl::SceneSpec sc;
-        sc.timestep   = 0.002;
-        sc.add_floor  = true;
-        sc.add_skybox = false;
+        sc.timestep  = 0.002;
+        sc.use_stage = true;
         sc.robots.push_back(rs);
 
         ASSERT_TRUE(mj_kdl::init_env(&env_, &sc));

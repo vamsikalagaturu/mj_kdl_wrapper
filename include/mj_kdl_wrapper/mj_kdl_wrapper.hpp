@@ -15,12 +15,12 @@
 #include <cstring>
 #include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
-#include <chrono>
 
 namespace mj_kdl {
 
@@ -66,6 +66,15 @@ inline LogLevel get_log_level() { return g_log_level; }
 #define MJ_LOG_INFO(expr) MJ_LOG_(INFO, "", "INFO ", expr)
 #define MJ_LOG_WARN(expr) MJ_LOG_(WARN, "\033[33m", "WARN ", expr)
 #define MJ_LOG_ERROR(expr) MJ_LOG_(ERROR, "\033[31m", "ERROR", expr)
+
+// Log a failure, then return it as the Status of the function that failed.
+#define MJ_FAIL(expr)                                              \
+    do {                                                           \
+        std::ostringstream _mj_fail;                               \
+        _mj_fail << expr; /* NOLINT(bugprone-macro-parentheses) */ \
+        MJ_LOG_ERROR(_mj_fail.str());                              \
+        return ::mj_kdl::Status{ _mj_fail.str() };                 \
+    } while (0)
 
 namespace mj_kdl {
 
@@ -301,18 +310,20 @@ struct CameraSpec
 
 /** @ingroup grp_types
  *  Full scene description passed to build_scene().
- *  timestep (unset: NaN), add_floor, and add_skybox have no defaults: the caller must
- *  choose a physics step and an explicit yes/no for each decoration so the
- *  resulting scene is never silently misconfigured. gravity_z defaults to
- *  Earth gravity. */
+ *  timestep (unset: NaN) and use_stage have no defaults: the caller must choose a physics
+ *  step and an explicit yes/no for the stage, so the resulting scene is never silently
+ *  misconfigured. gravity_z defaults to Earth gravity.
+ *
+ *  The stage is an MJCF file whose floor, sky, haze, lights and visual settings every scene
+ *  is built on; the bundled assets/stage/default.xml is used when `stage` is empty. */
 struct SceneSpec
 {
     std::vector<RobotSpec>   robots;
     double                   timestep  = NAN;   // required; suggested 0.002 [s]
     double                   gravity_z = -9.81; // Earth gravity [m/s^2]
-    bool                     add_floor;         // required; checker groundplane geom
-    double                   floor_z = 0.0;     // floor plane height in the world frame [m]
-    bool                     add_skybox;        // required; gradient sky + directional light
+    bool                     use_stage;         // required; false builds on an empty world
+    std::string              stage;             // stage MJCF path; empty = the bundled default
+    double                   floor_z = 0.0;     // added to the height of the stage's planes [m]
     std::vector<SceneObject> objects;
     std::vector<SiteSpec>    sites;   // frames marked on the assembled scene's bodies
     std::vector<CameraSpec>  cameras; // static world cameras added to worldbody
@@ -427,67 +438,6 @@ struct Robot : RobotPorts
     Robot &operator=(const Robot &) = delete;
 
     std::unique_ptr<RobotInternals> _impl; // internal
-};
-
-/**
- * @ingroup grp_viewer
- * The simulate UI window of an Env. Opened by open_viewer(); closed by cleanup(Env *).
- */
-struct Viewer
-{
-    mjvCamera cam{};
-    /* Real-time factor for pace_realtime(): 1.0 = real time, 0.5 = half speed, 0.0 = uncapped.
-     * The ',' and '.' keys adjust it. */
-    double realtime_factor = 1.0;
-    double fps             = 0.0; // the window's frame rate, read-only, set by step()
-    std::chrono::steady_clock::time_point _tick_t{};         // internal: pacing
-    void                                 *_sim_ui = nullptr; // internal: SimUiState*, open
-};
-
-/**
- * @ingroup grp_recorder
- * Standard output resolution presets for init_video_recorder().
- * Each maps to a 16:9 frame size at the named quality level.
- */
-enum class VideoResolution {
-    R360p  = 360,  // 640  x 360
-    R480p  = 480,  // 854  x 480
-    R720p  = 720,  // 1280 x 720
-    R1080p = 1080, // 1920 x 1080
-    R2K    = 1440, // 2560 x 1440
-    R4K    = 2160, // 3840 x 2160
-};
-
-/**
- * @ingroup grp_recorder
- * Headless video recorder.  Renders frames to an EGL offscreen buffer and
- * pipes raw RGB data to an ffmpeg process, producing an H.264 MP4 without a
- * display server or GLFW window.
- *
- * Each recorder renders on a thread of its own: record_frame() and render_rgb() take a
- * snapshot of the scene on the caller's thread and return, so a control loop pays for the
- * snapshot, not the render. cam and opt are read at the snapshot.
- *
- * Requirements: EGL (libegl-dev) and ffmpeg available in PATH.
- *
- * Typical usage:
- *
- *   VideoRecorder vr;
- *   init_video_recorder(&vr, env.model, "sim.mp4", VideoResolution::R1080p);
- *   vr.cam.azimuth = 135;  vr.cam.elevation = -20;  vr.cam.distance = 2.5;
- *
- *   for (int i = 0; i < steps; ++i) {
- *       step(&env);
- *       record_frame(&vr, &env);
- *   }
- *
- *   cleanup(&vr);
- */
-struct VideoRecorder
-{
-    mjvCamera cam{};           // camera configuration; modify freely between frames
-    mjvOption opt{};           // rendering options; modify freely between frames
-    void     *_impl = nullptr; // opaque EGL + ffmpeg state
 };
 
 /** @ingroup grp_env
@@ -605,7 +555,26 @@ struct SceneState
 struct EnvInternals;
 
 /** @ingroup grp_env
- * The simulation: the compiled scene and everything that reads, commands or shows it.
+ * What a component outside the core (the viewer of mj_kdl_wrapper::viewer, a recorder) does
+ * when the Env it follows changes. Each hook runs on the thread driving the Env, inside the call
+ * named; an unset one is skipped. Kept in Env::hooks under the component's address.
+ */
+struct EnvHooks
+{
+    /* step(), before it integrates: may write the state and commands, and clears *integrate to
+     * hold physics this step. Returns false once the component has stopped (a window closed),
+     * which step() returns in turn. */
+    std::function<bool(Env *env, bool *integrate)> on_step;
+    // scene_add_object() / scene_remove_object(), after env->model and env->data were replaced.
+    std::function<void(Env *env)> on_rebuild;
+    // reset(), after the robots and scene slots were re-seeded and before Env::on_reset.
+    std::function<void(Env *env)> on_reset;
+    // cleanup(Env *) and init_env(): the Env is going away; Env::hooks is cleared right after.
+    std::function<void(Env *env)> on_close;
+};
+
+/** @ingroup grp_env
+ * The simulation: the compiled scene and everything that reads or commands it.
  * init_env() builds it; step(), update() and reset() drive it; cleanup(Env *) frees it.
  * Robots are borrowed: registered by init_robot_from_mjcf() / init_robot_from_chain(), never
  * deleted here. Not copied or moved (robots and slots point into it).
@@ -616,11 +585,13 @@ struct Env
     mjModel             *model = nullptr;
     mjData              *data  = nullptr;
     std::vector<Robot *> robots;
-    SceneState           scene;  // bind slots with bind_scene_*(&env.scene, ...)
-    Viewer               viewer; // closed until open_viewer()
+    SceneState           scene; // bind slots with bind_scene_*(&env.scene, ...)
     ResetHook            on_reset;
     // Takes each compiled pair; returns the pair to run on, which the Env never frees.
     std::function<std::pair<mjModel *, mjData *>(mjModel *, mjData *)> adopt;
+    /* Components following the Env, keyed by their own address. A hook may add or erase entries
+     * while it runs; each entry is looked up again before it is called. */
+    std::map<const void *, EnvHooks> hooks;
 
     Env();
     ~Env();
@@ -740,66 +711,57 @@ Status init_env(Env *env, const SceneSpec *spec);
  * Reset everything env holds: MuJoCo data to the keyframe (or the model default); every
  * registered robot's ports (holding the reset pose, a requested ctrl_mode kept) and F/T readings,
  * and every scene slot, re-seeded; then Env::on_reset; then measurements read from the result.
- * The simulate UI's reset button does the same.
+ * The viewer's reset button does the same.
  */
 ResetInfo reset(Env *env, const ResetOptions *options = nullptr);
 
 /**
- * @ingroup grp_viewer
- * Open the simulate UI (panels, physics controls) on env, rendered on a background thread;
- * step() then drives physics, pause, perturbation and recording. Linux (X11 / Wayland) only.
- * @return an error when there is no display or the window cannot be created.
+ * @ingroup grp_overlay
+ * Remove every overlay geom of env: trace segments and arrows alike.
+ * Call once per frame before appending this frame's overlays. Thread-safe.
  */
-Status open_viewer(Env *env, const char *title = "MuJoCo");
+void clear_trace(Env *env);
 
 /**
- * @ingroup grp_viewer
- * Reset the viewer's user-scene geom count to 0.
- * Call once per frame before appending trace segments with add_trace_segment().
- * No-op while the viewer is closed (e.g. headless).
- * @param[in,out] v  An Env's viewer.
- */
-void clear_trace(Viewer *v);
-
-/**
- * @ingroup grp_viewer
- * Append a single line segment to the viewer's user scene. Thread-safe.
- * The render thread merges the user scene into each frame automatically.
- * Silently drops the segment once the user-scene geom buffer is full.
- * No-op while the viewer is closed (e.g. headless).
- * @param[in,out] v     An Env's viewer.
+ * @ingroup grp_overlay
+ * Append a world-space line segment to env's overlay geoms, which the viewer and every
+ * recorder draw on top of the model. Thread-safe. Silently dropped once the overlay holds
+ * its maximum of geoms.
+ * @param[in,out] env   Env the overlay belongs to.
  * @param[in]     a     Segment start point (world frame) [m].
  * @param[in]     b     Segment end point (world frame) [m].
  * @param[in]     rgba  Optional [r, g, b, a] colour; nullptr -> warm orange.
  */
 void add_trace_segment(
-  Viewer            *v,
+  Env               *env,
   const KDL::Vector &a,
   const KDL::Vector &b,
   const float        rgba[4] = nullptr
 );
 
 /**
- * @ingroup grp_viewer
- * Append a world-space arrow to the viewer's user scene. Thread-safe.
- * Shares the user scene with add_trace_segment(), so clear_trace() clears both
- * and one call per frame is enough for either.
+ * @ingroup grp_overlay
+ * Append a world-space arrow to env's overlay geoms, as add_trace_segment() does.
  * dir need not be normalised; a zero-length dir draws nothing.
- * Silently drops the arrow once the user-scene geom buffer is full.
- * No-op while the viewer is closed (e.g. headless).
- * @param[in,out] v       An Env's viewer.
+ * @param[in,out] env     Env the overlay belongs to.
  * @param[in]     from    Arrow tail (world frame) [m].
  * @param[in]     dir     Direction the arrow points; normalised internally.
  * @param[in]     length  Arrow length [m].
  * @param[in]     rgba    Optional [r, g, b, a] colour; nullptr -> warm orange.
  */
 void add_overlay_arrow(
-  Viewer            *v,
+  Env               *env,
   const KDL::Vector &from,
   const KDL::Vector &dir,
   double             length,
   const float        rgba[4] = nullptr
 );
+
+/**
+ * @ingroup grp_overlay
+ * A copy of env's overlay geoms, for whatever draws them. Thread-safe.
+ */
+std::vector<mjvGeom> overlay_geoms(const Env *env);
 
 /**
  * @ingroup grp_robot
@@ -809,169 +771,20 @@ void cleanup(Robot *r);
 
 /**
  * @ingroup grp_env
- * Close the viewer, free the model/data and forget the robots (which are not deleted).
+ * Close every component following env (EnvHooks::on_close), free the model/data and forget the
+ * robots (which are not deleted).
  */
 void cleanup(Env *env);
-
-/**
- * @ingroup grp_recorder
- * Initialise a headless EGL video recorder.
- * Creates an EGL context and launches an ffmpeg process (H.264/MP4) via a pipe. The render
- * context is made from the Env at its first frame and remade after the Env's model is rebuilt.
- *
- * @param vr        VideoRecorder to initialise; freed by cleanup(VideoRecorder*).
- * @param model     MuJoCo model whose default free camera vr->cam starts from.
- * @param out_path  Output MP4 path (e.g. "sim.mp4").
- * @param width     Frame width in pixels (default 1280).
- * @param height    Frame height in pixels (default 720).
- * @param fps       Playback frame rate (default 60).
- * @return an error if EGL init or ffmpeg launch fails.
- */
-Status init_video_recorder(
-  VideoRecorder *vr,
-  mjModel       *model,
-  const char    *out_path,
-  int            width  = 1280,
-  int            height = 720,
-  int            fps    = 60
-);
-
-/**
- * @ingroup grp_recorder
- * Convenience overload: initialise a VideoRecorder using a named resolution preset.
- * Frame width is derived from the preset at 16:9 aspect ratio.
- *
- * @param vr         VideoRecorder to initialise.
- * @param model      MuJoCo model.
- * @param out_path   Output MP4 path.
- * @param resolution VideoResolution preset (e.g. VideoResolution::R1080p).
- * @param fps        Playback frame rate (default 60).
- * @return an empty Status on success, else the error.
- */
-Status init_video_recorder(
-  VideoRecorder  *vr,
-  mjModel        *model,
-  const char     *out_path,
-  VideoResolution resolution,
-  int             fps = 60
-);
-
-/**
- * @ingroup grp_recorder
- * Snapshot env's current state as the next video frame; it is rendered and encoded on the
- * recorder's thread. Waits only while the previous frame has not been picked up.
- *
- * @param vr   VideoRecorder initialised by init_video_recorder().
- * @param env  Env to render.
- * @return false once rendering or the pipe to ffmpeg has failed; every frame is recorded.
- */
-bool record_frame(VideoRecorder *vr, Env *env);
-
-/**
- * @ingroup grp_recorder
- * Initialise offscreen rendering only: EGL context, no ffmpeg process and no output file.
- * Use with render_rgb() to grab frames; the camera is vr->cam, as for a recording, and
- * cleanup(VideoRecorder*) frees it. An open vr is freed first.
- *
- * @param vr      VideoRecorder to initialise; freed by cleanup(VideoRecorder*).
- * @param model   MuJoCo model whose default free camera vr->cam starts from.
- * @param width   Frame width in pixels.
- * @param height  Frame height in pixels.
- * @return an error if EGL init fails.
- */
-Status init_offscreen(VideoRecorder *vr, mjModel *model, int width, int height);
-
-/**
- * @ingroup grp_recorder
- * Render env's current state into a caller-owned top-down RGB8 buffer
- * of width*height*3 bytes.
- *
- * @param vr   VideoRecorder initialised by init_offscreen() or init_video_recorder().
- * @param env  Env to render.
- * @param out  Destination buffer, width*height*3 bytes.
- * @return true on success.
- */
-bool render_rgb(VideoRecorder *vr, Env *env, std::uint8_t *out);
-
-/**
- * @ingroup grp_recorder
- * Snapshot env's current state and return; done gets the top-down RGB8 frame on the recorder's
- * thread, valid only during the call. Waits only while the previous frame has not been picked up.
- *
- * @param vr    VideoRecorder initialised by init_offscreen() or init_video_recorder().
- * @param env   Env to render.
- * @param done  Receives width*height*3 bytes.
- * @return false once rendering has failed.
- */
-bool render_rgb(VideoRecorder *vr, Env *env, std::function<void(const std::uint8_t *rgb)> done);
-
-/**
- * @ingroup grp_recorder
- * Flush the ffmpeg pipe, finalise the MP4, and release all EGL resources.
- * After this call vr->_impl is null and the VideoRecorder may be discarded.
- *
- * @param vr  VideoRecorder to tear down.
- */
-void cleanup(VideoRecorder *vr);
 
 /**
  * @ingroup grp_env
  * Advance env one timestep: mj_step2() then mj_step1() (MuJoCo's split mj_step()). Afterwards
  * joint state, body frames and position/velocity sensors all describe the new state; force and
- * acceleration sensors describe the step just taken. With the viewer open it also honours its
- * pause, perturbation and recording, and does nothing while every robot is paused.
- * @return false once the viewer window is closed; always true headless.
+ * acceleration sensors describe the step just taken. Each EnvHooks::on_step runs first and may
+ * hold physics (a paused viewer); nothing integrates while every robot is paused either.
+ * @return false once a component following env has stopped (its window closed), else true.
  */
 bool step(Env *env);
-
-/**
- * @ingroup grp_viewer
- * Sleep out this step's share of wall time at the viewer's real-time factor. step() never
- * sleeps; a loop that paces itself reads Viewer::realtime_factor instead. No-op headless.
- */
-void pace_realtime(Env *env);
-
-/**
- * @ingroup grp_viewer
- * Returns true while the viewer window is open.
- * @param[in] v  An Env's viewer.
- */
-bool is_running(const Viewer *v);
-
-/**
- * @ingroup grp_viewer
- * Whether a key is currently held down in the viewer's window.
- *
- * The simulate UI opened by open_viewer() owns its GLFW window on the
- * render thread, so a caller driving physics on its own thread must not call
- * glfwGetKey() itself. This reads the key state that the UI's own key callback
- * records, which is safe from any thread.
- *
- * Keys the UI consumes for itself (',' and '.' for the speed control) are
- * reported like any other.
- *
- * @param[in] v         Viewer, or nullptr.
- * @param[in] glfw_key  A GLFW key code, e.g. GLFW_KEY_UP.
- * @return true while the key is held; false for a nullptr or headless viewer,
- *         or an out-of-range key code.
- */
-bool key_pressed(const Viewer *v, int glfw_key);
-
-/**
- * @ingroup grp_viewer
- * Claim a key for the caller, so the simulate UI never acts on it.
- *
- * The UI binds keys of its own: the left and right arrows scrub the history,
- * escape restores the free camera, space pauses. A caller
- * that drives a robot with those keys would otherwise fight the UI for them.
- * A captured key is still reported by key_pressed(); it is only withheld from
- * the UI's own handler.
- *
- * @param[in,out] v         An Env's viewer, or nullptr.
- * @param[in]     glfw_key  A GLFW key code, e.g. GLFW_KEY_LEFT.
- * @param[in]     capture   true to claim the key, false to give it back.
- */
-void capture_key(Viewer *v, int glfw_key, bool capture = true);
 
 /**
  * @ingroup grp_env
@@ -1084,25 +897,5 @@ bool get_site_frame(Env *env, const char *site_name, KDL::Frame *out);
  * Read a named MuJoCo body as a world-frame KDL frame, as get_site_frame() does.
  */
 bool get_body_frame(Env *env, const char *body_name, KDL::Frame *out);
-
-/**
- * @ingroup grp_viewer
- * Switch the viewer to a named fixed camera defined in the model.
- * Pass nullptr or an empty string to return to the free camera.
- * @return true if the camera name was found; false if not found (viewer unchanged).
- */
-bool use_camera(Viewer *v, const mjModel *model, const char *name);
-
-/**
- * @ingroup grp_viewer
- * Configure the viewer's free orbit camera.
- */
-void set_free_camera(
-  Viewer                      *v,
-  double                       distance,
-  double                       azimuth,
-  double                       elevation,
-  const std::array<double, 3> &lookat
-);
 
 } // namespace mj_kdl

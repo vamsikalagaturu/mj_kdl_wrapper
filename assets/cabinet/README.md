@@ -37,7 +37,7 @@ obj = mjk.SceneObject()
 obj.name, obj.mjcf_path, obj.pos, obj.fixed = "cabinet", ".../cabinet.xml", [0, 0, 0], True
 
 spec = mjk.SceneSpec()
-spec.timestep, spec.add_floor, spec.add_skybox, spec.objects = 0.002, True, True, [obj]
+spec.timestep, spec.use_stage, spec.objects = 0.002, True, [obj]
 with mjk.Env.build(spec) as env:
     env.step()
     pose = env.site_frame("grasp1")     # PyKDL.Frame at the handle center

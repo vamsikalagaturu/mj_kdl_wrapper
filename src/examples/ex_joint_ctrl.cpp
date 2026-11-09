@@ -13,6 +13,7 @@
  * POSITION motion ends further than kMaxErr from the target or the VELOCITY motion does not
  * converge within kTol before kTimeout. */
 
+#include "mj_kdl_wrapper/viewer.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
 
@@ -62,7 +63,8 @@ int main(int argc, char *argv[])
         restart = true;
     };
     mj_kdl::reset(&env);
-    if (!headless && !mj_kdl::open_viewer(&env)) return 1;
+    mj_kdl::Viewer viewer;
+    if (!headless && !mj_kdl::open_viewer(&viewer, &env)) return 1;
 
     constexpr double kNotReached = std::numeric_limits<double>::infinity();
     Motion           motion      = Motion::Position;
@@ -107,7 +109,7 @@ int main(int argc, char *argv[])
             }
         }
         if (!mj_kdl::step(&env)) break;
-        mj_kdl::pace_realtime(&env);
+        mj_kdl::pace_realtime(&viewer);
     }
 
     const bool pos_ok = pos_err <= kMaxErr;

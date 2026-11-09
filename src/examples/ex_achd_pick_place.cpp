@@ -18,6 +18,8 @@
  * elbow stayed within kMaxElbowDrop of its reference; --record
  * writes an MP4 offscreen (EGL + ffmpeg) and implies --headless. */
 
+#include "mj_kdl_wrapper/render.hpp"
+#include "mj_kdl_wrapper/viewer.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
 
@@ -221,7 +223,8 @@ int main(int argc, char *argv[])
         restart = true;
     };
     mj_kdl::reset(&env);
-    if (!headless && !mj_kdl::open_viewer(&env)) return 1;
+    mj_kdl::Viewer viewer;
+    if (!headless && !mj_kdl::open_viewer(&viewer, &env)) return 1;
 
     mj_kdl::VideoRecorder recorder;
     bool                  recording = false;
@@ -312,7 +315,7 @@ int main(int argc, char *argv[])
                     break;
                 }
                 if (restart) break;
-                mj_kdl::pace_realtime(&env);
+                mj_kdl::pace_realtime(&viewer);
                 if (recording && ++sim_step % steps_per_frame == 0
                     && !mj_kdl::record_frame(&recorder, &env)) {
                     std::cerr << "record_frame() failed at step " << sim_step << "\n";

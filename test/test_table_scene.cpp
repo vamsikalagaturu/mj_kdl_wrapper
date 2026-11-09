@@ -25,9 +25,8 @@ static constexpr double kSurfaceZ = 0.7;
 static mj_kdl::SceneSpec empty_scene()
 {
     mj_kdl::SceneSpec sc;
-    sc.timestep   = 0.002;
-    sc.add_floor  = false;
-    sc.add_skybox = false;
+    sc.timestep  = 0.002;
+    sc.use_stage = false;
     return sc;
 }
 
@@ -141,7 +140,7 @@ class TableSceneTest : public testing::Test
         mj_kdl::SceneObject top = table(table_mjcf, "table", "");
         top.pos[2]              = kSurfaceZ;
         spec_                   = empty_scene();
-        spec_.add_floor         = true;
+        spec_.use_stage         = true;
         spec_.objects           = {
             top,
             make_object("red_cube", box, 0.35, 0.10, 0.03, red),

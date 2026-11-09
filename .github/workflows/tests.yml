@@ -14,37 +14,22 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     env:
-      MUJOCO_VERSION: 3.14.0
-      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.14.0
       FETCHCONTENT_BASE_DIR: ${{ github.workspace }}/.fetchcontent
       CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
       - uses: actions/checkout@v4
 
-      # System build dependencies (KDL/MuJoCo are not installed from apt).
+      # System build dependencies (KDL and MuJoCo are built from source, not installed from apt);
+      # the X11, Wayland and GL headers are what MuJoCo's Filament and SDL2 builds use.
       - name: Install dependencies
         run: |
           sudo apt-get update -q
           sudo apt-get install -y \
             ccache ninja-build ffmpeg vcstool \
-            libeigen3-dev libglfw3-dev libgl-dev libegl-dev
+            libeigen3-dev libegl-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
 
-      # Native MuJoCo release (cached between runs).
-      - name: Cache MuJoCo
-        id: cache-mujoco
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.MJ_KDL_MUJOCO_DIR }}
-          key: mujoco-${{ runner.os }}-${{ env.MUJOCO_VERSION }}
-
-      - name: Install MuJoCo ${{ env.MUJOCO_VERSION }}
-        if: steps.cache-mujoco.outputs.cache-hit != 'true'
-        run: |
-          wget -q "https://github.com/google-deepmind/mujoco/releases/download/${MUJOCO_VERSION}/mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
-          tar xzf "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz" -C /tmp
-          rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
-
-      - name: Import the Orocos KDL fork
+      - name: Import the Orocos KDL fork and MuJoCo
         run: vcs import < mj_kdl_wrapper.repos
 
       - name: Cache ccache
@@ -67,7 +52,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DMJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}" \
+            -DMJ_KDL_WITH_RENDER=ON \
+            -DMJ_KDL_WITH_VIEWER=ON \
             -DBUILD_TESTS=ON \
             -DBUILD_DOCS=OFF \
             -DFETCHCONTENT_BASE_DIR="${FETCHCONTENT_BASE_DIR}" \

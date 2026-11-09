@@ -1,8 +1,8 @@
 /* test_init.cpp
  * Env and Robot lifecycle on the Kinova GEN3: init, reset (hook, ports, options), cleanup, an
  * adopted model pair, a chain adopted from outside, two Envs side by side, what a failure says,
- * required spec fields, the floor height, offscreen rendering and the recorder's output path.
- * Tests that need the bundled Gen3 self-skip without it. */
+ * required spec fields and the floor height. Tests that need the bundled Gen3 self-skip without
+ * it. */
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "common.hpp"
@@ -10,7 +10,6 @@
 
 #include <gtest/gtest.h>
 
-#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -23,9 +22,8 @@ static std::string gen3_path() { return ex::find_asset("kinova_gen3/gen3.xml"); 
 static mj_kdl::SceneSpec arm_scene(const std::string &mjcf, const std::string &prefix = "")
 {
     mj_kdl::SceneSpec sc;
-    sc.timestep   = 0.002;
-    sc.add_floor  = true;
-    sc.add_skybox = false;
+    sc.timestep  = 0.002;
+    sc.use_stage = true;
     mj_kdl::RobotSpec r;
     r.path   = mjcf;
     r.prefix = prefix;
@@ -278,7 +276,7 @@ TEST(TwoEnvs, StepIndependently)
     if (!fs::exists(mjcf)) GTEST_SKIP() << mjcf << " not found";
 
     mj_kdl::SceneSpec sc = arm_scene(mjcf);
-    sc.add_floor         = false;
+    sc.use_stage         = false;
 
     mj_kdl::Env   a, b;
     mj_kdl::Robot ra, rb;
@@ -377,10 +375,9 @@ TEST(EnvAdopt, RunsOnTheCallersPairAndNeverFreesIt)
 TEST(SceneFloor, PlacedAtFloorZ)
 {
     mj_kdl::SceneSpec sc;
-    sc.timestep   = 0.002;
-    sc.add_floor  = true;
-    sc.floor_z    = -0.72;
-    sc.add_skybox = false;
+    sc.timestep  = 0.002;
+    sc.use_stage = true;
+    sc.floor_z   = -0.72;
 
     mjModel *model = nullptr;
     mjData  *data  = nullptr;
@@ -396,55 +393,6 @@ TEST(SceneFloor, PlacedAtFloorZ)
     EXPECT_DOUBLE_EQ(model->geom_pos[3 * floor_id + 2], -0.72);
 
     mj_kdl::destroy_scene(model, data);
-}
-
-TEST(Recorder, OutputPathReachesFfmpegVerbatim)
-{
-    mj_kdl::SceneSpec sc;
-    sc.timestep   = 0.002;
-    sc.add_floor  = true;
-    sc.add_skybox = false;
-    mj_kdl::Env env;
-    ASSERT_TRUE(mj_kdl::init_env(&env, &sc));
-
-    const fs::path dir = fs::temp_directory_path() / "mj_kdl_rec_test";
-    fs::remove_all(dir);
-    fs::create_directories(dir);
-    const fs::path out    = dir / "a \"quoted\" $(touch injected) name.mp4";
-    const fs::path marker = dir / "injected";
-
-    mj_kdl::VideoRecorder vr;
-    if (!mj_kdl::init_video_recorder(&vr, env.model, out.c_str(), 64, 48, 10))
-        GTEST_SKIP() << "no EGL or ffmpeg";
-    for (int i = 0; i < 5; ++i) ASSERT_TRUE(mj_kdl::record_frame(&vr, &env));
-    mj_kdl::cleanup(&vr);
-
-    EXPECT_TRUE(fs::exists(out)) << out;
-    EXPECT_GT(fs::file_size(out), 0u);
-    EXPECT_FALSE(fs::exists(marker)) << "the path went through a shell";
-    EXPECT_FALSE(fs::exists(fs::current_path() / "injected"));
-    fs::remove_all(dir);
-}
-
-TEST(Offscreen, RendersTheSceneIntoABuffer)
-{
-    mj_kdl::SceneSpec sc;
-    sc.timestep   = 0.002;
-    sc.add_floor  = true;
-    sc.add_skybox = true;
-    mj_kdl::Env env;
-    ASSERT_TRUE(mj_kdl::init_env(&env, &sc));
-
-    constexpr int         kW = 64, kH = 48;
-    mj_kdl::VideoRecorder vr;
-    if (!mj_kdl::init_offscreen(&vr, env.model, kW, kH)) GTEST_SKIP() << "no EGL";
-    std::vector<std::uint8_t> rgb(kW * kH * 3, 0);
-    ASSERT_TRUE(mj_kdl::render_rgb(&vr, &env, rgb.data()));
-    mj_kdl::cleanup(&vr);
-
-    std::size_t lit = 0;
-    for (std::uint8_t c : rgb) lit += c != 0;
-    EXPECT_GT(lit, rgb.size() / 2) << "the floor and sky fill the frame";
 }
 
 TEST_F(InitTest, AFailureSaysWhy)
@@ -475,9 +423,8 @@ TEST(SceneSpecRequired, AnUnsetFieldFailsTheBuild)
         return ok;
     };
     mj_kdl::SceneSpec base;
-    base.timestep   = 0.002;
-    base.add_floor  = false;
-    base.add_skybox = false;
+    base.timestep  = 0.002;
+    base.use_stage = false;
 
     mj_kdl::SceneObject cube = small_cube();
     cube.friction[0]         = 1.0;

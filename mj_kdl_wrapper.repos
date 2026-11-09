@@ -3,3 +3,7 @@ repositories:
     type: git
     url: https://github.com/secorolab/orocos_kinematics_dynamics.git
     version: vereshchagin-driver-weighting
+  third_party/mujoco:
+    type: git
+    url: https://github.com/google-deepmind/mujoco.git
+    version: 4.0.0

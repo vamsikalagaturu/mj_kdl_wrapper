@@ -5,6 +5,7 @@
 #pragma once
 
 #include <mujoco/mujoco.h>
+#include <image_transport/camera_publisher.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
@@ -22,7 +23,7 @@ struct CameraConf
 {
     std::string camera;   // camera name in the compiled model (a scene prefixes robot cameras)
     std::string frame_id; // must name a ROS-optical frame: +Z forward, +X right, +Y down
-    std::string topic_ns; // -> <topic_ns>/color, <topic_ns>/camera_info
+    std::string topic_ns; // -> <topic_ns>/color (and its transports), <topic_ns>/camera_info
     int         width   = 0;
     int         height  = 0;
     double      rate_hz = 30.0;
@@ -30,7 +31,8 @@ struct CameraConf
 
 /**
  * @ingroup grp_recorder
- * Publishes an already-rendered RGB frame as sensor_msgs/Image plus its CameraInfo.
+ * Publishes an already-rendered RGB frame as sensor_msgs/Image plus its CameraInfo, through an
+ * image_transport::CameraPublisher, so subscribers can also take the compressed transports.
  *
  * A frame sink, not a renderer: it creates no node, no executor and no thread, and never
  * touches mjModel or mjData after construction. Call it from the thread that rendered the
@@ -60,13 +62,12 @@ class CameraRosPublisher
     const sensor_msgs::msg::CameraInfo &camera_info() const { return info_; }
 
   private:
-    CameraConf                                                 conf_;
-    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr      image_pub_;
-    rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr info_pub_;
-    sensor_msgs::msg::Image                                    image_;
-    sensor_msgs::msg::CameraInfo                               info_;
-    double                                                     period_s_   = 0.0;
-    double                                                     next_due_s_ = 0.0;
+    CameraConf                       conf_;
+    image_transport::CameraPublisher pub_;
+    sensor_msgs::msg::Image          image_;
+    sensor_msgs::msg::CameraInfo     info_;
+    double                           period_s_   = 0.0;
+    double                           next_due_s_ = 0.0;
 };
 
 } // namespace mj_kdl

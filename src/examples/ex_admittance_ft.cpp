@@ -18,6 +18,7 @@
  * --headless runs the self-check and exits non-zero on failure; with the viewer the same
  * sequence runs once and exits. */
 
+#include "mj_kdl_wrapper/viewer.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
 
@@ -138,6 +139,7 @@ struct Scene
 {
     mj_kdl::SceneSpec          spec;
     mj_kdl::Env                env;
+    mj_kdl::Viewer             viewer;
     mj_kdl::Robot              robot;
     mj_kdl::SceneActuatorSlot *gripper   = nullptr;
     mj_kdl::SceneWrenchSlot   *push      = nullptr; // the self-check's hand on the tool
@@ -274,7 +276,7 @@ static void settle_and_tare(Scene &s, RneaController &ctrl, Admittance &a)
         close_gripper(s);
         ctrl.track(home);
         if (!mj_kdl::step(&s.env)) break;
-        mj_kdl::pace_realtime(&s.env);
+        mj_kdl::pace_realtime(&s.viewer);
     }
     mj_kdl::update(&s.env);
     a.bias = ft_force_world(s.robot);
@@ -318,7 +320,7 @@ static Metrics
         m.helix_track_err       = std::max(m.helix_track_err, norm3(ctrl.tcp().p - target.p));
         if (!mj_kdl::step(&s.env)) break;
         m.elbow_min = std::min(m.elbow_min, elbow_height(s));
-        mj_kdl::pace_realtime(&s.env);
+        mj_kdl::pace_realtime(&s.viewer);
     }
 
     const double th = s.env.data->time;
@@ -329,7 +331,7 @@ static Metrics
         m.helix_track_err       = std::max(m.helix_track_err, norm3(ctrl.tcp().p - target.p));
         if (!mj_kdl::step(&s.env)) break;
         m.elbow_min = std::min(m.elbow_min, elbow_height(s));
-        mj_kdl::pace_realtime(&s.env);
+        mj_kdl::pace_realtime(&s.viewer);
     }
 
     mj_kdl::update(&s.env);
@@ -342,7 +344,7 @@ static Metrics
         control(s, ctrl, a, nominal, f);
         if (!mj_kdl::step(&s.env)) break;
         m.elbow_min = std::min(m.elbow_min, elbow_height(s));
-        mj_kdl::pace_realtime(&s.env);
+        mj_kdl::pace_realtime(&s.viewer);
     }
 
     const double ts = s.env.data->time;
@@ -353,7 +355,7 @@ static Metrics
         m.helix_settle_err      = std::max(m.helix_settle_err, norm3(ctrl.tcp().p - target.p));
         if (!mj_kdl::step(&s.env)) break;
         m.elbow_min = std::min(m.elbow_min, elbow_height(s));
-        mj_kdl::pace_realtime(&s.env);
+        mj_kdl::pace_realtime(&s.viewer);
     }
 
     const KDL::Vector push(kSelfcheckPush[0], kSelfcheckPush[1], kSelfcheckPush[2]);
@@ -379,7 +381,7 @@ static Metrics
         }
         if (!mj_kdl::step(&s.env)) break;
         m.elbow_min = std::min(m.elbow_min, elbow_height(s));
-        mj_kdl::pace_realtime(&s.env);
+        mj_kdl::pace_realtime(&s.viewer);
     }
     s.push->wrench = KDL::Wrench::Zero();
 
@@ -411,9 +413,9 @@ static bool report(const Metrics &m)
 // The same sequence with the viewer: helix, tare, then the mouse pushes the tool; ends on its own.
 static void run_gui(Scene &s, RneaController &ctrl, Admittance &a, const KDL::Frame &nominal)
 {
-    mj_kdl::Viewer *viewer = &s.env.viewer;
+    mj_kdl::Viewer *viewer = &s.viewer;
     mj_kdl::set_free_camera(viewer, 1.55, 145.0, -24.0, { 0.05, 0.0, ex::kTableZ + 0.35 });
-    if (!mj_kdl::open_viewer(&s.env, "ex_admittance_ft")) return;
+    if (!mj_kdl::open_viewer(viewer, &s.env, "ex_admittance_ft")) return;
 
     const double run_time =
       kTeachTime + kHandoffTareTime + kHandoffSteps * s.spec.timestep + kSettleTime + kPushTime;
@@ -431,7 +433,7 @@ static void run_gui(Scene &s, RneaController &ctrl, Admittance &a, const KDL::Fr
             start         = s.env.data->time;
             handoff_tared = false;
             have_prev     = false;
-            mj_kdl::clear_trace(viewer);
+            mj_kdl::clear_trace(&s.env);
         }
         const double t = s.env.data->time - start;
         if (t >= run_time) break;
@@ -458,15 +460,15 @@ static void run_gui(Scene &s, RneaController &ctrl, Admittance &a, const KDL::Fr
         if (have_prev && trace_step % 5 == 0) {
             const float yellow[4] = { 1.0f, 0.95f, 0.0f, 1.0f };
             const float green[4]  = { 0.0f, 1.0f, 0.2f, 1.0f };
-            mj_kdl::add_trace_segment(viewer, target_prev, target_xyz, yellow);
-            mj_kdl::add_trace_segment(viewer, tcp_prev, tcp_xyz, green);
+            mj_kdl::add_trace_segment(&s.env, target_prev, target_xyz, yellow);
+            mj_kdl::add_trace_segment(&s.env, tcp_prev, tcp_xyz, green);
         }
         target_prev = target_xyz;
         tcp_prev    = tcp_xyz;
         have_prev   = true;
 
         if (!mj_kdl::step(&s.env)) break;
-        mj_kdl::pace_realtime(&s.env);
+        mj_kdl::pace_realtime(&s.viewer);
     }
 }
 

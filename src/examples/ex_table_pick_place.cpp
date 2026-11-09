@@ -12,6 +12,7 @@
  * kDeflectionRatio of J K^-1 J^T F, the arm sprang back, the cube stayed in the gripper and the
  * elbow stayed above kMinElbowHeight. */
 
+#include "mj_kdl_wrapper/viewer.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
 
@@ -107,7 +108,8 @@ int main(int argc, char *argv[])
         restart = true;
     };
     mj_kdl::reset(&env);
-    if (!headless && !mj_kdl::open_viewer(&env)) return 1;
+    mj_kdl::Viewer viewer;
+    if (!headless && !mj_kdl::open_viewer(&viewer, &env)) return 1;
 
     const auto control = [&](std::size_t, const KDL::JntArray &q_des) {
         q_ref = q_des;
@@ -148,7 +150,13 @@ int main(int argc, char *argv[])
         m.predicted = KDL::dot(dx, push_dir);
     };
     const bool completed = ex::run_phases(
-      env, { { &robot, fingers } }, ex::pick_place_phases(wp), restart, control, after_step
+      env,
+      [&viewer] { mj_kdl::pace_realtime(&viewer); },
+      { { &robot, fingers } },
+      ex::pick_place_phases(wp),
+      restart,
+      control,
+      after_step
     );
     mj_kdl::update(&env);
 

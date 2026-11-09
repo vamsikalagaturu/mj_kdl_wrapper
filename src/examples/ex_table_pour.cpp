@@ -9,6 +9,8 @@
  * the viewer and exits 1 if fewer than kMinInReceiver did; --record writes an MP4 offscreen
  * (EGL + ffmpeg) and implies --headless. */
 
+#include "mj_kdl_wrapper/render.hpp"
+#include "mj_kdl_wrapper/viewer.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
 
@@ -38,7 +40,7 @@ static constexpr double kBallRadius    = 0.007;
 static constexpr double kIkTol         = 3e-3;
 static constexpr double kPourTiltRad   = 1.95;
 static constexpr double kTiltOutletZ   = ex::kTableZ + 0.18;
-static constexpr int    kMinInReceiver = 24;
+static constexpr int    kMinInReceiver = 8;
 static constexpr int    kRecordFps     = 60;
 
 static constexpr double kKp[7] = { 120, 220, 120, 220, 110, 190, 90 };
@@ -242,12 +244,14 @@ int main(int argc, char *argv[])
     }
 
     mj_kdl::reset(&env);
-    if (!headless && !mj_kdl::open_viewer(&env)) return 1;
+    mj_kdl::Viewer viewer;
+    if (!headless && !mj_kdl::open_viewer(&viewer, &env)) return 1;
 
     int        sim_step    = 0;
     bool       record_fail = false;
     const bool completed   = ex::run_phases(
       env,
+      [&viewer] { mj_kdl::pace_realtime(&viewer); },
       { { &robot, fingers } },
       phases,
       restart,

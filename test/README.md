@@ -25,7 +25,7 @@ for exit code 0; the two that always open a window are left out.
 
 | Test | What it covers |
 |------|----------------|
-| `test_init` | `Env`/`Robot` lifecycle: init, `reset` (hook, ports, options), cleanup, adoption, a chain from outside, offscreen rendering |
+| `test_init` | `Env`/`Robot` lifecycle: init, `reset` (hook, ports, options), cleanup, adoption, a chain from outside |
 | `test_dual_arm` | two prefixed arms, independent KDL chains, gravity per arm |
 | `test_table_scene` | MJCF table asset, `SceneObject` quat and prefix, runtime add/remove |
 | `test_mjcf_load` | the TCP chain vs the pinch site, cameras, sites, contact exclusions, attach targets, joint edge cases |
@@ -36,15 +36,11 @@ for exit code 0; the two that always open a window are left out.
 | `test_mjcf_pick` | pick with the gripper: IK waypoints, cube lifted |
 | `test_control_modes` | control modes as actuator groups: added actuators, switching, limits, VELOCITY |
 | `test_scene_state` | `Env` scene slots, what `step()` leaves current, what `reset()` restores |
-| `test_regressions` | fixes from the 0.4.0 audit: rebuilds, re-init, log levels, recorders, screenshot, viewer failure |
+| `test_regressions` | fixes from the 0.4.0 audit: rebuilds, re-init, log levels |
+| `test_render` | offscreen rendering and recording (built only with `mj_kdl_wrapper::render`) |
+| `test_viewer` | a viewer that cannot open (built only with `mj_kdl_wrapper::viewer`) |
 | `test_camera_ros` | ROS camera publisher (built only when configured with ROS) |
-| `ex_*_headless` | each C++ example runs `--headless` and passes its own self-check |
-
-The opt-in viewer test (`DISABLED_` prefix, see test_scene_state) opens a Simulate window:
-
-```bash
-./build/test/test_scene_state --gtest_also_run_disabled_tests --gtest_filter='*Viewer*'
-```
+| `ex_*_headless` | each C++ example runs `--headless` and passes its own self-check (built only with the viewer) |
 
 ---
 
@@ -72,11 +68,7 @@ The opt-in viewer test (`DISABLED_` prefix, see test_scene_state) opens a Simula
   path and prefix strings are gone.
 - **EnvAdopt.RunsOnTheCallersPairAndNeverFreesIt** -- `Env::adopt` runs the Env on the caller's
   model/data, rebuilds included, and never frees them.
-- **SceneFloor.PlacedAtFloorZ** -- the ground plane sits at `SceneSpec::floor_z`.
-- **Recorder.OutputPathReachesFfmpegVerbatim** -- a path with `"` and `$(...)` is written as named
-  and runs nothing (skips without EGL or ffmpeg).
-- **Offscreen.RendersTheSceneIntoABuffer** -- `init_offscreen()` + `render_rgb()` fill the buffer
-  (skips without EGL).
+- **SceneFloor.PlacedAtFloorZ** -- `SceneSpec::floor_z` raises the stage's ground plane.
 - **AFailureSaysWhy** -- a failed call returns a `Status` whose `error` names the cause.
 - **SceneSpecRequired.AnUnsetFieldFailsTheBuild** -- unset mass, friction, camera `fovy` or
   timestep fails `build_scene()`.
@@ -175,9 +167,6 @@ clamped proportional velocity command brings the arm to the target within 0.01 r
   **ASlotAddressSurvivesFurtherBinds** -- slot binding rules; slot pointers stay valid.
 - **ApplyClearsAWrenchThatIsNoLongerPushed** -- a wrench set to zero is cleared from
   `xfrc_applied`.
-- **DISABLED_ViewerKeepsUserWrenchesWhileAnotherThreadReads** -- opens a Simulate window, so it
-  runs only with `--gtest_also_run_disabled_tests`: a user wrench survives 1000 steps while the
-  render thread runs and a second thread reads frames.
 
 ### test_control_modes
 
@@ -206,13 +195,32 @@ Fixes from the 0.4.0 audit; headless, self-skips without the bundled Gen3.
 - **RebuildTest** -- `scene_add_object()` keeps the physics state and the commands; a failed
   `scene_remove_object()` keeps the object order; removing a robot's joint fails and leaves the
   Env; a failed re-init leaves the robot as it was; an `on_reset` set before `init_env()` is
-  kept; recorders follow a rebuild and outlive each other; a frame shows the state it was taken
-  at, delivered on the recorder's thread; one recorder keeps every frame it is given; an
-  attachment left at the world is refused rather than dropped; a pointer held to a port element
-  still commands and reads the robot after `reset()`; a viewer that cannot open returns an error.
+  kept; an attachment left at the world is refused rather than dropped; a pointer held to a port
+  element still commands and reads the robot after `reset()`.
 - **LogLevel.IsASeverityThreshold** -- each level shows its own and more severe messages.
-- **Screenshot.PathReachesFfmpegVerbatimAndAMissingFfmpegIsAFailure** -- the screenshot writer
-  takes its path verbatim and reports a missing ffmpeg.
+
+### test_render
+
+Built only with `mj_kdl_wrapper::render`; self-skips without the bundled Gen3.
+
+- **Recorder.OutputPathReachesFfmpegVerbatim** -- a path with `"` and `$(...)` is written as named
+  and runs nothing (skips without ffmpeg).
+- **Offscreen.RendersTheSceneIntoABuffer** -- `init_offscreen()` + `render_rgb()` fill the buffer.
+- **RecordersFollowARebuildAndOutliveEachOther** -- recorders follow a `scene_add_object()`
+  rebuild; cleaning one up leaves the other rendering; an open recorder re-inits.
+- **AFrameShowsTheStateItWasTakenAt** -- a frame shows the state it was taken at, delivered on
+  the recorder's thread.
+- **OneRecorderKeepsEveryFrameItIsGiven** -- 50 `render_rgb()` calls deliver 50 frames.
+- **OverlaysAreDrawnIntoTheFrame** -- `add_overlay_arrow()` geoms appear in the frame;
+  `clear_trace()` removes them.
+- **ARecorderOutlivesItsEnv** -- `cleanup(Env *)` before `cleanup(VideoRecorder *)` is safe.
+
+### test_viewer
+
+Built only with `mj_kdl_wrapper::viewer`.
+
+- **Viewer.AViewerThatCannotOpenReturnsAnError** -- with no display `open_viewer()` returns an
+  error, registers no hook, and `step()` carries on.
 
 ### test_camera_ros
 

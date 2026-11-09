@@ -2,7 +2,7 @@
 
 This tutorial builds a Python simulation application in layers: create a scene,
 initialize a KDL-backed robot handle, run position and torque control, add
-attachments, objects, cameras, reset hooks, the Simulate UI, recording, and a
+attachments, objects, cameras, reset hooks, the viewer, recording, and a
 small tabletop task structure.
 
 Installation stays in the README. The snippets below assume `mj_kdl_wrapper`,
@@ -16,9 +16,9 @@ The Python API has the same layers as the C++ wrapper:
 | Layer | Type | Responsibility |
 |-------|------|----------------|
 | Scene description | `SceneSpec`, `RobotSpec`, `AttachmentSpec`, `SceneObject`, `CameraSpec` | Describe what should be compiled into MuJoCo |
-| Runtime owner | `Env` | Own the compiled MuJoCo model/data, the robots and the viewer |
+| Runtime owner | `Env` | Own the compiled MuJoCo model/data, the robots and the overlay geoms |
 | Robot control handle | `Robot` | KDL chain, measured ports, command ports |
-| Visualization/recording | the `Env`'s viewer, `VideoRecorder` | Interactive Simulate UI and offscreen MP4 recording |
+| Visualization/recording | `mj_kdl_wrapper.viewer.Viewer`, mujoco's renderers | MuJoCo Studio window (`mujoco.studio`) and offscreen rendering (`mujoco.rendering.filament`) |
 | KDL interop | `PyKDL` | FK, IK, dynamics solvers over the wrapper-built chain |
 
 Most applications follow this flow:
@@ -27,15 +27,16 @@ Most applications follow this flow:
 2. Call `Env.build(spec)`.
 3. Create one or more `Robot` handles with `env.create_robot()`.
 4. Install `env.on_reset` if task state must be restored.
-5. Optionally `env.open_viewer()`.
-6. In the loop: `env.step()`, `env.update()`, compute commands, write command ports.
-7. Close the recorder and the environment when done (`env.close()` closes the viewer).
+5. Optionally open a `Viewer(env, title)`.
+6. In the loop: `env.update()`, compute commands, write command ports, then `env.step()`
+   (or `viewer.step()`, which also syncs with the window and paces).
+7. Close the viewer, the recorder and the environment when done.
 
 ## Complete Runnable Script
 
 The code below is a complete interactive script. Saved as `python_tutorial_demo.py` and run
 from any directory in an environment where `mj_kdl_wrapper` is installed, it builds a table
-scene, initializes a tool-aware KDL robot, opens the Simulate UI, and runs gravity
+scene, initializes a tool-aware KDL robot, opens the viewer, and runs gravity
 compensation.
 Pass `--headless` to run the same controller without a window for CI or remote
 machines without a display.
@@ -51,6 +52,7 @@ import argparse
 import PyKDL as kdl
 
 import mj_kdl_wrapper as mjk
+from mj_kdl_wrapper.viewer import Viewer
 
 
 HOME_POSE = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
@@ -98,8 +100,7 @@ def make_cube() -> mjk.SceneObject:
 def build_env() -> tuple[mjk.Env, mjk.Robot]:
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
-    spec.add_floor = True
-    spec.add_skybox = True
+    spec.use_stage = True
 
     table = make_table()
     spec.objects = [table, make_cube()]
@@ -137,11 +138,12 @@ def run_controller(env: mjk.Env, robot: mjk.Robot, dyn: kdl.ChainDynParam) -> No
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--headless", action="store_true", help="run without opening the Simulate UI")
+    parser.add_argument("--headless", action="store_true", help="run without opening the viewer")
     parser.add_argument("--duration", type=float, default=2.0, help="run duration in seconds")
     args = parser.parse_args()
 
     env, robot = build_env()
+    viewer = None
     try:
         robot.ctrl_mode = mjk.CtrlMode.TORQUE
 
@@ -164,15 +166,14 @@ def main() -> int:
         start_xyz = tcp_xyz()
 
         if not args.headless:
-            env.open_viewer("python tutorial")
-            env.viewer.use_camera("task")
+            viewer = Viewer(env, "python tutorial")
+        step = viewer.step if viewer else env.step
         end_time = env.data.time + args.duration
         # Ends after the duration either way; closing the window ends it early.
         while env.data.time < end_time:
             run_controller(env, robot, dyn)
-            if not env.step():
+            if not step():
                 break
-            env.pace()
 
         env.update()
         end_xyz = tcp_xyz()
@@ -183,6 +184,8 @@ def main() -> int:
         print(f"cameras: {' '.join(cameras)}")
         print(f"EE drift: {drift:.6f} m")
     finally:
+        if viewer:
+            viewer.close()
         env.close()
     return 0
 
@@ -193,18 +196,19 @@ if __name__ == "__main__":
 
 ## 1. Start With One Robot Scene
 
-`SceneSpec.timestep`, `add_floor`, and `add_skybox` are required. They are
-explicit choices, not defaults the wrapper invents. `floor_z` (default `0.0`)
-places the ground plane along the world z axis, for a scene whose world frame
-sits above ground level.
+`SceneSpec.timestep` and `use_stage` are required. They are explicit choices,
+not defaults the wrapper invents. `use_stage = True` builds on a stage MJCF
+(floor, sky, haze, lights): the bundled `assets/stage/default.xml` unless
+`spec.stage` names another; `use_stage = False` builds on an empty world.
+`floor_z` (default `0.0`) is added to the height of every plane on the stage's
+worldbody, for a scene whose world frame sits above ground level.
 
 ```python
 import mj_kdl_wrapper as mjk
 
 spec = mjk.SceneSpec()
 spec.timestep = 0.002
-spec.add_floor = True
-spec.add_skybox = True
+spec.use_stage = True
 
 robot_spec = mjk.RobotSpec()
 robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
@@ -261,7 +265,6 @@ while env.data.time < end_time:
     env.step()
     env.update()
     robot.jnt_pos_cmd = list(robot.jnt_pos_msr)
-    env.pace()
 ```
 
 `env.step()` advances the `Env` by one MuJoCo timestep; afterwards joint state
@@ -298,7 +301,6 @@ while env.data.time < end_time:
     env.step()
     env.update()
     robot.jnt_trq_cmd = gravity()
-    env.pace()
 
 tcp = kdl.Frame()
 fk.JntToCart(joints(robot.jnt_pos_msr), tcp)
@@ -401,7 +403,7 @@ top-level bodies.
 
 ```python
 env = mjk.Env.build(spec)
-env.open_viewer("object scene")
+viewer = Viewer(env, "object scene")   # from mj_kdl_wrapper.viewer import Viewer
 ```
 
 ## 7. Add Cameras
@@ -419,23 +421,21 @@ camera.fovy = 45.0
 spec.cameras = [camera]
 ```
 
-List compiled cameras after build. A viewer or recorder can switch to any
-compiled fixed camera after it is opened:
+List compiled cameras after build. A renderer switches to one through its
+`mujoco.MjvCamera` (`type = mujoco.mjtCamera.mjCAMERA_FIXED`, `fixedcamid` = the camera's id):
 
 ```python
 print([env.model.camera(i).name for i in range(env.model.ncam)])
 ```
-
-Pass `""` to return to the free camera.
 
 ## 8. Write Reset Hooks
 
 `Env.reset()` resets MuJoCo, re-seeds every registered robot's ports from the reset state (so
 stale commands do not hit the first post-reset step), runs your hook, then reads the
 measurements back. A command the hook primes is kept; a POSITION robot the hook moves needs
-its `jnt_pos_cmd` set there too. The Simulate UI's reset button does the same. The hook gets a
+its `jnt_pos_cmd` set there too. The viewer's reset button does the same. The hook gets a
 `ResetContext` copy it may keep; an exception it raises comes out of `reset()` (or the
-`step()` that ran a UI reset) once the measurements are read back.
+`viewer.step()` that ran a UI reset) once the measurements are read back.
 
 ```python
 home = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
@@ -458,79 +458,94 @@ info = env.reset(opts)
 Use reset hooks for robot pose, object pose, controller state, randomization,
 and task state. Avoid hiding reset logic in the control loop.
 
-## 9. Use The Simulate UI
+## 9. Use The Viewer
 
-`env.open_viewer()` starts the custom Simulate UI on the `Env`, with or without
-robots. The viewer owns the window; your loop still owns controller logic and its end
-condition, and `env.step()` returns `False` once the window is closed.
+`mj_kdl_wrapper.viewer.Viewer(env, title)` opens a MuJoCo Studio window (`mujoco.studio`)
+on the `Env`, with or without robots. The window runs on a thread of its own; your loop
+still owns controller logic and its end condition. `viewer.step()` syncs with the window,
+steps the `Env` unless the window is paused, and paces to the window's speed; it returns
+`False` once the window is closed.
 
 ```python
-env.open_viewer("task")
-env.viewer.use_camera("task")
+from mj_kdl_wrapper.viewer import Viewer
 
-while env.data.time < 10.0 and env.step():
+viewer = Viewer(env, "task")
+while env.data.time < 10.0:
     env.update()
     robot.jnt_trq_cmd = gravity()
-    env.pace()
+    if not viewer.step():
+        break
+viewer.close()
 ```
 
-The viewer exposes the same wrapper panels as C++: `Frames`, `Trace`, `Perturb`,
-`Recorder`, and `RTF`. The real-time factor controls pacing; `1.0` is real time
-and `0.0` runs as fast as possible. `env.close()` closes the window.
+The window's pause, speed, reset, perturbation and physics panels are mujoco's own.
+`viewer.speed` is in percent of real time; `viewer.paused` reads the pause. `Viewer` is also
+a context manager.
 
 ### Draw A Live Trajectory Trace Overlay
 
-Trace helpers draw line segments in world frame. Clear the user scene each frame
-and add the segments you want visible:
+Trace helpers on the `Env` draw line segments in world frame; the viewer draws them. Clear
+them each frame and add the segments you want visible:
 
 ```python
 trace = []
 orange = [1.0, 0.5, 0.1, 1.0]
 
-while env.data.time < 10.0 and env.step():
+while env.data.time < 10.0:
     env.update()
     frame = kdl.Frame()
     fk.JntToCart(joints(robot.jnt_pos_msr), frame)
     trace.append([frame.p.x(), frame.p.y(), frame.p.z()])
     trace = trace[-1024:]
 
-    env.viewer.clear_trace()
+    env.clear_trace()
     for a, b in zip(trace, trace[1:]):
-        env.viewer.add_trace_segment(a, b, orange)
+        env.add_trace_segment(a, b, orange)
 
     robot.jnt_trq_cmd = gravity()
-    env.pace()
+    if not viewer.step():
+        break
 ```
 
-`add_trace_segment()` silently drops segments once the user-scene geometry
-buffer is full, so keep the trace bounded.
+`add_trace_segment()` and `add_overlay_arrow()` silently drop geoms once the overlay is
+full (8192 geoms), so keep the trace bounded. `env.overlay_geoms()` returns them as
+`mujoco.MjvGeom`s for a renderer of your own.
 
 ## 10. Record Video
 
-Headless recording uses `VideoRecorder`. Call `record_frame()` after stepping
-the simulation state you want captured.
+The wheel has no recorder of its own; render with mujoco's renderers. This is the
+`Recorder` of `ex_table_pour.py`: `mujoco.rendering.filament` into a numpy array, encoded by
+`imageio[ffmpeg]` (`pip install "imageio[ffmpeg]"`). Render after stepping the state you want
+captured.
 
 ```python
-recorder = mjk.VideoRecorder.open_preset(
-    env,
-    "episode.mp4",
-    mjk.VideoResolution.R720p,
-    fps=60,
-)
-recorder.use_camera("task")
+import imageio.v2 as imageio
+import mujoco
+import numpy as np
+from mujoco import mjrf
+from mujoco.rendering.filament import model_scene, renderer
+
+r = renderer.Renderer(mjrf.Context(mjrf.ContextConfig()))
+scene = model_scene.ModelScene(r.context, env.model, r.scene("scn"))
+pixels = np.empty((720, 1280, 3), dtype=np.uint8)
+r.target("out", pixels)
+cam = mujoco.MjvCamera()
+cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
+cam.fixedcamid = env.model.camera("task").id
+writer = imageio.get_writer("episode.mp4", fps=60, codec="libx264", macro_block_size=1)
 
 try:
     for _ in range(3000):
-        env.step()
         env.update()
         robot.jnt_trq_cmd = gravity()
-        recorder.record_frame()
+        env.step()
+        scene.update(env.data)
+        gl_cam = mujoco.mjv_camera2GLCamera(env.model, env.data, cam)
+        r.render([renderer.View(scene="scn", target="out", camera=gl_cam)])
+        writer.append_data(pixels)
 finally:
-    recorder.close()
+    writer.close()
 ```
-
-Use `VideoRecorder.open(env, path, width, height, fps)` when you need explicit
-frame dimensions instead of a preset.
 
 ## 11. Build A Tabletop Task Structure
 
@@ -547,8 +562,7 @@ A pick-place task is the same pieces assembled with a small state machine:
 ```python
 spec = mjk.SceneSpec()
 spec.timestep = 0.002
-spec.add_floor = True
-spec.add_skybox = True
+spec.use_stage = True
 
 table = mjk.SceneObject()
 table.name = "table"
@@ -717,8 +731,8 @@ env.update()
 env.remove_object("obstacle")
 ```
 
-Existing Python `Robot` handles, the viewer and open recorders follow the new model. A
-closed `Env` or `Robot` raises `RuntimeError` instead of leaving dangling native
+Existing Python `Robot` handles follow the new model; a renderer built on the old
+`env.model` must be rebuilt. A closed `Env` or `Robot` raises `RuntimeError` instead of leaving dangling native
 pointers.
 
 ## 14. Grow Into The Examples

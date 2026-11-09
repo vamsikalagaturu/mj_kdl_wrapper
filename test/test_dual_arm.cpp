@@ -35,9 +35,8 @@ class DualArmTest : public testing::Test
 
         // arm1 at x = -0.5 m facing +X; arm2 at x = +0.5 m turned 180 deg about Z, prefixed "r2_".
         mj_kdl::SceneSpec scene;
-        scene.timestep   = 0.002;
-        scene.add_floor  = true;
-        scene.add_skybox = false;
+        scene.timestep  = 0.002;
+        scene.use_stage = true;
         mj_kdl::RobotSpec left, right;
         left.path     = mjcf;
         left.pos[0]   = -0.5;

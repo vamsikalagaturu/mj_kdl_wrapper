@@ -20,25 +20,15 @@ jobs:
         ros_distro: [jazzy, lyrical]
     container:
       image: ros:${{ matrix.ros_distro }}
-    env:
-      MUJOCO_VERSION: 3.14.0
-      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.14.0
     steps:
-      # System build dependencies (KDL/MuJoCo are not installed from apt).
+      # System build dependencies (KDL and MuJoCo are built from source, not installed from apt).
+      # The camera publisher needs only the core, so render and viewer are left out here.
       - name: Install dependencies
         run: |
           apt-get update -q
           apt-get install -y \
-            git wget cmake g++ python3-vcstool \
-            libeigen3-dev libglfw3-dev libgl-dev libegl-dev ffmpeg \
+            git cmake g++ python3-vcstool libeigen3-dev ffmpeg \
             python3-colcon-common-extensions
-
-      # Native MuJoCo release the wrapper builds against.
-      - name: Install MuJoCo ${{ env.MUJOCO_VERSION }}
-        run: |
-          wget -q "https://github.com/google-deepmind/mujoco/releases/download/${MUJOCO_VERSION}/mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
-          tar xzf "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz" -C /tmp
-          rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
 
       # The wrapper goes under the colcon workspace src/.
       - name: Checkout the wrapper into the workspace
@@ -46,8 +36,9 @@ jobs:
         with:
           path: ws/src/mj_kdl_wrapper
 
-      # The secorolab Orocos KDL fork is a workspace package, at ws/src/third_party/.
-      - name: Import the Orocos KDL fork
+      # The secorolab Orocos KDL fork is a workspace package, at ws/src/third_party/, and MuJoCo's
+      # source lands beside it.
+      - name: Import the Orocos KDL fork and MuJoCo
         run: vcs import ws/src < ws/src/mj_kdl_wrapper/mj_kdl_wrapper.repos
 
       # Build the shared KDL first, then the wrapper against it (FROM_PACKAGE).
@@ -60,7 +51,8 @@ jobs:
           source install/setup.bash
           colcon build --packages-select mj_kdl_wrapper \
             --cmake-args -DMJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON \
-                         -DMJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}" \
+                         -DMJ_KDL_MUJOCO_DIR="${PWD}/src/third_party/mujoco" \
+                         -DMJ_KDL_WITH_RENDER=OFF -DMJ_KDL_WITH_VIEWER=OFF \
                          -DMJ_KDL_WITH_ROS=ON \
                          -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF
 

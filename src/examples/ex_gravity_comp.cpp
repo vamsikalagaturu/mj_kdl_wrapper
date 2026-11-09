@@ -8,6 +8,7 @@
  * Runs 15 s (7500 steps) and prints the EE drift; --headless skips the viewer and exits 1 if
  * the drift exceeds kMaxDrift. */
 
+#include "mj_kdl_wrapper/viewer.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
 
@@ -45,7 +46,8 @@ int main(int argc, char *argv[])
         ex::prime_gravity(robot, dyn, q_home);
     };
     mj_kdl::reset(&env);
-    if (!headless && !mj_kdl::open_viewer(&env)) return 1;
+    mj_kdl::Viewer viewer;
+    if (!headless && !mj_kdl::open_viewer(&viewer, &env)) return 1;
 
     KDL::Frame ee_start;
     fk.JntToCart(q_home, ee_start);
@@ -53,7 +55,7 @@ int main(int argc, char *argv[])
         mj_kdl::update(&env);
         ex::pd_gravity(robot, dyn, q_home);
         if (!mj_kdl::step(&env)) break;
-        mj_kdl::pace_realtime(&env);
+        mj_kdl::pace_realtime(&viewer);
     }
     mj_kdl::update(&env);
 

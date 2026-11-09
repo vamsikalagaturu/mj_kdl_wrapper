@@ -1,11 +1,14 @@
 /* test_camera_ros.cpp
- * The CameraInfo a sim camera publishes, and the gate that keeps an unwatched topic free.
+ * The CameraInfo a sim camera publishes, its image_transport topics, the gate that keeps an
+ * unwatched topic free, and the sim time on /clock.
  * Built only when the camera_ros target is (MJ_KDL_WITH_ROS). */
 
 #include "mj_kdl_wrapper/camera_ros.hpp"
+#include "mj_kdl_wrapper/clock_ros.hpp"
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -76,6 +79,37 @@ TEST_F(CameraRosTest, NobodyWatchingCostsNothing)
     // Due by rate at both times; with no subscriber neither asks for a frame.
     EXPECT_FALSE(pub.wants_frame(0.0));
     EXPECT_FALSE(pub.wants_frame(10.0));
+}
+
+TEST_F(CameraRosTest, ImageAndInfoShareOneCameraPublisher)
+{
+    mj_kdl::CameraRosPublisher pub(*node_, model_, conf_);
+
+    const auto topics = node_->get_topic_names_and_types();
+    ASSERT_TRUE(topics.count("/wrist/color"));
+    ASSERT_TRUE(topics.count("/wrist/camera_info"));
+    EXPECT_EQ(topics.at("/wrist/color").front(), "sensor_msgs/msg/Image");
+    EXPECT_EQ(topics.at("/wrist/camera_info").front(), "sensor_msgs/msg/CameraInfo");
+}
+
+TEST_F(CameraRosTest, ClockCarriesTheSimTime)
+{
+    mj_kdl::ClockRosPublisher clock(*node_);
+    rclcpp::Time              received;
+    auto                      sub = node_->create_subscription<rosgraph_msgs::msg::Clock>(
+      "/clock",
+      rclcpp::ClockQoS(),
+      [&received](const rosgraph_msgs::msg::Clock &msg) { received = msg.clock; }
+    );
+
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(node_);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (received.nanoseconds() == 0 && std::chrono::steady_clock::now() < deadline) {
+        clock.publish(1.25);
+        executor.spin_some(std::chrono::milliseconds(10));
+    }
+    EXPECT_EQ(received.nanoseconds(), 1'250'000'000);
 }
 
 int main(int argc, char *argv[])

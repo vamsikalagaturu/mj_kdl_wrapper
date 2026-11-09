@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import PyKDL as kdl
 
 import mj_kdl_wrapper as mjk
+from mj_kdl_wrapper.viewer import Viewer
 
 HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 SURFACE_Z = 0.70
@@ -78,8 +79,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
 
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
-    spec.add_floor = True
-    spec.add_skybox = True
+    spec.use_stage = True
     spec.objects = [table, cube]
     spec.robots = [robot_spec]
     env = mjk.Env.build(spec)
@@ -236,12 +236,11 @@ def run_phase(env, robot, fingers, dyn, phase: Phase, state: dict) -> bool:
         done_pose = phase.settle_tol < 0.0 or err <= phase.settle_tol
         if (elapsed >= phase.duration and done_pose) or elapsed >= phase.timeout:
             return True
-        if not env.step():
+        if not state["step"]():
             return False
         if state["reset"]:
             state["reset"] = False
             raise ResetRequested()
-        env.pace()
         metrics = state["metrics"]
         metrics["elbow_min"] = min(metrics["elbow_min"], env.body_frame("forearm_link").p.z())
         force = PUSH_DIR * (PUSH_FORCE * push_scale(elapsed) if pushing else 0.0)
@@ -256,6 +255,7 @@ def main() -> int:
     args = parser.parse_args()
 
     env, robot = build_env()
+    viewer = None
     try:
         robot.set_control_mode(mjk.CtrlMode.TORQUE)
         fingers = env.data.actuator("g_fingers_actuator")
@@ -281,7 +281,8 @@ def main() -> int:
         env.reset()
         state["reset"] = False
         if args.gui:
-            env.open_viewer("ex_table_pick_place.py")
+            viewer = Viewer(env, "ex_table_pick_place.py")
+        state["step"] = viewer.step if viewer else env.step
 
         completed = False
         while not completed:
@@ -321,6 +322,8 @@ def main() -> int:
             f"(limit {MIN_ELBOW_HEIGHT * 1000} mm)"
         )
     finally:
+        if viewer:
+            viewer.close()
         env.close()
     if args.gui:
         return 0

@@ -102,9 +102,9 @@ struct PySceneSpec
     std::vector<PyRobotSpec>   robots;
     std::optional<double>      timestep;
     double                     gravity_z = -9.81;
-    std::optional<bool>        add_floor;
+    std::optional<bool>        use_stage;
+    std::string                stage;
     double                     floor_z = 0.0;
-    std::optional<bool>        add_skybox;
     std::vector<PySceneObject> objects;
     std::vector<PySiteSpec>    sites;
     std::vector<PyCameraSpec>  cameras;
@@ -213,13 +213,12 @@ SceneSpec to_cpp(const PySceneSpec &src)
 {
     SceneSpec out;
     if (!src.timestep) throw std::runtime_error("SceneSpec.timestep must be set");
-    if (!src.add_floor) throw std::runtime_error("SceneSpec.add_floor must be set");
-    if (!src.add_skybox) throw std::runtime_error("SceneSpec.add_skybox must be set");
-    out.timestep   = *src.timestep;
-    out.gravity_z  = src.gravity_z;
-    out.add_floor  = *src.add_floor;
-    out.floor_z    = src.floor_z;
-    out.add_skybox = *src.add_skybox;
+    if (!src.use_stage) throw std::runtime_error("SceneSpec.use_stage must be set");
+    out.timestep  = *src.timestep;
+    out.gravity_z = src.gravity_z;
+    out.use_stage = *src.use_stage;
+    out.stage     = src.stage;
+    out.floor_z   = src.floor_z;
     out.robots.reserve(src.robots.size());
     for (const auto &item : src.robots) out.robots.push_back(to_cpp(item));
     out.objects.reserve(src.objects.size());
@@ -434,7 +433,7 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         return out;
     }
 
-    // The viewer thread is stopped by cleanup before the mujoco objects are dropped.
+    // cleanup frees nothing of the adopted pair, so the mujoco objects are dropped after it.
     void close()
     {
         {
@@ -472,7 +471,7 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         return info;
     }
 
-    // The simulate UI's reset runs inside step(), so on_reset can fail here too.
+    // An EnvHooks::on_step may reset the Env, so on_reset can fail here too.
     bool step()
     {
         ensure_open();
@@ -492,21 +491,61 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         mj_kdl::update(&env);
     }
 
-    void pace()
+    void add_trace_segment(
+      const std::array<double, 3> &a,
+      const std::array<double, 3> &b,
+      const std::array<float, 4>  *rgba
+    )
     {
-        ensure_open();
-        mj_kdl::pace_realtime(&env);
+        const KDL::Vector ka(a[0], a[1], a[2]);
+        const KDL::Vector kb(b[0], b[1], b[2]);
+        mj_kdl::add_trace_segment(&env, ka, kb, rgba ? rgba->data() : nullptr);
     }
 
-    void open_viewer(const std::string &title)
+    void add_overlay_arrow(
+      const std::array<double, 3> &from,
+      const std::array<double, 3> &dir,
+      double                       length,
+      const std::array<float, 4>  *rgba
+    )
     {
-        ensure_open();
-        mj_kdl::Status s;
-        {
-            py::gil_scoped_release nogil;
-            s = mj_kdl::open_viewer(&env, title.c_str());
+        const KDL::Vector kfrom(from[0], from[1], from[2]);
+        const KDL::Vector kdir(dir[0], dir[1], dir[2]);
+        mj_kdl::add_overlay_arrow(&env, kfrom, kdir, length, rgba ? rgba->data() : nullptr);
+    }
+
+    // mujoco.MjvGeom exposes no address, so each one is made the way mujoco makes geoms.
+    py::list overlay_geoms() const
+    {
+        py::module_ mujoco = py::module_::import("mujoco");
+        py::list    out;
+        for (const mjvGeom &g : mj_kdl::overlay_geoms(&env)) {
+            py::object geom = mujoco.attr("MjvGeom")();
+            mujoco.attr("mjv_initGeom")(
+              geom,
+              g.type,
+              py::array_t<mjtNum>(
+                3, std::array<mjtNum, 3>{ g.size[0], g.size[1], g.size[2] }.data()
+              ),
+              py::array_t<mjtNum>(3, std::array<mjtNum, 3>{ g.pos[0], g.pos[1], g.pos[2] }.data()),
+              py::array_t<mjtNum>(
+                9,
+                std::array<mjtNum, 9>{ g.mat[0],
+                                       g.mat[1],
+                                       g.mat[2],
+                                       g.mat[3],
+                                       g.mat[4],
+                                       g.mat[5],
+                                       g.mat[6],
+                                       g.mat[7],
+                                       g.mat[8] }
+                  .data()
+              ),
+              py::array_t<float>(4, g.rgba)
+            );
+            out.append(geom);
         }
-        if (!s) throw std::runtime_error(s.error);
+        return out;
     }
 
     void add_object(const PySceneObject &object)
@@ -696,174 +735,6 @@ std::shared_ptr<PyRobot> PyEnv::create_robot_from_chain(
     return out;
 }
 
-// The simulate UI of an Env; every call is a no-op (or false) while it is closed.
-// Calls drop the GIL: the render thread may wait for it (pip glfw's error hook) under their lock.
-struct PyViewer
-{
-    py::object owner; // the Python Env, which keeps env alive
-    PyEnv     *env = nullptr;
-
-    mj_kdl::Viewer *viewer() const { return &env->env.viewer; }
-
-    bool is_running() const
-    {
-        py::gil_scoped_release nogil;
-        return mj_kdl::is_running(viewer());
-    }
-
-    bool key_pressed(int glfw_key) const
-    {
-        py::gil_scoped_release nogil;
-        return mj_kdl::key_pressed(viewer(), glfw_key);
-    }
-
-    void capture_key(int glfw_key, bool capture)
-    {
-        py::gil_scoped_release nogil;
-        mj_kdl::capture_key(viewer(), glfw_key, capture);
-    }
-
-    void clear_trace()
-    {
-        py::gil_scoped_release nogil;
-        mj_kdl::clear_trace(viewer());
-    }
-
-    void add_trace_segment(
-      const std::array<double, 3> &a,
-      const std::array<double, 3> &b,
-      const std::array<float, 4>  *rgba
-    )
-    {
-        KDL::Vector            ka(a[0], a[1], a[2]);
-        KDL::Vector            kb(b[0], b[1], b[2]);
-        py::gil_scoped_release nogil;
-        mj_kdl::add_trace_segment(viewer(), ka, kb, rgba ? rgba->data() : nullptr);
-    }
-
-    bool use_camera(const std::string &name)
-    {
-        env->ensure_open();
-        py::gil_scoped_release nogil;
-        return mj_kdl::use_camera(viewer(), env->env.model, name.empty() ? nullptr : name.c_str());
-    }
-
-    void set_free_camera(
-      double                       distance,
-      double                       azimuth,
-      double                       elevation,
-      const std::array<double, 3> &lookat
-    )
-    {
-        py::gil_scoped_release nogil;
-        mj_kdl::set_free_camera(viewer(), distance, azimuth, elevation, lookat);
-    }
-};
-
-struct PyVideoRecorder
-{
-    mj_kdl::VideoRecorder recorder;
-    py::object            owner; // the Python Env, which keeps env alive
-    PyEnv                *env    = nullptr;
-    bool                  active = false;
-    int                   width  = 0;
-    int                   height = 0;
-
-    ~PyVideoRecorder() { close(); }
-
-    // out_path empty: offscreen only, no video file.
-    static std::shared_ptr<PyVideoRecorder> make(
-      const std::shared_ptr<PyEnv> &env,
-      const std::string            &out_path,
-      int                           width,
-      int                           height,
-      int                           fps
-    )
-    {
-        if (!env) throw std::runtime_error("env is null");
-        env->ensure_open();
-        mjModel *m   = env->env.model;
-        auto     out = std::shared_ptr<PyVideoRecorder>(new PyVideoRecorder());
-        out->owner   = py::cast(env);
-        out->env     = env.get();
-        const mj_kdl::Status s =
-          out_path.empty()
-            ? mj_kdl::init_offscreen(&out->recorder, m, width, height)
-            : mj_kdl::init_video_recorder(&out->recorder, m, out_path.c_str(), width, height, fps);
-        if (!s) throw std::runtime_error(s.error);
-        out->active = true;
-        out->width  = width;
-        out->height = height;
-        return out;
-    }
-
-    void ensure_open() const
-    {
-        if (!active || !env->env.model) throw std::runtime_error("recorder is closed");
-    }
-
-    py::array_t<std::uint8_t> render_rgb()
-    {
-        ensure_open();
-        py::array_t<std::uint8_t> out({ height, width, 3 });
-        std::uint8_t             *pixels = out.mutable_data();
-        bool                      ok     = false;
-        {
-            py::gil_scoped_release nogil;
-            ok = mj_kdl::render_rgb(&recorder, &env->env, pixels);
-        }
-        if (!ok) throw std::runtime_error("render_rgb failed");
-        return out;
-    }
-
-    bool record_frame()
-    {
-        ensure_open();
-        py::gil_scoped_release nogil;
-        return mj_kdl::record_frame(&recorder, &env->env);
-    }
-
-    bool use_camera(const std::string &name)
-    {
-        ensure_open();
-        if (name.empty()) {
-            mjv_defaultFreeCamera(env->env.model, &recorder.cam);
-            return true;
-        }
-        const int id = mj_name2id(env->env.model, mjOBJ_CAMERA, name.c_str());
-        if (id < 0) return false;
-        recorder.cam.type       = mjCAMERA_FIXED;
-        recorder.cam.fixedcamid = id;
-        return true;
-    }
-
-    void set_free_camera(
-      double                       distance,
-      double                       azimuth,
-      double                       elevation,
-      const std::array<double, 3> &lookat
-    )
-    {
-        if (!active) throw std::runtime_error("recorder is closed");
-        mjvCamera &cam = recorder.cam;
-        cam.type       = mjCAMERA_FREE;
-        cam.fixedcamid = -1;
-        cam.distance   = distance;
-        cam.azimuth    = azimuth;
-        cam.elevation  = elevation;
-        std::copy(lookat.begin(), lookat.end(), cam.lookat);
-    }
-
-    void close()
-    {
-        if (!active) return;
-        mj_kdl::cleanup(&recorder);
-        active = false;
-        owner  = py::object();
-        env    = nullptr;
-    }
-};
-
 } // namespace
 
 PYBIND11_MODULE(_mj_kdl_wrapper, m)
@@ -918,14 +789,6 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "joints", &mj_kdl::CtrlModeSpec::joints, "Joints to give the mode; empty = all actuated."
       )
       .def_readwrite("kv", &mj_kdl::CtrlModeSpec::kv, "VELOCITY actuator gain [N m s/rad].");
-
-    py::enum_<mj_kdl::VideoResolution>(m, "VideoResolution")
-      .value("R360p", mj_kdl::VideoResolution::R360p)
-      .value("R480p", mj_kdl::VideoResolution::R480p)
-      .value("R720p", mj_kdl::VideoResolution::R720p)
-      .value("R1080p", mj_kdl::VideoResolution::R1080p)
-      .value("R2K", mj_kdl::VideoResolution::R2K)
-      .value("R4K", mj_kdl::VideoResolution::R4K);
 
     py::class_<PyAttachTarget>(
       m,
@@ -1036,7 +899,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def_readwrite("fovy", &PyCameraSpec::fovy, "Required vertical field of view, in degrees.");
 
     py::class_<PySceneSpec>(
-      m, "SceneSpec", "Full scene description. timestep, add_floor, and add_skybox are required."
+      m, "SceneSpec", "Full scene description. timestep and use_stage are required."
     )
       .def(py::init<>())
       .def_readwrite("robots", &PySceneSpec::robots, "Robot specs to add to the scene.")
@@ -1047,12 +910,16 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "gravity_z", &PySceneSpec::gravity_z, "World z gravity in m/s^2; defaults to -9.81."
       )
       .def_readwrite(
-        "add_floor", &PySceneSpec::add_floor, "Required flag for checker ground plane."
+        "use_stage",
+        &PySceneSpec::use_stage,
+        "Required: build on a stage (floor, sky, lights), or on an empty world."
       )
       .def_readwrite(
-        "floor_z", &PySceneSpec::floor_z, "Ground plane height in the world frame; defaults to 0."
+        "stage", &PySceneSpec::stage, "Stage MJCF path; empty uses the bundled default stage."
       )
-      .def_readwrite("add_skybox", &PySceneSpec::add_skybox, "Required flag for skybox and light.")
+      .def_readwrite(
+        "floor_z", &PySceneSpec::floor_z, "Added to the height of the stage's planes [m]."
+      )
       .def_readwrite("objects", &PySceneSpec::objects, "Scene objects and fixtures.")
       .def_readwrite("sites", &PySceneSpec::sites, "Frames to mark on the scene's bodies.")
       .def_readwrite("cameras", &PySceneSpec::cameras, "Named fixed world cameras.");
@@ -1294,158 +1161,15 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "Transform from the KDL tip frame to the TCP frame as a PyKDL.Frame."
       );
 
-    py::class_<PyViewer>(
-      m,
-      "Viewer",
-      "The simulate UI of an Env, opened by Env.open_viewer(); inert while closed.",
-      gc_keeps<PyViewer, &PyViewer::owner>(false)
-    )
-      .def("is_running", &PyViewer::is_running, "True while the viewer window is open.")
-      .def(
-        "key_pressed",
-        &PyViewer::key_pressed,
-        py::arg("key"),
-        "True while the GLFW key code is held; False headless."
-      )
-      .def(
-        "capture_key",
-        &PyViewer::capture_key,
-        py::arg("key"),
-        py::arg("capture") = true,
-        "Claim a GLFW key so the UI does not act on it; capture=False gives it back."
-      )
-      .def("clear_trace", &PyViewer::clear_trace, "Clear viewer trace geometry.")
-      .def(
-        "add_trace_segment",
-        [](
-          PyViewer                    &self,
-          const std::array<double, 3> &a,
-          const std::array<double, 3> &b,
-          const py::object            &rgba
-        ) {
-            if (rgba.is_none()) {
-                self.add_trace_segment(a, b, nullptr);
-                return;
-            }
-            auto color = rgba.cast<std::array<float, 4>>();
-            self.add_trace_segment(a, b, &color);
-        },
-        py::arg("a"),
-        py::arg("b"),
-        py::arg("rgba") = py::none(),
-        "Add a trace line segment in world coordinates."
-      )
-      .def(
-        "use_camera",
-        &PyViewer::use_camera,
-        py::arg("name") = "",
-        "Switch to a named camera; empty name restores default."
-      )
-      .def(
-        "set_free_camera",
-        &PyViewer::set_free_camera,
-        py::arg("distance"),
-        py::arg("azimuth"),
-        py::arg("elevation"),
-        py::arg("lookat") = std::array<double, 3>{ 0.0, 0.0, 0.0 },
-        "Configure the free orbit camera (distance, azimuth/elevation in degrees, "
-        "lookat xyz in meters)."
-      )
-      .def_property(
-        "realtime_factor",
-        [](const PyViewer &self) { return self.viewer()->realtime_factor; },
-        [](PyViewer &self, double value) {
-            if (value < 0.0) throw std::invalid_argument("realtime_factor must be >= 0");
-            self.viewer()->realtime_factor = value;
-        }
-      );
-
-    // Registered before the recorder, whose signatures name it.
-    py::class_<PyEnv, std::shared_ptr<PyEnv>> env_class(
+    py::class_<PyEnv, std::shared_ptr<PyEnv>>(
       m,
       "Env",
-      "The simulation: compiled scene, its robots and viewer.",
+      "The simulation: compiled scene and its robots. View it with mj_kdl_wrapper.viewer, render "
+      "it with mujoco.Renderer on env.model and env.data.",
       gc_keeps<PyEnv, &PyEnv::reset_callback>(true)
-    );
-
-    py::class_<PyVideoRecorder, std::shared_ptr<PyVideoRecorder>>(
-      m,
-      "VideoRecorder",
-      "Offscreen MuJoCo video recorder for an Env.",
-      gc_keeps<PyVideoRecorder, &PyVideoRecorder::owner>(false)
     )
-      .def_static(
-        "open",
-        [](const std::shared_ptr<PyEnv> &env, const std::string &out, int w, int h, int fps) {
-            if (out.empty()) throw std::invalid_argument("out_path must be set");
-            return PyVideoRecorder::make(env, out, w, h, fps);
-        },
-        py::arg("env"),
-        py::arg("out_path"),
-        py::arg("width")  = 1280,
-        py::arg("height") = 720,
-        py::arg("fps")    = 60,
-        "Open an offscreen recorder for an Env with explicit dimensions."
-      )
-      .def_static(
-        "open_preset",
-        [](
-          const std::shared_ptr<PyEnv> &env,
-          const std::string            &out,
-          mj_kdl::VideoResolution       res,
-          int                           fps
-        ) {
-            if (out.empty()) throw std::invalid_argument("out_path must be set");
-            // The size init_video_recorder gives a preset, kept so render_rgb knows the frame.
-            const int h = static_cast<int>(res);
-            const int w = ((h * 16 / 9) + 1) / 2 * 2;
-            return PyVideoRecorder::make(env, out, w, h, fps);
-        },
-        py::arg("env"),
-        py::arg("out_path"),
-        py::arg("resolution") = mj_kdl::VideoResolution::R720p,
-        py::arg("fps")        = 60,
-        "Open an offscreen recorder for an Env with a resolution preset."
-      )
-      .def_static(
-        "open_offscreen",
-        [](const std::shared_ptr<PyEnv> &env, int w, int h) {
-            return PyVideoRecorder::make(env, "", w, h, 0);
-        },
-        py::arg("env"),
-        py::arg("width"),
-        py::arg("height"),
-        "Open an offscreen renderer (no video file) for render_rgb()."
-      )
-      .def(
-        "render_rgb",
-        &PyVideoRecorder::render_rgb,
-        "Render the Env's current state as a (height, width, 3) uint8 array, top row first."
-      )
-      .def("__enter__", [](const std::shared_ptr<PyVideoRecorder> &self) { return self; })
-      .def("__exit__", [](PyVideoRecorder &self, const py::args &) { self.close(); })
-      .def("record_frame", &PyVideoRecorder::record_frame, "Render and append one frame.")
-      .def(
-        "use_camera",
-        &PyVideoRecorder::use_camera,
-        py::arg("name") = "",
-        "Switch to a named camera; empty name restores default."
-      )
-      .def(
-        "set_free_camera",
-        &PyVideoRecorder::set_free_camera,
-        py::arg("distance"),
-        py::arg("azimuth"),
-        py::arg("elevation"),
-        py::arg("lookat") = std::array<double, 3>{ 0.0, 0.0, 0.0 },
-        "Configure the free orbit camera (distance, azimuth/elevation in degrees, "
-        "lookat point). Call between frames to orbit."
-      )
-      .def("close", &PyVideoRecorder::close, "Finalize and close the recorder.");
-
-    env_class
       .def_static("build", &PyEnv::build, py::arg("spec"), "Build an environment from a SceneSpec.")
-      .def("close", &PyEnv::close, "Close the viewer and free the model; robots become closed.")
+      .def("close", &PyEnv::close, "Free the model; robots become closed.")
       .def_property_readonly(
         "model",
         [](const PyEnv &self) {
@@ -1460,9 +1184,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
             self.ensure_open();
             return self.data_obj;
         },
-        "The live mujoco.MjData; a new object after add_object()/remove_object(). The viewer "
-        "thread reads it too: call mujoco functions on it only while the viewer is closed or "
-        "paused."
+        "The live mujoco.MjData; a new object after add_object()/remove_object()."
       )
       .def("__enter__", [](const std::shared_ptr<PyEnv> &self) { return self; })
       .def("__exit__", [](PyEnv &self, const py::args &) { self.close(); })
@@ -1509,32 +1231,61 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "chain order. The chain is used as is (no tool inertia lumped); tool only names FT "
         "sensors."
       )
-      .def(
-        "step",
-        &PyEnv::step,
-        "Advance one timestep; with the viewer open, honours its pause and perturbation. "
-        "Returns False once the viewer window is closed."
-      )
+      .def("step", &PyEnv::step, "Advance one timestep. step() never sleeps.")
       .def(
         "update", &PyEnv::update, "One control cycle: read every robot, then apply its commands."
       )
       .def(
-        "pace",
-        &PyEnv::pace,
-        py::call_guard<py::gil_scoped_release>(),
-        "Sleep out this step's share of wall time at the viewer's real-time factor; no-op "
-        "headless. step() never sleeps."
+        "clear_trace",
+        [](PyEnv &self) { mj_kdl::clear_trace(&self.env); },
+        "Remove every overlay geom: segments and arrows."
       )
       .def(
-        "open_viewer",
-        &PyEnv::open_viewer,
-        py::arg("title") = "MuJoCo",
-        "Open the simulate UI; step() drives it. Closed by close()."
+        "add_trace_segment",
+        [](
+          PyEnv                       &self,
+          const std::array<double, 3> &a,
+          const std::array<double, 3> &b,
+          const py::object            &rgba
+        ) {
+            if (rgba.is_none()) {
+                self.add_trace_segment(a, b, nullptr);
+                return;
+            }
+            auto color = rgba.cast<std::array<float, 4>>();
+            self.add_trace_segment(a, b, &color);
+        },
+        py::arg("a"),
+        py::arg("b"),
+        py::arg("rgba") = py::none(),
+        "Add an overlay line segment in world coordinates [m]."
       )
-      .def_property_readonly(
-        "viewer",
-        [](const std::shared_ptr<PyEnv> &self) { return PyViewer{ py::cast(self), self.get() }; },
-        "The simulate UI; inert until open_viewer()."
+      .def(
+        "add_overlay_arrow",
+        [](
+          PyEnv                       &self,
+          const std::array<double, 3> &from,
+          const std::array<double, 3> &dir,
+          double                       length,
+          const py::object            &rgba
+        ) {
+            if (rgba.is_none()) {
+                self.add_overlay_arrow(from, dir, length, nullptr);
+                return;
+            }
+            auto color = rgba.cast<std::array<float, 4>>();
+            self.add_overlay_arrow(from, dir, length, &color);
+        },
+        py::arg("from_"),
+        py::arg("dir"),
+        py::arg("length"),
+        py::arg("rgba") = py::none(),
+        "Add an overlay arrow from a point along dir, length [m] long, in world coordinates."
+      )
+      .def(
+        "overlay_geoms",
+        &PyEnv::overlay_geoms,
+        "The overlay geoms as mujoco.MjvGeom, for a viewer's extra_geoms or a renderer's scene."
       )
       .def(
         "reset",
@@ -1551,7 +1302,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         &PyEnv::add_object,
         py::arg("object"),
         py::call_guard<py::gil_scoped_release>(),
-        "Rebuild with an added object; robots and the viewer follow the new model."
+        "Rebuild with an added object; robots and scene slots follow the new model."
       )
       .def(
         "set_control_mode",
@@ -1565,7 +1316,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         &PyEnv::remove_object,
         py::arg("name"),
         py::call_guard<py::gil_scoped_release>(),
-        "Rebuild without the named object; robots and the viewer follow the new model."
+        "Rebuild without the named object; robots and scene slots follow the new model."
       )
       .def_property(
         "on_reset",

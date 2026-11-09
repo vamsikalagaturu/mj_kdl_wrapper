@@ -9,6 +9,7 @@ import math
 import PyKDL as kdl
 
 import mj_kdl_wrapper as mjk
+from mj_kdl_wrapper.viewer import Viewer
 
 HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 SURFACE_Z = 0.70
@@ -61,8 +62,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
 
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
-    spec.add_floor = True
-    spec.add_skybox = True
+    spec.use_stage = True
     spec.objects = [table, cube]
     spec.robots = [robot_spec]
     env = mjk.Env.build(spec)
@@ -197,12 +197,11 @@ def run_phase(env, ctrl: Achd, fingers, phase: dict, state: dict) -> bool:
         )
         if (elapsed >= phase["duration"] and settled) or elapsed >= phase["timeout"]:
             return True
-        if not env.step():
+        if not state["step"]():
             return False
         if state["reset"]:
             state["reset"] = False
             raise ResetRequested()
-        env.pace()
 
 
 def build_phases(robot: mjk.Robot, home_tcp: kdl.Frame) -> list[dict]:
@@ -246,6 +245,7 @@ def main() -> int:
     args = parser.parse_args()
 
     env, robot = build_env()
+    viewer = None
     try:
         robot.set_control_mode(mjk.CtrlMode.TORQUE)
         fingers = env.data.actuator("g_fingers_actuator")
@@ -269,7 +269,8 @@ def main() -> int:
         env.on_reset = on_reset
         env.reset()
         if args.gui:
-            env.open_viewer("ex_achd_pick_place.py")
+            viewer = Viewer(env, "ex_achd_pick_place.py")
+        state["step"] = viewer.step if viewer else env.step
 
         completed = False
         while not completed:
@@ -294,6 +295,8 @@ def main() -> int:
         drop = state["support"]["drop"]
         print(f"elbow drop: {drop * 1000:.4f} mm (limit {MAX_ELBOW_DROP * 1000} mm)")
     finally:
+        if viewer:
+            viewer.close()
         env.close()
     if args.gui:
         return 0

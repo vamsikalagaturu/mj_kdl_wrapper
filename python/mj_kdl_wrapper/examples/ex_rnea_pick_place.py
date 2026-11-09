@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import PyKDL as kdl
 
 import mj_kdl_wrapper as mjk
+from mj_kdl_wrapper.viewer import Viewer
 
 HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 SURFACE_Z = 0.70
@@ -125,8 +126,7 @@ def build_env() -> tuple[mjk.Env, list[mjk.Robot]]:
 
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
-    spec.add_floor = True
-    spec.add_skybox = True
+    spec.use_stage = True
     spec.robots = robot_specs
     spec.objects = [
         table,
@@ -265,12 +265,11 @@ def run_phase(env, robots, fingers, solvers, phase: Phase, state: dict) -> bool:
         done_pose = phase.settle_tol < 0.0 or err <= phase.settle_tol
         if (elapsed >= phase.duration and done_pose) or elapsed >= phase.timeout:
             return True
-        if not env.step():
+        if not state["step"]():
             return False
         if state["reset"]:
             state["reset"] = False
             raise ResetRequested()
-        env.pace()
         measure(env, state)
 
 
@@ -284,6 +283,7 @@ def main() -> int:
     args = parser.parse_args()
 
     env, robots = build_env()
+    viewer = None
     try:
         print(f"cameras: {' '.join(env.model.camera(i).name for i in range(env.model.ncam))}")
         fingers = [env.data.actuator(p + "g_fingers_actuator") for p in PREFIXES]
@@ -317,7 +317,8 @@ def main() -> int:
         env.reset()
         state["reset"] = False
         if args.gui:
-            env.open_viewer("ex_rnea_pick_place.py")
+            viewer = Viewer(env, "ex_rnea_pick_place.py")
+        state["step"] = viewer.step if viewer else env.step
 
         completed = False
         while not completed:
@@ -351,6 +352,8 @@ def main() -> int:
         print(f"arm-to-arm contacts: {m['arm_contacts']} (limit 0)")
         ok = ok and m["disturb"] <= MAX_DISTURB and m["arm_contacts"] == 0
     finally:
+        if viewer:
+            viewer.close()
         env.close()
     if args.gui:
         return 0

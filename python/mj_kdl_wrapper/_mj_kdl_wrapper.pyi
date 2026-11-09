@@ -56,14 +56,6 @@ class CtrlMode(_Enum):
     VELOCITY: ClassVar[CtrlMode]
 
 
-class VideoResolution(_Enum):
-    R360p: ClassVar[VideoResolution]
-    R480p: ClassVar[VideoResolution]
-    R720p: ClassVar[VideoResolution]
-    R1080p: ClassVar[VideoResolution]
-    R2K: ClassVar[VideoResolution]
-    R4K: ClassVar[VideoResolution]
-
 
 class CtrlModeSpec:
     """A control mode build_scene adds to a robot, on its own actuator group."""
@@ -147,13 +139,13 @@ class CameraSpec:
 
 
 class SceneSpec:
-    """Full scene description. timestep, add_floor, and add_skybox are required."""
+    """Full scene description. timestep and use_stage are required."""
     robots: list[RobotSpec]
     timestep: Optional[float]
     gravity_z: float
-    add_floor: Optional[bool]
+    use_stage: Optional[bool]
+    stage: str
     floor_z: float
-    add_skybox: Optional[bool]
     objects: list[SceneObject]
     sites: list[SiteSpec]
     cameras: list[CameraSpec]
@@ -257,70 +249,10 @@ class Robot:
         unlimited."""
 
 
-class Viewer:
-    """The simulate UI of an Env, opened by Env.open_viewer(); inert while closed."""
-    realtime_factor: float
-    def is_running(self) -> bool: ...
-    def key_pressed(self, key: int) -> bool:
-        """True while the GLFW key code is held; False headless."""
-    def capture_key(self, key: int, capture: bool = True) -> None:
-        """Claim a GLFW key so the UI does not act on it; capture=False gives it back."""
-    def clear_trace(self) -> None: ...
-    def add_trace_segment(
-        self,
-        a: Sequence[float],
-        b: Sequence[float],
-        rgba: Optional[Sequence[float]] = None,
-    ) -> None: ...
-    def use_camera(self, name: str = "") -> bool: ...
-    def set_free_camera(
-        self,
-        distance: float,
-        azimuth: float,
-        elevation: float,
-        lookat: Sequence[float] = (0.0, 0.0, 0.0),
-    ) -> None: ...
-
-
-class VideoRecorder:
-    """Offscreen MuJoCo video recorder for an Env."""
-    @staticmethod
-    def open(
-        env: Env,
-        out_path: str,
-        width: int = 1280,
-        height: int = 720,
-        fps: int = 60,
-    ) -> VideoRecorder: ...
-    @staticmethod
-    def open_preset(
-        env: Env,
-        out_path: str,
-        resolution: VideoResolution = VideoResolution.R720p,
-        fps: int = 60,
-    ) -> VideoRecorder: ...
-    @staticmethod
-    def open_offscreen(env: Env, width: int, height: int) -> VideoRecorder:
-        """Open an offscreen renderer (no video file) for render_rgb()."""
-    def render_rgb(self) -> npt.NDArray[np.uint8]:
-        """The Env's current state as a (height, width, 3) array, top row first."""
-    def __enter__(self) -> VideoRecorder: ...
-    def __exit__(self, *args: object) -> None: ...
-    def record_frame(self) -> bool: ...
-    def use_camera(self, name: str = "") -> bool: ...
-    def set_free_camera(
-        self,
-        distance: float,
-        azimuth: float,
-        elevation: float,
-        lookat: Sequence[float] = (0.0, 0.0, 0.0),
-    ) -> None: ...
-    def close(self) -> None: ...
-
-
 class Env:
-    """The simulation: compiled scene, its robots and viewer. The loop is step(), then
-    update() (read every robot, apply its commands), then pace()."""
+    """The simulation: compiled scene and its robots. The loop is update() (read every robot,
+    apply its commands), then step(); mj_kdl_wrapper.viewer shows it, mujoco.Renderer and
+    mujoco.rendering.filament render it from model and data."""
     on_reset: Optional[Callable[[ResetContext], None]]
     """Called by reset() after every robot is re-seeded; its exception comes out of reset() or
     step()."""
@@ -332,13 +264,11 @@ class Env:
         """The live mujoco.MjModel; a new object after add_object()/remove_object()."""
     @property
     def data(self) -> mujoco.MjData:
-        """The live mujoco.MjData; a new object after add_object()/remove_object(). The viewer
-        thread reads it too: call mujoco functions on it only while the viewer is closed or
-        paused."""
+        """The live mujoco.MjData; a new object after add_object()/remove_object()."""
     @staticmethod
     def build(spec: SceneSpec) -> Env: ...
     def close(self) -> None:
-        """Close the viewer and free the model; robots become closed."""
+        """Free the model; robots become closed."""
     def __enter__(self) -> Env: ...
     def __exit__(self, *args: object) -> None: ...
     def create_robot(
@@ -357,25 +287,38 @@ class Env:
     ) -> Robot:
         """Register a robot driven by chain; joint_names are the MuJoCo joints in chain order."""
     def step(self) -> bool:
-        """Advance one timestep; False once the viewer window is closed."""
+        """Advance one timestep. step() never sleeps."""
     def update(self) -> None:
         """Read every robot, then apply its commands."""
-    def pace(self) -> None:
-        """Sleep out this step's share of wall time; no-op headless. step() never sleeps."""
-    def open_viewer(self, title: str = "MuJoCo") -> None:
-        """Open the simulate UI; step() drives it, close() closes it."""
-    @property
-    def viewer(self) -> Viewer: ...
+    def clear_trace(self) -> None:
+        """Remove every overlay geom: segments and arrows."""
+    def add_trace_segment(
+        self,
+        a: Sequence[float],
+        b: Sequence[float],
+        rgba: Optional[Sequence[float]] = None,
+    ) -> None:
+        """Add an overlay line segment in world coordinates [m]."""
+    def add_overlay_arrow(
+        self,
+        from_: Sequence[float],
+        dir: Sequence[float],
+        length: float,
+        rgba: Optional[Sequence[float]] = None,
+    ) -> None:
+        """Add an overlay arrow from a point along dir, length [m] long."""
+    def overlay_geoms(self) -> list[mujoco.MjvGeom]:
+        """The overlay geoms, for a viewer's extra_geoms or a renderer's scene."""
     def reset(self, options: Optional[ResetOptions] = None) -> ResetInfo:
         """Reset MuJoCo state, re-seed every robot, then call on_reset; what it moves is read
         back."""
     def add_object(self, object: SceneObject) -> None:
-        """Rebuild with an added object; robots and the viewer follow the new model."""
+        """Rebuild with an added object; robots and scene slots follow the new model."""
     def set_control_mode(self, robot: int, mode: CtrlMode) -> None:
         """Switch robot (its SceneSpec.robots index) to mode, for robots driven without a
         Robot."""
     def remove_object(self, name: str) -> None:
-        """Rebuild without the named object; robots and the viewer follow the new model."""
+        """Rebuild without the named object; robots and scene slots follow the new model."""
     def body_frame(self, name: str) -> kdl.Frame: ...
     def site_frame(self, name: str) -> kdl.Frame: ...
     def set_body_pose(

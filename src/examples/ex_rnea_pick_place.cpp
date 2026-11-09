@@ -18,6 +18,7 @@
  * of its place spot, each elbow stayed above kMinElbowHeight, no free object moved more than
  * kMaxDisturb, the arms never touched and RNEA never failed. */
 
+#include "mj_kdl_wrapper/viewer.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
 
@@ -223,7 +224,8 @@ int main(int argc, char *argv[])
         restart      = true;
     };
     mj_kdl::reset(&env);
-    if (!headless && !mj_kdl::open_viewer(&env)) return 1;
+    mj_kdl::Viewer viewer;
+    if (!headless && !mj_kdl::open_viewer(&viewer, &env)) return 1;
 
     const auto control = [&](std::size_t a, const KDL::JntArray &q_des) {
         if (!ctl[a].control(q_des)) solver_ok = false;
@@ -249,8 +251,15 @@ int main(int argc, char *argv[])
                 ++arm_contacts;
         }
     };
-    const bool completed =
-      ex::run_phases(env, arms, ex::pick_place_phases(wp), restart, control, after_step);
+    const bool completed = ex::run_phases(
+      env,
+      [&viewer] { mj_kdl::pace_realtime(&viewer); },
+      arms,
+      ex::pick_place_phases(wp),
+      restart,
+      control,
+      after_step
+    );
     mj_kdl::update(&env);
     if (!solver_ok) std::cerr << "RNEA failed during the run\n";
 

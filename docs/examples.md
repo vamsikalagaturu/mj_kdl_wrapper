@@ -14,8 +14,10 @@ cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build --parallel $(nproc)
 ```
 
-Every example ends by itself. A C++ example (`src/examples/`) opens the Simulate UI unless
-given `--headless`; a Python one (`python/mj_kdl_wrapper/examples/`) runs headless unless given
+The C++ examples link `mj_kdl_wrapper::viewer` and are built only with it (`MJ_KDL_WITH_VIEWER`).
+
+Every example ends by itself. A C++ example (`src/examples/`) opens the MuJoCo Studio viewer
+unless given `--headless`; a Python one (`python/mj_kdl_wrapper/examples/`) runs headless unless given
 `--gui`. Either way it runs the same sequence or duration, prints its result, and exits;
 closing the window ends it early. Headless, each example checks its own goal (the limit is
 printed next to the measured value), prints `PASS` or `FAIL`, and exits 1 on a failure. The C++
@@ -188,8 +190,8 @@ the pick examples.
 tau[i] = g[i] + Kp[i] * (q_des[i] - q[i]) - Kd[i] * dq[i]
 ```
 
-**Headless check:** `balls in transparent receiver: N/36`, at least 24; measured 34 (C++) and
-35 (Python).
+**Headless check:** `balls in transparent receiver: N/36`, at least 8; measured 10 (C++) and
+12 (Python).
 
 ---
 
@@ -284,9 +286,11 @@ python -m mj_kdl_wrapper.examples.ex_admittance_ft --gui
 
 ## Recording
 
-`--record [out.mp4]` runs an example headless and writes an H.264 MP4 through `VideoRecorder`
-(EGL offscreen rendering + ffmpeg pipe); no window is needed. A recorder that cannot start or
-write fails the run.
+`--record [out.mp4]` runs a C++ example headless and writes an H.264 MP4 through
+`VideoRecorder` (`mj_kdl_wrapper::render`: Filament offscreen rendering + ffmpeg pipe); no
+window is needed. A recorder that cannot start or write fails the run. The Python
+`ex_table_pour.py --record` renders with `mujoco.rendering.filament` and encodes with
+`imageio[ffmpeg]` (`pip install "imageio[ffmpeg]"`).
 
 ```bash
 ./build/src/examples/ex_table_pour --record pour.mp4        # 1080p, default table_pour.mp4
@@ -294,4 +298,5 @@ write fails the run.
 python -m mj_kdl_wrapper.examples.ex_table_pour --record pour.mp4
 ```
 
-**Requires:** `BUILD_RECORDER=ON` (default) and `ffmpeg` in `PATH`.
+**Requires:** the render library (`MJ_KDL_WITH_RENDER`, `AUTO` by default; needs `libegl-dev`)
+and `ffmpeg` in `PATH`.

@@ -34,8 +34,7 @@ def _cube() -> mjk.SceneObject:
 def _spec(objects) -> mjk.SceneSpec:
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
-    spec.add_floor = True
-    spec.add_skybox = False
+    spec.use_stage = True
     spec.objects = objects
     return spec
 
@@ -72,8 +71,7 @@ def test_camera_without_a_required_field_is_refused(field):
 def test_robotless_scene_applies_timestep():
     spec = mjk.SceneSpec()
     spec.timestep = 0.004
-    spec.add_floor = True
-    spec.add_skybox = True
+    spec.use_stage = True
     spec.objects = [_cube()]
     env = mjk.Env.build(spec)  # no robots
     try:
@@ -91,8 +89,7 @@ def test_mesh_scene_object_builds_and_moves():
     obj.fixed = True
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
-    spec.add_floor = True
-    spec.add_skybox = True
+    spec.use_stage = True
     spec.objects = [obj]
     env = mjk.Env.build(spec)
     try:
@@ -128,8 +125,7 @@ def test_mesh_scene_object_applies_quat():
     obj.fixed = True
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
-    spec.add_floor = False
-    spec.add_skybox = False
+    spec.use_stage = False
     spec.objects = [obj]
     env = mjk.Env.build(spec)
     try:

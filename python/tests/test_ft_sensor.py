@@ -21,8 +21,7 @@ def test_ft_sensor_returns_pykdl_wrench():
 
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
-    spec.add_floor = True
-    spec.add_skybox = True
+    spec.use_stage = True
     spec.robots = [robot_spec]
 
     env = mjk.Env.build(spec)

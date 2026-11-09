@@ -17,6 +17,7 @@ import mujoco
 import numpy as np
 import PyKDL as kdl
 import mj_kdl_wrapper as mjk
+from mj_kdl_wrapper.viewer import Viewer
 
 HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 # [m] TCP start in the base frame, flange down; the base stands on the table, so z is its height.
@@ -50,8 +51,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     table.fixed = True
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
-    spec.add_floor = True
-    spec.add_skybox = True
+    spec.use_stage = True
     spec.objects = [table]
     robot_spec = mjk.RobotSpec()
     robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
@@ -270,6 +270,7 @@ def main() -> int:
     args = parser.parse_args()
 
     env, robot = build_env()
+    viewer = None
     try:
         restarted = [False]
         start = kdl.Frame(kdl.Rotation.RotX(math.pi), kdl.Vector(*START_TCP))
@@ -287,17 +288,17 @@ def main() -> int:
 
         if args.gui:
             # The UI's reset button runs env's reset, on_reset included.
-            env.open_viewer("ex_achd_table_slide.py")
+            viewer = Viewer(env, "ex_achd_table_slide.py")
+        step = viewer.step if viewer else env.step
         restarted[0] = False
         while not slide.done():
             slide.control()
-            if not env.step():
+            if not step():
                 break
             slide.measure()
             if restarted[0]:
                 restarted[0] = False
                 slide.restart()
-            env.pace()
 
         env.update()
         err = kdl.diff(slide.tcp(), slide.target)
@@ -318,6 +319,8 @@ def main() -> int:
             f"elbow_min_z_above_table={slide.elbow_min:.4f} (limit {MIN_ELBOW_HEIGHT:.4f})"
         )
     finally:
+        if viewer:
+            viewer.close()
         env.close()
     if args.gui:
         return 0

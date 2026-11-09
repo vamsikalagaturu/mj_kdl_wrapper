@@ -16,6 +16,7 @@
  * that window, the touchdown was faster than kMaxTouchdown or the elbow went below
  * kMinElbowHeight. */
 
+#include "mj_kdl_wrapper/viewer.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
 
@@ -315,7 +316,8 @@ int main(int argc, char **argv)
         return true;
     };
 
-    if (!headless && !mj_kdl::open_viewer(&env)) return 1;
+    mj_kdl::Viewer viewer;
+    if (!headless && !mj_kdl::open_viewer(&viewer, &env)) return 1;
     restarted      = false;
     bool solver_ok = true;
     bool finished  = false;
@@ -346,7 +348,7 @@ int main(int argc, char **argv)
             restart_task();
             continue;
         }
-        mj_kdl::pace_realtime(&env);
+        mj_kdl::pace_realtime(&viewer);
         if (phase == Phase::Approach && phase_steps >= kApproachSteps) break;
         if (phase == Phase::Slide && phase_steps >= kSlideSteps) {
             finished = true;

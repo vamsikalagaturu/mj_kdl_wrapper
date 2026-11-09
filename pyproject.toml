@@ -2,6 +2,8 @@
 requires = [
   "scikit-build-core>=1.1",
   "pybind11>=2.13",
+  # The extension compiles against this package's headers and libmujoco.
+  "mujoco-core==4.0.0",
 ]
 build-backend = "scikit_build_core.build"
 
@@ -10,7 +12,7 @@ name = "mj-kdl-wrapper"
 dynamic = ["version"]
 description = "Python bindings for mj_kdl_wrapper: MuJoCo physics with Orocos KDL kinematics and dynamics"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [
   { name = "Vamsi Kalagaturu" },
@@ -23,14 +25,13 @@ classifiers = [
   "Operating System :: POSIX :: Linux",
   "Programming Language :: C++",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Topic :: Scientific/Engineering",
   "Topic :: Scientific/Engineering :: Physics",
 ]
 dependencies = [
-  "mujoco==3.14.0",
+  "mujoco==4.0.0",
 ]
 
 [project.urls]

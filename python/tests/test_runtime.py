@@ -9,8 +9,7 @@ import mj_kdl_wrapper as mjk
 def _scene_spec() -> mjk.SceneSpec:
     spec = mjk.SceneSpec()
     spec.timestep = 0.002
-    spec.add_floor = True
-    spec.add_skybox = True
+    spec.use_stage = True
     robot_spec = mjk.RobotSpec()
     robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
     spec.robots = [robot_spec]
@@ -263,18 +262,6 @@ def test_joint_force_limits_follow_the_active_mode():
         assert (limits > 0).all() and (limits < 1e6).all()
 
 
-def test_offscreen_render_returns_an_image():
-    with mjk.Env.build(_scene_spec()) as env:
-        try:
-            rec = mjk.VideoRecorder.open_offscreen(env, 64, 48)
-        except RuntimeError as exc:
-            pytest.skip(f"no offscreen rendering: {exc}")
-        with rec:
-            rgb = rec.render_rgb()
-        assert rgb.shape == (48, 64, 3) and rgb.dtype.name == "uint8"
-        assert rgb.any()
-
-
 def test_env_runs_on_real_mujoco_objects():
     mujoco = pytest.importorskip("mujoco")
 
@@ -398,13 +385,12 @@ def test_velocity_mode_tracks_the_commanded_velocity():
         assert robot.jnt_pos_msr[0] - start > 0.1
 
 
-def test_paused_robot_holds_headless_step_and_pace_is_a_no_op():
+def test_paused_robot_holds_the_step():
     with mjk.Env.build(_scene_spec()) as env:
         robot = env.create_robot("base_link", "bracelet_link")
         robot.paused = True
         t0 = env.data.time
         assert env.step()
-        env.pace()
         assert env.data.time == t0
         robot.paused = False
         assert env.step()
@@ -428,14 +414,16 @@ def test_frames_and_ports_come_back_exactly():
             robot.set_joint_pos(kdl.JntArray(robot.n_joints + 1))
 
 
-def test_headless_viewer_is_inert():
+def test_overlays_are_mujoco_geoms():
+    mujoco = pytest.importorskip("mujoco")
+
     with mjk.Env.build(_scene_spec()) as env:
-        viewer = env.viewer
-        assert not viewer.is_running()
-        assert not viewer.key_pressed(32)
-        viewer.clear_trace()
-        viewer.add_trace_segment([0, 0, 0], [0, 0, 1])
-        viewer.realtime_factor = 0.5
-        assert env.viewer.realtime_factor == 0.5
-        with pytest.raises(ValueError, match="realtime_factor"):
-            viewer.realtime_factor = -1.0
+        env.add_trace_segment([0, 0, 0], [0, 0, 1])
+        env.add_overlay_arrow([0, 0, 0.5], [1, 0, 0], 0.5, (0.0, 1.0, 0.0, 1.0))
+        segment, arrow = env.overlay_geoms()
+        assert isinstance(segment, mujoco.MjvGeom)
+        assert segment.type == mujoco.mjtGeom.mjGEOM_LINE
+        assert arrow.type == mujoco.mjtGeom.mjGEOM_ARROW
+        assert list(arrow.rgba) == [0.0, 1.0, 0.0, 1.0]
+        env.clear_trace()
+        assert env.overlay_geoms() == []

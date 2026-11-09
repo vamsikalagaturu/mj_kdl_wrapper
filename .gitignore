@@ -20,10 +20,14 @@ MUJOCO_LOG.TXT
 # Third-party dependencies and local workspace installs
 /install/
 third_party/orocos_kinematics_dynamics/
+third_party/mujoco/
 third_party/lodepng/
 
 # MuJoCo screenshot output
 screenshot.png
+
+# Python environment
+.venv/
 
 # IDE
 .vscode/

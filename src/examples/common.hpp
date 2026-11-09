@@ -138,9 +138,8 @@ inline void prime_gravity(mj_kdl::Robot &robot, KDL::ChainDynParam &dyn, const K
 inline mj_kdl::SceneSpec scene_spec()
 {
     mj_kdl::SceneSpec spec;
-    spec.timestep   = 0.002;
-    spec.add_floor  = true;
-    spec.add_skybox = true;
+    spec.timestep  = 0.002;
+    spec.use_stage = true;
     return spec;
 }
 
@@ -315,9 +314,10 @@ struct PhaseArm
 };
 
 // One update() per step for all arms, so a command lands one cycle later; control(i, q_des)
-// commands arm i. False if the viewer was closed.
+// commands arm i; pace, if set, runs after each step. False if the viewer was closed.
 inline bool run_phases(
   mj_kdl::Env                                                   &env,
+  const std::function<void()>                                   &pace,
   const std::vector<PhaseArm>                                   &arms,
   const std::vector<Phase>                                      &phases,
   bool                                                          &restart,
@@ -352,7 +352,7 @@ inline bool run_phases(
 
                 if (!mj_kdl::step(&env)) return false;
                 if (restart) break;
-                mj_kdl::pace_realtime(&env);
+                if (pace) pace();
                 if (after_step) after_step(phase, t_rel);
             }
             if (restart) break;
