@@ -250,6 +250,7 @@ def admittance_step(env, robot, nominal, state, force):
 def run_gui(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dict) -> None:
     """The same sequence with the viewer; after the helix the mouse pushes the tool."""
     viewer = mjk.Viewer()
+    viewer.paused = True
     viewer.set_free_camera(1.55, 145.0, -24.0, (0.05, 0.0, TABLE_Z + 0.35))
     viewer.open(env, "ex_admittance_ft.py")
     start = env.data.time

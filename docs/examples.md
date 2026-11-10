@@ -140,15 +140,16 @@ mm); cube centre within 10 mm of the TCP while pushed (6.28 mm, the grasp offset
 ## ex_rnea_pick_place
 
 **Scene:** two Kinova GEN3 + 2F-85 arms on the bundled table (1.6 m x 1.2 m top at
-`z = 0.7 m`), facing each other: arm 1 at `(-0.70, -0.12)` facing +x, arm 2 at
-`(0.70, 0.12)` facing -x with every name prefixed `r2_`. Each arm's cube (`cube`, `r2_cube`)
-sits at the same spot in its own base frame, so the arms work in opposite halves of the table.
-Five free objects the arms must leave alone (three boxes, two spheres) stand on the table, and
-two scene cameras (`overview`, `side`) join each arm's own `wrist` / `r2_wrist` camera.
+`z = 0.7 m`), facing each other: arm 1 at `(-0.70, -0.12)` facing +x with every name
+prefixed `r1_`, arm 2 at `(0.70, 0.12)` facing -x with every name prefixed `r2_`. Each arm's
+cube (`r1_cube`, `r2_cube`) sits at the same spot in its own base frame, so the arms work in
+opposite halves of the table. Five free objects the arms must leave alone (three boxes, two
+spheres) stand on the table, and two scene cameras (`overview`, `side`) join each arm's own
+`r1_wrist` / `r2_wrist` camera.
 
 **What it does:**
-- Registers each arm as its own `Robot` (`init_robot_from_mjcf(..., "r2_", &tool)` for the
-  second) with its own KDL chain and RNEA solver.
+- Registers each arm as its own `Robot` (`init_robot_from_mjcf(..., "r1_", &tool)`, and
+  `"r2_"` for the second), named `arm1` / `arm2`, with its own KDL chain and RNEA solver.
 - Solves the IK waypoints once: the targets are in the base frame, the same for both arms.
 - Runs the `ex_table_pick_place` sequence on both arms in lockstep, one `update(&env)` per step.
 

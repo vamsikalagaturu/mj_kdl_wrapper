@@ -246,6 +246,7 @@ def main() -> int:
 
     env, robot = build_env()
     viewer = mjk.Viewer()
+    viewer.paused = True
     try:
         robot.set_control_mode(mjk.CtrlMode.TORQUE)
         fingers = env.data.actuator("g_fingers_actuator")

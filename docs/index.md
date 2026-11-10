@@ -16,7 +16,7 @@ MuJoCo 4.0.0, built from source; the viewer and the recorder are optional librar
 | 0.5 | 0.6 |
 |-----|-----|
 | MuJoCo 3.14.0 release tarball downloaded into `~/.cache/mj_kdl_wrapper/mujoco-*` (`MJ_KDL_FETCH_MUJOCO`, `MJ_KDL_MUJOCO_URL`, sha256 pin) | `vcs import < mj_kdl_wrapper.repos` checks out MuJoCo 4.0.0 into `third_party/mujoco`; CMake builds it. `MJ_KDL_MUJOCO_DIR` names a MuJoCo source checkout, not an install |
-| apt `libglfw3-dev libgl-dev` | not needed; `libegl-dev` for render, the X11/Wayland/GL headers (`libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev`) for the viewer |
+| apt `libglfw3-dev libgl-dev` | not needed; `libegl-dev` for render, the X11/Wayland/GL headers (`libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libfontconfig-dev`) for the viewer |
 | One library `mj_kdl_wrapper` with the Simulate UI and the EGL recorder | core `mj_kdl_wrapper` (no GL, no window), `mj_kdl_wrapper::render` (`render.hpp`) and `mj_kdl_wrapper::viewer` (`viewer.hpp`); `MJ_KDL_WITH_RENDER` / `MJ_KDL_WITH_VIEWER` (`AUTO`/`ON`/`OFF`, the viewer needs render); `find_package(mj_kdl_wrapper COMPONENTS render viewer)`; pkg-config covers the core only |
 | `BUILD_RECORDER`, `SHOW_EQUALITY_PANEL`, `SHOW_GROUP_PANEL` | removed |
 | `VideoRecorder`, `init_video_recorder()`, `init_offscreen()`, `record_frame()`, `render_rgb()` in `mj_kdl_wrapper.hpp`, rendered through EGL | the same calls in `render.hpp`, link `mj_kdl_wrapper::render`; rendered with MuJoCo's Filament renderer |

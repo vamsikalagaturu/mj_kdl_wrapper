@@ -163,22 +163,6 @@ static constexpr size_t kMjErrBuf = 2048;
 // assets/stage/default.xml, compiled in by CMake so a scene needs no file at run time.
 extern const char *const kDefaultStageXml;
 
-// Frame sites are markers, not geometry: small, and in their own group so the viewer can
-// switch them off without hiding the sites an asset declares for attaching.
-static constexpr double kFrameSiteSize  = 0.005; // frame-site marker radius [m]
-static constexpr int    kFrameSiteGroup = 4;     // viewer group for frame sites
-
-// A manual TCP frame this close to identity is no TCP.
-static constexpr double kIdentityTol = 1e-12;
-
-// Default MuJoCo collision category bitmask for wrapper-authored geoms (sets
-// category bit 0, matching MuJoCo's MJCF compiler defaults for contype and
-// conaffinity). This is a bitmask, not a boolean.
-static constexpr int kContactCategoryAll = 1;
-
-// Overlay geoms (trace segments, arrows) an Env holds at most.
-static constexpr std::size_t kOverlayMaxGeom = 8192;
-
 // Sole owner of the MuJoCo worldbody name. Every other site that needs the
 // worldbody (skybox light, floor geom, resolve_parent with kind == World,
 // cameras) calls this so the literal "world" exists in one place.
@@ -495,8 +479,8 @@ static Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &
         if (!std::isnan(obj.mass)) g->mass = obj.mass;
         for (int k = 0; k < 4; ++k) g->rgba[k] = obj.rgba[k];
         for (int k = 0; k < 3; ++k) g->friction[k] = obj.friction[k];
-        g->contype     = kContactCategoryAll;
-        g->conaffinity = kContactCategoryAll;
+        g->contype     = obj.contype;
+        g->conaffinity = obj.conaffinity;
         g->condim      = static_cast<int>(obj.condim);
 
         if (Status s = attach_child(spec, obj.attach_to, obj.pos, obj.quat, ob, ""); !s) return s;
@@ -538,10 +522,10 @@ static void add_site_to_spec(mjSpec *spec, mjsBody *body, const SiteSpec &ss)
     mjsSite *site = mjs_addSite(body, nullptr);
     mjs_setString(mjs_getName(site->element), ss.name.c_str());
     site->type    = mjGEOM_SPHERE;
-    site->size[0] = kFrameSiteSize;
-    site->size[1] = kFrameSiteSize;
-    site->size[2] = kFrameSiteSize;
-    site->group   = kFrameSiteGroup;
+    site->size[0] = ss.size;
+    site->size[1] = ss.size;
+    site->size[2] = ss.size;
+    site->group   = ss.group;
     site->pos[0]  = ss.pos[0];
     site->pos[1]  = ss.pos[1];
     site->pos[2]  = ss.pos[2];
@@ -967,6 +951,18 @@ Status save_model_xml(const mjModel *model, const char *path)
     if (!ok) MJ_FAIL("saving the model to '" << path << "' failed: " << err);
     MJ_LOG_INFO("model saved to '" << path << "'");
     return {};
+}
+
+// The body the robot's first joint moves against, -1 if unknown; the viewer's label for an
+// unnamed robot. Declared there, not in a header: no part of the public API.
+int robot_base_body(const Robot *r)
+{
+    if (!r || !r->model || r->_impl->kdl_to_mj_qpos.empty()) return -1;
+    const mjModel *m   = r->model;
+    const int      adr = r->_impl->kdl_to_mj_qpos.front();
+    for (int j = 0; j < m->njnt; ++j)
+        if (m->jnt_qposadr[j] == adr) return m->body_parentid[m->jnt_bodyid[j]];
+    return -1;
 }
 
 // The viewer's Explorer reads it; declared there, not in a header: no part of the public API.
@@ -1693,7 +1689,7 @@ static Status configure_from_mjcf(
         r->tip_T_tcp     = tip_T_tcp;
         r->has_tcp_frame = true;
         r->tcp_site      = tcp_site;
-    } else if (tool && !Equal(tool->tcp_frame, KDL::Frame::Identity(), kIdentityTol)) {
+    } else if (tool && !Equal(tool->tcp_frame, KDL::Frame::Identity(), tool->tcp_identity_tol)) {
         tip_T_tcp        = tool->tcp_frame;
         has_tcp          = true;
         r->tip_T_tcp     = tip_T_tcp;
@@ -1840,6 +1836,7 @@ void cleanup(Robot *r)
 {
     if (!r) return;
     unregister_robot(r);
+    r->name.clear();
     r->model         = nullptr;
     r->data          = nullptr;
     r->chain         = KDL::Chain();
@@ -2364,8 +2361,6 @@ static bool rebind_scene(Env *env)
 
 // Overlay
 
-static constexpr float kOverlayDefaultRgba[4] = { 1.0f, 0.5f, 0.1f, 1.0f }; // warm orange
-
 void clear_trace(Env *env)
 {
     if (!env) return;
@@ -2384,9 +2379,9 @@ static void add_overlay_connector(
 {
     const std::lock_guard<std::mutex> lock(env->_impl->overlay_mtx);
     auto                             &overlays = env->_impl->overlays;
-    if (overlays.size() >= kOverlayMaxGeom) return;
+    if (overlays.size() >= env->overlay_max_geoms) return;
     mjvGeom &g = overlays.emplace_back();
-    mjv_initGeom(&g, type, nullptr, nullptr, nullptr, rgba ? rgba : kOverlayDefaultRgba);
+    mjv_initGeom(&g, type, nullptr, nullptr, nullptr, rgba ? rgba : env->overlay_rgba.data());
     const mjtNum a[3] = { from.x(), from.y(), from.z() };
     const mjtNum b[3] = { to.x(), to.y(), to.z() };
     mjv_connector(&g, type, width, a, b);

@@ -270,6 +270,7 @@ def main() -> int:
 
     env, robot = build_env()
     viewer = mjk.Viewer()
+    viewer.paused = True
     try:
         restarted = [False]
         start = kdl.Frame(kdl.Rotation.RotX(math.pi), kdl.Vector(*START_TCP))

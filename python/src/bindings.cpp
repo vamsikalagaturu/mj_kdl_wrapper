@@ -84,6 +84,8 @@ struct PySceneObject
     std::optional<double>                mass;
     Condim                               condim = Condim::Tangential;
     std::optional<std::array<double, 3>> friction;
+    int                                  contype     = SceneObject{}.contype;
+    int                                  conaffinity = SceneObject{}.conaffinity;
 };
 
 struct PyCameraSpec
@@ -99,8 +101,10 @@ struct PySiteSpec
 {
     std::string           body;
     std::string           name;
-    std::array<double, 3> pos  = { 0.0, 0.0, 0.0 };
-    std::array<double, 4> quat = { 0.0, 0.0, 0.0, 1.0 };
+    std::array<double, 3> pos   = { 0.0, 0.0, 0.0 };
+    std::array<double, 4> quat  = { 0.0, 0.0, 0.0, 1.0 };
+    double                size  = mj_kdl::SiteSpec{}.size;
+    int                   group = mj_kdl::SiteSpec{}.group;
 };
 
 struct PySceneSpec
@@ -179,8 +183,10 @@ SceneObject to_cpp(const PySceneObject &src)
     out.shape     = src.shape;
     std::copy(src.pos.begin(), src.pos.end(), out.pos);
     std::copy(src.quat.begin(), src.quat.end(), out.quat);
-    out.fixed  = src.fixed;
-    out.condim = src.condim;
+    out.fixed       = src.fixed;
+    out.condim      = src.condim;
+    out.contype     = src.contype;
+    out.conaffinity = src.conaffinity;
     if (src.rgba) {
         std::copy(src.rgba->begin(), src.rgba->end(), out.rgba);
         out.has_rgba = true;
@@ -236,6 +242,8 @@ SceneSpec to_cpp(const PySceneSpec &src)
         site.name = item.name;
         std::copy(item.pos.begin(), item.pos.end(), site.pos);
         std::copy(item.quat.begin(), item.quat.end(), site.quat);
+        site.size  = item.size;
+        site.group = item.group;
         out.sites.push_back(site);
     }
     out.cameras.reserve(src.cameras.size());
@@ -1035,6 +1043,14 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def_readwrite("condim", &PySceneObject::condim, "MuJoCo contact friction dimensionality.")
       .def_readwrite(
         "friction", &PySceneObject::friction, "Required primitive [slide, spin, roll] friction."
+      )
+      .def_readwrite(
+        "contype", &PySceneObject::contype, "Primitive's collision bitmask; MuJoCo's default 1."
+      )
+      .def_readwrite(
+        "conaffinity",
+        &PySceneObject::conaffinity,
+        "Primitive's collision bitmask; MuJoCo's default 1."
       );
 
     py::class_<PySiteSpec>(m, "SiteSpec", "A frame marked on a body of the assembled scene.")
@@ -1042,7 +1058,9 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def_readwrite("body", &PySiteSpec::body, "Body to add the site to, by name.")
       .def_readwrite("name", &PySiteSpec::name, "Site name, unique within the scene.")
       .def_readwrite("pos", &PySiteSpec::pos, "Offset in the body frame, in meters.")
-      .def_readwrite("quat", &PySiteSpec::quat, "Orientation in the body frame [x, y, z, w].");
+      .def_readwrite("quat", &PySiteSpec::quat, "Orientation in the body frame [x, y, z, w].")
+      .def_readwrite("size", &PySiteSpec::size, "Marker sphere radius, in meters.")
+      .def_readwrite("group", &PySiteSpec::group, "Visibility group of the marker.");
 
     py::class_<PyCameraSpec>(
       m,
@@ -1287,6 +1305,12 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         py::arg("mode"),
         "Switch mode without a jump: seeds the new mode's commands from the current state."
       )
+      .def_property(
+        "name",
+        [](const PyRobot &self) { return self.robot.name; },
+        [](PyRobot &self, std::string name) { self.robot.name = std::move(name); },
+        "Set by the caller, before or after init; the viewer shows it."
+      )
       .def_property_readonly(
         "has_tcp_frame",
         [](const PyRobot &self) {
@@ -1442,6 +1466,18 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         py::arg("rgba") = py::none(),
         "Add an overlay arrow from a point along dir, length [m] long, in world coordinates."
       )
+      .def_property(
+        "overlay_max_geoms",
+        [](const PyEnv &self) { return self.env.overlay_max_geoms; },
+        [](PyEnv &self, std::size_t value) { self.env.overlay_max_geoms = value; },
+        "Overlay geoms beyond this many are dropped."
+      )
+      .def_property(
+        "overlay_rgba",
+        [](const PyEnv &self) { return self.env.overlay_rgba; },
+        [](PyEnv &self, const std::array<float, 4> &value) { self.env.overlay_rgba = value; },
+        "Overlay colour [r, g, b, a] when a call gives none."
+      )
       .def(
         "overlay_geoms",
         &PyEnv::overlay_geoms,
@@ -1534,6 +1570,11 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       );
 
 #ifdef MJ_KDL_PYTHON_VIEWER
+    py::enum_<mj_kdl::ViewerTheme>(m, "ViewerTheme", "MuJoCo Studio's three GUI themes.")
+      .value("Light", mj_kdl::ViewerTheme::Light)
+      .value("Dark", mj_kdl::ViewerTheme::Dark)
+      .value("Classic", mj_kdl::ViewerTheme::Classic);
+
     py::class_<PyViewer>(
       m,
       "Viewer",
@@ -1611,8 +1652,104 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         },
         "pace()'s speed: 1.0 real time, 0.5 half speed, 0.0 uncapped; the window's slider sets it."
       )
+      .def_property(
+        "paused",
+        [](const PyViewer &self) { return self.viewer.paused; },
+        [](PyViewer &self, bool value) { self.viewer.paused = value; },
+        "Set before open() to open paused; while open, env.step() keeps it equal to the window's "
+        "pause."
+      )
       .def_property_readonly(
         "fps", [](const PyViewer &self) { return self.viewer.fps; }, "The window's frame rate."
+      )
+      // Read by open(); later changes reach the next window.
+      .def_property(
+        "window_width",
+        [](const PyViewer &self) { return self.viewer.window_width; },
+        [](PyViewer &self, int v) { self.viewer.window_width = v; }
+      )
+      .def_property(
+        "window_height",
+        [](const PyViewer &self) { return self.viewer.window_height; },
+        [](PyViewer &self, int v) { self.viewer.window_height = v; }
+      )
+      .def_property(
+        "min_panel_width",
+        [](const PyViewer &self) { return self.viewer.min_panel_width; },
+        [](PyViewer &self, float v) { self.viewer.min_panel_width = v; },
+        "Narrowest a side panel may be dragged, in font heights."
+      )
+      .def_property(
+        "theme",
+        [](const PyViewer &self) { return self.viewer.theme; },
+        [](PyViewer &self, mj_kdl::ViewerTheme v) { self.viewer.theme = v; },
+        "Theme unless the settings file names another."
+      )
+      .def_property(
+        "ini_path",
+        [](const PyViewer &self) { return self.viewer.ini_path; },
+        [](PyViewer &self, const std::string &v) { self.viewer.ini_path = v; },
+        "Layout and theme file; empty uses Studio's ~/.mujoco.ini."
+      )
+      .def_property(
+        "record_path",
+        [](const PyViewer &self) { return self.viewer.record_path; },
+        [](PyViewer &self, const std::string &v) { self.viewer.record_path = v; },
+        "The Recording panel's starting file."
+      )
+      .def_property(
+        "record_resolution",
+        [](const PyViewer &self) { return self.viewer.record_resolution; },
+        [](PyViewer &self, mj_kdl::VideoResolution v) { self.viewer.record_resolution = v; },
+        "The Recording panel's starting resolution."
+      )
+      .def_property(
+        "record_fps",
+        [](const PyViewer &self) { return self.viewer.record_fps; },
+        [](PyViewer &self, int v) { self.viewer.record_fps = v; },
+        "The Recording panel's starting frame rate."
+      )
+      .def_property(
+        "framing_frames",
+        [](const PyViewer &self) { return self.viewer.framing_frames; },
+        [](PyViewer &self, int v) { self.viewer.framing_frames = v; },
+        "Frames the start camera is re-fitted while the layout settles."
+      )
+      .def_property(
+        "speed_window",
+        [](const PyViewer &self) { return self.viewer.speed_window; },
+        [](PyViewer &self, double v) { self.viewer.speed_window = v; },
+        "The measured speed is sim time over this much wall time [s]."
+      )
+      .def_property(
+        "plugin_max_geoms",
+        [](const PyViewer &self) { return self.viewer.plugin_max_geoms; },
+        [](PyViewer &self, int v) { self.viewer.plugin_max_geoms = v; },
+        "Geoms Studio's ScenePlugins may add per frame."
+      )
+      .def_property(
+        "joint_limit_margin",
+        [](const PyViewer &self) { return self.viewer.joint_limit_margin; },
+        [](PyViewer &self, double v) { self.viewer.joint_limit_margin = v; },
+        "Part of a joint's range counted as near a limit (0..0.5)."
+      )
+      .def_property(
+        "joint_limit_highlight",
+        [](const PyViewer &self) { return self.viewer.joint_limit_highlight; },
+        [](PyViewer &self, bool v) { self.viewer.joint_limit_highlight = v; },
+        "Red sphere on a joint near a limit (window only, never recorded)."
+      )
+      .def_property(
+        "manipulability_ellipsoid",
+        [](const PyViewer &self) { return self.viewer.manipulability_ellipsoid; },
+        [](PyViewer &self, bool v) { self.viewer.manipulability_ellipsoid = v; },
+        "TCP velocity ellipsoid per robot (window only, never recorded)."
+      )
+      .def_property(
+        "manipulability_scale",
+        [](const PyViewer &self) { return self.viewer.manipulability_scale; },
+        [](PyViewer &self, double v) { self.viewer.manipulability_scale = v; },
+        "Drawn size of 1 m/s per rad/s of joint speed [m]."
       );
 #endif
 

@@ -29,7 +29,7 @@ MAX_DISTURB = 0.001  # [m] free-object displacement
 
 # Base x, y [m] and yaw [rad] on the tabletop: facing each other, each arm in its own half.
 BASES = [(-0.70, -0.12, 0.0), (0.70, 0.12, math.pi)]
-PREFIXES = ["", "r2_"]
+PREFIXES = ["r1_", "r2_"]
 FREE_OBJECTS = [
     ("red_box", mjk.Shape.BOX, 0.0, 0.42, 0.03, (1.0, 0.2, 0.2)),
     ("green_box", mjk.Shape.BOX, 0.0, -0.42, 0.03, (0.2, 1.0, 0.2)),
@@ -138,6 +138,8 @@ def build_env() -> tuple[mjk.Env, list[mjk.Robot]]:
     tool.tool_body = "g_base_mount"
     tool.tcp_site = "g_pinch"
     robots = [env.create_robot("base_link", "bracelet_link", p, tool=tool) for p in PREFIXES]
+    for i, robot in enumerate(robots):
+        robot.name = f"arm{i + 1}"
     return env, robots
 
 
@@ -284,6 +286,7 @@ def main() -> int:
 
     env, robots = build_env()
     viewer = mjk.Viewer()
+    viewer.paused = True
     try:
         print(f"cameras: {' '.join(env.model.camera(i).name for i in range(env.model.ncam))}")
         fingers = [env.data.actuator(p + "g_fingers_actuator") for p in PREFIXES]

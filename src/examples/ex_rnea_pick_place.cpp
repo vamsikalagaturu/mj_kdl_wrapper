@@ -6,10 +6,10 @@
  *   qddot_des[i] = Kp[i] * (q_des[i] - q[i]) - Kd[i] * qdot[i]
  *   tau          = RNEA(q, qdot, qddot_des) = M(q) qddot_des + C(q, qdot) qdot + g(q)
  *
- * The second arm's names carry the prefix "r2_". Each arm has its own Robot, KDL chain and
+ * Each arm's names carry its prefix, "r1_" or "r2_". Each arm has its own Robot, KDL chain and
  * solver; both see their cube at the same base-frame spot, so one IK solve serves both, and one
  * update() per step drives both. Free objects the arms must leave alone stand on the table; the
- * "overview" and "side" scene cameras join each arm's own "wrist" camera.
+ * "overview" and "side" scene cameras join each arm's own wrist camera ("r1_wrist", "r2_wrist").
  *
  * Usage:
  *   ex_rnea_pick_place [--headless]
@@ -45,7 +45,7 @@ static constexpr double kKd[7] = { 20, 28, 20, 28, 20, 28, 20 };
 
 // Base x, y [m] and yaw [rad] on the tabletop: facing each other, each arm in its own half.
 static constexpr double      kBase[2][3] = { { -0.70, -0.12, 0.0 }, { 0.70, 0.12, M_PI } };
-static constexpr const char *kPrefix[2]  = { "", "r2_" };
+static constexpr const char *kPrefix[2]  = { "r1_", "r2_" };
 
 static KDL::Frame world_T_base(int arm)
 {
@@ -184,6 +184,7 @@ int main(int argc, char *argv[])
               &robots[a], &env, "base_link", "bracelet_link", pre.c_str(), &tool
             ))
             return 1;
+        robots[a].name = a == 0 ? "arm1" : "arm2";
         if (!mj_kdl::set_control_mode(&robots[a], mj_kdl::CtrlMode::TORQUE)) return 1;
         arms.push_back(
           { &robots[a],
@@ -225,6 +226,7 @@ int main(int argc, char *argv[])
     };
     mj_kdl::reset(&env);
     mj_kdl::Viewer viewer;
+    viewer.paused = true;
     if (!headless && !mj_kdl::open_viewer(&viewer, &env)) return 1;
 
     const auto control = [&](std::size_t a, const KDL::JntArray &q_des) {

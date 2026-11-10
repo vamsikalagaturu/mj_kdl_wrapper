@@ -41,7 +41,7 @@ KDL is never used.
 ```bash
 sudo apt install cmake g++ git python3-dev python3-venv vcstool libeigen3-dev ffmpeg \
   libegl-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev \
-  libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+  libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libfontconfig-dev
 
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git && cd mj_kdl_wrapper
 vcs import < mj_kdl_wrapper.repos            # the KDL fork and MuJoCo, into third_party/

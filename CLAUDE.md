@@ -11,7 +11,7 @@
 
 - MuJoCo 4.0.0 is built from source in `third_party/mujoco` (`MJ_KDL_MUJOCO_DIR`) as an ExternalProject under `build/mujoco`: its CMake assumes it is the top-level project. Its static Filament and Studio archives are imported with the dependency list of upstream's `python/mujoco/CMakeLists.txt`.
 - The release tarball is not used: it ships neither Filament nor the Studio libraries as libraries.
-- apt: `libeigen3-dev ffmpeg`, plus `libegl-dev` for render and `libx11-dev` (and the X/Wayland headers SDL2 uses) for the viewer; ffmpeg only for recording.
+- apt: `libeigen3-dev ffmpeg`, plus `libegl-dev` for render and `libx11-dev` (and the X/Wayland headers SDL2 uses) and `libfontconfig-dev` for the viewer; ffmpeg only for recording.
 - CMake builds the secorolab Orocos KDL fork from `third_party/orocos_kinematics_dynamics` (`MJ_KDL_OROCOS_KDL_DIR`); it never clones it; system `liborocos-kdl` is never used.
 - `vcs import < mj_kdl_wrapper.repos` (vcstool, pip or apt) checks out the fork (branch `vereshchagin-driver-weighting`) and MuJoCo (tag `4.0.0`).
 - `cmake/Versions.cmake` holds `MJ_KDL_MUJOCO_VERSION`, which must match the `.repos` tag (CMake validates `mjVERSION_HEADER`), and googletest.

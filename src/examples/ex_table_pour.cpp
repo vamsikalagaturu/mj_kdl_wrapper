@@ -245,6 +245,7 @@ int main(int argc, char *argv[])
 
     mj_kdl::reset(&env);
     mj_kdl::Viewer viewer;
+    viewer.paused = true;
     if (!headless && !mj_kdl::open_viewer(&viewer, &env)) return 1;
 
     int        sim_step    = 0;

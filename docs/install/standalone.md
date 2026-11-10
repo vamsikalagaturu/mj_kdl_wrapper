@@ -41,13 +41,13 @@ sudo apt install \
   cmake g++ git python3-dev python3-pip python3-venv vcstool \
   libeigen3-dev ffmpeg doxygen \
   libegl-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev \
-  libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+  libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libfontconfig-dev
 ```
 
 `doxygen` is only needed for the docs target; `python3-dev`/`python3-venv` only
 for the Python package; `ffmpeg` only for recording. `libegl-dev` is for the render library,
 and the X11, Wayland and GL headers are what MuJoCo's Filament and SDL2 builds use for the
-viewer; without them `AUTO` leaves those libraries out, and the Python package, which always
+viewer, which also links `libfontconfig` to list the system fonts; without them `AUTO` leaves those libraries out, and the Python package, which always
 builds both, fails. `vcstool` is also on PyPI (`pip install vcstool`); ROS apt sources
 name it `python3-vcstool`.
 

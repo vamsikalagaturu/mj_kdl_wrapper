@@ -317,6 +317,7 @@ int main(int argc, char **argv)
     };
 
     mj_kdl::Viewer viewer;
+    viewer.paused = true;
     if (!headless && !mj_kdl::open_viewer(&viewer, &env)) return 1;
     restarted      = false;
     bool solver_ok = true;

@@ -5,11 +5,19 @@
 #pragma once
 
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#include "mj_kdl_wrapper/render.hpp"
 
 #include <array>
 #include <chrono>
+#include <string>
 
 namespace mj_kdl {
+
+/**
+ * @ingroup grp_viewer
+ * MuJoCo Studio's three GUI themes.
+ */
+enum class ViewerTheme { Light, Dark, Classic };
 
 /**
  * @ingroup grp_viewer
@@ -25,9 +33,29 @@ struct Viewer
 {
     mjvCamera cam{}; // the camera the window opens with; use_camera()/set_free_camera() move it
     /* Real-time factor for pace_realtime(): 1.0 = real time, 0.5 = half speed, 0.0 = uncapped.
-     * The ',' and '.' keys adjust it. */
+     * The window's Speed slider and the '-' and '=' keys set it. */
     double realtime_factor = 1.0;
-    double fps             = 0.0; // the window's frame rate, read-only, set by step()
+    /* Set before open_viewer() to open with the simulation paused; while the window is open,
+     * step() keeps it equal to the window's pause (Space, Pause/Run). */
+    bool   paused = false;
+    double fps    = 0.0; // the window's frame rate, read-only, set by step()
+
+    // Read by open_viewer(); later changes reach the next window.
+    int             window_width    = 1600;
+    int             window_height   = 900;
+    float           min_panel_width = 18.0f; // narrowest a side panel may be dragged [font heights]
+    ViewerTheme     theme           = ViewerTheme::Dark; // unless the settings file names another
+    std::string     ini_path;                            // layout and theme; empty = ~/.mujoco.ini
+    std::string     record_path       = "recording.mp4"; // the Recording panel's starting values
+    VideoResolution record_resolution = VideoResolution::R720p;
+    int             record_fps        = 30;
+    int    framing_frames     = 5; // frames the start camera is re-fitted while the layout settles
+    double speed_window       = 0.5;  // the measured speed is sim time over this much wall time [s]
+    int    plugin_max_geoms   = 2000; // geoms Studio's ScenePlugins may add per frame
+    double joint_limit_margin = 0.05; // part of a joint's range counted as near a limit (0..0.5)
+    bool   joint_limit_highlight    = true;  // red sphere on a joint near a limit (window only)
+    bool   manipulability_ellipsoid = false; // TCP velocity ellipsoid per robot (window only)
+    double manipulability_scale     = 0.3;   // drawn size of 1 m/s per rad/s of joint speed [m]
     std::chrono::steady_clock::time_point _tick_t{};       // internal: pacing
     void                                 *_impl = nullptr; // internal: open window
 

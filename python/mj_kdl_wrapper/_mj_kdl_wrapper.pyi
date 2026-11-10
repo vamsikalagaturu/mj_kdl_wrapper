@@ -116,6 +116,10 @@ class SceneObject:
     mass: Optional[float]
     condim: Condim
     friction: Optional[list[float]]
+    contype: int
+    """Primitive's collision bitmask; MuJoCo's default 1."""
+    conaffinity: int
+    """Primitive's collision bitmask; MuJoCo's default 1."""
     def __init__(self) -> None: ...
 
 
@@ -125,6 +129,10 @@ class SiteSpec:
     name: str
     pos: list[float]
     quat: list[float]
+    size: float
+    """Marker sphere radius [m]; 0.005 by default."""
+    group: int
+    """Visibility group of the marker; 4 by default."""
     def __init__(self) -> None: ...
 
 
@@ -238,6 +246,8 @@ class Robot:
     def ft_sensor_names(self) -> list[str]: ...
     def ft_sensor(self, name: str) -> kdl.Wrench:
         """Return the latest measured force-torque sensor value as a PyKDL.Wrench."""
+    name: str
+    """Set by the caller, before or after init; the viewer shows it."""
     @property
     def has_tcp_frame(self) -> bool: ...
     @property
@@ -308,6 +318,10 @@ class Env:
         """Add an overlay arrow from a point along dir, length [m] long."""
     def overlay_geoms(self) -> list[mujoco.MjvGeom]:
         """The overlay geoms as mujoco.MjvGeom; Viewer and VideoRecorder draw them themselves."""
+    overlay_max_geoms: int
+    """Overlay geoms beyond this many are dropped; 8192 by default."""
+    overlay_rgba: list[float]
+    """Overlay colour [r, g, b, a] when a call gives none; orange by default."""
     def reset(self, options: Optional[ResetOptions] = None) -> ResetInfo:
         """Reset MuJoCo state, re-seed every robot, then call on_reset; what it moves is read
         back."""
@@ -356,8 +370,43 @@ class Viewer:
     ) -> None: ...
     realtime_factor: float
     """pace()'s speed: 1.0 real time, 0.5 half speed, 0.0 uncapped."""
+    paused: bool
+    """Set before open() to open paused; while open, env.step() keeps it equal to the window's
+    pause."""
     @property
     def fps(self) -> float: ...
+    # Read by open(); later changes reach the next window.
+    window_width: int
+    window_height: int
+    min_panel_width: float
+    """Narrowest a side panel may be dragged, in font heights."""
+    theme: ViewerTheme
+    """Theme unless the settings file names another."""
+    ini_path: str
+    """Layout and theme file; empty uses Studio's ~/.mujoco.ini."""
+    record_path: str
+    record_resolution: VideoResolution
+    record_fps: int
+    framing_frames: int
+    """Frames the start camera is re-fitted while the layout settles."""
+    speed_window: float
+    """The measured speed is sim time over this much wall time [s]."""
+    plugin_max_geoms: int
+    """Geoms Studio's ScenePlugins may add per frame."""
+    joint_limit_margin: float
+    """Part of a joint's range counted as near a limit (0..0.5)."""
+    joint_limit_highlight: bool
+    """Red sphere on a joint near a limit (window only, never recorded)."""
+    manipulability_ellipsoid: bool
+    """TCP velocity ellipsoid per robot (window only, never recorded)."""
+    manipulability_scale: float
+    """Drawn size of 1 m/s per rad/s of joint speed [m]."""
+
+
+class ViewerTheme(_Enum):
+    Light: ClassVar[ViewerTheme]
+    Dark: ClassVar[ViewerTheme]
+    Classic: ClassVar[ViewerTheme]
 
 
 class VideoResolution(_Enum):

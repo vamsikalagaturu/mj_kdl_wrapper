@@ -998,13 +998,15 @@ law used consistently across states.
 
 ## 13. Build A Multi-Robot Scene
 
-Use prefixes to disambiguate the second robot:
+With more than one robot, give each its own prefix, so every robot's names are built the same
+way:
 
 ```cpp
 scene.robots = {
     mj_kdl::RobotSpec{
-        .path = mj_kdl_examples::asset("kinova_gen3/gen3.xml"),
-        .pos  = { -0.7, 0.0, 0.0 },
+        .path   = mj_kdl_examples::asset("kinova_gen3/gen3.xml"),
+        .prefix = "r1_",
+        .pos    = { -0.7, 0.0, 0.0 },
         .attachments = { gripper },
     },
     mj_kdl::RobotSpec{
@@ -1019,18 +1021,19 @@ scene.robots = {
 Then initialize two robot handles:
 
 ```cpp
-const mj_kdl::ToolFrameSpec right_tool{ .tool_body = "r2_g_base_mount", .tcp_site = "r2_g_pinch" };
-
 mj_kdl::Robot left;
 mj_kdl::Robot right;
-mj_kdl::init_robot_from_mjcf(&left, &env, "base_link", "bracelet_link", "", &tool);
-mj_kdl::init_robot_from_mjcf(&right, &env, "r2_base_link", "r2_bracelet_link", "", &right_tool);
+mj_kdl::init_robot_from_mjcf(&left, &env, "base_link", "bracelet_link", "r1_", &tool);
+mj_kdl::init_robot_from_mjcf(&right, &env, "base_link", "bracelet_link", "r2_", &tool);
+left.name  = "left";
+right.name = "right";
 ```
 
 The `prefix` argument is prepended to every name the call resolves (bodies, tool body, TCP
-site, F/T sensors), as `ex_rnea_pick_place` does with `"r2_"`; passing already-prefixed names
-with no prefix, as above, is the same. Each robot gets its own KDL chain and
-command ports, while both share the same `Env`; one `update(&env)` reads and commands both.
+site, F/T sensors), so one `ToolFrameSpec` serves both arms, as in `ex_rnea_pick_place`;
+passing already-prefixed names (`"r2_base_link"`) with no prefix is the same. `name` labels
+each robot in the viewer. Each robot gets its own KDL chain and command ports, while both share
+the same `Env`; one `update(&env)` reads and commands both.
 
 ## 14. Grow Into Task Examples
 

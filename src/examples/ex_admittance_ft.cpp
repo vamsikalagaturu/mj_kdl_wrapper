@@ -414,6 +414,7 @@ static bool report(const Metrics &m)
 static void run_gui(Scene &s, RneaController &ctrl, Admittance &a, const KDL::Frame &nominal)
 {
     mj_kdl::Viewer *viewer = &s.viewer;
+    viewer->paused         = true;
     mj_kdl::set_free_camera(viewer, 1.55, 145.0, -24.0, { 0.05, 0.0, ex::kTableZ + 0.35 });
     if (!mj_kdl::open_viewer(viewer, &s.env, "ex_admittance_ft")) return;
 

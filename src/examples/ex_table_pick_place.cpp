@@ -36,7 +36,7 @@ static constexpr double      kPushOff   = 2.0;  // [s] into the phase
 static constexpr double      kPushRamp  = 0.2;  // [s] rise and fall
 static constexpr double      kSettle    = 0.5;  // [s] after the push, when the residual is taken
 
-static constexpr double kMinDeflection     = 0.010; // [m]
+static constexpr double kMinDeflection     = 0.010;          // [m]
 static constexpr double kDeflectionRatio[] = { 0.85, 1.15 }; // measured / predicted
 static constexpr double kMaxResidual       = 0.004;          // [m]
 static constexpr double kMaxCubeSlip       = 0.010; // [m] cube centre from the TCP while pushed
@@ -109,6 +109,7 @@ int main(int argc, char *argv[])
     };
     mj_kdl::reset(&env);
     mj_kdl::Viewer viewer;
+    viewer.paused = true;
     if (!headless && !mj_kdl::open_viewer(&viewer, &env)) return 1;
 
     const auto control = [&](std::size_t, const KDL::JntArray &q_des) {

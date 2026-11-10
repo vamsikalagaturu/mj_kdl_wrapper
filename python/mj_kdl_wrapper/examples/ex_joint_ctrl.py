@@ -38,6 +38,7 @@ def main() -> int:
 
     env = mjk.Env.build(spec)
     viewer = mjk.Viewer()
+    viewer.paused = True
     try:
         robot = env.create_robot("base_link", "bracelet_link")
         state = {"restart": False}

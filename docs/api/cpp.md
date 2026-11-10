@@ -263,19 +263,25 @@ mj_kdl::SceneSpec sc;
 sc.timestep  = 0.002;
 sc.use_stage = true;
 sc.robots = {
-    mj_kdl::RobotSpec{ .path = "gen3.xml", .pos = { -0.5, 0.0, 0.0 } },
+    mj_kdl::RobotSpec{ .path = "gen3.xml", .prefix = "r1_", .pos = { -0.5, 0.0, 0.0 } },
     mj_kdl::RobotSpec{ .path = "gen3.xml", .prefix = "r2_", .pos = { 0.5, 0.0, 0.0 } },
 };
 mj_kdl::init_env(&env, &sc);
 
 mj_kdl::Robot robot1, robot2;
-mj_kdl::init_robot_from_mjcf(&robot1, &env, "base_link", "bracelet_link");
-mj_kdl::init_robot_from_mjcf(&robot2, &env, "r2_base_link", "r2_bracelet_link");
+mj_kdl::init_robot_from_mjcf(&robot1, &env, "base_link", "bracelet_link", "r1_");
+mj_kdl::init_robot_from_mjcf(&robot2, &env, "base_link", "bracelet_link", "r2_");
+robot1.name = "left";
+robot2.name = "right";
 ```
 
-The `prefix` argument is prepended to every name the call resolves: base and tip bodies, tool
-body, TCP site and F/T sensor names. `("base_link", "bracelet_link", "r2_")` and
+With more than one robot, each gets a prefix of its own, so all their names are built the same
+way. The `prefix` argument is prepended to every name the call resolves: base and tip bodies,
+tool body, TCP site and F/T sensor names. `("base_link", "bracelet_link", "r2_")` and
 `("r2_base_link", "r2_bracelet_link", "")` build the same robot.
+
+`Robot::name` is the caller's label for the robot, set before or after init; the viewer's
+Robots section shows it. Unnamed, a robot is shown by its base body (`r1_base_link`).
 
 Each robot gets a group of actuators per control mode (see
 [Torque control](@ref page_howto_torque_control)), so the two can run different modes.
@@ -622,13 +628,39 @@ toolbar, Explorer, profiler, console and key bindings, with every action carried
 
 `capture_key()` withholds a key from these bindings. To push the selected body: `Ctrl` +
 right-drag applies force (`Shift`: in the horizontal plane), `Ctrl` + left-drag applies
-torque.
+torque; with the Perturb section's Force or Torque chosen, a plain left drag does the same.
+While paused, a drag moves a free body (or mocap body) to the drag target.
 
 The history behind Step Back/Fwd and the timeline scrubber is recorded on the thread that
 steps the `Env`; scrubbing pauses and loads that frame into `env.data`. Reload builds the
 scene again from its MJCF files and keeps the state. The Explorer shows a read-only copy of
 the scene's `mjSpec`. Open Model, Unload, the spec Editor and the graphics-mode switch are
 disabled, because the `Env` owns the model. The wrapper adds an `Equality` section to the
-Inspector and a `Recording` section to the Options panel. Layout and theme are kept in
-Studio's own `~/.mujoco.ini`. On open, the free camera frames the whole scene in the part of
-the window the panels leave free.
+Inspector and, to the Options panel, `Robots` (each robot's name and active control mode,
+read-only, and each joint's position between its limits), `Frames` (checkboxes that draw body and site frames, under a name filter),
+`Perturb` and `Recording`. `View -> Add Camera View` opens a fixed camera's image (colour,
+depth or segmentation) in a window of its own. `View -> Style Editor` is ImGui's style editor
+under a Theme choice (Studio's Light / Dark / Classic, as `View -> Theme`) and a Font choice
+(the system fonts fontconfig lists, Studio's icons merged in). Its edits stay over the theme
+and are saved with the settings (`[MjKdl][Style]` in the settings file, by name and per unit
+DPI scale); picking a theme starts afresh from it, and `File -> Reset Config` drops them. On open, the free camera frames
+the whole scene in the part of the window the panels leave free.
+
+`Viewer` fields, read by `open_viewer()` (Python: the same names on `mjk.Viewer`):
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `paused` | `false` | open paused; while open it follows the window's pause |
+| `realtime_factor` | `1.0` | `pace_realtime()` speed; the Speed slider sets it |
+| `window_width`, `window_height` | `1600`, `900` | window size [px] |
+| `min_panel_width` | `18` | narrowest a side panel may be dragged [font heights] |
+| `theme` | `ViewerTheme::Dark` | theme unless the settings file names another |
+| `ini_path` | empty | layout and theme file; empty is Studio's `~/.mujoco.ini` |
+| `record_path`, `record_resolution`, `record_fps` | `recording.mp4`, `R720p`, `30` | the Recording panel's starting values |
+| `framing_frames` | `5` | frames the start camera is re-fitted while the layout settles |
+| `speed_window` | `0.5` | measured speed: sim time over this much wall time [s] |
+| `plugin_max_geoms` | `2000` | geoms Studio's ScenePlugins may add per frame |
+| `joint_limit_margin` | `0.05` | part of a joint's range counted as near a limit (0..0.5): its bar in the Robots section turns red |
+| `joint_limit_highlight` | `true` | a translucent red sphere (half `stat.meansize` across) on each robot joint within `joint_limit_margin` of a limit; window and camera views only (never in recordings); the Robots section toggles it |
+| `manipulability_ellipsoid` | `false` | each robot's TCP velocity ellipsoid at its TCP (window and camera views only); the Robots section toggles it |
+| `manipulability_scale` | `0.3` | drawn size of the ellipsoid: metres per m/s of TCP speed per rad/s of joint speed |

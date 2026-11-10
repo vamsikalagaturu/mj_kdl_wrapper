@@ -34,9 +34,6 @@ extern char **environ;
 
 namespace mj_kdl {
 
-// Pixel layout of every frame: RGB8, as ffmpeg's rgb24 input takes it.
-static constexpr int kRgbBytesPerPixel = 3;
-
 // Asset providers
 
 static std::filesystem::path asset_dir()

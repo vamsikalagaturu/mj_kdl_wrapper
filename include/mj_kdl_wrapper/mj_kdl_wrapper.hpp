@@ -271,6 +271,8 @@ struct SceneObject
     double mass        = NAN; // [kg]; required for non-fixed primitives
     Condim condim      = Condim::Tangential;
     double friction[3] = { NAN, NAN, NAN }; // [slide, spin, roll]; required for primitives
+    int    contype     = 1;                 // primitive's collision bitmask; MuJoCo's default
+    int    conaffinity = 1;                 // primitive's collision bitmask; MuJoCo's default
 };
 
 /**
@@ -288,6 +290,8 @@ struct SiteSpec
     std::string name;                             // site name, unique within the scene
     double      pos[3]  = { 0.0, 0.0, 0.0 };      // offset in the body frame [m]
     double      quat[4] = { 0.0, 0.0, 0.0, 1.0 }; // orientation in the body frame [x, y, z, w]
+    double      size    = 0.005;                  // marker sphere radius [m]
+    int         group   = 4; // visibility group, so frame sites hide without an asset's own
 };
 
 /**
@@ -388,6 +392,7 @@ struct ToolFrameSpec
     std::string tcp_site;                           // MuJoCo site name (takes priority)
     KDL::Frame  tcp_frame = KDL::Frame::Identity(); // manual TCP in tip frame (fallback)
     std::vector<ForceTorqueSensorSpec> ft_sensors;
+    double tcp_identity_tol = 1e-12; // a tcp_frame this close to identity means no TCP
 };
 
 
@@ -419,6 +424,8 @@ struct RobotInternals;
  */
 struct Robot : RobotPorts
 {
+    std::string name; // set by the caller, before or after init; the viewer shows it
+
     /* Configuration - set by init_robot_from_mjcf() / init_robot_from_chain(). */
     mjModel                               *model = nullptr; // the Env's; updated on a rebuild
     mjData                                *data  = nullptr;
@@ -592,6 +599,8 @@ struct Env
     /* Components following the Env, keyed by their own address. A hook may add or erase entries
      * while it runs; each entry is looked up again before it is called. */
     std::map<const void *, EnvHooks> hooks;
+    std::size_t          overlay_max_geoms = 8192; // overlay geoms beyond this are dropped
+    std::array<float, 4> overlay_rgba      = { 1.0f, 0.5f, 0.1f, 1.0f }; // when a call gives none
 
     Env();
     ~Env();

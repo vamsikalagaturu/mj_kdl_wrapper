@@ -227,8 +227,8 @@ attachment.
 
 ## Multi-Robot Scene
 
-Use prefixes to keep MuJoCo names distinct when loading the same MJCF more than
-once. `create_robot()`'s `prefix` is prepended to every name it resolves (base and tip
+With more than one robot, give each a prefix of its own, so MuJoCo names stay distinct and
+every robot's are built the same way. `create_robot()`'s `prefix` is prepended to every name it resolves (base and tip
 bodies, tool body, TCP site, F/T sensor names), so `create_robot("base_link",
 "bracelet_link", "r2_", tool)` and the same call with `r2_`-prefixed names and no prefix
 build the same robot.
@@ -236,6 +236,7 @@ build the same robot.
 ```python
 left = mjk.RobotSpec()
 left.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
+left.prefix = "r1_"
 left.pos = [-0.5, 0.0, 0.0]
 
 right = mjk.RobotSpec()
@@ -246,8 +247,10 @@ right.pos = [0.5, 0.0, 0.0]
 spec.robots = [left, right]
 env = mjk.Env.build(spec)
 
-robot1 = env.create_robot("base_link", "bracelet_link")
-robot2 = env.create_robot("r2_base_link", "r2_bracelet_link")
+robot1 = env.create_robot("base_link", "bracelet_link", "r1_")
+robot2 = env.create_robot("base_link", "bracelet_link", "r2_")
+robot1.name = "left"    # the viewer's Robots section shows it; unnamed, the base body
+robot2.name = "right"
 ```
 
 ## Table And Scene Objects
@@ -512,7 +515,8 @@ env.add_trace_segment(prev_tcp, tcp, [1.0, 0.9, 0.1, 1.0])
 ## Viewer Controls
 
 `mjk.Viewer` is the C++ viewer (`mj_kdl::Viewer`), the same MuJoCo Studio window with the same
-menus, panels, Step Back/Fwd history, Explorer, `Recording` section and key bindings; see
+menus, panels, Step Back/Fwd history, Explorer, wrapper sections (`Robots`, `Frames`,
+`Perturb`, `Recording`), camera views and key bindings; see
 Viewer Controls in the [C++ API guide](@ref page_api_cpp). `viewer.open(env, title="MuJoCo")`
 opens it on the `Env`, with or without robots, and raises `RuntimeError` when there is no
 display. The `Env` keeps stepping on the caller's thread; the window runs on a thread of its
@@ -538,4 +542,10 @@ env.close()
 `Viewer` is also a context manager. `viewer.is_running()`, `viewer.realtime_factor` (1.0 real
 time, 0.0 uncapped), `viewer.fps`, `use_camera(name)` and `set_free_camera(distance, azimuth,
 elevation, lookat)` mirror the C++ calls. `key_pressed(key)` and `capture_key(key,
-capture=True)` take `ImGuiKey` integer codes as in `imgui.h`, as in C++.
+capture=True)` take `ImGuiKey` integer codes as in `imgui.h`, as in C++. Every setting of the
+C++ `Viewer` is a property of the same name, set before `open()`: `paused`, `window_width`,
+`window_height`, `min_panel_width`, `theme` (`mjk.ViewerTheme`), `ini_path`, `record_path`,
+`record_resolution`, `record_fps`, `framing_frames`, `speed_window`, `plugin_max_geoms`,
+`joint_limit_margin`, `joint_limit_highlight`, `manipulability_ellipsoid` and
+`manipulability_scale`;
+the C++ guide's Viewer Controls lists their defaults.

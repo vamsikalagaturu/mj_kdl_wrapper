@@ -670,11 +670,13 @@ Before treating a task as working, validate:
 
 ## 12. Build A Multi-Robot Scene
 
-Use prefixes to disambiguate the second robot:
+With more than one robot, give each its own prefix, so every robot's names are built the same
+way:
 
 ```python
 left = mjk.RobotSpec()
 left.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
+left.prefix = "r1_"
 left.pos = [-0.7, 0.0, 0.0]
 left.attachments = [gripper]
 
@@ -687,18 +689,17 @@ right.attachments = [gripper]
 spec.robots = [left, right]
 env = mjk.Env.build(spec)
 
-right_tool = mjk.ToolFrameSpec()
-right_tool.tool_body = "r2_g_base_mount"
-right_tool.tcp_site = "r2_g_pinch"
-
-left_robot = env.create_robot("base_link", "bracelet_link", tool=tool)
-right_robot = env.create_robot("r2_base_link", "r2_bracelet_link", tool=right_tool)
+left_robot = env.create_robot("base_link", "bracelet_link", "r1_", tool=tool)
+right_robot = env.create_robot("base_link", "bracelet_link", "r2_", tool=tool)
+left_robot.name = "left"
+right_robot.name = "right"
 ```
 
 Each robot gets its own KDL chain and command ports while sharing the same
 `Env`; one `env.update()` reads and commands both. `prefix` is prepended to every name the
-call resolves (bodies, tool body, TCP site, F/T sensors), as `ex_rnea_pick_place.py` does
-with `"r2_"`; passing already-prefixed names with no prefix, as above, is the same.
+call resolves (bodies, tool body, TCP site, F/T sensors), so one `ToolFrameSpec` serves both
+arms, as in `ex_rnea_pick_place.py`; passing already-prefixed names (`"r2_base_link"`) with no
+prefix is the same. `name` labels each robot in the viewer.
 
 ## 13. Modify A Running Scene
 
