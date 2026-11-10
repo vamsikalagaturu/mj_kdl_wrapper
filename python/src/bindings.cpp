@@ -71,6 +71,7 @@ struct PySceneObject
     std::string                          prefix;
     PyAttachTarget                       attach_to;
     Shape                                shape = Shape::Unspecified;
+    std::string                          mesh_path;
     std::optional<std::array<double, 3>> size;
     std::array<double, 3>                pos  = { 0.0, 0.0, 0.0 };
     std::array<double, 4>                quat = { 0.0, 0.0, 0.0, 1.0 };
@@ -179,6 +180,7 @@ SceneObject to_cpp(const PySceneObject &src)
     out.prefix    = src.prefix;
     out.attach_to = to_cpp(src.attach_to);
     out.shape     = src.shape;
+    out.mesh_path = src.mesh_path;
     std::copy(src.pos.begin(), src.pos.end(), out.pos);
     std::copy(src.quat.begin(), src.quat.end(), out.quat);
     out.fixed       = src.fixed;
@@ -192,16 +194,13 @@ SceneObject to_cpp(const PySceneObject &src)
     if (src.mjcf_path.empty()) {
         if (!src.size)
             throw std::runtime_error("SceneObject.size must be set for primitive objects");
-        if (!src.rgba)
-            throw std::runtime_error("SceneObject.rgba must be set for primitive objects");
         if (!src.mass && !src.fixed)
             throw std::runtime_error("SceneObject.mass must be set for non-fixed primitives");
-        if (!src.friction) {
-            throw std::runtime_error("SceneObject.friction must be set for primitive objects");
-        }
+        if (!src.friction && !src.fixed)
+            throw std::runtime_error("SceneObject.friction must be set for non-fixed primitives");
         std::copy(src.size->begin(), src.size->end(), out.size);
         if (src.mass) out.mass = *src.mass;
-        std::copy(src.friction->begin(), src.friction->end(), out.friction);
+        if (src.friction) std::copy(src.friction->begin(), src.friction->end(), out.friction);
     }
     return out;
 }
@@ -937,7 +936,9 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .value("Unspecified", Shape::Unspecified)
       .value("BOX", Shape::BOX)
       .value("SPHERE", Shape::SPHERE)
-      .value("CYLINDER", Shape::CYLINDER);
+      .value("CYLINDER", Shape::CYLINDER)
+      .value("ELLIPSOID", Shape::ELLIPSOID)
+      .value("MESH", Shape::MESH);
 
     py::enum_<Condim>(m, "Condim")
       .value("Tangential", Condim::Tangential)
@@ -1039,8 +1040,8 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
     py::class_<PySceneObject>(
       m,
       "SceneObject",
-      "MJCF asset or primitive object placed in a scene. Primitive size, rgba, mass, and friction "
-      "are required."
+      "MJCF asset or primitive object placed in a scene. A primitive needs size, and mass and "
+      "friction unless fixed; what it leaves unset takes MuJoCo's default."
     )
       .def(py::init<>())
       .def_readwrite("name", &PySceneObject::name, "Object name.")
@@ -1052,19 +1053,28 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       )
       .def_readwrite("attach_to", &PySceneObject::attach_to, "Placement parent; defaults to world.")
       .def_readwrite("shape", &PySceneObject::shape, "Primitive shape when mjcf_path is empty.")
-      .def_readwrite("size", &PySceneObject::size, "Required primitive size.")
+      .def_readwrite(
+        "mesh_path", &PySceneObject::mesh_path, "Mesh file of a MESH primitive; size is its scale."
+      )
+      .def_readwrite(
+        "size", &PySceneObject::size, "Required primitive size: dimensions, or a MESH's scale."
+      )
       .def_readwrite("pos", &PySceneObject::pos, "Placement offset in the parent frame, in meters.")
       .def_readwrite("quat", &PySceneObject::quat, "Placement orientation offset [x, y, z, w].")
       .def_readwrite(
-        "rgba", &PySceneObject::rgba, "Primitive color, required; on an asset, recolors its geoms."
+        "rgba", &PySceneObject::rgba, "Color; unset is MuJoCo's default; on an asset, recolors it."
       )
       .def_readwrite(
         "fixed", &PySceneObject::fixed, "If true, primitives are welded to their parent."
       )
-      .def_readwrite("mass", &PySceneObject::mass, "Required primitive mass in kilograms.")
+      .def_readwrite(
+        "mass", &PySceneObject::mass, "Primitive mass in kilograms; required unless fixed."
+      )
       .def_readwrite("condim", &PySceneObject::condim, "MuJoCo contact friction dimensionality.")
       .def_readwrite(
-        "friction", &PySceneObject::friction, "Required primitive [slide, spin, roll] friction."
+        "friction",
+        &PySceneObject::friction,
+        "Primitive [slide, spin, roll]; required unless fixed."
       )
       .def_readwrite(
         "contype", &PySceneObject::contype, "Primitive's collision bitmask; MuJoCo's default 1."

@@ -301,14 +301,19 @@ in `build_scene()` is decorations, objects in declaration order, robots, then
 cameras. A robot's `attach_to` can reference any prior object, and a child
 object's `attach_to` can reference any earlier object in `SceneSpec::objects`.
 
-`SceneObject` has no defaults for `shape`, `size`, `rgba`, `mass`, or
+`SceneObject` invents no values for `shape`, `size`, `rgba`, `mass`, or
 `friction`: the numbers start unset (NaN). For MJCF-backed objects, when `mjcf_path` is set,
-they are ignored (`rgba` with `has_rgba` recolours the asset). For primitives,
+they are ignored (`rgba` with `has_rgba` recolours the asset). A primitive is a `BOX`,
+`SPHERE`, `CYLINDER`, `ELLIPSOID` (`size` = radii) or `MESH` (`mesh_path` names an STL, OBJ
+or MSH file and `size` is its scale), built through mjSpec. What a primitive may leave unset
+takes MuJoCo's own default: `rgba` on any primitive, `mass` (from the default density) and
+`friction` on a fixed one. A fixed primitive with `mass = 0` adds no mass to its parent.
 `build_scene()` fails, naming the object, when:
 
-- `shape == Shape::Unspecified`;
+- `shape == Shape::Unspecified`, or a `MESH` has no `mesh_path` or it is not a file;
 - a size the shape uses is unset or not positive;
-- `rgba` or `friction` is unset;
+- `rgba` or `friction` is only partly set;
+- `friction` is unset on a non-fixed primitive;
 - `mass` is unset or not positive on a non-fixed primitive.
 
 ```cpp

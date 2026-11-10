@@ -303,14 +303,19 @@ the same tagged `AttachTarget` as `RobotSpec` and `AttachmentSpec`. Inside
 robots -> cameras, so a robot or a later object may reference any prior
 object via its name or one of its sites.
 
-`SceneObject` has no defaults for `shape`, `size`, `rgba`, `mass`, or
+`SceneObject` invents no values for `shape`, `size`, `rgba`, `mass`, or
 `friction`. For MJCF-backed objects (when `mjcf_path` is set) those fields
-are ignored at runtime, so leaving them zero-initialised is fine. For
-primitives, `build_scene` runs explicit checks:
+are ignored at runtime, so leaving them unset is fine. For primitives (`BOX`, `SPHERE`,
+`CYLINDER`, `ELLIPSOID`, or `MESH` with `mesh_path` and `size` as its scale), the build fails,
+naming the object, when:
 
-- `shape == Shape::Unspecified` -> error, the object is skipped.
-- `size[i] <= 0` for the relevant dimensions of the shape -> error, skipped.
-- `mass <= 0` on a non-fixed primitive -> error, skipped.
+- `shape == Shape::Unspecified`, or a `Shape::MESH` has no `mesh_path` or it is not a file;
+- `size[i] <= 0` (or unset) for the dimensions of the shape;
+- `mass <= 0` or unset `friction` on a non-fixed primitive;
+- `rgba` or `friction` is only partly set.
+
+A fixed primitive may leave `mass` and `friction` unset, and any primitive may leave `rgba`
+unset; those then take MuJoCo's own defaults.
 
 ```cpp
 mj_kdl::SceneObject table{
@@ -322,7 +327,7 @@ mj_kdl::SceneObject table{
 
 scene.objects.push_back(table);
 
-// Primitives require shape, size, rgba, mass, and friction.
+// A free primitive requires shape, size, mass, and friction.
 scene.objects.push_back(mj_kdl::SceneObject{
     .name     = "cube",
     .shape    = mj_kdl::Shape::BOX,
@@ -1061,7 +1066,7 @@ mj_kdl::SceneObject obstacle{
     .pos   = { 0.3, -0.2, 0.82 },
     .rgba     = { 0.6f, 0.6f, 0.6f, 1.0f },
     .fixed    = true,                             // a fixed primitive may leave mass unset
-    .friction = { 0.8, 0.02, 0.001 },             // required for primitives
+    .friction = { 0.8, 0.02, 0.001 },             // required unless fixed
 };
 
 if (mj_kdl::Status s = mj_kdl::scene_add_object(&env, obstacle); !s) std::cerr << s.error;

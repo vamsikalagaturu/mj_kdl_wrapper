@@ -42,6 +42,8 @@ class Shape(_Enum):
     BOX: ClassVar[Shape]
     SPHERE: ClassVar[Shape]
     CYLINDER: ClassVar[Shape]
+    ELLIPSOID: ClassVar[Shape]
+    MESH: ClassVar[Shape]
 
 
 class Condim(_Enum):
@@ -117,13 +119,15 @@ class RobotSpec:
 
 
 class SceneObject:
-    """MJCF asset or primitive object. A primitive needs size, rgba and friction, and mass
-    unless fixed; rgba on an asset recolors its geoms."""
+    """MJCF asset or primitive object. A primitive needs size, and mass and friction unless
+    fixed; unset rgba, mass or friction take MuJoCo's default. MESH needs mesh_path, with size
+    as its scale; rgba on an asset recolors its geoms."""
     name: str
     mjcf_path: str
     prefix: str
     attach_to: AttachTarget
     shape: Shape
+    mesh_path: str
     size: Optional[list[float]]
     pos: list[float]
     quat: list[float]
