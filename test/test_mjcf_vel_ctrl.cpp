@@ -33,9 +33,8 @@ TEST(MjcfVelCtrlTest, ConvergesInVelocityMode)
     rs.path  = arm;
     rs.modes = { { .mode = mj_kdl::CtrlMode::VELOCITY, .joints = {}, .kv = kVelGain } };
     mj_kdl::SceneSpec sc;
-    sc.timestep   = 0.002;
-    sc.add_floor  = true;
-    sc.add_skybox = false;
+    sc.timestep  = 0.001;
+    sc.use_stage = true;
     sc.robots.push_back(rs);
 
     mj_kdl::Env   env;
@@ -52,7 +51,7 @@ TEST(MjcfVelCtrlTest, ConvergesInVelocityMode)
         for (int i = 0; i < 7; ++i) {
             const double err     = kTargetPose[i] - robot.jnt_pos_msr[i];
             max_err              = std::max(max_err, std::abs(err));
-            robot.jnt_vel_cmd[i] = ex::clamp_abs(kKv * err, kMaxVel);
+            robot.jnt_vel_cmd[i] = std::clamp(kKv * err, -kMaxVel, kMaxVel);
         }
         if (max_err < kTol) break;
         mj_kdl::step(&env);

@@ -52,6 +52,9 @@ struct ArmCase
     double              limit;
 };
 
+// Without it gtest prints the parameter's raw bytes, its uninitialised padding included.
+static void PrintTo(const ArmCase &c, std::ostream *os) { *os << c.name; }
+
 static const ArmCase kArms[] = {
     { "Gen3",
       "kinova_gen3/gen3.xml",
@@ -78,9 +81,8 @@ class ArmModesTest : public testing::TestWithParam<ArmCase>
         const ArmCase &c = GetParam();
         mjcf_            = mj_kdl_examples::find_asset(c.mjcf);
         if (!fs::exists(mjcf_)) GTEST_SKIP() << c.mjcf << " not found";
-        spec_.timestep   = 0.002;
-        spec_.add_floor  = true;
-        spec_.add_skybox = false;
+        spec_.timestep  = 0.001;
+        spec_.use_stage = true;
         mj_kdl::RobotSpec rs;
         rs.path = mjcf_;
         spec_.robots.push_back(rs);
@@ -321,9 +323,8 @@ TEST(GripperModesTest, GripperStaysInPositionWhileTheArmSwitches)
     rs.path = arm_mjcf;
     rs.attachments.push_back(mj_kdl_examples::gripper_attachment(grp_mjcf));
     mj_kdl::SceneSpec spec;
-    spec.timestep   = 0.002;
-    spec.add_floor  = true;
-    spec.add_skybox = false;
+    spec.timestep  = 0.001;
+    spec.use_stage = true;
     spec.robots.push_back(rs);
 
     mj_kdl::Env env;
@@ -378,9 +379,8 @@ class MotorWheelModesTest : public testing::Test
 
     void SetUp() override
     {
-        spec_.timestep   = 0.002;
-        spec_.add_floor  = false;
-        spec_.add_skybox = false;
+        spec_.timestep  = 0.001;
+        spec_.use_stage = false;
         mj_kdl::RobotSpec rs;
         rs.path  = fixture_;
         rs.modes = { { .mode = mj_kdl::CtrlMode::VELOCITY, .joints = { "wheel" }, .kv = 2.0 } };
@@ -485,9 +485,8 @@ class AttachedArmModesTest : public testing::Test
     {
         const std::string mjcf = mj_kdl_examples::find_asset("kinova_gen3/gen3.xml");
         if (!fs::exists(mjcf)) GTEST_SKIP() << "kinova_gen3/gen3.xml not found";
-        spec_.timestep   = 0.002;
-        spec_.add_floor  = false;
-        spec_.add_skybox = false;
+        spec_.timestep  = 0.001;
+        spec_.use_stage = false;
         mj_kdl::RobotSpec rs;
         rs.path = std::string(MJ_KDL_TEST_FIXTURES) + "/arm_mount.xml";
         rs.attachments.push_back(arm(mjcf, "left_mount", "l_"));

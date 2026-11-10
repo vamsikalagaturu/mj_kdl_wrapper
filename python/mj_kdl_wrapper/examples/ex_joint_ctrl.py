@@ -26,9 +26,8 @@ def main() -> int:
     args = parser.parse_args()
 
     spec = mjk.SceneSpec()
-    spec.timestep = 0.002
-    spec.add_floor = True
-    spec.add_skybox = True
+    spec.timestep = 0.001
+    spec.use_stage = True
     robot_spec = mjk.RobotSpec()
     robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
     velocity = mjk.CtrlModeSpec()
@@ -38,6 +37,8 @@ def main() -> int:
     spec.robots = [robot_spec]
 
     env = mjk.Env.build(spec)
+    viewer = mjk.Viewer()
+    viewer.paused = True
     try:
         robot = env.create_robot("base_link", "bracelet_link")
         state = {"restart": False}
@@ -50,7 +51,7 @@ def main() -> int:
         env.on_reset = on_reset
         env.reset()
         if args.gui:
-            env.open_viewer("ex_joint_ctrl.py")
+            viewer.open(env, "ex_joint_ctrl.py")
 
         motion, t_start = "position", 0.0
         pos_err = vel_err = math.inf
@@ -81,7 +82,7 @@ def main() -> int:
                     break
             if not env.step():
                 break
-            env.pace()
+            viewer.pace()
         pos_ok, vel_ok = pos_err <= MAX_ERR, vel_err < TOL
         status = "converged" if vel_ok else "not converged"
         print(f"POSITION: max joint error at the target {pos_err:.4f} rad (limit {MAX_ERR} rad)")
@@ -90,6 +91,7 @@ def main() -> int:
             f"({status} at t = {vel_time:.2f} s, timeout {TIMEOUT} s)"
         )
     finally:
+        viewer.close()
         env.close()
     if args.gui:
         return 0

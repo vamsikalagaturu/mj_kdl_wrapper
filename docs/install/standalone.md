@@ -24,12 +24,12 @@ Instructions target Ubuntu/Debian. CMake checks `mjVERSION_HEADER` and stops if
 
 | Dependency | Version / source | Notes |
 |------------|------------------|-------|
-| MuJoCo | `3.14.0` from `cmake/Versions.cmake` | Native library and pinned `mujoco` Python package must match |
+| MuJoCo | `4.0.0`, tag in `mj_kdl_wrapper.repos`, `MJ_KDL_MUJOCO_VERSION` in `cmake/Versions.cmake` | Built from source for C++; the wheel compiles against pip `mujoco-core==4.0.0` and depends on `mujoco==4.0.0` |
 | Orocos KDL | secorolab fork, branch `vereshchagin-driver-weighting`, from `mj_kdl_wrapper.repos` | Built from source; system `liborocos-kdl` is not used |
-| vcstool | any | Checks out the KDL fork (`vcs import < mj_kdl_wrapper.repos`) |
+| vcstool | any | Checks out the KDL fork and MuJoCo (`vcs import < mj_kdl_wrapper.repos`) |
 | CMake | `>=3.16` | Required to configure the C++ build |
 | C++ compiler | C++20-capable | `CMAKE_CXX_STANDARD` is set to 20 |
-| Python | `>=3.10` | Required for the Python package |
+| Python | `>=3.12` | Required for the Python package (the default python3 of Ubuntu 24.04) |
 | scikit-build-core | `>=0.11.2` | Python build backend |
 | pybind11 | `>=2.13` | Python binding build dependency |
 
@@ -39,19 +39,31 @@ Instructions target Ubuntu/Debian. CMake checks `mjVERSION_HEADER` and stops if
 sudo apt update
 sudo apt install \
   cmake g++ git python3-dev python3-pip python3-venv vcstool \
-  libeigen3-dev libglfw3-dev libgl-dev libegl-dev \
-  ffmpeg doxygen
+  libeigen3-dev ffmpeg doxygen \
+  libegl-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev \
+  libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libfontconfig-dev
 ```
 
 `doxygen` is only needed for the docs target; `python3-dev`/`python3-venv` only
-for the Python package. `vcstool` is also on PyPI (`pip install vcstool`); ROS apt sources
+for the Python package; `ffmpeg` only for recording. `libegl-dev` is for the render library,
+and the X11, Wayland and GL headers are what MuJoCo's Filament and SDL2 builds use for the
+viewer, which also links `libfontconfig` to list the system fonts; without them `AUTO` leaves those libraries out, and the Python package, which always
+builds both, fails. `vcstool` is also on PyPI (`pip install vcstool`); ROS apt sources
 name it `python3-vcstool`.
 
 ## C++ (CMake)
 
-A standard CMake project. The default build is self-contained: it downloads
-MuJoCo and builds the Orocos KDL fork that `vcs import` checked out; the robot models
-ship in `assets/`. No system MuJoCo or KDL is ever used.
+A standard CMake project. The default build is self-contained: it builds MuJoCo and the
+Orocos KDL fork that `vcs import` checked out; the robot models ship in `assets/`. No system
+MuJoCo or KDL is ever used.
+
+It makes up to three libraries:
+
+| Target | Header | What |
+|--------|--------|------|
+| `mj_kdl_wrapper::mj_kdl_wrapper` | `mj_kdl_wrapper.hpp` | the core: MuJoCo + KDL, no GL or window |
+| `mj_kdl_wrapper::render` | `render.hpp` | `VideoRecorder`: offscreen rendering with MuJoCo's Filament renderer, MP4 through ffmpeg (`MJ_KDL_WITH_RENDER`) |
+| `mj_kdl_wrapper::viewer` | `viewer.hpp` | `Viewer`: a MuJoCo Studio window (`MJ_KDL_WITH_VIEWER`, needs render) |
 
 ### Default build
 
@@ -59,10 +71,10 @@ ship in `assets/`. No system MuJoCo or KDL is ever used.
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
 cd mj_kdl_wrapper
 
-# check out the KDL fork into third_party/orocos_kinematics_dynamics
+# check out the KDL fork and MuJoCo into third_party/
 vcs import < mj_kdl_wrapper.repos
 
-# configure (downloads MuJoCo, builds the KDL fork)
+# configure
 cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
 
 # compile
@@ -74,9 +86,14 @@ ctest --test-dir build --output-on-failure
 
 What happens during configure/build:
 
-- **MuJoCo** is downloaded into the user cache (`MJ_KDL_FETCH_MUJOCO=ON`) unless
-  `MJ_KDL_MUJOCO_DIR` already holds a matching install. No system paths are
-  searched; set `MJ_KDL_MUJOCO_DIR` to use an install elsewhere.
+- **MuJoCo** is built from `MJ_KDL_MUJOCO_DIR` (default `third_party/mujoco`, tag `4.0.0`,
+  where `vcs import` puts it) via `ExternalProject` into `build/mujoco`, with Filament for
+  render and Studio for the viewer when those are enabled. Configure stops when the checkout
+  is missing or its `mjVERSION_HEADER` is not 4.0.0. No system paths are searched.
+- **render / viewer** are built when `MJ_KDL_WITH_RENDER` / `MJ_KDL_WITH_VIEWER` allow it
+  (`AUTO`: when EGL, respectively X11, is found); configure prints `render : ON|OFF` and
+  `viewer : ON|OFF`. Filament's materials and Studio's fonts are staged in
+  `build/mujoco_assets`.
 - **Orocos KDL** (the secorolab fork) is built from `MJ_KDL_OROCOS_KDL_DIR` (default
   `third_party/orocos_kinematics_dynamics`, where `vcs import` puts it) via
   `ExternalProject` into `build/orocos_kdl_install`. CMake never clones it; configure stops
@@ -94,14 +111,20 @@ cmake --build build --parallel $(nproc)
 cmake --install build
 ```
 
-The install is self-contained. Alongside `libmj_kdl_wrapper.so`, its headers, and
-the `mj_kdl_wrapper` CMake package config, the built Orocos KDL fork is installed
-into the same prefix:
+The install is self-contained. Alongside `libmj_kdl_wrapper.so`, the render and viewer
+libraries when built, their headers, and the `mj_kdl_wrapper` CMake package config, the built
+MuJoCo and Orocos KDL fork are installed into the same prefix:
 
 ```
 <prefix>/lib/libmj_kdl_wrapper.so
+<prefix>/lib/libmj_kdl_render.so             # with render
+<prefix>/lib/libmj_kdl_viewer.so             # with the viewer
+<prefix>/lib/libmujoco.so*
+<prefix>/lib/mujoco_plugin/...
+<prefix>/lib/mujoco_assets/...               # Filament materials, Studio fonts (render / viewer)
 <prefix>/lib/liborocos-kdl.so*
 <prefix>/include/mj_kdl_wrapper/...
+<prefix>/include/mujoco/...
 <prefix>/include/kdl/...
 <prefix>/lib/cmake/mj_kdl_wrapper/...
 <prefix>/lib/pkgconfig/mj_kdl_wrapper.pc
@@ -111,12 +134,15 @@ into the same prefix:
 ```
 
 The wrapper is rpath'd to `$ORIGIN` as a `DT_RPATH`, not a `DT_RUNPATH`, so it loads the
-co-installed KDL without a build tree, and an `LD_LIBRARY_PATH` holding a system
+co-installed MuJoCo and KDL without a build tree, and an `LD_LIBRARY_PATH` holding a system
 `liborocos-kdl` cannot swap it out. Consumers:
 
 ```cmake
 find_package(mj_kdl_wrapper REQUIRED)              # pulls KDL in transitively
 target_link_libraries(my_app mj_kdl_wrapper::mj_kdl_wrapper)
+# the optional libraries are components:
+find_package(mj_kdl_wrapper REQUIRED COMPONENTS render viewer)
+target_link_libraries(my_app mj_kdl_wrapper::viewer)   # brings render and the core
 # or use KDL directly:
 find_package(orocos_kdl REQUIRED)
 target_link_libraries(my_app orocos-kdl)
@@ -126,9 +152,9 @@ A requested version matches only within its minor version: `find_package(mj_kdl_
 does not accept `0.4.x`. The exported target carries `-Wl,--disable-new-dtags`, so a consumer
 executable gets a `DT_RPATH` too.
 
-Without CMake, use pkg-config. `mj_kdl_wrapper.pc` requires `orocos-kdl`, which the bundled
-fork installs next to it, and carries MuJoCo's include and library paths and the rpaths
-(`DT_RPATH`) to the wrapper's and MuJoCo's library directories:
+Without CMake, use pkg-config; it covers the core library only. `mj_kdl_wrapper.pc` requires
+`orocos-kdl`, which the bundled fork installs next to it, links `-lmujoco` from the same
+library directory and carries the rpath (`DT_RPATH`) to it:
 
 ```bash
 export PKG_CONFIG_PATH="$HOME/ws/lib/pkgconfig"
@@ -140,20 +166,17 @@ With a KDL consumed from elsewhere (`MJ_KDL_OROCOS_KDL_INSTALL_DIR` or
 as well (a colcon overlay puts it there); the rpath to its library directory is in
 `mj_kdl_wrapper.pc`.
 
-A consumer wanting MuJoCo without KDL, glfw and OpenGL links `mujoco::mujoco`, which the config
-recreates for the exact copy this wrapper was built against:
+A consumer wanting MuJoCo without KDL links `mujoco::mujoco`, which the config recreates for
+the copy installed in the prefix:
 
 ```cmake
 find_package(mj_kdl_wrapper REQUIRED)
 target_link_libraries(my_app mujoco::mujoco)       # MuJoCo alone
 ```
 
-`MJ_KDL_MUJOCO_DIR` and `MJ_KDL_MUJOCO_VERSION` are set alongside it for anyone who needs the
-path rather than the target.
+`MJ_KDL_MUJOCO_VERSION` is set alongside it.
 
-MuJoCo is intentionally not bundled into the prefix; consumers resolve it from
-`MJ_KDL_MUJOCO_DIR` (or the `mujoco` pip package). Set
-`-DMJ_KDL_INSTALL_BUNDLED_KDL=OFF` to keep KDL out of a shared prefix such as
+Set `-DMJ_KDL_INSTALL_BUNDLED_KDL=OFF` to keep KDL out of a shared prefix such as
 `/usr/local`, where it could shadow a distro KDL - but then the install is no
 longer self-contained: the library has no rpath to any KDL, so the loader takes the first
 `liborocos-kdl` it finds, possibly a system one without the fork's solvers. Configure warns.
@@ -165,9 +188,8 @@ Each dependency has a default source, or can point at something you already have
 
 | To... | Set |
 |-------|-----|
-| Use an existing MuJoCo install | `-DMJ_KDL_MUJOCO_DIR=/opt/mujoco-3.14.0` |
-| Override the MuJoCo download URL | `-DMJ_KDL_MUJOCO_URL=<url>` |
-| Skip the MuJoCo download | `-DMJ_KDL_FETCH_MUJOCO=OFF` (then set `MJ_KDL_MUJOCO_DIR`) |
+| Build a MuJoCo 4.0.0 checkout from elsewhere | `-DMJ_KDL_MUJOCO_DIR=~/src/mujoco` |
+| Build the core only | `-DMJ_KDL_WITH_RENDER=OFF -DMJ_KDL_WITH_VIEWER=OFF` |
 | Build a KDL fork checkout from elsewhere | `-DMJ_KDL_OROCOS_KDL_DIR=~/src/orocos_kinematics_dynamics` |
 | Build a different KDL branch/tag | check it out in `third_party/orocos_kinematics_dynamics` |
 | Reuse a prebuilt KDL by prefix | `-DMJ_KDL_OROCOS_KDL_INSTALL_DIR=$HOME/ws` |
@@ -205,9 +227,15 @@ the [ROS 2 workflow](ros2.md) shares one KDL across a colcon overlay.
 
 ## Python
 
-`pip install` builds the extension and bundles the secorolab Orocos KDL fork, PyKDL and the
-MuJoCo plugins. MuJoCo itself is not bundled: the wheel pins `mujoco==3.14.0` and loads that
-package's shared library. The build is isolated - it does not reuse any C++ build tree.
+`pip install` builds the extension with the core, render and viewer libraries and bundles the
+secorolab Orocos KDL fork and PyKDL, so Python gets the same viewer (`mjk.Viewer`) and
+recorder (`mjk.VideoRecorder`) as C++. It builds MuJoCo's Filament and Studio archives from
+the `third_party/mujoco` source (`vcs import < mj_kdl_wrapper.repos` first, and the same apt
+headers as the C++ viewer build) and links them against the headers and `libmujoco` of the
+pip `mujoco-core==4.0.0` build requirement, so a process loads one `libmujoco`. The wheel
+depends on `mujoco==4.0.0`, whose shared library and plugins it loads at runtime; MP4
+recording needs ffmpeg on `PATH`. The build is isolated - it does not reuse any C++ build
+tree. Python >= 3.12.
 
 PyKDL is bundled inside the wheel as a top-level extension module. It imports as
 `PyKDL` but does not appear as a separate package in `pip list` / `uv pip list`.
@@ -216,6 +244,7 @@ PyKDL is bundled inside the wheel as a top-level extension module. It imports as
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git
 cd mj_kdl_wrapper
 vcs import < mj_kdl_wrapper.repos
+uv venv .venv --python 3.12
 uv pip install .
 ```
 
@@ -269,9 +298,7 @@ Paths / sources:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `MJ_KDL_MUJOCO_DIR` | `~/.cache/mj_kdl_wrapper/mujoco-${MJ_KDL_MUJOCO_VERSION}` | MuJoCo location: download destination, or an existing install to use |
-| `MJ_KDL_FETCH_MUJOCO` | `ON` | Download MuJoCo into the cache when `MJ_KDL_MUJOCO_DIR` is not present |
-| `MJ_KDL_MUJOCO_URL` | (release) | MuJoCo archive URL to download |
+| `MJ_KDL_MUJOCO_DIR` | `third_party/mujoco` | MuJoCo source checkout (`vcs import < mj_kdl_wrapper.repos`), built into `build/mujoco`; ignored by a wheel build, which uses pip `mujoco-core` |
 | `MJ_KDL_OROCOS_KDL_DIR` | `third_party/orocos_kinematics_dynamics` | Fork source checkout (`vcs import < mj_kdl_wrapper.repos`), built in place |
 | `MJ_KDL_OROCOS_KDL_INSTALL_DIR` | (empty) | Pre-installed Orocos KDL prefix to consume (skips building and bundling the fork) |
 | `MJ_KDL_OROCOS_KDL_FROM_PACKAGE` | `OFF` | Consume Orocos KDL via `find_package(orocos_kdl)` on `CMAKE_PREFIX_PATH`; skips building and bundling the fork |
@@ -280,13 +307,12 @@ Build toggles:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `BUILD_RECORDER` | `ON` | Enable `VideoRecorder` (EGL + ffmpeg headless recording) |
-| `BUILD_EXAMPLES` | `ON` | Build the `src/examples/ex_*` programs |
+| `MJ_KDL_WITH_RENDER` | `AUTO` | Build `mj_kdl_wrapper::render` (`VideoRecorder`, Filament offscreen rendering): `AUTO` when EGL is found, `ON` requires it, `OFF` never; forced `OFF` in a wheel build |
+| `MJ_KDL_WITH_VIEWER` | `AUTO` | Build `mj_kdl_wrapper::viewer` (MuJoCo Studio window): `AUTO` when X11 is found and render is built, `ON` requires both, `OFF` never; forced `OFF` in a wheel build |
+| `BUILD_EXAMPLES` | `ON` | Build the `src/examples/ex_*` programs; only with the viewer |
 | `BUILD_TESTS` | `ON` | Build and register GoogleTest tests with CTest |
 | `BUILD_DOCS` | `OFF` | Generate Doxygen HTML docs (`cmake --build build --target docs`) |
 | `BUILD_PYTHON_BINDINGS` | `OFF` | Build the pybind11 extension (driven by the Python build) |
 | `MJ_KDL_INSTALL_CPP_PACKAGE` | `ON` (`OFF` under scikit-build) | Install the C++ library, headers, CMake package config and `mj_kdl_wrapper.pc` |
 | `MJ_KDL_INSTALL_BUNDLED_KDL` | `ON` | Install the built Orocos KDL fork into the prefix so the install is self-contained; `OFF` leaves the library without a path to KDL (configure warns). No effect with `MJ_KDL_OROCOS_KDL_INSTALL_DIR` / `MJ_KDL_OROCOS_KDL_FROM_PACKAGE` |
 | `MJ_KDL_WITH_ROS` | `AUTO` | Build `mj_kdl_wrapper::camera_ros` (publishes a rendered camera as `sensor_msgs/Image` + `CameraInfo`): `AUTO` when `rclcpp` and `sensor_msgs` are found, `ON` requires them, `OFF` never |
-| `SHOW_EQUALITY_PANEL` | `OFF` | Show the Simulate UI `Equality` section |
-| `SHOW_GROUP_PANEL` | `OFF` | Show the Simulate UI `Group enable` section |

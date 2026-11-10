@@ -42,6 +42,8 @@ class Shape(_Enum):
     BOX: ClassVar[Shape]
     SPHERE: ClassVar[Shape]
     CYLINDER: ClassVar[Shape]
+    ELLIPSOID: ClassVar[Shape]
+    MESH: ClassVar[Shape]
 
 
 class Condim(_Enum):
@@ -50,19 +52,27 @@ class Condim(_Enum):
     Rolling: ClassVar[Condim]
 
 
+class Integrator(_Enum):
+    Robot: ClassVar[Integrator]
+    Euler: ClassVar[Integrator]
+    RK4: ClassVar[Integrator]
+    Implicit: ClassVar[Integrator]
+    ImplicitFast: ClassVar[Integrator]
+    Discrete: ClassVar[Integrator]
+
+
+class Solver(_Enum):
+    Robot: ClassVar[Solver]
+    PGS: ClassVar[Solver]
+    CG: ClassVar[Solver]
+    Newton: ClassVar[Solver]
+
+
 class CtrlMode(_Enum):
     POSITION: ClassVar[CtrlMode]
     TORQUE: ClassVar[CtrlMode]
     VELOCITY: ClassVar[CtrlMode]
 
-
-class VideoResolution(_Enum):
-    R360p: ClassVar[VideoResolution]
-    R480p: ClassVar[VideoResolution]
-    R720p: ClassVar[VideoResolution]
-    R1080p: ClassVar[VideoResolution]
-    R2K: ClassVar[VideoResolution]
-    R4K: ClassVar[VideoResolution]
 
 
 class CtrlModeSpec:
@@ -109,13 +119,15 @@ class RobotSpec:
 
 
 class SceneObject:
-    """MJCF asset or primitive object. A primitive needs size, rgba and friction, and mass
-    unless fixed; rgba on an asset recolors its geoms."""
+    """MJCF asset or primitive object. A primitive needs size, and mass and friction unless
+    fixed; unset rgba, mass or friction take MuJoCo's default. MESH needs mesh_path, with size
+    as its scale; rgba on an asset recolors its geoms."""
     name: str
     mjcf_path: str
     prefix: str
     attach_to: AttachTarget
     shape: Shape
+    mesh_path: str
     size: Optional[list[float]]
     pos: list[float]
     quat: list[float]
@@ -124,6 +136,10 @@ class SceneObject:
     mass: Optional[float]
     condim: Condim
     friction: Optional[list[float]]
+    contype: int
+    """Primitive's collision bitmask; MuJoCo's default 1."""
+    conaffinity: int
+    """Primitive's collision bitmask; MuJoCo's default 1."""
     def __init__(self) -> None: ...
 
 
@@ -133,6 +149,10 @@ class SiteSpec:
     name: str
     pos: list[float]
     quat: list[float]
+    size: float
+    """Marker sphere radius [m]; 0.005 by default."""
+    group: int
+    """Visibility group of the marker; 4 by default."""
     def __init__(self) -> None: ...
 
 
@@ -147,13 +167,16 @@ class CameraSpec:
 
 
 class SceneSpec:
-    """Full scene description. timestep, add_floor, and add_skybox are required."""
+    """Full scene description. timestep and use_stage are required."""
     robots: list[RobotSpec]
     timestep: Optional[float]
     gravity_z: float
-    add_floor: Optional[bool]
+    use_stage: Optional[bool]
+    stage: str
     floor_z: float
-    add_skybox: Optional[bool]
+    speculative_contacts: bool
+    integrator: Integrator
+    solver: Solver
     objects: list[SceneObject]
     sites: list[SiteSpec]
     cameras: list[CameraSpec]
@@ -246,6 +269,8 @@ class Robot:
     def ft_sensor_names(self) -> list[str]: ...
     def ft_sensor(self, name: str) -> kdl.Wrench:
         """Return the latest measured force-torque sensor value as a PyKDL.Wrench."""
+    name: str
+    """Set by the caller, before or after init; the viewer shows it."""
     @property
     def has_tcp_frame(self) -> bool: ...
     @property
@@ -257,70 +282,9 @@ class Robot:
         unlimited."""
 
 
-class Viewer:
-    """The simulate UI of an Env, opened by Env.open_viewer(); inert while closed."""
-    realtime_factor: float
-    def is_running(self) -> bool: ...
-    def key_pressed(self, key: int) -> bool:
-        """True while the GLFW key code is held; False headless."""
-    def capture_key(self, key: int, capture: bool = True) -> None:
-        """Claim a GLFW key so the UI does not act on it; capture=False gives it back."""
-    def clear_trace(self) -> None: ...
-    def add_trace_segment(
-        self,
-        a: Sequence[float],
-        b: Sequence[float],
-        rgba: Optional[Sequence[float]] = None,
-    ) -> None: ...
-    def use_camera(self, name: str = "") -> bool: ...
-    def set_free_camera(
-        self,
-        distance: float,
-        azimuth: float,
-        elevation: float,
-        lookat: Sequence[float] = (0.0, 0.0, 0.0),
-    ) -> None: ...
-
-
-class VideoRecorder:
-    """Offscreen MuJoCo video recorder for an Env."""
-    @staticmethod
-    def open(
-        env: Env,
-        out_path: str,
-        width: int = 1280,
-        height: int = 720,
-        fps: int = 60,
-    ) -> VideoRecorder: ...
-    @staticmethod
-    def open_preset(
-        env: Env,
-        out_path: str,
-        resolution: VideoResolution = VideoResolution.R720p,
-        fps: int = 60,
-    ) -> VideoRecorder: ...
-    @staticmethod
-    def open_offscreen(env: Env, width: int, height: int) -> VideoRecorder:
-        """Open an offscreen renderer (no video file) for render_rgb()."""
-    def render_rgb(self) -> npt.NDArray[np.uint8]:
-        """The Env's current state as a (height, width, 3) array, top row first."""
-    def __enter__(self) -> VideoRecorder: ...
-    def __exit__(self, *args: object) -> None: ...
-    def record_frame(self) -> bool: ...
-    def use_camera(self, name: str = "") -> bool: ...
-    def set_free_camera(
-        self,
-        distance: float,
-        azimuth: float,
-        elevation: float,
-        lookat: Sequence[float] = (0.0, 0.0, 0.0),
-    ) -> None: ...
-    def close(self) -> None: ...
-
-
 class Env:
-    """The simulation: compiled scene, its robots and viewer. The loop is step(), then
-    update() (read every robot, apply its commands), then pace()."""
+    """The simulation: compiled scene and its robots. The loop is update() (read every robot,
+    apply its commands), then step(); Viewer shows it, VideoRecorder records or renders it."""
     on_reset: Optional[Callable[[ResetContext], None]]
     """Called by reset() after every robot is re-seeded; its exception comes out of reset() or
     step()."""
@@ -332,13 +296,11 @@ class Env:
         """The live mujoco.MjModel; a new object after add_object()/remove_object()."""
     @property
     def data(self) -> mujoco.MjData:
-        """The live mujoco.MjData; a new object after add_object()/remove_object(). The viewer
-        thread reads it too: call mujoco functions on it only while the viewer is closed or
-        paused."""
+        """The live mujoco.MjData; a new object after add_object()/remove_object()."""
     @staticmethod
     def build(spec: SceneSpec) -> Env: ...
     def close(self) -> None:
-        """Close the viewer and free the model; robots become closed."""
+        """Free the model; robots become closed."""
     def __enter__(self) -> Env: ...
     def __exit__(self, *args: object) -> None: ...
     def create_robot(
@@ -357,25 +319,42 @@ class Env:
     ) -> Robot:
         """Register a robot driven by chain; joint_names are the MuJoCo joints in chain order."""
     def step(self) -> bool:
-        """Advance one timestep; False once the viewer window is closed."""
+        """Advance one timestep. step() never sleeps."""
     def update(self) -> None:
         """Read every robot, then apply its commands."""
-    def pace(self) -> None:
-        """Sleep out this step's share of wall time; no-op headless. step() never sleeps."""
-    def open_viewer(self, title: str = "MuJoCo") -> None:
-        """Open the simulate UI; step() drives it, close() closes it."""
-    @property
-    def viewer(self) -> Viewer: ...
+    def clear_trace(self) -> None:
+        """Remove every overlay geom: segments and arrows."""
+    def add_trace_segment(
+        self,
+        a: Sequence[float],
+        b: Sequence[float],
+        rgba: Optional[Sequence[float]] = None,
+    ) -> None:
+        """Add an overlay line segment in world coordinates [m]."""
+    def add_overlay_arrow(
+        self,
+        from_: Sequence[float],
+        dir: Sequence[float],
+        length: float,
+        rgba: Optional[Sequence[float]] = None,
+    ) -> None:
+        """Add an overlay arrow from a point along dir, length [m] long."""
+    def overlay_geoms(self) -> list[mujoco.MjvGeom]:
+        """The overlay geoms as mujoco.MjvGeom; Viewer and VideoRecorder draw them themselves."""
+    overlay_max_geoms: int
+    """Overlay geoms beyond this many are dropped; 8192 by default."""
+    overlay_rgba: list[float]
+    """Overlay colour [r, g, b, a] when a call gives none; orange by default."""
     def reset(self, options: Optional[ResetOptions] = None) -> ResetInfo:
         """Reset MuJoCo state, re-seed every robot, then call on_reset; what it moves is read
         back."""
     def add_object(self, object: SceneObject) -> None:
-        """Rebuild with an added object; robots and the viewer follow the new model."""
+        """Rebuild with an added object; robots and scene slots follow the new model."""
     def set_control_mode(self, robot: int, mode: CtrlMode) -> None:
         """Switch robot (its SceneSpec.robots index) to mode, for robots driven without a
         Robot."""
     def remove_object(self, name: str) -> None:
-        """Rebuild without the named object; robots and the viewer follow the new model."""
+        """Rebuild without the named object; robots and scene slots follow the new model."""
     def body_frame(self, name: str) -> kdl.Frame: ...
     def site_frame(self, name: str) -> kdl.Frame: ...
     def set_body_pose(
@@ -388,8 +367,116 @@ class Env:
     def save_model_xml(self, path: str) -> None: ...
 
 
+class Viewer:
+    """The C++ MuJoCo Studio viewer on an Env: open() it, then env.step() and pace() as in C++.
+    Its pause, reset, perturbation and edits reach the Env inside env.step(), which returns
+    False once the window is closed."""
+    def __init__(self) -> None: ...
+    def open(self, env: Env, title: str = "MuJoCo") -> None:
+        """Open the window on env; raises when there is no display."""
+    def close(self) -> None: ...
+    def __enter__(self) -> Viewer: ...
+    def __exit__(self, *args: Any) -> None: ...
+    def is_running(self) -> bool: ...
+    def pace(self) -> None:
+        """Sleep out one timestep at the real-time factor; nothing while closed."""
+    def key_pressed(self, key: int) -> bool:
+        """True while the key (an ImGuiKey code, as in imgui.h) is held in the window."""
+    def capture_key(self, key: int, capture: bool = True) -> None: ...
+    def use_camera(self, name: str = "") -> bool: ...
+    def set_free_camera(
+        self,
+        distance: float,
+        azimuth: float,
+        elevation: float,
+        lookat: Sequence[float] = (0.0, 0.0, 0.0),
+    ) -> None: ...
+    realtime_factor: float
+    """pace()'s speed: 1.0 real time, 0.5 half speed, 0.0 uncapped."""
+    paused: bool
+    """Set before open() to open paused; while open, env.step() keeps it equal to the window's
+    pause."""
+    @property
+    def fps(self) -> float: ...
+    # Read by open(); later changes reach the next window.
+    window_width: int
+    window_height: int
+    min_panel_width: float
+    """Narrowest a side panel may be dragged, in font heights."""
+    theme: ViewerTheme
+    """Theme unless the settings file names another."""
+    ini_path: str
+    """Layout and theme file; empty uses Studio's ~/.mujoco.ini."""
+    record_path: str
+    record_resolution: VideoResolution
+    record_fps: int
+    framing_frames: int
+    """Frames the start camera is re-fitted while the layout settles."""
+    speed_window: float
+    """The measured speed is sim time over this much wall time [s]."""
+    plugin_max_geoms: int
+    """Geoms Studio's ScenePlugins may add per frame."""
+    joint_limit_margin: float
+    """Part of a joint's range counted as near a limit (0..0.5)."""
+    joint_limit_highlight: bool
+    """Red sphere on a joint near a limit (window only, never recorded)."""
+    manipulability_ellipsoid: bool
+    """TCP velocity ellipsoid per robot (window only, never recorded)."""
+    manipulability_scale: float
+    """Drawn size of 1 m/s per rad/s of joint speed [m]."""
+
+
+class ViewerTheme(_Enum):
+    Light: ClassVar[ViewerTheme]
+    Dark: ClassVar[ViewerTheme]
+    Classic: ClassVar[ViewerTheme]
+
+
+class VideoResolution(_Enum):
+    R360p: ClassVar[VideoResolution]
+    R480p: ClassVar[VideoResolution]
+    R720p: ClassVar[VideoResolution]
+    R1080p: ClassVar[VideoResolution]
+    R2K: ClassVar[VideoResolution]
+    R4K: ClassVar[VideoResolution]
+
+
+class VideoRecorder:
+    """The C++ offscreen recorder (Filament) on an Env: an MP4 through ffmpeg, or RGB frames."""
+    @staticmethod
+    def open(
+        env: Env, out_path: str, width: int = 1280, height: int = 720, fps: int = 60
+    ) -> VideoRecorder: ...
+    @staticmethod
+    def open_preset(
+        env: Env,
+        out_path: str,
+        resolution: VideoResolution = ...,
+        fps: int = 60,
+    ) -> VideoRecorder: ...
+    @staticmethod
+    def open_offscreen(env: Env, width: int, height: int) -> VideoRecorder: ...
+    def render_rgb(self) -> npt.NDArray[np.uint8]:
+        """The Env's current state as a (height, width, 3) array, top row first."""
+    def record_frame(self) -> bool: ...
+    def use_camera(self, name: str = "") -> bool: ...
+    def set_free_camera(
+        self,
+        distance: float,
+        azimuth: float,
+        elevation: float,
+        lookat: Sequence[float] = (0.0, 0.0, 0.0),
+    ) -> None: ...
+    def close(self) -> None: ...
+    def __enter__(self) -> VideoRecorder: ...
+    def __exit__(self, *args: Any) -> None: ...
+
+
 __version__: str
 __mujoco_version__: str
+
+def version() -> str:
+    """The build's version: __version__, plus -dev+<commit>[.dirty] when not built from its tag."""
 
 def set_log_level(level: LogLevel) -> None:
     """Print wrapper messages at level and above; NONE prints nothing."""

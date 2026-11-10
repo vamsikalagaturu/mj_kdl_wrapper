@@ -5,6 +5,8 @@
 #include "mj_kdl_wrapper/camera_ros.hpp"
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 
+#include <image_transport/image_transport.hpp>
+
 #include <cmath>
 #include <cstring>
 #include <utility>
@@ -14,12 +16,16 @@ namespace mj_kdl {
 CameraRosPublisher::CameraRosPublisher(rclcpp::Node &node, const mjModel *model, CameraConf conf)
   : conf_(std::move(conf)), period_s_(conf_.rate_hz > 0.0 ? 1.0 / conf_.rate_hz : 0.0)
 {
-    image_pub_ = node.create_publisher<sensor_msgs::msg::Image>(
-      conf_.topic_ns + "/color", rclcpp::SensorDataQoS()
+    // The camera_info topic is the image topic's sibling: <topic_ns>/camera_info.
+#ifdef MJ_KDL_IMAGE_TRANSPORT_QOS
+    pub_ = image_transport::create_camera_publisher(
+      node, conf_.topic_ns + "/color", rclcpp::SensorDataQoS()
     );
-    info_pub_ = node.create_publisher<sensor_msgs::msg::CameraInfo>(
-      conf_.topic_ns + "/camera_info", rclcpp::SensorDataQoS()
+#else
+    pub_ = image_transport::create_camera_publisher(
+      &node, conf_.topic_ns + "/color", rmw_qos_profile_sensor_data
     );
+#endif
 
     image_.header.frame_id = conf_.frame_id;
     image_.width           = static_cast<std::uint32_t>(conf_.width);
@@ -57,16 +63,15 @@ bool CameraRosPublisher::wants_frame(double sim_t) const
     // A clock that jumped back (a reset) is due now, so publish() can re-base on it.
     const bool jumped_back = next_due_s_ > sim_t + 2.0 * period_s_;
     if (sim_t < next_due_s_ && !jumped_back) return false;
-    return image_pub_->get_subscription_count() > 0;
+    return pub_.getNumSubscribers() > 0;
 }
 
 void CameraRosPublisher::publish(const std::uint8_t *rgb, double sim_t)
 {
     if (!rgb) return;
 
-    // Hold the cadence on its own grid. A caller that is itself rate-gated hands each frame over
-    // a tick late, and re-basing on arrival would then drop every other one. Re-base only when
-    // the clock jumped: a simulation reset, or a stall longer than a period.
+    /* Re-basing on arrival would drop every other frame of a rate-gated caller, which hands each
+       over a tick late; re-base only when the clock jumped (a reset, or a stall over a period). */
     next_due_s_ += period_s_;
     if (next_due_s_ < sim_t || next_due_s_ > sim_t + 2.0 * period_s_)
         next_due_s_ = sim_t + period_s_;
@@ -77,8 +82,7 @@ void CameraRosPublisher::publish(const std::uint8_t *rgb, double sim_t)
     const auto stamp    = rclcpp::Time(static_cast<std::int64_t>(sim_t * 1e9));
     image_.header.stamp = stamp;
     info_.header.stamp  = stamp;
-    image_pub_->publish(image_);
-    info_pub_->publish(info_);
+    pub_.publish(image_, info_);
 }
 
 } // namespace mj_kdl

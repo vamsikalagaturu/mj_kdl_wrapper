@@ -5,9 +5,10 @@
  * Usage:
  *   ex_gravity_comp [--headless]
  *
- * Runs 15 s (7500 steps) and prints the EE drift; --headless skips the viewer and exits 1 if
+ * Runs 15 s (15000 steps) and prints the EE drift; --headless skips the viewer and exits 1 if
  * the drift exceeds kMaxDrift. */
 
+#include "mj_kdl_wrapper/viewer.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
 
@@ -17,7 +18,7 @@
 
 namespace ex = mj_kdl_examples;
 
-static constexpr int    kSteps    = 7500;   // 15 s
+static constexpr int    kSteps    = 15000;   // 15 s
 static constexpr double kMaxDrift = 0.0001; // [m]
 
 int main(int argc, char *argv[])
@@ -45,7 +46,9 @@ int main(int argc, char *argv[])
         ex::prime_gravity(robot, dyn, q_home);
     };
     mj_kdl::reset(&env);
-    if (!headless && !mj_kdl::open_viewer(&env)) return 1;
+    mj_kdl::Viewer viewer;
+    viewer.paused = true;
+    if (!headless && !mj_kdl::open_viewer(&viewer, &env)) return 1;
 
     KDL::Frame ee_start;
     fk.JntToCart(q_home, ee_start);
@@ -53,7 +56,7 @@ int main(int argc, char *argv[])
         mj_kdl::update(&env);
         ex::pd_gravity(robot, dyn, q_home);
         if (!mj_kdl::step(&env)) break;
-        mj_kdl::pace_realtime(&env);
+        mj_kdl::pace_realtime(&viewer);
     }
     mj_kdl::update(&env);
 

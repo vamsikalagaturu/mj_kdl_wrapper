@@ -29,7 +29,7 @@ MAX_DISTURB = 0.001  # [m] free-object displacement
 
 # Base x, y [m] and yaw [rad] on the tabletop: facing each other, each arm in its own half.
 BASES = [(-0.70, -0.12, 0.0), (0.70, 0.12, math.pi)]
-PREFIXES = ["", "r2_"]
+PREFIXES = ["r1_", "r2_"]
 FREE_OBJECTS = [
     ("red_box", mjk.Shape.BOX, 0.0, 0.42, 0.03, (1.0, 0.2, 0.2)),
     ("green_box", mjk.Shape.BOX, 0.0, -0.42, 0.03, (0.2, 1.0, 0.2)),
@@ -124,9 +124,8 @@ def build_env() -> tuple[mjk.Env, list[mjk.Robot]]:
         robot_specs.append(robot_spec)
 
     spec = mjk.SceneSpec()
-    spec.timestep = 0.002
-    spec.add_floor = True
-    spec.add_skybox = True
+    spec.timestep = 0.001
+    spec.use_stage = True
     spec.robots = robot_specs
     spec.objects = [
         table,
@@ -139,6 +138,8 @@ def build_env() -> tuple[mjk.Env, list[mjk.Robot]]:
     tool.tool_body = "g_base_mount"
     tool.tcp_site = "g_pinch"
     robots = [env.create_robot("base_link", "bracelet_link", p, tool=tool) for p in PREFIXES]
+    for i, robot in enumerate(robots):
+        robot.name = f"arm{i + 1}"
     return env, robots
 
 
@@ -267,10 +268,10 @@ def run_phase(env, robots, fingers, solvers, phase: Phase, state: dict) -> bool:
             return True
         if not env.step():
             return False
+        state["viewer"].pace()
         if state["reset"]:
             state["reset"] = False
             raise ResetRequested()
-        env.pace()
         measure(env, state)
 
 
@@ -284,6 +285,8 @@ def main() -> int:
     args = parser.parse_args()
 
     env, robots = build_env()
+    viewer = mjk.Viewer()
+    viewer.paused = True
     try:
         print(f"cameras: {' '.join(env.model.camera(i).name for i in range(env.model.ncam))}")
         fingers = [env.data.actuator(p + "g_fingers_actuator") for p in PREFIXES]
@@ -317,7 +320,8 @@ def main() -> int:
         env.reset()
         state["reset"] = False
         if args.gui:
-            env.open_viewer("ex_rnea_pick_place.py")
+            viewer.open(env, "ex_rnea_pick_place.py")
+        state["viewer"] = viewer
 
         completed = False
         while not completed:
@@ -351,6 +355,7 @@ def main() -> int:
         print(f"arm-to-arm contacts: {m['arm_contacts']} (limit 0)")
         ok = ok and m["disturb"] <= MAX_DISTURB and m["arm_contacts"] == 0
     finally:
+        viewer.close()
         env.close()
     if args.gui:
         return 0

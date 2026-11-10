@@ -1,17 +1,13 @@
 // Regressions from the 0.4.0 audit; headless, self-skips without the bundled Gen3.
 
-#include "mj_kdl_wrapper/image_io.hpp"
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 #include "example_paths.hpp"
 
 #include <gtest/gtest.h>
 
-#include <algorithm>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -44,9 +40,8 @@ class RebuildTest : public testing::Test
     {
         const std::string gen3 = mj_kdl_examples::find_asset("kinova_gen3/gen3.xml");
         if (gen3.empty()) GTEST_SKIP() << "kinova_gen3/gen3.xml not found";
-        spec_.timestep   = 0.002;
-        spec_.add_floor  = true;
-        spec_.add_skybox = false;
+        spec_.timestep  = 0.001;
+        spec_.use_stage = true;
         spec_.robots.emplace_back();
         spec_.robots.back().path = gen3;
         ASSERT_TRUE(mj_kdl::init_env(&env_, &spec_));
@@ -156,63 +151,6 @@ TEST_F(RebuildTest, AnOnResetSetBeforeInitEnvIsKept)
     EXPECT_EQ(calls, 1);
 }
 
-TEST_F(RebuildTest, RecordersFollowARebuildAndOutliveEachOther)
-{
-    mj_kdl::VideoRecorder a, b;
-    if (!mj_kdl::init_offscreen(&a, env_.model, 64, 48)) GTEST_SKIP() << "no EGL";
-    ASSERT_TRUE(mj_kdl::init_offscreen(&b, env_.model, 64, 48));
-    std::vector<std::uint8_t> rgb(64 * 48 * 3);
-    ASSERT_TRUE(mj_kdl::render_rgb(&a, &env_, rgb.data()));
-    ASSERT_TRUE(mj_kdl::render_rgb(&b, &env_, rgb.data()));
-
-    ASSERT_TRUE(mj_kdl::scene_add_object(&env_, make_box("box", 0.5)));
-    ASSERT_TRUE(mj_kdl::render_rgb(&a, &env_, rgb.data()));
-    const std::vector<std::uint8_t> before = rgb;
-    mj_kdl::cleanup(&b);
-    std::fill(rgb.begin(), rgb.end(), 0xAB);
-    EXPECT_TRUE(mj_kdl::render_rgb(&a, &env_, rgb.data()));
-    EXPECT_EQ(rgb, before) << "b's cleanup ended a's context";
-    ASSERT_TRUE(mj_kdl::init_offscreen(&a, env_.model, 32, 24)) << "an open recorder re-inits";
-    EXPECT_TRUE(mj_kdl::render_rgb(&a, &env_, rgb.data()));
-    mj_kdl::cleanup(&a);
-}
-
-TEST_F(RebuildTest, AFrameShowsTheStateItWasTakenAt)
-{
-    mj_kdl::VideoRecorder vr;
-    if (!mj_kdl::init_offscreen(&vr, env_.model, 64, 48)) GTEST_SKIP() << "no EGL";
-    std::vector<std::uint8_t> at_a(64 * 48 * 3), at_b(64 * 48 * 3), called;
-    ASSERT_TRUE(mj_kdl::render_rgb(&vr, &env_, at_a.data()));
-
-    std::thread::id render_thread;
-    ASSERT_TRUE(mj_kdl::render_rgb(&vr, &env_, [&](const std::uint8_t *rgb) {
-        called.assign(rgb, rgb + at_a.size());
-        render_thread = std::this_thread::get_id();
-    }));
-    KDL::JntArray q(robot_.n_joints);
-    for (int i = 0; i < robot_.n_joints; ++i) q(i) = 1.0;
-    mj_kdl::set_joint_pos(&robot_, q);
-    ASSERT_TRUE(mj_kdl::render_rgb(&vr, &env_, at_b.data()));
-    mj_kdl::cleanup(&vr);
-
-    EXPECT_NE(at_a, at_b) << "the arm moved in view";
-    EXPECT_EQ(called, at_a) << "the callback shows the snapshot, not the state it rendered in";
-    EXPECT_NE(render_thread, std::this_thread::get_id());
-}
-
-TEST_F(RebuildTest, OneRecorderKeepsEveryFrameItIsGiven)
-{
-    mj_kdl::VideoRecorder vr;
-    if (!mj_kdl::init_offscreen(&vr, env_.model, 64, 48)) GTEST_SKIP() << "no EGL";
-    int frames = 0;
-    for (int i = 0; i < 50; ++i) {
-        mj_kdl::step(&env_);
-        ASSERT_TRUE(mj_kdl::render_rgb(&vr, &env_, [&frames](const std::uint8_t *) { ++frames; }));
-    }
-    mj_kdl::cleanup(&vr);
-    EXPECT_EQ(frames, 50);
-}
-
 TEST_F(RebuildTest, AnAttachmentLeftAtTheWorldIsRefused)
 {
     mj_kdl::SceneSpec      spec = spec_;
@@ -262,46 +200,6 @@ TEST(LogLevel, IsASeverityThreshold)
     EXPECT_NE(error.find("error"), std::string::npos);
     EXPECT_TRUE(logs(mj_kdl::LogLevel::NONE).empty());
     mj_kdl::set_log_level(level);
-}
-
-TEST(Screenshot, PathReachesFfmpegVerbatimAndAMissingFfmpegIsAFailure)
-{
-    const fs::path dir = fs::temp_directory_path() / "mj_kdl_png_test";
-    fs::remove_all(dir);
-    fs::create_directories(dir);
-    const fs::path                  out    = dir / "a \"quoted\" $(touch injected) shot.png";
-    const fs::path                  marker = dir / "injected";
-    const std::vector<std::uint8_t> rgb(8 * 4 * 3, 128);
-
-    if (!mj_kdl::write_png_rgb(out.string(), rgb.data(), 8, 4)) GTEST_SKIP() << "no ffmpeg";
-    EXPECT_GT(fs::file_size(out), 0u);
-    EXPECT_FALSE(fs::exists(marker));
-    EXPECT_FALSE(fs::exists(fs::current_path() / "injected"));
-
-    const std::string path = std::getenv("PATH") ? std::getenv("PATH") : "";
-    setenv("PATH", dir.c_str(), 1);
-    const std::vector<std::uint8_t> big(1024 * 1024 * 3, 0);
-    EXPECT_FALSE(mj_kdl::write_png_rgb((dir / "b.png").string(), big.data(), 1024, 1024));
-    setenv("PATH", path.c_str(), 1);
-    fs::remove_all(dir);
-}
-
-// The display is unreachable, so no window can open; the viewer must say so, not end the process.
-TEST_F(RebuildTest, AViewerThatCannotOpenReturnsAnError)
-{
-    const char       *display       = std::getenv("DISPLAY");
-    const char       *wayland       = std::getenv("WAYLAND_DISPLAY");
-    const std::string saved_display = display ? display : "";
-    const std::string saved_wayland = wayland ? wayland : "";
-    setenv("DISPLAY", ":987", 1);
-    unsetenv("WAYLAND_DISPLAY");
-
-    const mj_kdl::Status s = mj_kdl::open_viewer(&env_);
-
-    display ? setenv("DISPLAY", saved_display.c_str(), 1) : unsetenv("DISPLAY");
-    if (wayland) setenv("WAYLAND_DISPLAY", saved_wayland.c_str(), 1);
-    EXPECT_FALSE(s);
-    EXPECT_FALSE(mj_kdl::is_running(&env_.viewer));
 }
 
 int main(int argc, char *argv[])

@@ -1,7 +1,6 @@
-set(MJ_KDL_VERSION "0.5.1")
-set(MJ_KDL_MUJOCO_VERSION "3.14.0")
-# sha256 of mujoco-<version>-linux-x86_64.tar.gz; scripts/update_mujoco_version.py rewrites it.
-set(MJ_KDL_MUJOCO_SHA256 "326f0da78a7767cc18fab7205c993a771b5f19eda913648f958ee3f625240944")
+set(MJ_KDL_VERSION "0.6.0")
+# Must match the tag mj_kdl_wrapper.repos checks out into third_party/mujoco.
+set(MJ_KDL_MUJOCO_VERSION "4.0.0")
 set(MJ_KDL_GOOGLETEST_GIT_TAG "v1.15.2")
 
 if(NOT MJ_KDL_MUJOCO_VERSION MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$")

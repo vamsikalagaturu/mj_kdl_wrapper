@@ -16,20 +16,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        # The default python3 of Ubuntu 24.04 and 26.04.
+        python-version: ["3.12", "3.14"]
     env:
-      MUJOCO_VERSION: 3.14.0
-      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.14.0
       CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
       - uses: actions/checkout@v4
 
+      # The wheel links the pip mujoco-core library and builds the same viewer and recorder as
+      # C++, so it needs the same headers (EGL, X11, Wayland) and ffmpeg for the recorder test.
       - name: Install dependencies
         run: |
           sudo apt-get update -q
           sudo apt-get install -y \
-            ccache vcstool \
-            libeigen3-dev libglfw3-dev libgl-dev libegl-dev
+            ccache ninja-build ffmpeg vcstool \
+            libeigen3-dev libegl-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libfontconfig-dev
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -44,22 +46,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Import the Orocos KDL fork
+      - name: Import the Orocos KDL fork and MuJoCo
         run: vcs import < mj_kdl_wrapper.repos
-
-      - name: Cache MuJoCo
-        id: cache-mujoco
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.MJ_KDL_MUJOCO_DIR }}
-          key: mujoco-${{ runner.os }}-${{ env.MUJOCO_VERSION }}
-
-      - name: Install MuJoCo ${{ env.MUJOCO_VERSION }}
-        if: steps.cache-mujoco.outputs.cache-hit != 'true'
-        run: |
-          wget -q "https://github.com/google-deepmind/mujoco/releases/download/${MUJOCO_VERSION}/mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
-          tar xzf "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz" -C /tmp
-          rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
 
       - name: Build and test the Python bindings
         run: |
@@ -67,12 +55,11 @@ jobs:
           uv venv .venv
           . .venv/bin/activate
           uv pip install . \
-            --config-settings=cmake.define.MJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}" \
             --config-settings=cmake.define.CMAKE_CXX_COMPILER_LAUNCHER=ccache \
             --config-settings=cmake.define.CMAKE_C_COMPILER_LAUNCHER=ccache
           uv pip install pytest
           python -c "import PyKDL, mujoco, mj_kdl_wrapper as mjk; print(mujoco.mj_versionString(), mjk.__mujoco_version__)"
           set -o pipefail
           pytest -q -rs python/tests | tee pytest.log
-          # A skipped test fails the job, except where the runner has no offscreen rendering.
-          ! grep '^SKIPPED' pytest.log | grep -v 'no offscreen rendering'
+          # A skipped test fails the job.
+          ! grep '^SKIPPED' pytest.log

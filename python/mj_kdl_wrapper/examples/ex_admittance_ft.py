@@ -24,21 +24,20 @@ KP_NULL, KD_NULL = 100.0, 20.0  # posture gains in the task's null space
 
 # Admittance: virtual mass, damping, stiffness (isotropic); K = 0 holds the pose on release.
 M_ADM, D_ADM, K_ADM = 8.0, 80.0, 0.0
-FORCE_DEADBAND = 2.5  # N; rejects sensor noise and settling transients
-MAX_OFFSET = 0.20     # m; reachable workspace half-extent around home
-MAX_VEL = 0.25        # m/s
+FORCE_DEADBAND = 2.5  # [N] rejects sensor noise and settling transients
+MAX_OFFSET = 0.20     # [m] reachable workspace half-extent around home
+MAX_VEL = 0.25        # [m/s]
 TOOL_BODY = "g_base"  # rigid gripper base; where the headless self-check pushes
 GRIPPER_ACTUATOR = "g_fingers_actuator"
-FT_SITE = "wrist_ft_site"  # the F/T sensor's frame
-GRIPPER_CLOSED = 0.82  # rad; driver joint, the bundled 2F-85's ctrlrange is 0..0.82
-SETTLE_STEPS = 300  # ~0.6 s at dt=0.002 to close the gripper before taring
-HANDOFF_TARE_TIME = 1.0  # s; let scripted-motion transients settle before FT hand-guiding
-GUIDE_TIME = 4.7  # s; hand-guiding window, as long as the self-check's push phases
+FT_SITE = "wrist_ft_site"
+GRIPPER_CLOSED = 0.82  # [rad] driver joint, the bundled 2F-85's ctrlrange is 0..0.82
+SETTLE_STEPS = 600  # ~0.6 s at dt=0.001 to close the gripper before taring
+HANDOFF_TARE_TIME = 1.0  # [s] lets scripted-motion transients settle before hand-guiding
+GUIDE_TIME = 4.7  # [s] as long as the self-check's push phases
 SELFCHECK_PUSH = (8.0, 12.0, 6.0)
 ELBOW_BODY = "forearm_link"  # its origin is the elbow joint
-MIN_ELBOW_HEIGHT = 0.64  # m above the table
+MIN_ELBOW_HEIGHT = 0.64  # [m] above the table
 
-# Intro helical force: amplitude/shape and how long it is applied.
 TEACH_TIME = 16.0
 TEACH_RADIUS = 0.04
 TEACH_RISE = 0.10
@@ -107,9 +106,8 @@ def table_object() -> mjk.SceneObject:
 def build_env() -> tuple[mjk.Env, mjk.Robot]:
     table = table_object()
     spec = mjk.SceneSpec()
-    spec.timestep = 0.002
-    spec.add_floor = True
-    spec.add_skybox = True
+    spec.timestep = 0.001
+    spec.use_stage = True
     spec.objects = [table]
 
     robot_spec = mjk.RobotSpec()
@@ -195,7 +193,6 @@ def settle_and_tare(env: mjk.Env, robot: mjk.Robot, state: dict) -> list[float]:
         rnea_track(env, robot, state, home)
         if not env.step():
             break
-        env.pace()
     env.update()
     return tare_force(env, robot)
 
@@ -251,9 +248,10 @@ def admittance_step(env, robot, nominal, state, force):
 
 def run_gui(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dict) -> None:
     """The same sequence with the viewer; after the helix the mouse pushes the tool."""
-    env.open_viewer("ex_admittance_ft.py")
-    viewer = env.viewer
+    viewer = mjk.Viewer()
+    viewer.paused = True
     viewer.set_free_camera(1.55, 145.0, -24.0, (0.05, 0.0, TABLE_Z + 0.35))
+    viewer.open(env, "ex_admittance_ft.py")
     start = env.data.time
     handoff_tared = False
     target_prev: list[float] | None = None
@@ -267,7 +265,7 @@ def run_gui(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dict) -> 
                 start = env.data.time
                 handoff_tared = False
                 target_prev = tcp_prev = None
-                viewer.clear_trace()
+                env.clear_trace()
             t = env.data.time - start
             env.update()
             close_gripper(env)
@@ -289,17 +287,18 @@ def run_gui(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dict) -> 
             target_xyz = frame_point(world_base, target.p)
             tcp_xyz = frame_point(world_base, tcp_frame(robot, state).p)
             if target_prev and trace_step % 5 == 0:
-                viewer.add_trace_segment(target_prev, target_xyz, (1.0, 0.95, 0.0, 1.0))
+                env.add_trace_segment(target_prev, target_xyz, (1.0, 0.95, 0.0, 1.0))
             if tcp_prev and trace_step % 5 == 0:
-                viewer.add_trace_segment(tcp_prev, tcp_xyz, (0.0, 1.0, 0.2, 1.0))
+                env.add_trace_segment(tcp_prev, tcp_xyz, (0.0, 1.0, 0.2, 1.0))
             target_prev = target_xyz
             tcp_prev = tcp_xyz
 
             if not env.step():
                 break
-            env.pace()
+            viewer.pace()
     finally:
         env.data.body(TOOL_BODY).xfrc_applied[:] = 0.0
+        viewer.close()
 
 
 def elbow_height(env: mjk.Env) -> float:
@@ -324,7 +323,6 @@ def run_selfcheck(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dic
         if not env.step():
             break
         elbow_min = min(elbow_min, elbow_height(env))
-        env.pace()
 
     handoff_force = 0.0
     t_handoff = env.data.time
@@ -338,7 +336,6 @@ def run_selfcheck(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dic
         if not env.step():
             break
         elbow_min = min(elbow_min, elbow_height(env))
-        env.pace()
     env.update()
     state["bias"] = tare_force(env, robot)
     for _ in range(100):
@@ -350,7 +347,6 @@ def run_selfcheck(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dic
         if not env.step():
             break
         elbow_min = min(elbow_min, elbow_height(env))
-        env.pace()
 
     helix_settle_err = 0.0
     t_settle = env.data.time
@@ -364,7 +360,6 @@ def run_selfcheck(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dic
         if not env.step():
             break
         elbow_min = min(elbow_min, elbow_height(env))
-        env.pace()
 
     pre_push = state["offset"][:]
     t1 = env.data.time
@@ -387,7 +382,6 @@ def run_selfcheck(env: mjk.Env, robot: mjk.Robot, nominal: kdl.Frame, state: dic
         if not env.step():
             break
         elbow_min = min(elbow_min, elbow_height(env))
-        env.pace()
     env.data.body(TOOL_BODY).xfrc_applied[:] = 0.0
     return {
         "helix_react": helix_react,

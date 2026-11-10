@@ -10,7 +10,7 @@ import PyKDL as kdl
 import mj_kdl_wrapper as mjk
 
 HOME_POSE = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
-STEPS = 7500  # 15 s
+STEPS = 15000  # 15 s
 MAX_DRIFT = 0.0001  # [m]
 
 
@@ -33,14 +33,15 @@ def main() -> int:
     args = parser.parse_args()
 
     spec = mjk.SceneSpec()
-    spec.timestep = 0.002
-    spec.add_floor = True
-    spec.add_skybox = True
+    spec.timestep = 0.001
+    spec.use_stage = True
     robot_spec = mjk.RobotSpec()
     robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
     spec.robots = [robot_spec]
 
     env = mjk.Env.build(spec)
+    viewer = mjk.Viewer()
+    viewer.paused = True
     try:
         robot = env.create_robot("base_link", "bracelet_link")
         robot.set_control_mode(mjk.CtrlMode.TORQUE)
@@ -55,7 +56,7 @@ def main() -> int:
         env.on_reset = on_reset
         env.reset()
         if args.gui:
-            env.open_viewer("ex_gravity_comp.py")
+            viewer.open(env, "ex_gravity_comp.py")
 
         start = kdl.Frame()
         fk.JntToCart(joints(HOME_POSE), start)
@@ -64,7 +65,7 @@ def main() -> int:
             robot.jnt_trq_cmd = gravity(dyn, robot.jnt_pos_msr)
             if not env.step():
                 break
-            env.pace()
+            viewer.pace()
         env.update()
 
         end = kdl.Frame()
@@ -72,6 +73,7 @@ def main() -> int:
         drift = (end.p - start.p).Norm()
         print(f"EE drift after {STEPS} steps: {drift * 1000:.4f} mm (limit {MAX_DRIFT * 1000} mm)")
     finally:
+        viewer.close()
         env.close()
     if args.gui:
         return 0

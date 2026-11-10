@@ -47,8 +47,11 @@ fork ships `package.xml` for `orocos_kdl` (C++, build type `cmake`) and
 sudo apt update
 sudo apt install \
   cmake g++ git python3-dev python3-venv python3-vcstool \
-  libeigen3-dev libglfw3-dev libgl-dev libegl-dev ffmpeg
+  libeigen3-dev ffmpeg
 ```
+
+For the render and viewer libraries add `libegl-dev` and the X11, Wayland and GL headers of
+the [standalone guide](standalone.md#system-packages); `camera_ros` needs only the core.
 
 ROS 2 (**Jazzy** or **Lyrical**) and `colcon` (via
 `python3-colcon-common-extensions`) are assumed present and sourced. CI builds
@@ -57,14 +60,14 @@ non-ROS CI.
 
 ## ROS 2 C++
 
-Create the workspace, clone the wrapper, import the KDL fork from its
+Create the workspace, clone the wrapper, import the KDL fork and MuJoCo from its
 `mj_kdl_wrapper.repos`, then build KDL first and the wrapper against it:
 
 ```bash
 # Workspace with the KDL fork and the wrapper as sibling packages
 mkdir -p ~/ros2_ws/src && cd ~/ros2_ws
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git src/mj_kdl_wrapper
-# the fork lands in src/third_party/orocos_kinematics_dynamics
+# the fork lands in src/third_party/orocos_kinematics_dynamics, MuJoCo in src/third_party/mujoco
 vcs import src < src/mj_kdl_wrapper/mj_kdl_wrapper.repos
 
 # Use your distro: jazzy or lyrical
@@ -74,14 +77,19 @@ source /opt/ros/jazzy/setup.bash
 colcon build --packages-select orocos_kdl --cmake-args -DENABLE_TESTS=OFF
 source install/setup.bash
 
-# 2. Build the wrapper against it (no clone, no rebuild, no bundling)
+# 2. Build the wrapper against it (no clone, no rebuild, no bundling); MuJoCo is built from
+#    the imported source, which is outside the wrapper's own third_party/
 colcon build --packages-select mj_kdl_wrapper \
-  --cmake-args -DMJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF
+  --cmake-args -DMJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON \
+               -DMJ_KDL_MUJOCO_DIR="${PWD}/src/third_party/mujoco" \
+               -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF
 source install/setup.bash
 ```
 
 Result: `mj_kdl_wrapper` links `install/orocos_kdl/lib/liborocos-kdl.so` and ships
-no KDL of its own; there is exactly one KDL in the overlay.
+no KDL of its own; there is exactly one KDL in the overlay. Its install carries the MuJoCo it
+built (`libmujoco`, headers, plugins). Add `-DMJ_KDL_WITH_RENDER=OFF -DMJ_KDL_WITH_VIEWER=OFF`
+to build the core only, as CI does.
 
 The wrapper checkout carries a `third_party/COLCON_IGNORE`, so a fork imported into its
 own `third_party/` for standalone builds is never picked up as a duplicate workspace
@@ -92,17 +100,21 @@ package.
 ```cmake
 find_package(mj_kdl_wrapper REQUIRED)
 target_link_libraries(my_node mj_kdl_wrapper::mj_kdl_wrapper)
+# the optional recorder and viewer, when the wrapper was built with them:
+find_package(mj_kdl_wrapper REQUIRED COMPONENTS render viewer)
+target_link_libraries(my_node mj_kdl_wrapper::render)
 # KDL is available too:
 find_package(orocos_kdl REQUIRED)
 target_link_libraries(my_node orocos-kdl)
-# or MuJoCo alone, without KDL, glfw and OpenGL:
+# or MuJoCo alone, without KDL:
 target_link_libraries(my_node mujoco::mujoco)
 ```
 
 With `rclcpp` and `sensor_msgs` sourced at configure time, the wrapper also builds
 `mj_kdl_wrapper::camera_ros` (`MJ_KDL_WITH_ROS=AUTO`; `ON` requires ROS, `OFF` skips it). It
-publishes a frame rendered with `render_rgb()` as `sensor_msgs/Image` plus `CameraInfo`
-(`include/mj_kdl_wrapper/camera_ros.hpp`); it creates no node or thread of its own.
+publishes an already-rendered frame, e.g. from `render_rgb()` of `mj_kdl_wrapper::render`, as
+`sensor_msgs/Image` plus `CameraInfo` (`include/mj_kdl_wrapper/camera_ros.hpp`); it creates no
+node or thread of its own.
 
 ```cmake
 if(TARGET mj_kdl_wrapper::camera_ros)
@@ -126,8 +138,8 @@ is still needed. A consuming ROS package declares the dependencies in its own `p
 
 `rclpy` is only importable from the interpreter ROS 2 was built against (the
 system Python). Create the venv with `--system-site-packages` so it can import the
-system `rclpy` while keeping the wheel and its pinned `mujoco==3.14.0` inside the
-venv:
+system `rclpy` while keeping the wheel and its pinned `mujoco==4.0.0` inside the
+venv (the wheel needs Python >= 3.12):
 
 ```bash
 # Use your distro: jazzy or lyrical

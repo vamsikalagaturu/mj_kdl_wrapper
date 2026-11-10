@@ -24,26 +24,32 @@ in C++ and Python.
   robots, each with its own chain, share one simulation.
 - **Control** -- POSITION / VELOCITY / TORQUE ports, each mode a group of MuJoCo actuators
   ([torque control](docs/howto/torque_control.md)), plus KDL FK, IK, RNEA and ACHD solvers.
-- **One `Env`** -- owns the model, robots, scene slots and viewer; `step` / `update` /
+- **One `Env`** -- owns the model, robots, scene slots and overlay geoms; `step` / `update` /
   `reset` drive it, and reset re-seeds everything it holds.
-- **Viewer and recording** -- the MuJoCo Simulate UI with Frames / Trace / Perturb panels,
-  and interactive or headless (EGL + ffmpeg) MP4 capture.
-- **Python bindings** -- the same `Env`, `Robot`, `Viewer` and `VideoRecorder`, returning
-  PyKDL types and numpy arrays.
+- **Viewer and recording** -- optional libraries: `mj_kdl_wrapper::viewer`, a MuJoCo Studio
+  window, and `mj_kdl_wrapper::render`, headless MP4 capture with MuJoCo's Filament renderer
+  and ffmpeg.
+- **Python bindings** -- the same `Env` and `Robot`, returning PyKDL types and numpy arrays;
+  `mjk.Viewer` and `mjk.VideoRecorder` are the same C++ Studio window and Filament recorder.
 
 ## Install
 
-Ubuntu/Debian, CMake >= 3.16, a C++20 compiler and, for Python, Python >= 3.10. MuJoCo 3.14.0
-is downloaded by the build; the secorolab Orocos KDL fork is built from source (`mj_kdl_wrapper.repos`)
-and the system KDL is never used.
+Ubuntu/Debian, CMake >= 3.16, a C++20 compiler and, for Python, Python >= 3.12. MuJoCo 4.0.0
+and the secorolab Orocos KDL fork are built from source (`mj_kdl_wrapper.repos`); the system
+KDL is never used.
 
 ```bash
-sudo apt install cmake g++ git python3-dev python3-venv vcstool \
-  libeigen3-dev libglfw3-dev libgl-dev libegl-dev ffmpeg
+sudo apt install cmake g++ git python3-dev python3-venv vcstool libeigen3-dev ffmpeg \
+  libegl-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev \
+  libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libfontconfig-dev
 
 git clone https://github.com/vamsikalagaturu/mj_kdl_wrapper.git && cd mj_kdl_wrapper
-vcs import < mj_kdl_wrapper.repos            # the KDL fork, into third_party/
+vcs import < mj_kdl_wrapper.repos            # the KDL fork and MuJoCo, into third_party/
 ```
+
+The second line of packages is for the render and viewer libraries (`libegl-dev` for render,
+the X11, Wayland and GL headers for MuJoCo's Filament and SDL2 builds); without them CMake
+builds the core only, and `pip install .` fails.
 
 `main` only advances at releases, so a plain clone is the latest release; `--branch vX.Y.Z`
 pins an older one. `vcstool` is also on PyPI; ROS apt sources name it `python3-vcstool`.
@@ -53,9 +59,12 @@ pins an older one. `vcstool` is also on PyPI; ROS apt sources name it `python3-v
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build --parallel $(nproc)
-cmake --install build               # optional: find_package(mj_kdl_wrapper) or pkg-config mj_kdl_wrapper
+cmake --install build               # optional: find_package(mj_kdl_wrapper COMPONENTS render viewer)
 ./build/src/examples/ex_table_pick_place
 ```
+
+`pkg-config mj_kdl_wrapper` covers the core library only. The examples link the viewer and
+are built only with it.
 
 **Python**
 
@@ -64,8 +73,10 @@ uv pip install .
 python python/mj_kdl_wrapper/examples/ex_table_pick_place.py --gui
 ```
 
-The wheel bundles the KDL fork, PyKDL, the MuJoCo plugins and the `assets/` models; MuJoCo
-itself comes from the pinned `mujoco` pip package.
+The wheel builds the core, the viewer and the recorder (from the `third_party/mujoco` source,
+so `vcs import` and the apt headers above are needed first) and bundles the KDL fork, PyKDL
+and the `assets/` models; `libmujoco` and its plugins come from the pinned `mujoco` pip
+package.
 
 **ROS 2 (colcon)**, Jazzy or Lyrical, with KDL as its own package so the overlay shares one
 `liborocos-kdl`:
@@ -77,7 +88,8 @@ vcs import src < src/mj_kdl_wrapper/mj_kdl_wrapper.repos
 source /opt/ros/jazzy/setup.bash
 colcon build --packages-select orocos_kdl --cmake-args -DENABLE_TESTS=OFF
 source install/setup.bash
-colcon build --packages-select mj_kdl_wrapper --cmake-args -DMJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON
+colcon build --packages-select mj_kdl_wrapper --cmake-args -DMJ_KDL_OROCOS_KDL_FROM_PACKAGE=ON \
+  -DMJ_KDL_MUJOCO_DIR="${PWD}/src/third_party/mujoco"
 ```
 
 The [standalone](docs/install/standalone.md) and [ROS 2](docs/install/ros2.md) guides cover
@@ -97,13 +109,14 @@ for programs that know neither.
 | `assets/robotiq_2f85/2f85.xml` | Robotiq 2F-85; ctrl is the driver joint angle, 0 (open) to 0.82 rad (closed). Use `tool_body = "g_base_mount"` (with prefix `g_`): the mount carries mass too |
 | `assets/ft_sensor.xml` | 6-axis force-torque sensor |
 | `assets/table.xml` | Table with an authored `table_top` site |
-| `assets/mug.xml`, `assets/mug_table.xml` | Pouring example |
+| `assets/mug.xml`, `assets/mug_table.xml` | Mug (a gripper-held tool in the C++ tutorial) and a table-mounted mug |
 | `assets/cabinet/cabinet.xml` | Three-drawer cabinet |
 | `assets/cube.xml` | Free cube |
+| `assets/towel.xml` | 0.30 m cloth towel (2D flex) held by a gripper; needs `Integrator::Discrete` |
 | `assets/door_latch/door_latch.xml` | Latched cupboard door (not used by the examples or tests) |
 
 Any other MJCF, e.g. from [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie),
-loads through `RobotSpec.path`; a model that brings its own floor needs `add_floor = false`.
+loads through `RobotSpec.path`; a model that brings its own floor needs `use_stage = false`.
 
 ## Examples and tests
 
@@ -121,6 +134,6 @@ ctest --test-dir build --output-on-failure      # see test/README.md
 - [Python tutorial](docs/tutorials/python.md) and [Python API guide](docs/api/python.md)
 - [Conventions](docs/conventions.md) -- units, frames, quaternion order, F/T sign, what persists
 - [Torque control](docs/howto/torque_control.md), [loop pacing](docs/howto/loop_pacing.md)
-- Migration notes between versions: [docs/index.md](docs/index.md)
+- Migrating to 0.6: [docs/migration.md](docs/migration.md)
 - Generated API reference: `cmake -B build -DBUILD_DOCS=ON && cmake --build build --target docs`,
   then `build/docs/html/index.html`

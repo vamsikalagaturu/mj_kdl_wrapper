@@ -38,9 +38,8 @@ class MjcfFtSensorTest : public testing::Test
         rs.attachments.push_back(ex::gripper_attachment(gripper, "wrist_ft_site"));
 
         mj_kdl::SceneSpec sc;
-        sc.timestep   = 0.002;
-        sc.add_floor  = true;
-        sc.add_skybox = false;
+        sc.timestep  = 0.001;
+        sc.use_stage = true;
         sc.robots.push_back(rs);
         ASSERT_TRUE(mj_kdl::init_env(&env_, &sc));
     }
@@ -74,7 +73,6 @@ TEST_F(MjcfFtSensorTest, ReadsNamedWrench)
     EXPECT_EQ(sensor.torque_sensor, "wrist_ft_torque");
     EXPECT_EQ(sensor.frame_site_id, mj_name2id(env_.model, mjOBJ_SITE, "wrist_ft_site"));
 
-    // Let the arm settle under its position servos, then read.
     for (int i = 0; i < 500; ++i) {
         mj_kdl::update(&env_);
         mj_kdl::step(&env_);

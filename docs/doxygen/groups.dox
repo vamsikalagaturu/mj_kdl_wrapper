@@ -25,29 +25,36 @@
 
 /**
  * @defgroup grp_env Runtime Environment
- * @brief The Env: owns model/data, robots, scene slots and the viewer.
+ * @brief The Env: owns model/data, robots and scene slots; components follow it through hooks.
  *
  * init_env() builds it; step(), update() and reset() drive it; cleanup(Env *)
- * frees it.  reset() re-seeds every part it holds.
+ * frees it.  reset() re-seeds every part it holds.  The viewer and recorders
+ * follow it through Env::hooks (EnvHooks).
+ */
+
+/**
+ * @defgroup grp_overlay Overlays
+ * @brief World-space geoms drawn on top of the model by the viewer and every recorder.
+ *
+ * Draw your own geometry (e.g. a live end-effector trajectory trace) with
+ * add_trace_segment() and add_overlay_arrow(); clear it with clear_trace().
  */
 
 /**
  * @defgroup grp_viewer Visualization
- * @brief The simulate UI of an Env and loop pacing.
+ * @brief The MuJoCo Studio window of mj_kdl_wrapper::viewer (viewer.hpp) and loop pacing.
  *
- * Use open_viewer() + step() for the simulate UI with physics panels.
- *
- * The simulate UI owns a user scene merged into every frame; draw your own
- * overlay geometry (e.g. a live end-effector trajectory trace) into it with
- * clear_trace() and add_trace_segment().  Both are no-ops in headless mode.
+ * open_viewer() opens a window on an Env; step() then honours its pause, reset,
+ * perturbation, edited controls and physics options.  pace_realtime() paces a loop.
+ * Build with -DMJ_KDL_WITH_VIEWER (AUTO by default).
  */
 
 /**
  * @defgroup grp_recorder Video Recording
- * @brief Headless H.264 video recording via EGL offscreen rendering and ffmpeg.
+ * @brief Headless rendering and H.264 recording of mj_kdl_wrapper::render (render.hpp).
  *
- * No display or GLFW window is needed.  Requires EGL (libegl-dev) and
- * ffmpeg in PATH.  Enable with -DBUILD_RECORDER=ON (default).
+ * Renders offscreen with MuJoCo's Filament renderer; no display is needed.
+ * Recording requires ffmpeg in PATH.  Build with -DMJ_KDL_WITH_RENDER (AUTO by default).
  */
 
 /**

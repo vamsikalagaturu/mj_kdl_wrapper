@@ -13,11 +13,12 @@
  * Usage:
  *   ex_achd_pick_place [--headless] [--record output.mp4]
  *
- * Runs the sequence once and prints the cube's final position; --headless skips the viewer and
- * exits 1 unless the cube rests on the table within kMaxPlaceErr of the place spot and the
- * elbow stayed within kMaxElbowDrop of its reference; --record
- * writes an MP4 offscreen (EGL + ffmpeg) and implies --headless. */
+ * Prints the cube's final position; --headless exits 1 unless the cube rests within kMaxPlaceErr
+ * of the place spot and the elbow stayed within kMaxElbowDrop of its reference; --record writes
+ * an MP4 offscreen (EGL + ffmpeg) and implies --headless. */
 
+#include "mj_kdl_wrapper/render.hpp"
+#include "mj_kdl_wrapper/viewer.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
 
@@ -58,7 +59,7 @@ static constexpr double      kSupportLift = 0.06;
 
 static double smoothstep(double t)
 {
-    t = ex::clamp01(t);
+    t = std::clamp(t, 0.0, 1.0);
     return t * t * (3.0 - 2.0 * t);
 }
 
@@ -110,19 +111,20 @@ struct AchdController
         const double     dt   = robot.model->opt.timestep;
         const double     e[6] = { err.vel.x(), err.vel.y(), err.vel.z(),
                                   err.rot.x(), err.rot.y(), err.rot.z() };
-        if (first) std::copy(e, e + 6, err_prev.begin());
+        if (first) std::ranges::copy(e, err_prev.begin());
         first = false;
         // The rotation is damped against the measured rate: the target's own turn is no error.
         const double d_rot[3] = { target_twist.rot.x() - w.rot.x(),
                                   target_twist.rot.y() - w.rot.y(),
                                   target_twist.rot.z() - w.rot.z() };
         for (unsigned i = 0; i < 6; ++i) {
-            err_i[i]           = ex::clamp_abs(err_i[i] + e[i] * dt, kIntegralMax);
+            err_i[i]           = std::clamp(err_i[i] + e[i] * dt, -kIntegralMax, kIntegralMax);
             const bool   lin   = i < 3;
             const double d     = lin ? (e[i] - err_prev[i]) / dt : d_rot[i - 3];
             const double accel = lin ? kKpLin * e[i] + kKiLin * err_i[i] + kKdLin * d
                                      : kKpRot * e[i] + kKiRot * err_i[i] + kKdRot * d;
-            beta(i)            = ex::clamp_abs(accel, lin ? kBetaMaxLin : kBetaMaxRot);
+            const double limit = lin ? kBetaMaxLin : kBetaMaxRot;
+            beta(i)            = std::clamp(accel, -limit, limit);
             err_prev[i]        = e[i];
         }
         KDL::SetToZero(ff_tau);
@@ -221,7 +223,9 @@ int main(int argc, char *argv[])
         restart = true;
     };
     mj_kdl::reset(&env);
-    if (!headless && !mj_kdl::open_viewer(&env)) return 1;
+    mj_kdl::Viewer viewer;
+    viewer.paused = true;
+    if (!headless && !mj_kdl::open_viewer(&viewer, &env)) return 1;
 
     mj_kdl::VideoRecorder recorder;
     bool                  recording = false;
@@ -278,7 +282,7 @@ int main(int argc, char *argv[])
                 const KDL::Twist target_twist = KDL::diff(prev_target, target, dt);
                 prev_target                   = target;
 
-                std::fill(ctrl.f_ext.begin(), ctrl.f_ext.end(), KDL::Wrench::Zero());
+                std::ranges::fill(ctrl.f_ext, KDL::Wrench::Zero());
                 ctrl.fk_pos.JntToCart(ctrl.q, link, support_segment + 1);
                 const double z  = ex::kTableZ + link.p.z();
                 const double vz = (z - support_prev_z) / dt;
@@ -312,7 +316,7 @@ int main(int argc, char *argv[])
                     break;
                 }
                 if (restart) break;
-                mj_kdl::pace_realtime(&env);
+                mj_kdl::pace_realtime(&viewer);
                 if (recording && ++sim_step % steps_per_frame == 0
                     && !mj_kdl::record_frame(&recorder, &env)) {
                     std::cerr << "record_frame() failed at step " << sim_step << "\n";

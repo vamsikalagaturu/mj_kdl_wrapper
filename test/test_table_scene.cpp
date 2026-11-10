@@ -12,6 +12,8 @@
 #include <kdl/chaindynparam.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
 
+#include <algorithm>
+#include <array>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -25,9 +27,8 @@ static constexpr double kSurfaceZ = 0.7;
 static mj_kdl::SceneSpec empty_scene()
 {
     mj_kdl::SceneSpec sc;
-    sc.timestep   = 0.002;
-    sc.add_floor  = false;
-    sc.add_skybox = false;
+    sc.timestep  = 0.001;
+    sc.use_stage = false;
     return sc;
 }
 
@@ -75,10 +76,11 @@ TEST(SceneObjectTransform, PathBackedObjectAppliesQuat)
     mj_kdl::SceneSpec   spec   = empty_scene();
     mj_kdl::SceneObject turned = table(table_mjcf, "turned", "");
     // extrinsic XYZ euler (30, 40, 50) deg
-    const double q[4] = {
-        0.08080468869083995, 0.40219849353410964, 0.30337177447125957, 0.860042173697679
-    };
-    std::copy(q, q + 4, turned.quat);
+    std::ranges::copy(
+      std::array{
+        0.08080468869083995, 0.40219849353410964, 0.30337177447125957, 0.860042173697679 },
+      turned.quat
+    );
     spec.objects.push_back(turned);
 
     mj_kdl::Env env;
@@ -141,7 +143,7 @@ class TableSceneTest : public testing::Test
         mj_kdl::SceneObject top = table(table_mjcf, "table", "");
         top.pos[2]              = kSurfaceZ;
         spec_                   = empty_scene();
-        spec_.add_floor         = true;
+        spec_.use_stage         = true;
         spec_.objects           = {
             top,
             make_object("red_cube", box, 0.35, 0.10, 0.03, red),

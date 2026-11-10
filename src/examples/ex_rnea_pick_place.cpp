@@ -6,10 +6,10 @@
  *   qddot_des[i] = Kp[i] * (q_des[i] - q[i]) - Kd[i] * qdot[i]
  *   tau          = RNEA(q, qdot, qddot_des) = M(q) qddot_des + C(q, qdot) qdot + g(q)
  *
- * The second arm's names carry the prefix "r2_". Each arm has its own Robot, KDL chain and
+ * Each arm's names carry its prefix, "r1_" or "r2_". Each arm has its own Robot, KDL chain and
  * solver; both see their cube at the same base-frame spot, so one IK solve serves both, and one
  * update() per step drives both. Free objects the arms must leave alone stand on the table; the
- * "overview" and "side" scene cameras join each arm's own "wrist" camera.
+ * "overview" and "side" scene cameras join each arm's own wrist camera ("r1_wrist", "r2_wrist").
  *
  * Usage:
  *   ex_rnea_pick_place [--headless]
@@ -18,10 +18,9 @@
  * of its place spot, each elbow stayed above kMinElbowHeight, no free object moved more than
  * kMaxDisturb, the arms never touched and RNEA never failed. */
 
+#include "mj_kdl_wrapper/viewer.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
-
-#include <kdl/chainidsolver_recursive_newton_euler.hpp>
 
 #include <algorithm>
 #include <array>
@@ -29,6 +28,7 @@
 #include <deque>
 #include <iomanip>
 #include <iostream>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -38,13 +38,9 @@ static constexpr double kMaxPlaceErr    = 0.005; // [m] in the table plane
 static constexpr double kMinElbowHeight = 0.45;  // [m] forearm_link origin above the table
 static constexpr double kMaxDisturb     = 0.001; // [m] free-object displacement
 
-// Acceleration gains: the closed loop is qddot = Kp e - Kd qdot [1/s^2], [1/s].
-static constexpr double kKp[7] = { 100, 200, 100, 200, 100, 200, 100 };
-static constexpr double kKd[7] = { 20, 28, 20, 28, 20, 28, 20 };
-
 // Base x, y [m] and yaw [rad] on the tabletop: facing each other, each arm in its own half.
 static constexpr double      kBase[2][3] = { { -0.70, -0.12, 0.0 }, { 0.70, 0.12, M_PI } };
-static constexpr const char *kPrefix[2]  = { "", "r2_" };
+static constexpr const char *kPrefix[2]  = { "r1_", "r2_" };
 
 static KDL::Frame world_T_base(int arm)
 {
@@ -86,11 +82,10 @@ static mj_kdl::SceneObject scene_object(const FreeObject &f)
     o.pos[0] = f.x;
     o.pos[1] = f.y;
     o.pos[2] = ex::kTableZ + f.half;
-    std::copy(f.rgb, f.rgb + 3, o.rgba);
-    o.rgba[3]                = 1.0f;
-    o.mass                   = 0.1;
-    const double friction[3] = { 1.0, 0.005, 0.0001 }; // MuJoCo's geom default
-    std::copy(friction, friction + 3, o.friction);
+    std::ranges::copy(f.rgb, o.rgba);
+    o.rgba[3] = 1.0f;
+    o.mass    = 0.1;
+    std::ranges::copy(std::array{ 1.0, 0.005, 0.0001 }, o.friction); // MuJoCo's geom default
     return o;
 }
 
@@ -99,37 +94,11 @@ static mj_kdl::CameraSpec
 {
     mj_kdl::CameraSpec cam;
     cam.name = name;
-    std::copy(pos, pos + 3, cam.pos);
-    std::copy(quat, quat + 4, cam.quat);
+    std::ranges::copy(std::span(pos, 3), cam.pos);
+    std::ranges::copy(std::span(quat, 4), cam.quat);
     cam.fovy = fovy;
     return cam;
 }
-
-// RNEA computed torque for one arm; the solvers keep a reference to robot.chain.
-struct RneaArm
-{
-    RneaArm(mj_kdl::Robot &r, double gravity_z)
-      : robot(r), n(r.chain.getNrOfJoints()), rnea(r.chain, KDL::Vector(0.0, 0.0, gravity_z)),
-        dyn(r.chain, KDL::Vector(0.0, 0.0, gravity_z)), q(n), qdot(n), qddot(n), tau(n),
-        f_ext(r.chain.getNrOfSegments(), KDL::Wrench::Zero())
-    {}
-
-    bool control(const KDL::JntArray &q_des)
-    {
-        ex::read_q(robot, q, qdot);
-        for (unsigned i = 0; i < n; ++i) qddot(i) = kKp[i] * (q_des(i) - q(i)) - kKd[i] * qdot(i);
-        if (rnea.CartToJnt(q, qdot, qddot, f_ext, tau) < 0) return false;
-        for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = tau(i);
-        return true;
-    }
-
-    mj_kdl::Robot         &robot;
-    unsigned               n;
-    KDL::ChainIdSolver_RNE rnea;
-    KDL::ChainDynParam     dyn;
-    KDL::JntArray          q, qdot, qddot, tau;
-    KDL::Wrenches          f_ext;
-};
 
 int main(int argc, char *argv[])
 {
@@ -175,7 +144,7 @@ int main(int argc, char *argv[])
     std::array<mj_kdl::Robot, 2>             robots;
     std::vector<ex::PhaseArm>                arms;
     std::vector<mj_kdl::SceneFreeBodySlot *> cubes, free_bodies;
-    std::deque<RneaArm>                      ctl;
+    std::deque<ex::RneaArm>                  ctl;
     std::array<int, 2>                       roots{};
     for (int a = 0; a < 2; ++a) {
         const std::string pre = kPrefix[a];
@@ -183,6 +152,7 @@ int main(int argc, char *argv[])
               &robots[a], &env, "base_link", "bracelet_link", pre.c_str(), &tool
             ))
             return 1;
+        robots[a].name = a == 0 ? "arm1" : "arm2";
         if (!mj_kdl::set_control_mode(&robots[a], mj_kdl::CtrlMode::TORQUE)) return 1;
         arms.push_back(
           { &robots[a],
@@ -223,7 +193,9 @@ int main(int argc, char *argv[])
         restart      = true;
     };
     mj_kdl::reset(&env);
-    if (!headless && !mj_kdl::open_viewer(&env)) return 1;
+    mj_kdl::Viewer viewer;
+    viewer.paused = true;
+    if (!headless && !mj_kdl::open_viewer(&viewer, &env)) return 1;
 
     const auto control = [&](std::size_t a, const KDL::JntArray &q_des) {
         if (!ctl[a].control(q_des)) solver_ok = false;
@@ -249,8 +221,15 @@ int main(int argc, char *argv[])
                 ++arm_contacts;
         }
     };
-    const bool completed =
-      ex::run_phases(env, arms, ex::pick_place_phases(wp), restart, control, after_step);
+    const bool completed = ex::run_phases(
+      env,
+      [&viewer] { mj_kdl::pace_realtime(&viewer); },
+      arms,
+      ex::pick_place_phases(wp),
+      restart,
+      control,
+      after_step
+    );
     mj_kdl::update(&env);
     if (!solver_ok) std::cerr << "RNEA failed during the run\n";
 

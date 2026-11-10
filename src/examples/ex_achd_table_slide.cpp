@@ -1,21 +1,20 @@
 /* ex_achd_table_slide.cpp
  * Kinova GEN3, no gripper, slides its wrist flange (the TCP, the bracelet's pinch_site) 0.2 m
- * along +X on a table while pressing down
- * with kPressForce, under ACHD (KDL ChainHdSolver_Vereshchagin, linear Z left free) + RNEA.
- * The press goes through ACHD's external-force input with driver weights 1, the pinned KDL
- * fork's setDriverWeights(); the table's contact normal force is measured against it. Before
- * the press, a guarded approach (all six directions tracked, nc=6) lowers the TCP at a speed
- * that falls with its height, and the press ramps up once the table is touched.
+ * along +X on a table while pressing down with kPressForce, under ACHD (KDL
+ * ChainHdSolver_Vereshchagin, linear Z left free) + RNEA. The press goes through ACHD's
+ * external-force input with driver weights 1 (the KDL fork's setDriverWeights()); the table's
+ * contact normal force is measured against it. A guarded approach (nc=6) first lowers the TCP at
+ * a speed that falls with its height; the press ramps up once the table is touched.
  *
  * Usage:
  *   ex_achd_table_slide [--headless]
  *
- * Runs the slide once and prints the mean table reaction over its second half, the commanded
- * press and their ratio (not judged), plus a one-shot nc=6 vs nc=5 comparison; --headless
- * skips the viewer and exits 1 if the table contact was held for less than kContactHeld of
- * that window, the touchdown was faster than kMaxTouchdown or the elbow went below
- * kMinElbowHeight. */
+ * Prints the mean table reaction over the slide's second half, the commanded press and their
+ * ratio (not judged), plus a one-shot nc=6 vs nc=5 comparison; --headless exits 1 if contact
+ * was held for less than kContactHeld of that window, the touchdown was faster than
+ * kMaxTouchdown or the elbow went below kMinElbowHeight. */
 
+#include "mj_kdl_wrapper/viewer.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
 
@@ -23,6 +22,7 @@
 #include <kdl/chainidsolver_recursive_newton_euler.hpp>
 #include <kdl/kinfam_io.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <iomanip>
@@ -32,9 +32,9 @@
 
 namespace ex = mj_kdl_examples;
 
-static constexpr int    kApproachSteps  = 7500; // no contact within 15 s fails the run
-static constexpr int    kPressSteps     = 250;  // the press ramps up over 0.5 s
-static constexpr int    kSlideSteps     = 2000;
+static constexpr int    kApproachSteps  = 15000; // no contact within 15 s fails the run
+static constexpr int    kPressSteps     = 500;   // the press ramps up over 0.5 s
+static constexpr int    kSlideSteps     = 4000;
 static constexpr double kTableZ         = 0.447;
 static constexpr double kMoveX          = 0.20;
 static constexpr double kVMaxLin        = 0.08; // [m/s]
@@ -145,12 +145,12 @@ static void print_nc_comparison(
         const double e[6] = { err.vel.x(), err.vel.y(), err.vel.z(),
                               err.rot.x(), err.rot.y(), err.rot.z() };
         for (unsigned i = 0; i < 6; ++i)
-            beta(i) = ex::clamp_abs((i < 3 ? kKpLin : kKpRot) * e[i], kBetaMax);
+            beta(i) = std::clamp((i < 3 ? kKpLin : kKpRot) * e[i], -kBetaMax, kBetaMax);
     } else {
         set_alpha_no_linear_z(alpha);
         const double e[5] = { err.vel.x(), err.vel.y(), err.rot.x(), err.rot.y(), err.rot.z() };
         for (unsigned i = 0; i < 5; ++i)
-            beta(i) = ex::clamp_abs((i < 2 ? kKpLin : kKpRot) * e[i], kBetaMax);
+            beta(i) = std::clamp((i < 2 ? kKpLin : kKpRot) * e[i], -kBetaMax, kBetaMax);
     }
     achd.CartToJnt(q, qd, qdd, alpha, beta, f_ext, ff, ctau);
     rnea.CartToJnt(q, qd, qdd, f_ext, tau);
@@ -284,12 +284,12 @@ int main(int argc, char **argv)
         const KDL::Twist err  = KDL::diff(current, tracked);
         const double     e[6] = { err.vel.x(), err.vel.y(), err.vel.z(),
                                   err.rot.x(), err.rot.y(), err.rot.z() };
-        if (first) std::copy(e, e + 6, err_prev.begin());
+        if (first) std::ranges::copy(e, err_prev.begin());
         first = false;
         double b[6];
         for (unsigned i = 0; i < 6; ++i) {
             const double kp = i < 3 ? kKpLin : kKpRot, kd = i < 3 ? kKdLin : kKdRot;
-            b[i]        = ex::clamp_abs(kp * e[i] + kd * (e[i] - err_prev[i]) / dt, kBetaMax);
+            b[i] = std::clamp(kp * e[i] + kd * (e[i] - err_prev[i]) / dt, -kBetaMax, kBetaMax);
             err_prev[i] = e[i];
         }
         // Gravity as feed-forward, so only the commanded press pushes the free linear Z down.
@@ -315,7 +315,9 @@ int main(int argc, char **argv)
         return true;
     };
 
-    if (!headless && !mj_kdl::open_viewer(&env)) return 1;
+    mj_kdl::Viewer viewer;
+    viewer.paused = true;
+    if (!headless && !mj_kdl::open_viewer(&viewer, &env)) return 1;
     restarted      = false;
     bool solver_ok = true;
     bool finished  = false;
@@ -346,7 +348,7 @@ int main(int argc, char **argv)
             restart_task();
             continue;
         }
-        mj_kdl::pace_realtime(&env);
+        mj_kdl::pace_realtime(&viewer);
         if (phase == Phase::Approach && phase_steps >= kApproachSteps) break;
         if (phase == Phase::Slide && phase_steps >= kSlideSteps) {
             finished = true;

@@ -21,9 +21,8 @@ namespace fs = std::filesystem;
 static mj_kdl::SceneSpec bare_scene()
 {
     mj_kdl::SceneSpec sc;
-    sc.timestep   = 0.002;
-    sc.add_floor  = false;
-    sc.add_skybox = false;
+    sc.timestep  = 0.001;
+    sc.use_stage = false;
     return sc;
 }
 

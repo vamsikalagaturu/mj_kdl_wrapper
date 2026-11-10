@@ -9,10 +9,10 @@
  * Usage:
  *   ex_joint_ctrl [--headless]
  *
- * Prints each motion's final max joint error; --headless skips the viewer and exits 1 if the
- * POSITION motion ends further than kMaxErr from the target or the VELOCITY motion does not
- * converge within kTol before kTimeout. */
+ * Prints each motion's final max joint error; --headless exits 1 if POSITION ends beyond kMaxErr
+ * or VELOCITY does not converge within kTol before kTimeout. */
 
+#include "mj_kdl_wrapper/viewer.hpp"
 #include "common.hpp"
 #include "example_paths.hpp"
 
@@ -62,7 +62,9 @@ int main(int argc, char *argv[])
         restart = true;
     };
     mj_kdl::reset(&env);
-    if (!headless && !mj_kdl::open_viewer(&env)) return 1;
+    mj_kdl::Viewer viewer;
+    viewer.paused = true;
+    if (!headless && !mj_kdl::open_viewer(&viewer, &env)) return 1;
 
     constexpr double kNotReached = std::numeric_limits<double>::infinity();
     Motion           motion      = Motion::Position;
@@ -82,7 +84,7 @@ int main(int argc, char *argv[])
         const double t       = env.data->time - t_start;
         double       max_err = 0.0;
         if (motion == Motion::Position) {
-            const double alpha = ex::clamp01(t / kMotionDuration);
+            const double alpha = std::clamp(t / kMotionDuration, 0.0, 1.0);
             for (unsigned i = 0; i < n; ++i) {
                 robot.jnt_pos_cmd[i] = q_home(i) + alpha * (kTargetPose[i] - q_home(i));
                 max_err = std::max(max_err, std::abs(kTargetPose[i] - robot.jnt_pos_msr[i]));
@@ -98,7 +100,7 @@ int main(int argc, char *argv[])
             for (unsigned i = 0; i < n; ++i) {
                 const double err     = q_home(i) - robot.jnt_pos_msr[i];
                 max_err              = std::max(max_err, std::abs(err));
-                robot.jnt_vel_cmd[i] = ex::clamp_abs(kKv * err, kMaxVel);
+                robot.jnt_vel_cmd[i] = std::clamp(kKv * err, -kMaxVel, kMaxVel);
             }
             if (max_err < kTol || t >= kTimeout) {
                 vel_err  = max_err;
@@ -107,7 +109,7 @@ int main(int argc, char *argv[])
             }
         }
         if (!mj_kdl::step(&env)) break;
-        mj_kdl::pace_realtime(&env);
+        mj_kdl::pace_realtime(&viewer);
     }
 
     const bool pos_ok = pos_err <= kMaxErr;

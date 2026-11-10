@@ -2,13 +2,11 @@
 
 This page collects the C++ wrapper usage notes that are too detailed for the
 README. For complete function signatures, see the generated Doxygen API pages
-for `include/mj_kdl_wrapper/mj_kdl_wrapper.hpp`.
+for `include/mj_kdl_wrapper/mj_kdl_wrapper.hpp` (the core), `render.hpp` (the recorder,
+`mj_kdl_wrapper::render`) and `viewer.hpp` (the window, `mj_kdl_wrapper::viewer`).
 
-Coming from 0.4? See [Migrating to 0.5](@ref sec_migrate_mj_kdl_wrapper).
-From 0.3.x, the `Env` also took over the loop; see [Migrating to 0.4](@ref sec_migrate_env).
-From 0.2.x, placement orientation also moved from `euler` to `quat` `[x, y, z, w]`; see
-[Migrating from 0.2.x](@ref sec_migrate_quat). Units, frames and what persists between
-calls: [Conventions](@ref page_conventions).
+Coming from 0.5? See [Migrating to 0.6](@ref page_migration). Units, frames and what persists
+between calls: [Conventions](@ref page_conventions).
 
 ## Errors
 
@@ -38,25 +36,34 @@ helper under `src/examples/`) against the source `assets/` directory, compiled i
 The Python counterpart is `mjk.ASSETS_DIR / "kinova_gen3/gen3.xml"`. `cmake --install` copies
 the same files into `~/.cache/mj_kdl_wrapper/assets` for programs outside this tree. Any other MJCF
 (e.g. MuJoCo Menagerie's) goes into `RobotSpec::path`; one that brings its own floor needs
-`add_floor = false`.
+`use_stage = false`.
 
 ## Load From MJCF
 
-`SceneSpec` has no defaults for `timestep`, `add_floor`, or `add_skybox`.
+`SceneSpec` has no defaults for `timestep` or `use_stage`.
 Those are choices, not values the library can guess. `timestep` starts unset (NaN), and
 `build_scene()` fails unless it is > 0. String fields throughout the specs are `std::string`;
 empty means "not set", and the `Env` keeps its own copy of the spec. `SceneSpec::robots` may be empty; object-only
-scenes are valid. `floor_z` places the ground plane along the world z axis
-(default `0.0`), for scenes whose world frame is not at ground level.
+scenes are valid. `use_stage = true` builds the scene on a stage MJCF that supplies the floor,
+sky, haze and lights: by default the bundled `assets/stage/default.xml` (an infinite checker floor
+plane, a gradient skybox and two spot lights), or the file named by `SceneSpec::stage`;
+`use_stage = false` builds on an empty world. `floor_z` (default `0.0`) is added to the height of
+every plane on the stage's worldbody, for scenes whose world frame is not at ground level.
+`speculative_contacts` (default `false`) turns on MuJoCo 4's speculative contacts, which add a
+contact before an impact so a fast convex geom does not pass through a thin one within a step
+(MuJoCo's `doc/computation/speculative.rst`); a scene MJCF that enables the flag keeps it.
+`integrator` and `solver` (`Integrator::Robot`, `Solver::Robot` by default) keep the first
+robot's MuJoCo options (Gen3: implicitfast, Newton) unless set; cloth and other flex elasticity
+needs `Integrator::Discrete` (or `Euler`, `RK4`), as MuJoCo 4.0 no longer supports it under the
+implicit integrators.
 
 ```cpp
 #include "example_paths.hpp"
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 
 mj_kdl::SceneSpec sc;
-sc.timestep   = 0.002;   // [s]; required, must be > 0
-sc.add_floor  = true;
-sc.add_skybox = true;
+sc.timestep  = 0.001;   // [s]; required, must be > 0
+sc.use_stage = true;
 sc.robots.push_back(mj_kdl::RobotSpec{
     .path = mj_kdl_examples::asset("kinova_gen3/gen3.xml")
 });
@@ -219,9 +226,8 @@ robot_spec.path = mj_kdl_examples::asset("kinova_gen3/gen3.xml");
 robot_spec.attachments.push_back(gripper);
 
 mj_kdl::SceneSpec sc;
-sc.timestep   = 0.002;
-sc.add_floor  = true;
-sc.add_skybox = true;
+sc.timestep  = 0.001;
+sc.use_stage = true;
 sc.robots.push_back(robot_spec);
 mj_kdl::init_env(&env, &sc);
 ```
@@ -257,23 +263,28 @@ any body, site, or frame added by prior entries.
 
 ```cpp
 mj_kdl::SceneSpec sc;
-sc.timestep   = 0.002;
-sc.add_floor  = true;
-sc.add_skybox = true;
+sc.timestep  = 0.001;
+sc.use_stage = true;
 sc.robots = {
-    mj_kdl::RobotSpec{ .path = "gen3.xml", .pos = { -0.5, 0.0, 0.0 } },
+    mj_kdl::RobotSpec{ .path = "gen3.xml", .prefix = "r1_", .pos = { -0.5, 0.0, 0.0 } },
     mj_kdl::RobotSpec{ .path = "gen3.xml", .prefix = "r2_", .pos = { 0.5, 0.0, 0.0 } },
 };
 mj_kdl::init_env(&env, &sc);
 
 mj_kdl::Robot robot1, robot2;
-mj_kdl::init_robot_from_mjcf(&robot1, &env, "base_link", "bracelet_link");
-mj_kdl::init_robot_from_mjcf(&robot2, &env, "r2_base_link", "r2_bracelet_link");
+mj_kdl::init_robot_from_mjcf(&robot1, &env, "base_link", "bracelet_link", "r1_");
+mj_kdl::init_robot_from_mjcf(&robot2, &env, "base_link", "bracelet_link", "r2_");
+robot1.name = "left";
+robot2.name = "right";
 ```
 
-The `prefix` argument is prepended to every name the call resolves: base and tip bodies, tool
-body, TCP site and F/T sensor names. `("base_link", "bracelet_link", "r2_")` and
+With more than one robot, each gets a prefix of its own, so all their names are built the same
+way. The `prefix` argument is prepended to every name the call resolves: base and tip bodies,
+tool body, TCP site and F/T sensor names. `("base_link", "bracelet_link", "r2_")` and
 `("r2_base_link", "r2_bracelet_link", "")` build the same robot.
+
+`Robot::name` is the caller's label for the robot, set before or after init; the viewer's
+Robots section shows it. Unnamed, a robot is shown by its base body (`r1_base_link`).
 
 Each robot gets a group of actuators per control mode (see
 [Torque control](@ref page_howto_torque_control)), so the two can run different modes.
@@ -286,21 +297,25 @@ in `build_scene()` is decorations, objects in declaration order, robots, then
 cameras. A robot's `attach_to` can reference any prior object, and a child
 object's `attach_to` can reference any earlier object in `SceneSpec::objects`.
 
-`SceneObject` has no defaults for `shape`, `size`, `rgba`, `mass`, or
+`SceneObject` invents no values for `shape`, `size`, `rgba`, `mass`, or
 `friction`: the numbers start unset (NaN). For MJCF-backed objects, when `mjcf_path` is set,
-they are ignored (`rgba` with `has_rgba` recolours the asset). For primitives,
+they are ignored (`rgba` with `has_rgba` recolours the asset). A primitive is a `BOX`,
+`SPHERE`, `CYLINDER`, `ELLIPSOID` (`size` = radii) or `MESH` (`mesh_path` names an STL, OBJ
+or MSH file and `size` is its scale), built through mjSpec. What a primitive may leave unset
+takes MuJoCo's own default: `rgba` on any primitive, `mass` (from the default density) and
+`friction` on a fixed one. A fixed primitive with `mass = 0` adds no mass to its parent.
 `build_scene()` fails, naming the object, when:
 
-- `shape == Shape::Unspecified`;
+- `shape == Shape::Unspecified`, or a `MESH` has no `mesh_path` or it is not a file;
 - a size the shape uses is unset or not positive;
-- `rgba` or `friction` is unset;
+- `rgba` or `friction` is only partly set;
+- `friction` is unset on a non-fixed primitive;
 - `mass` is unset or not positive on a non-fixed primitive.
 
 ```cpp
 mj_kdl::SceneSpec sc;
-sc.timestep   = 0.002;
-sc.add_floor  = true;
-sc.add_skybox = true;
+sc.timestep  = 0.001;
+sc.use_stage = true;
 
 mj_kdl::SceneObject table{
     .name      = "table",
@@ -363,7 +378,7 @@ free camera. A recorder's camera is its `vr.cam`, written directly:
 for (int i = 0; i < env.model->ncam; ++i) {
     MJ_LOG_INFO("camera: " << mj_id2name(env.model, mjOBJ_CAMERA, i));
 }
-mj_kdl::use_camera(&env.viewer, env.model, "overview");
+mj_kdl::use_camera(&viewer, env.model, "overview");   // viewer.hpp
 vr.cam.type       = mjCAMERA_FIXED;
 vr.cam.fixedcamid = mj_name2id(env.model, mjOBJ_CAMERA, "overview");
 ```
@@ -393,14 +408,17 @@ joint's `jnt_qposadr` directly.
 ```cpp
 mj_kdl::set_control_mode(&robot, mj_kdl::CtrlMode::TORQUE);   // seeds the torque ports, no jump
 
-mj_kdl::open_viewer(&env);   // optional; the loop is the same headless
+mj_kdl::Viewer viewer;                 // #include "mj_kdl_wrapper/viewer.hpp"
+mj_kdl::open_viewer(&viewer, &env);   // optional; the loop is the same headless
 
 KDL::JntArray q(n), g(n);
-while (env.data->time < 5.0 && mj_kdl::step(&env)) {   // step() is false only on window close
+while (env.data->time < 5.0) {
     mj_kdl::update(&env);
     for (unsigned i = 0; i < n; ++i) q(i) = robot.jnt_pos_msr[i];
     dyn.JntToGravity(q, g);
     for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = g(i);
+    if (!mj_kdl::step(&env)) break;   // false only once the window is closed
+    mj_kdl::pace_realtime(&viewer);   // no-op while the viewer is closed
 }
 
 mj_kdl::cleanup(&env);   // closes the viewer, frees model/data
@@ -408,7 +426,8 @@ mj_kdl::cleanup(&env);   // closes the viewer, frees model/data
 
 `step(&env)` advances one timestep (`mj_step2()` then `mj_step1()`), so joint
 state, frames and position/velocity sensors all describe the new state. It
-returns false once the viewer window is closed.
+returns false once the viewer window is closed. A loop without a viewer links only the core
+and drops the `Viewer` lines.
 
 `update(&env)` does both halves of the port synchronization for every registered
 robot and every scene slot: it reads MuJoCo joint state into `jnt_pos_msr`,
@@ -470,16 +489,22 @@ Each part's runtime state is one struct (`ForceTorqueReading`, and the
 so a field added to one is reset without further code; a part without a reset
 overload does not compile. `RobotPorts` is rewritten in place instead: its vectors
 are sized once by `init_robot_*()`, so a pointer to a port element stays valid
-across resets. The Simulate UI's reset button runs the same path,
-hook included. `on_reset` may be set before or after `init_env()`.
+across resets. The viewer's reset button (and `Backspace`) runs the same path inside
+`step()`, hook included. `on_reset` may be set before or after `init_env()`.
 
 `cleanup(&env)` closes the viewer, frees the model/data and forgets the robots,
 which are not deleted.
 
 ## Headless Video Recording
 
+The recorder is the `mj_kdl_wrapper::render` library (`render.hpp`), built when
+`MJ_KDL_WITH_RENDER` allows it. It renders offscreen with MuJoCo's Filament renderer, on a
+thread of its own from a snapshot of the state, and needs no display.
+
 ```cpp
-// Requires BUILD_RECORDER=ON (default) and ffmpeg in PATH.
+// Link mj_kdl_wrapper::render; ffmpeg in PATH.
+#include "mj_kdl_wrapper/render.hpp"
+
 mj_kdl::VideoRecorder vr;
 mj_kdl::init_video_recorder(
     &vr, env.model, "sim.mp4", mj_kdl::VideoResolution::R1080p);
@@ -488,9 +513,9 @@ vr.cam.azimuth   = 135.0;
 vr.cam.elevation = -20.0;
 vr.cam.distance  = 2.5;
 
-for (int i = 0; i < 3000; ++i) {
-    mj_kdl::step(&env);
+for (int i = 0; i < 6000; ++i) {
     mj_kdl::update(&env);
+    mj_kdl::step(&env);
     mj_kdl::record_frame(&vr, &env);
 }
 
@@ -508,20 +533,19 @@ mj_kdl::render_rgb(&vr, &env, rgb.data());
 mj_kdl::cleanup(&vr);
 ```
 
-Interactive recording is available from the Simulate UI:
+Interactive recording is available from the viewer:
 
-1. Open the left Simulation panel.
-2. Scroll to Recorder.
-3. Set `Path`, `Camera`, `Resolution`, and `FPS`.
-4. Press `Start rec`.
-5. Press `Stop rec`.
+1. Open the `Recording` section of the `Options` panel.
+2. Set `File`, `Camera`, `Resolution`, and `FPS`.
+3. Press `Start recording`.
+4. Press `Stop recording`.
 
 The recorder camera list includes `Current`, `Free`, `Tracking`, robot MJCF
 cameras, and cameras added through `SceneSpec::cameras`.
 
 ## Recording What The Window Shows
 
-Recording is offscreen only: a `VideoRecorder` has its own headless context and
+Recording is offscreen only: a `VideoRecorder` has its own renderer and
 its own thread, so a window never stalls on a readback while it records. To
 record the view a freshly opened GUI window shows, point the recorder at the
 default free camera:
@@ -530,9 +554,23 @@ default free camera:
 mjv_defaultFreeCamera(env.model, &vr.cam);   // the view a window opens with
 ```
 
-The Simulate UI's Recorder panel offers `Current`, `Free`, `Tracking`, and the
-fixed model cameras; every one of them renders offscreen. `Current` follows the
-camera the GUI is being driven with, frame by frame.
+The viewer's `Recording` section offers `Current`, `Free`, `Tracking`, and the
+fixed model cameras; every one of them renders offscreen through a `VideoRecorder`, inside
+`step()`. `Current` follows the camera the window is being driven with, frame by frame.
+
+## Overlays
+
+`add_trace_segment(&env, a, b, rgba)` and `add_overlay_arrow(&env, from, dir, length, rgba)`
+append world-space geoms to the `Env`; `clear_trace(&env)` removes them all, and
+`overlay_geoms(&env)` returns a copy. They are part of the core, work headless, and the
+viewer and every recorder draw them on top of the model. Clear once per frame before
+appending that frame's overlays:
+
+```cpp
+const float yellow[4] = { 1.0f, 0.9f, 0.1f, 1.0f };
+mj_kdl::clear_trace(&env);
+mj_kdl::add_trace_segment(&env, prev_tcp, tcp, yellow);
+```
 
 ## Runtime Add And Remove Objects
 
@@ -544,7 +582,7 @@ mj_kdl::scene_remove_object(&env, "red_cube");
 Both append to or erase from `env.spec.objects` and rebuild. The model/data are
 replaced; the time, `qpos`/`qvel` (by joint name and type) and `act`/`ctrl` (by actuator
 name) carry over, and the port commands are kept. Registered robots, scene slots, the viewer
-and `VideoRecorder`s follow the new model; a slot whose name is gone is unbound and skipped.
+and `VideoRecorder`s (through `EnvHooks::on_rebuild`) follow the new model; a slot whose name is gone is unbound and skipped.
 If a robot or F/T sensor cannot be rebound, the call returns the error and the `Env` is left
 as it was. Both fail when called from `on_reset`. MuJoCo ids you cached yourself must be
 recomputed. In Python, `Env.add_object()` and `Env.remove_object()` do the
@@ -552,35 +590,88 @@ same. See [Python API guide](python.md) for Python ownership rules.
 
 ## Viewer Loop
 
-`open_viewer(&env, "title")` opens the full Simulate UI in a background render
-thread, or returns an error `Status` when no window can be created; `step(&env)` then also
-handles its pause, perturbation and recording.
-It works the same for object-only scenes. The viewer is `env.viewer`; pass it to
-`key_pressed()`, `capture_key()`, `use_camera()`, `set_free_camera()` and the
-overlay helpers. `pace_realtime(&env)` paces a loop to the viewer's real-time
-factor and does nothing headless. `cleanup(&env)` closes the window.
+The viewer is the `mj_kdl_wrapper::viewer` library (`viewer.hpp`), a MuJoCo Studio window
+(Filament rendering, Dear ImGui panels), built when `MJ_KDL_WITH_VIEWER` allows it. The caller
+owns the `Viewer`:
+
+```cpp
+#include "mj_kdl_wrapper/viewer.hpp"
+
+mj_kdl::Viewer viewer;
+if (!mj_kdl::open_viewer(&viewer, &env, "title")) return 1;
+```
+
+`open_viewer()` returns an error `Status` when there is no display. The window runs on a
+thread of its own and draws a copy of the state that `step(&env)` publishes; its pause,
+reset, perturbation, edited controls (they win over `update()` until a reset), physics
+options and recording reach the `Env` inside `step()`, through `Env::hooks`. Only the thread
+that steps the `Env` touches it. It works the same for object-only scenes. Pass `&viewer` to
+`is_running()`, `key_pressed()`, `capture_key()`, `use_camera()` and `set_free_camera()`.
+Keys are `ImGuiKey` codes from `<imgui.h>`, e.g. `mj_kdl::key_pressed(&viewer,
+ImGuiKey_UpArrow)`. `pace_realtime(&viewer)` paces a loop to the viewer's real-time factor
+and does nothing while it is closed. `cleanup(&viewer)`, its destructor or `cleanup(&env)`
+closes the window.
 
 ## Viewer Controls
+
+The window is MuJoCo Studio's: its menus (File, Simulation, View, Plugins, Help), panels,
+toolbar, Explorer, profiler, console and key bindings, with every action carried out by the
+`Env` inside `step()`. `Help -> Help` (`F1`) lists all keys. The most used:
 
 | Input | Action |
 |-------|--------|
 | Left drag | Orbit camera |
-| Right drag | Pan camera |
+| Right drag | Pan camera (`Shift`: in the horizontal plane) |
 | Scroll | Zoom |
-| Double-click body | Select body, name shown in the Perturb panel |
-| `D` | Deselect body |
+| Double-click body | Select body (`PgUp`: its parent) |
+| Right double-click | Look at the point; with `Ctrl`, track the body |
+| `[` / `]`, `Esc` | Previous / next camera, back to the free camera |
 | `Space` | Pause or resume |
-| `,` | Decrease wrapper real-time factor |
-| `.` | Increase wrapper real-time factor |
+| Left / Right arrow | Step back / forward through the history while paused |
+| `Backspace` | Reset (to the keyframe chosen in the Simulation panel, if any) |
+| `-` / `=` | Slower / faster, along Studio's speeds from 100% down to 0.1% |
+| `Tab` / `Shift+Tab` | Hide or show the Options / Explorer and Inspector panels |
+| `F2`, `F3`, `F11` | Info overlay, profiler, full screen |
+| `Ctrl+S`, `Ctrl+P`, `Ctrl+L`, `Ctrl+Q` | Save XML, save a screenshot (WebP), reload, quit |
 
-Applying a perturbation force or torque to the selected body can be done in two
-ways:
+`capture_key()` withholds a key from these bindings. To push the selected body: `Ctrl` +
+right-drag applies force (`Shift`: in the horizontal plane), `Ctrl` + left-drag applies
+torque; with the Perturb section's Force or Torque chosen, a plain left drag does the same.
+While paused, a drag moves a free body (or mocap body) to the drag target.
 
-- Perturb panel: set `Drag` to `Force` or `Torque`, then left-drag in the 3D
-  view. Right-drag still pans the camera. `Shift` drags in the horizontal plane
-  instead of the vertical.
-- Keyboard and mouse: `Ctrl` + right-drag applies force, `Ctrl` + left-drag
-  applies torque.
+The history behind Step Back/Fwd and the timeline scrubber is recorded on the thread that
+steps the `Env`; scrubbing pauses and loads that frame into `env.data`. Reload builds the
+scene again from its MJCF files and keeps the state. The Explorer shows a read-only copy of
+the scene's `mjSpec`. Open Model, Unload, the spec Editor and the graphics-mode switch are
+disabled, because the `Env` owns the model. The wrapper adds an `Equality` section to the
+Inspector and, to the Options panel, `Robots` (each robot's name and active control mode,
+read-only, and each joint's position between its limits), `Frames` (checkboxes that draw body and site frames, under a name filter),
+`Perturb` and `Recording`. The Explorer's Data tab starts with a `Frame` choice (world, or any
+body or site, as RViz's Fixed Frame) and the element's `Pose` in it: `pos` [m], `quat_xyzw`
+and `rpy` [rad] about the frame's fixed axes; Studio's list of every `mjData` field follows,
+folded under `All fields (mjData)`. Right-click a row to copy its values. `View -> Add Camera View` opens a fixed camera's image (colour,
+depth or segmentation) in a window of its own. `View -> Style Editor` is ImGui's style editor
+under a Theme choice (Studio's Light / Dark / Classic, as `View -> Theme`) and a Font choice
+(the system fonts fontconfig lists, Studio's icons merged in). Its edits stay over the theme
+and are saved with the settings (`[MjKdl][Style]` in the settings file, by name and per unit
+DPI scale); picking a theme starts afresh from it, and `File -> Reset Config` drops them. On open, the free camera frames
+the whole scene in the part of the window the panels leave free.
 
-All other controls, including reset, quit, rendering flags, live camera
-selection, and recording, are in the MuJoCo panels.
+`Viewer` fields, read by `open_viewer()` (Python: the same names on `mjk.Viewer`):
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `paused` | `false` | open paused; while open it follows the window's pause |
+| `realtime_factor` | `1.0` | `pace_realtime()` speed; the Speed slider sets it |
+| `window_width`, `window_height` | `1600`, `900` | window size [px] |
+| `min_panel_width` | `18` | narrowest a side panel may be dragged [font heights] |
+| `theme` | `ViewerTheme::Dark` | theme unless the settings file names another |
+| `ini_path` | empty | layout and theme file; empty is Studio's `~/.mujoco.ini` |
+| `record_path`, `record_resolution`, `record_fps` | `recording.mp4`, `R720p`, `30` | the Recording panel's starting values |
+| `framing_frames` | `5` | frames the start camera is re-fitted while the layout settles |
+| `speed_window` | `0.5` | measured speed: sim time over this much wall time [s] |
+| `plugin_max_geoms` | `2000` | geoms Studio's ScenePlugins may add per frame |
+| `joint_limit_margin` | `0.05` | part of a joint's range counted as near a limit (0..0.5): its bar in the Robots section turns red |
+| `joint_limit_highlight` | `true` | a translucent red sphere (half `stat.meansize` across) on each robot joint within `joint_limit_margin` of a limit; window and camera views only (never in recordings); the Robots section toggles it |
+| `manipulability_ellipsoid` | `false` | each robot's TCP velocity ellipsoid at its TCP (window and camera views only); the Robots section toggles it |
+| `manipulability_scale` | `0.3` | drawn size of the ellipsoid: metres per m/s of TCP speed per rad/s of joint speed |

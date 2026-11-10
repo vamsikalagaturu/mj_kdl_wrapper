@@ -6,14 +6,14 @@ set(MJ_KDL_EXAMPLES
   ex_rnea_pick_place
   ex_achd_table_slide
   ex_achd_pick_place
-  ex_table_pour
+  ex_table_towel
 )
 # test/ registers each one as a headless test.
 set(MJ_KDL_EXAMPLES ${MJ_KDL_EXAMPLES} PARENT_SCOPE)
 
 foreach(ex ${MJ_KDL_EXAMPLES})
   add_executable(${ex} ${ex}.cpp)
-  target_link_libraries(${ex} PRIVATE mj_kdl_wrapper)
+  target_link_libraries(${ex} PRIVATE mj_kdl_wrapper::viewer)
   target_compile_options(${ex} PRIVATE -Wall -Wextra)
   target_compile_definitions(${ex} PRIVATE MJ_KDL_ASSETS_DIR="${PROJECT_SOURCE_DIR}/assets")
 endforeach()

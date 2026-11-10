@@ -20,6 +20,7 @@ INPUT                  = @CMAKE_CURRENT_SOURCE_DIR@/include \
                          @CMAKE_CURRENT_SOURCE_DIR@/README.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/doxygen/groups.dox \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/index.md \
+                         @CMAKE_CURRENT_SOURCE_DIR@/docs/migration.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/install/standalone.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/install/ros2.md \
                          @CMAKE_CURRENT_SOURCE_DIR@/docs/tutorials/cpp.md \

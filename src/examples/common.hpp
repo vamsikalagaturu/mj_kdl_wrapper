@@ -4,9 +4,11 @@
 
 #include <kdl/chaindynparam.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
+#include <kdl/chainidsolver_recursive_newton_euler.hpp>
 #include <kdl/chainiksolvervel_wdls.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <functional>
 #include <iostream>
@@ -61,20 +63,12 @@ inline int verdict(bool ok, const std::string &goal)
     return ok ? 0 : 1;
 }
 
-inline double clamp01(double v) { return std::clamp(v, 0.0, 1.0); }
-
-inline double clamp_abs(double v, double limit) { return std::clamp(v, -limit, limit); }
 
 inline KDL::JntArray home_q(unsigned n)
 {
     KDL::JntArray q(n);
     for (unsigned i = 0; i < n; ++i) q(i) = kHomePose[i];
     return q;
-}
-
-inline void lerp_q(const KDL::JntArray &a, const KDL::JntArray &b, double t, KDL::JntArray &out)
-{
-    for (unsigned i = 0; i < a.rows(); ++i) out(i) = a(i) + t * (b(i) - a(i));
 }
 
 inline void read_q(const mj_kdl::Robot &robot, KDL::JntArray &q)
@@ -88,14 +82,6 @@ inline void read_q(const mj_kdl::Robot &robot, KDL::JntArray &q, KDL::JntArray &
         q(i)  = robot.jnt_pos_msr[i];
         qd(i) = robot.jnt_vel_msr[i];
     }
-}
-
-inline double max_abs_joint_err(const mj_kdl::Robot &robot, const KDL::JntArray &q)
-{
-    double max_err = 0.0;
-    for (unsigned i = 0; i < q.rows(); ++i)
-        max_err = std::max(max_err, std::abs(q(i) - robot.jnt_pos_msr[i]));
-    return max_err;
 }
 
 // TCP of the chain at the measured joint positions, in the robot base frame.
@@ -138,9 +124,8 @@ inline void prime_gravity(mj_kdl::Robot &robot, KDL::ChainDynParam &dyn, const K
 inline mj_kdl::SceneSpec scene_spec()
 {
     mj_kdl::SceneSpec spec;
-    spec.timestep   = 0.002;
-    spec.add_floor  = true;
-    spec.add_skybox = true;
+    spec.timestep  = 0.001;
+    spec.use_stage = true;
     return spec;
 }
 
@@ -184,8 +169,7 @@ inline mj_kdl::SceneObject cube_object(double x, double y, double surface_z)
     cube.pos[1] = y;
     cube.pos[2] = surface_z + kCubeHS;
     for (int k = 0; k < 3; ++k) cube.size[k] = kCubeHS;
-    const float rgba[4] = { 0.1f, 0.35f, 1.0f, 1.0f };
-    std::copy(rgba, rgba + 4, cube.rgba);
+    std::ranges::copy(std::array{ 0.1f, 0.35f, 1.0f, 1.0f }, cube.rgba);
     cube.mass        = 0.1;
     cube.condim      = mj_kdl::Condim::Torsional;
     cube.friction[0] = 0.8;
@@ -307,6 +291,37 @@ inline std::vector<Phase> pick_place_phases(const PickPlaceWaypoints &w)
     // clang-format on
 }
 
+// RNEA computed-torque gains [1/s^2], [1/s]: the closed loop is qddot = Kp e - Kd qdot.
+constexpr double kRneaKp[7] = { 100, 200, 100, 200, 100, 200, 100 };
+constexpr double kRneaKd[7] = { 20, 28, 20, 28, 20, 28, 20 };
+
+// RNEA computed torque for one arm; the solvers keep a reference to robot.chain.
+struct RneaArm
+{
+    RneaArm(mj_kdl::Robot &r, double gravity_z)
+      : robot(r), n(r.chain.getNrOfJoints()), rnea(r.chain, KDL::Vector(0.0, 0.0, gravity_z)),
+        dyn(r.chain, KDL::Vector(0.0, 0.0, gravity_z)), q(n), qdot(n), qddot(n), tau(n),
+        f_ext(r.chain.getNrOfSegments(), KDL::Wrench::Zero())
+    {}
+
+    bool control(const KDL::JntArray &q_des)
+    {
+        read_q(robot, q, qdot);
+        for (unsigned i = 0; i < n; ++i)
+            qddot(i) = kRneaKp[i] * (q_des(i) - q(i)) - kRneaKd[i] * qdot(i);
+        if (rnea.CartToJnt(q, qdot, qddot, f_ext, tau) < 0) return false;
+        for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = tau(i);
+        return true;
+    }
+
+    mj_kdl::Robot         &robot;
+    unsigned               n;
+    KDL::ChainIdSolver_RNE rnea;
+    KDL::ChainDynParam     dyn;
+    KDL::JntArray          q, qdot, qddot, tau;
+    KDL::Wrenches          f_ext;
+};
+
 // An arm the phases drive; each follows the same joint waypoints in its own base frame.
 struct PhaseArm
 {
@@ -315,9 +330,10 @@ struct PhaseArm
 };
 
 // One update() per step for all arms, so a command lands one cycle later; control(i, q_des)
-// commands arm i. False if the viewer was closed.
+// commands arm i; pace, if set, runs after each step. False if the viewer was closed.
 inline bool run_phases(
   mj_kdl::Env                                                   &env,
+  const std::function<void()>                                   &pace,
   const std::vector<PhaseArm>                                   &arms,
   const std::vector<Phase>                                      &phases,
   bool                                                          &restart,
@@ -337,13 +353,17 @@ inline bool run_phases(
             while (true) {
                 mj_kdl::update(&env);
                 const double t_rel = env.data->time - t_enter;
-                const double alpha = phase.duration > 0.0 ? clamp01(t_rel / phase.duration) : 1.0;
-                double       err   = 0.0;
+                const double alpha =
+                  phase.duration > 0.0 ? std::clamp(t_rel / phase.duration, 0.0, 1.0) : 1.0;
+                double err = 0.0;
                 for (std::size_t i = 0; i < arms.size(); ++i) {
-                    lerp_q(q_enter[i], *phase.target, alpha, q_des);
+                    const KDL::JntArray &target = *phase.target;
+                    for (unsigned j = 0; j < target.rows(); ++j) {
+                        q_des(j) = q_enter[i](j) + alpha * (target(j) - q_enter[i](j));
+                        err = std::max(err, std::abs(target(j) - arms[i].robot->jnt_pos_msr[j]));
+                    }
                     control(i, q_des);
                     arms[i].gripper->command = phase.gripper_cmd;
-                    err = std::max(err, max_abs_joint_err(*arms[i].robot, *phase.target));
                 }
 
                 const bool done_pose    = phase.settle_tol < 0.0 || err <= phase.settle_tol;
@@ -352,7 +372,7 @@ inline bool run_phases(
 
                 if (!mj_kdl::step(&env)) return false;
                 if (restart) break;
-                mj_kdl::pace_realtime(&env);
+                if (pace) pace();
                 if (after_step) after_step(phase, t_rel);
             }
             if (restart) break;

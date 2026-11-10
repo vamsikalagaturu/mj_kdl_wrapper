@@ -1,11 +1,5 @@
-"""Robot-less scenes: options are honored and mesh SceneObjects load.
-
-Regression tests for two fixes in build_scene:
-  * a scene with no robots builds (was hard-rejected), and its timestep/gravity
-    from SceneSpec are applied;
-  * a mesh-backed SceneObject compiles (the asset spec's meshes are loaded before
-    it is freed, so the scene compile can resolve them).
-"""
+"""Robot-less scenes: a scene with no robots builds with SceneSpec's timestep and gravity, and a
+mesh-backed SceneObject compiles."""
 
 import pytest
 
@@ -33,9 +27,8 @@ def _cube() -> mjk.SceneObject:
 
 def _spec(objects) -> mjk.SceneSpec:
     spec = mjk.SceneSpec()
-    spec.timestep = 0.002
-    spec.add_floor = True
-    spec.add_skybox = False
+    spec.timestep = 0.001
+    spec.use_stage = True
     spec.objects = objects
     return spec
 
@@ -48,12 +41,42 @@ def test_fixed_primitive_needs_no_mass():
         assert env.step()
 
 
-@pytest.mark.parametrize("field", ["size", "rgba", "mass", "friction"])
+@pytest.mark.parametrize("field", ["size", "mass", "friction"])
 def test_primitive_without_a_required_field_is_refused(field):
     obj = _cube()
     setattr(obj, field, None)
     with pytest.raises(RuntimeError, match=f"SceneObject.{field}"):
         mjk.Env.build(_spec([obj]))
+
+
+def _drawn(name: str, shape: mjk.Shape) -> mjk.SceneObject:
+    """Fixed, massless, with no colour or friction: a shape drawn on a body."""
+    obj = mjk.SceneObject()
+    obj.name = name
+    obj.shape = shape
+    obj.fixed = True
+    obj.mass = 0.0
+    obj.size = [0.05, 0.05, 0.08]
+    return obj
+
+
+def test_ellipsoid_and_mesh_build_on_mujoco_defaults():
+    ball = _drawn("ball", mjk.Shape.ELLIPSOID)
+    drawer = _drawn("drawer", mjk.Shape.MESH)
+    drawer.mesh_path = str(CABINET.parent / "cabinet_drawer.stl")
+    drawer.size = [1.0, 1.0, 1.0]
+    with mjk.Env.build(_spec([ball, drawer])) as env:
+        assert env.step()
+        assert env.model.geom("ball_geom").type == 4  # mjGEOM_ELLIPSOID
+        assert env.model.geom("drawer_geom").type == 7  # mjGEOM_MESH
+
+
+@pytest.mark.parametrize("mesh_path", ["", "no_such_mesh.stl"])
+def test_mesh_without_a_file_is_refused(mesh_path):
+    drawer = _drawn("drawer", mjk.Shape.MESH)
+    drawer.mesh_path = mesh_path
+    with pytest.raises(RuntimeError, match="drawer"):
+        mjk.Env.build(_spec([drawer]))
 
 
 @pytest.mark.parametrize("field", ["pos", "fovy"])
@@ -72,8 +95,7 @@ def test_camera_without_a_required_field_is_refused(field):
 def test_robotless_scene_applies_timestep():
     spec = mjk.SceneSpec()
     spec.timestep = 0.004
-    spec.add_floor = True
-    spec.add_skybox = True
+    spec.use_stage = True
     spec.objects = [_cube()]
     env = mjk.Env.build(spec)  # no robots
     try:
@@ -90,14 +112,12 @@ def test_mesh_scene_object_builds_and_moves():
     obj.pos = [0.0, 0.0, 0.0]
     obj.fixed = True
     spec = mjk.SceneSpec()
-    spec.timestep = 0.002
-    spec.add_floor = True
-    spec.add_skybox = True
+    spec.timestep = 0.001
+    spec.use_stage = True
     spec.objects = [obj]
     env = mjk.Env.build(spec)
     try:
-        # Meshes compiled -> the drawer's grasp site exists; force pulls the
-        # drawer through the cabinet rails, then out and onto the floor.
+        # The force pulls the drawer through the cabinet rails, then out onto the floor.
         closed = env.site_frame("grasp1").p
         env.data.body("drawer1").xfrc_applied[:3] = [40.0, 0.0, 0.0]
         for _ in range(120):
@@ -127,9 +147,8 @@ def test_mesh_scene_object_applies_quat():
     obj.quat = [0.08080468869083995, 0.40219849353410964, 0.30337177447125957, 0.860042173697679]
     obj.fixed = True
     spec = mjk.SceneSpec()
-    spec.timestep = 0.002
-    spec.add_floor = False
-    spec.add_skybox = False
+    spec.timestep = 0.001
+    spec.use_stage = False
     spec.objects = [obj]
     env = mjk.Env.build(spec)
     try:

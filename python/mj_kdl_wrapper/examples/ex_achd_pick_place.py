@@ -60,9 +60,8 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     robot_spec.attachments = [gripper]
 
     spec = mjk.SceneSpec()
-    spec.timestep = 0.002
-    spec.add_floor = True
-    spec.add_skybox = True
+    spec.timestep = 0.001
+    spec.use_stage = True
     spec.objects = [table, cube]
     spec.robots = [robot_spec]
     env = mjk.Env.build(spec)
@@ -199,10 +198,10 @@ def run_phase(env, ctrl: Achd, fingers, phase: dict, state: dict) -> bool:
             return True
         if not env.step():
             return False
+        state["viewer"].pace()
         if state["reset"]:
             state["reset"] = False
             raise ResetRequested()
-        env.pace()
 
 
 def build_phases(robot: mjk.Robot, home_tcp: kdl.Frame) -> list[dict]:
@@ -246,6 +245,8 @@ def main() -> int:
     args = parser.parse_args()
 
     env, robot = build_env()
+    viewer = mjk.Viewer()
+    viewer.paused = True
     try:
         robot.set_control_mode(mjk.CtrlMode.TORQUE)
         fingers = env.data.actuator("g_fingers_actuator")
@@ -269,7 +270,8 @@ def main() -> int:
         env.on_reset = on_reset
         env.reset()
         if args.gui:
-            env.open_viewer("ex_achd_pick_place.py")
+            viewer.open(env, "ex_achd_pick_place.py")
+        state["viewer"] = viewer
 
         completed = False
         while not completed:
@@ -294,6 +296,7 @@ def main() -> int:
         drop = state["support"]["drop"]
         print(f"elbow drop: {drop * 1000:.4f} mm (limit {MAX_ELBOW_DROP * 1000} mm)")
     finally:
+        viewer.close()
         env.close()
     if args.gui:
         return 0

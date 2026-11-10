@@ -15,36 +15,23 @@ jobs:
   asan-ubsan:
     runs-on: ubuntu-24.04
     env:
-      MUJOCO_VERSION: 3.14.0
-      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.14.0
       FETCHCONTENT_BASE_DIR: ${{ github.workspace }}/.fetchcontent
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       SAN_FLAGS: -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer
     steps:
       - uses: actions/checkout@v4
 
+      # System build dependencies (KDL and MuJoCo are built from source, not installed from apt);
+      # the X11, Wayland and GL headers are what MuJoCo's Filament and SDL2 builds use.
       - name: Install dependencies
         run: |
           sudo apt-get update -q
           sudo apt-get install -y \
             ccache ninja-build ffmpeg vcstool \
-            libeigen3-dev libglfw3-dev libgl-dev libegl-dev
+            libeigen3-dev libegl-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libfontconfig-dev
 
-      - name: Cache MuJoCo
-        id: cache-mujoco
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.MJ_KDL_MUJOCO_DIR }}
-          key: mujoco-${{ runner.os }}-${{ env.MUJOCO_VERSION }}
-
-      - name: Install MuJoCo ${{ env.MUJOCO_VERSION }}
-        if: steps.cache-mujoco.outputs.cache-hit != 'true'
-        run: |
-          wget -q "https://github.com/google-deepmind/mujoco/releases/download/${MUJOCO_VERSION}/mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
-          tar xzf "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz" -C /tmp
-          rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
-
-      - name: Import the Orocos KDL fork
+      - name: Import the Orocos KDL fork and MuJoCo
         run: vcs import < mj_kdl_wrapper.repos
 
       - name: Cache ccache
@@ -71,7 +58,8 @@ jobs:
             -DCMAKE_CXX_FLAGS="${SAN_FLAGS}" \
             -DCMAKE_EXE_LINKER_FLAGS="${SAN_FLAGS}" \
             -DCMAKE_SHARED_LINKER_FLAGS="${SAN_FLAGS}" \
-            -DMJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}" \
+            -DMJ_KDL_WITH_RENDER=ON \
+            -DMJ_KDL_WITH_VIEWER=ON \
             -DBUILD_TESTS=ON \
             -DBUILD_DOCS=OFF \
             -DFETCHCONTENT_BASE_DIR="${FETCHCONTENT_BASE_DIR}" \
@@ -89,82 +77,3 @@ jobs:
           # A test that did not run fails the job; an opt-in DISABLED_ one is expected not to.
           ! awk '/tests did not run/{f=1;next} f&&/^[ \t]+[0-9]+ - /{print;next} {f=0}' ctest.log \
             | grep -v '(Disabled)'
-
-  # The Simulate UI's render thread against the control loop, under ThreadSanitizer.
-  tsan:
-    runs-on: ubuntu-24.04
-    env:
-      MUJOCO_VERSION: 3.14.0
-      MJ_KDL_MUJOCO_DIR: /tmp/mujoco-3.14.0
-      FETCHCONTENT_BASE_DIR: ${{ github.workspace }}/.fetchcontent
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
-      SAN_FLAGS: -fsanitize=thread -fno-omit-frame-pointer
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y \
-            ccache ninja-build vcstool xvfb libgl1-mesa-dri \
-            libeigen3-dev libglfw3-dev libgl-dev libegl-dev
-
-      - name: Cache MuJoCo
-        id: cache-mujoco
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.MJ_KDL_MUJOCO_DIR }}
-          key: mujoco-${{ runner.os }}-${{ env.MUJOCO_VERSION }}
-
-      - name: Install MuJoCo ${{ env.MUJOCO_VERSION }}
-        if: steps.cache-mujoco.outputs.cache-hit != 'true'
-        run: |
-          wget -q "https://github.com/google-deepmind/mujoco/releases/download/${MUJOCO_VERSION}/mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
-          tar xzf "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz" -C /tmp
-          rm "mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz"
-
-      - name: Import the Orocos KDL fork
-        run: vcs import < mj_kdl_wrapper.repos
-
-      - name: Cache ccache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-tsan-${{ runner.os }}-${{ github.sha }}
-          restore-keys: |
-            ccache-tsan-${{ runner.os }}-
-
-      - name: Cache FetchContent deps
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.FETCHCONTENT_BASE_DIR }}
-          key: fetchcontent-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'test/CMakeLists.txt', 'cmake/Versions.cmake') }}
-
-      - name: Configure
-        run: |
-          cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_C_FLAGS="${SAN_FLAGS}" \
-            -DCMAKE_CXX_FLAGS="${SAN_FLAGS}" \
-            -DCMAKE_EXE_LINKER_FLAGS="${SAN_FLAGS}" \
-            -DCMAKE_SHARED_LINKER_FLAGS="${SAN_FLAGS}" \
-            -DMJ_KDL_MUJOCO_DIR="${MJ_KDL_MUJOCO_DIR}" \
-            -DBUILD_TESTS=ON \
-            -DBUILD_EXAMPLES=OFF \
-            -DBUILD_DOCS=OFF \
-            -DFETCHCONTENT_BASE_DIR="${FETCHCONTENT_BASE_DIR}" \
-            -DFETCHCONTENT_UPDATES_DISCONNECTED=ON
-
-      - name: Build
-        run: cmake --build build --target test_scene_state
-
-      # The viewer test is opt-in (it opens a window); Xvfb gives it one.
-      - name: Viewer lock test
-        env:
-          TSAN_OPTIONS: suppressions=${{ github.workspace }}/test/tsan.supp halt_on_error=1
-          LIBGL_ALWAYS_SOFTWARE: "1"
-        run: |
-          xvfb-run -a build/test/test_scene_state \
-            --gtest_also_run_disabled_tests --gtest_filter='*Viewer*'

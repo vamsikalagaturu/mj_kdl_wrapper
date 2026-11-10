@@ -97,17 +97,12 @@
     SceneSpec: "classmj__kdl__wrapper_1_1__mj__kdl__wrapper_1_1SceneSpec.html",
     Shape: "classmj__kdl__wrapper_1_1__mj__kdl__wrapper_1_1Shape.html",
     ToolFrameSpec: "classmj__kdl__wrapper_1_1__mj__kdl__wrapper_1_1ToolFrameSpec.html",
-    VideoRecorder: "classmj__kdl__wrapper_1_1__mj__kdl__wrapper_1_1VideoRecorder.html",
-    VideoResolution: "classmj__kdl__wrapper_1_1__mj__kdl__wrapper_1_1VideoResolution.html",
-    Viewer: "classmj__kdl__wrapper_1_1__mj__kdl__wrapper_1_1Viewer.html",
   };
   var commonPythonVariables = {
     env: "Env",
-    recorder: "VideoRecorder",
     robot: "Robot",
     robot_spec: "RobotSpec",
     spec: "SceneSpec",
-    viewer: "Viewer",
   };
   var pythonMethodNames = {
     add_object: true,

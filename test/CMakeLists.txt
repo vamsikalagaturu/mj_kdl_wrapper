@@ -39,6 +39,26 @@ foreach(test_name test_control_modes test_mjcf_load)
     MJ_KDL_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 endforeach()
 
+# The optional components' tests follow their targets.
+set(_mj_kdl_component_tests)
+if(TARGET mj_kdl_wrapper::render)
+  list(APPEND _mj_kdl_component_tests test_render)
+  set(test_render_link mj_kdl_wrapper::render)
+endif()
+if(TARGET mj_kdl_wrapper::viewer)
+  list(APPEND _mj_kdl_component_tests test_viewer)
+  set(test_viewer_link mj_kdl_wrapper::viewer)
+endif()
+foreach(test_name ${_mj_kdl_component_tests})
+  add_executable(${test_name} ${test_name}.cpp)
+  target_link_libraries(${test_name} PRIVATE ${${test_name}_link} GTest::gtest)
+  target_include_directories(${test_name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src/examples")
+  target_compile_options(${test_name} PRIVATE -Wall -Wextra)
+  target_compile_definitions(${test_name} PRIVATE
+    MJ_KDL_ASSETS_DIR="${PROJECT_SOURCE_DIR}/assets")
+  gtest_discover_tests(${test_name} DISCOVERY_TIMEOUT 60 PROPERTIES RUN_SERIAL TRUE)
+endforeach()
+
 # The examples self-check under --headless and exit non-zero on failure.
 if(BUILD_EXAMPLES)
   foreach(ex ${MJ_KDL_EXAMPLES})

@@ -1,7 +1,7 @@
 # C++ Tutorial {#page_tutorial_cpp}
 
 This tutorial builds a C++ simulation application in layers: compile a robot scene,
-add KDL control, add reset hooks, add objects and cameras, use the Simulate UI,
+add KDL control, add reset hooks, add objects and cameras, use the viewer,
 record video, and then extend the scene to more robots and more complex task assets.
 
 The snippets load the bundled Kinova GEN3 arm and Robotiq 2F-85 gripper from `assets/`
@@ -14,16 +14,18 @@ The wrapper has four layers. Keep them separate and the API stays simple:
 | Layer | Type | Responsibility |
 |-------|------|----------------|
 | Scene description | `SceneSpec`, `RobotSpec`, `AttachmentSpec`, `SceneObject`, `CameraSpec` | Describe what should be compiled into MuJoCo |
-| Runtime environment | `Env` | Own `mjModel`/`mjData`, registered robots, scene slots, the viewer, and reset hooks |
+| Runtime environment | `Env` | Own `mjModel`/`mjData`, registered robots, scene slots, overlay geoms, and reset hooks |
 | Robot control handle | `Robot` | KDL chain, measured ports, command ports |
-| Visualization/recording | `Env::viewer`, `VideoRecorder` | Interactive Simulate UI and offscreen MP4 recording |
-| Python package | `mj_kdl_wrapper` | Python wrappers for the same scene, robot, reset, viewer, and recorder concepts |
+| Visualization/recording | `Viewer` (`viewer.hpp`), `VideoRecorder` (`render.hpp`) | MuJoCo Studio window and offscreen MP4 recording, optional libraries `mj_kdl_wrapper::viewer` and `mj_kdl_wrapper::render` |
+| Python package | `mj_kdl_wrapper` | Python wrappers for the same scene, robot, reset and overlay concepts; `Viewer` and `VideoRecorder` bind this same viewer and recorder |
 
 The important ownership rule:
 
-- `Env` owns `mjModel`, `mjData`, its scene slots (`env.scene`) and its viewer (`env.viewer`).
+- `Env` owns `mjModel`, `mjData` and its scene slots (`env.scene`).
 - `Robot` is registered with one `Env` and borrows its model/data; `Env` never deletes it.
-- `VideoRecorder` owns only its EGL/rendering/ffmpeg resources; it renders an `Env`
+- `Viewer` is owned by the caller; it follows one `Env` through `env.hooks`, and
+  `cleanup(&env)` closes it.
+- `VideoRecorder` owns only its Filament renderer and ffmpeg process; it renders an `Env`
   when recording frames.
 
 Most examples follow this flow:
@@ -33,15 +35,18 @@ Most examples follow this flow:
 3. Initialize one or more `Robot` handles with `init_robot_from_mjcf(&robot, &env, ...)`,
    which also registers them with the `Env`.
 4. Install `env.on_reset` if the task has object/controller state.
-5. Call `open_viewer(&env)`, or run headless (the loop is the same).
-6. In the loop: `step(&env)`, `update(&env)`, compute commands, write command ports.
+5. Call `open_viewer(&viewer, &env)`, or run headless (the loop is the same).
+6. In the loop: `step(&env)`, `update(&env)`, compute commands, write command ports,
+   `pace_realtime(&viewer)`.
 7. Cleanup: `cleanup(&env)` closes the viewer and frees the model/data.
 
 ## 2. Start With One Robot Scene
 
-Scenes are declared with `SceneSpec`. `timestep`, `add_floor`, and
-`add_skybox` have no defaults - they are choices the wrapper refuses to
-guess on your behalf. `build_scene` fails unless `timestep` is set and > 0.
+Scenes are declared with `SceneSpec`. `timestep` and `use_stage` have no
+defaults - they are choices the wrapper refuses to guess on your behalf.
+`use_stage = true` builds on a stage MJCF (floor, sky, haze, lights): the
+bundled `assets/stage/default.xml` unless `SceneSpec::stage` names another;
+`use_stage = false` builds on an empty world. `build_scene` fails unless `timestep` is set and > 0.
 `gravity_z` defaults to Earth gravity (-9.81 m/s^2). Calls that can fail return
 `mj_kdl::Status`: `false` on failure, with the reason in `error`.
 
@@ -50,9 +55,8 @@ guess on your behalf. `build_scene` fails unless `timestep` is set and > 0.
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 
 mj_kdl::SceneSpec scene;
-scene.timestep   = 0.002;   // [s]
-scene.add_floor  = true;
-scene.add_skybox = true;
+scene.timestep  = 0.001;   // [s]
+scene.use_stage = true;
 scene.robots.push_back(mj_kdl::RobotSpec{
     .path = mj_kdl_examples::asset("kinova_gen3/gen3.xml"),
 });
@@ -72,21 +76,22 @@ a scene, but robots, stepping, frames and the viewer all work on an `Env`.
 
 ### What `SceneSpec` Compiles
 
-`build_scene()` creates one MuJoCo `mjSpec`, attaches robot MJCF trees into it,
-adds global scene options, adds objects and cameras, then compiles the model.
+`build_scene()` starts one MuJoCo `mjSpec` from the stage (or an empty world),
+attaches robot MJCF trees into it, adds global scene options, adds objects and
+cameras, then compiles the model.
 The robot list may be empty when the scene only contains objects.
 
 Important fields:
 
 ```cpp
 mj_kdl::SceneSpec scene;
-scene.timestep   = 0.002;
-scene.gravity_z  = -9.81;
-scene.add_floor  = true;
-scene.add_skybox = true;
-scene.robots     = {};
-scene.objects    = {};
-scene.cameras    = {};
+scene.timestep  = 0.001;
+scene.gravity_z = -9.81;
+scene.use_stage = true;
+scene.stage     = "";   // empty: the bundled assets/stage/default.xml
+scene.robots    = {};
+scene.objects   = {};
+scene.cameras   = {};
 ```
 
 Use `RobotSpec::prefix` for repeated robots. The prefix is applied during MJCF
@@ -141,14 +146,17 @@ For position mode, write `jnt_pos_cmd`; `update(&env)` copies it to MuJoCo actua
 controls.
 
 ```cpp
+#include "mj_kdl_wrapper/viewer.hpp"   // link mj_kdl_wrapper::viewer
+
 robot.ctrl_mode = mj_kdl::CtrlMode::POSITION;
 
-mj_kdl::open_viewer(&env, "position control");
+mj_kdl::Viewer viewer;
+mj_kdl::open_viewer(&viewer, &env, "position control");
 
 // step() is false only when the window closes, so the loop needs its own end.
 while (env.data->time < 10.0 && mj_kdl::step(&env)) {
     mj_kdl::update(&env);
-    mj_kdl::pace_realtime(&env);   // step() never sleeps; pace the loop yourself
+    mj_kdl::pace_realtime(&viewer);   // step() never sleeps; pace the loop yourself
 
     for (int i = 0; i < robot.n_joints; ++i) {
         robot.jnt_pos_cmd[i] = robot.jnt_pos_msr[i];
@@ -156,8 +164,9 @@ while (env.data->time < 10.0 && mj_kdl::step(&env)) {
 }
 ```
 
-`open_viewer()` starts MuJoCo Simulate in a render thread. Your loop still
-owns stepping, updating control, and task logic. `update(&env)` reads and commands
+`open_viewer()` opens a MuJoCo Studio window on a thread of its own; it draws a copy of the
+state each `step()` publishes. Your loop still owns stepping, updating control, and task
+logic. `update(&env)` reads and commands
 every registered robot and scene slot; commands written after it are applied by the
 next `update()`.
 
@@ -173,7 +182,7 @@ KDL::JntArray g(robot.n_joints);
 
 while (env.data->time < 10.0 && mj_kdl::step(&env)) {
     mj_kdl::update(&env);
-    mj_kdl::pace_realtime(&env);   // step() never sleeps; pace the loop yourself
+    mj_kdl::pace_realtime(&viewer);   // step() never sleeps; pace the loop yourself
 
     for (int i = 0; i < robot.n_joints; ++i) {
         q(i) = robot.jnt_pos_msr[i];
@@ -273,8 +282,7 @@ scene.robots.push_back(mj_kdl::RobotSpec{
 });
 ```
 
-Both assets ship with the package; `ex_table_pour` runs this chain (with prefix `pour_`)
-to hold the mug in the gripper.
+Both assets ship with the package.
 
 For contact stability, add contact exclusions only when two attached bodies are
 known to overlap structurally:
@@ -295,14 +303,19 @@ the same tagged `AttachTarget` as `RobotSpec` and `AttachmentSpec`. Inside
 robots -> cameras, so a robot or a later object may reference any prior
 object via its name or one of its sites.
 
-`SceneObject` has no defaults for `shape`, `size`, `rgba`, `mass`, or
+`SceneObject` invents no values for `shape`, `size`, `rgba`, `mass`, or
 `friction`. For MJCF-backed objects (when `mjcf_path` is set) those fields
-are ignored at runtime, so leaving them zero-initialised is fine. For
-primitives, `build_scene` runs explicit checks:
+are ignored at runtime, so leaving them unset is fine. For primitives (`BOX`, `SPHERE`,
+`CYLINDER`, `ELLIPSOID`, or `MESH` with `mesh_path` and `size` as its scale), the build fails,
+naming the object, when:
 
-- `shape == Shape::Unspecified` -> error, the object is skipped.
-- `size[i] <= 0` for the relevant dimensions of the shape -> error, skipped.
-- `mass <= 0` on a non-fixed primitive -> error, skipped.
+- `shape == Shape::Unspecified`, or a `Shape::MESH` has no `mesh_path` or it is not a file;
+- `size[i] <= 0` (or unset) for the dimensions of the shape;
+- `mass <= 0` or unset `friction` on a non-fixed primitive;
+- `rgba` or `friction` is only partly set.
+
+A fixed primitive may leave `mass` and `friction` unset, and any primitive may leave `rgba`
+unset; those then take MuJoCo's own defaults.
 
 ```cpp
 mj_kdl::SceneObject table{
@@ -314,7 +327,7 @@ mj_kdl::SceneObject table{
 
 scene.objects.push_back(table);
 
-// Primitives require shape, size, rgba, mass, and friction.
+// A free primitive requires shape, size, mass, and friction.
 scene.objects.push_back(mj_kdl::SceneObject{
     .name     = "cube",
     .shape    = mj_kdl::Shape::BOX,
@@ -331,7 +344,7 @@ scene.objects.push_back(mj_kdl::SceneObject{
 matching MuJoCo's contact-dimensionality integers. Default is `Tangential`.
 
 `scene.robots` can be empty. Object-only scenes still compile and can be opened
-in the Simulate UI with `open_viewer(&env, "object scene")`.
+in the viewer with `open_viewer(&viewer, &env, "object scene")`.
 
 After `build_scene`, an MJCF-backed `SceneObject` exposes its root body in
 the compiled scene under `obj.name` (the asset's internal root body name is
@@ -410,12 +423,13 @@ for (int i = 0; i < env.model->ncam; ++i) {
 Use one in the viewer, or set the recorder's `cam` directly:
 
 ```cpp
-mj_kdl::use_camera(&env.viewer, env.model, "front");
+mj_kdl::use_camera(&viewer, env.model, "front");
 recorder.cam.type       = mjCAMERA_FIXED;
 recorder.cam.fixedcamid = mj_name2id(env.model, mjOBJ_CAMERA, "front");
 ```
 
-The Simulate UI also has its own live camera selector in the Rendering panel.
+The viewer also has its own live camera selector in the Simulation section, and `[` / `]`
+cycle the cameras.
 
 ## 9. Write Production Reset Hooks
 
@@ -465,7 +479,7 @@ re-seeded after the hook: a hook that moves a POSITION robot sets its `jnt_pos_c
 the first update drives it back. Each part's runtime state lives in one struct that reset
 assigns afresh, so a field added later is reset too; a part without a reset does not compile.
 A robot's ports are rewritten in place, so a pointer you keep to a port element survives it.
-The Simulate UI's reset button runs the same path.
+The viewer's reset button runs the same path.
 
 Use `ResetContext` when your hook needs direct MuJoCo access:
 
@@ -483,62 +497,63 @@ env.on_reset = [&](mj_kdl::ResetContext *ctx) {
 For randomized starts, generate random values in the hook and write them to
 MuJoCo before `reset()` returns.
 
-## 10. Use The Simulate UI
+## 10. Use The Viewer
 
-The full viewer path is:
+The viewer is the optional `mj_kdl_wrapper::viewer` library (`MJ_KDL_WITH_VIEWER`), a
+MuJoCo Studio window. The full viewer path is:
 
 ```cpp
-mj_kdl::open_viewer(&env, "task");
+#include "mj_kdl_wrapper/viewer.hpp"
+
+mj_kdl::Viewer viewer;
+mj_kdl::open_viewer(&viewer, &env, "task");
 
 while (env.data->time < 10.0 && mj_kdl::step(&env)) {
     mj_kdl::update(&env);
-    mj_kdl::pace_realtime(&env);   // step() never sleeps; pace the loop yourself
+    mj_kdl::pace_realtime(&viewer);   // step() never sleeps; pace the loop yourself
     // control...
 }
 ```
 
-With the viewer open, `step()` also honours its pause, perturbation and recording.
-Setting `robot.paused` on every registered robot pauses physics in both modes.
+With the viewer open, `step()` also honours its pause, reset, perturbation, edited controls
+(they win over `update()` until a reset), physics options and recording. Setting
+`robot.paused` on every registered robot pauses physics in both modes.
 
 Useful wrapper-specific controls:
 
 | Control | Behavior |
 |---------|----------|
-| `,` | slow the wrapper real-time factor |
-| `.` | speed the wrapper real-time factor |
-| Simulation -> `RTF` | current wrapper real-time factor |
-| Simulation -> Recorder | path, camera, resolution, FPS, start/stop, status |
+| `-` / `=` | slower / faster (Studio's speeds, 100% down to 0.1%) |
+| `Space` / `Backspace` | pause / reset |
+| Left / Right arrow | step back / forward through the history while paused |
+| Options -> Simulation | Studio's panel: reset, reload, align, pause/run, speed, history, keyframes, threads |
+| Options -> Recording | file, camera, resolution, FPS, start/stop, status |
+| File -> Save XML | write the compiled scene to MJCF |
 
 Recorder camera options include `Current`, `Free`, `Tracking`, and every fixed
 camera compiled into the model.
 
-The right panel adds debug sections:
+The `Options` panel also has `Physics`, `Rendering`, `Visibility Groups` and `Visualization`;
+the `Inspector` panel has `Joints`, `Controls`, `Sensor`, `Watch`, `State` and `Equality`, and
+the `Explorer` beside it shows the scene's spec. Double-click a body to select it, then `Ctrl`
++ right-drag pushes it with a force and `Ctrl` + left-drag with a torque. `F1` lists every key.
 
-| Section | Behavior |
-|---------|----------|
-| `Frames` | per-body/site coordinate triads (RViz-style), with a `Scale` slider |
-| `Perturb` | `Body` shows the double-clicked selection; `Drag` = `Camera`/`Force`/`Torque`, then left-drag to apply (or `Ctrl`+right/left-drag) |
+### Viewer Recorder Controls
 
-The `Equality` and `Group enable` sections are hidden by default; rebuild with
-`-DSHOW_EQUALITY_PANEL=ON` / `-DSHOW_GROUP_PANEL=ON` to restore them. These
-debug geoms appear in the live viewer only, not in recorded MP4s.
-
-### Simulate UI Recorder Controls
-
-The recorder controls live in the left Simulation panel:
+The recorder controls live in the `Recording` section of the `Options` panel:
 
 | Field | Meaning |
 |-------|---------|
-| `Path` | Output MP4 path, relative to the process working directory unless absolute |
+| `File` | Output MP4 path, relative to the process working directory unless absolute |
 | `Camera` | `Current`, `Free`, `Tracking`, or any compiled fixed camera |
 | `Resolution` | `360p`, `480p`, `720p`, or `1080p` |
 | `FPS` | Recording frame rate |
-| `Start rec` | Opens EGL recorder and starts feeding frames |
-| `Stop rec` | Closes ffmpeg and finalizes the MP4 |
-| `Rec` | `idle`, `recording`, or `failed` |
+| `Start recording` | Opens a `VideoRecorder` and feeds it a frame from `step()` |
+| `Stop recording` | Closes ffmpeg and finalizes the MP4 |
 
-`Current` means the recorder follows the Simulate viewer camera. A fixed camera
-records from that camera even if the live viewer is moved elsewhere.
+The status line below the button reads `recording to <path>`, `recording stopped`, or the
+error. `Current` means the recorder follows the viewer camera. A fixed camera records from
+that camera even if the live viewer is moved elsewhere. A scene rebuild stops the recording.
 
 When recording stops successfully, the terminal prints:
 
@@ -546,13 +561,12 @@ When recording stops successfully, the terminal prints:
 [mj_kdl] recording saved to recording.mp4
 ```
 
-If the status changes to `failed`, check that `ffmpeg` is installed and the path
-is writable.
+If it fails, check that `ffmpeg` is installed and the path is writable.
 
 ### Draw A Live Trajectory Trace Overlay
 
-The viewer owns a user scene that the render thread merges into every
-frame. Two helpers let you draw your own line geometry into it -- the built-in
+The `Env` holds overlay geoms that the viewer and every recorder draw on top of the
+model. Two helpers let you draw your own line geometry into it -- the built-in
 use is a live polyline of recent end-effector positions, which makes it obvious
 at a glance whether the EE is tracking a commanded path:
 
@@ -560,11 +574,11 @@ at a glance whether the EE is tracking a commanded path:
 #include <deque>
 
 std::deque<KDL::Vector> trace;          // ring buffer of recent EE points
-constexpr size_t kTraceMax = 4096;      // bounded by the user-scene geom budget
+constexpr size_t kTraceMax = 4096;      // bounded by the overlay geom budget
 
 while (env.data->time < 10.0 && mj_kdl::step(&env)) {
     mj_kdl::update(&env);
-    mj_kdl::pace_realtime(&env);   // step() never sleeps; pace the loop yourself
+    mj_kdl::pace_realtime(&viewer);   // step() never sleeps; pace the loop yourself
     // ... run your controller; advance the EE ...
 
     // FK gives the EE in the chain-root frame; the overlay renders in world
@@ -577,22 +591,21 @@ while (env.data->time < 10.0 && mj_kdl::step(&env)) {
     trace.push_back(world_T_base * ee_base.p);
     if (trace.size() > kTraceMax) trace.pop_front();
 
-    mj_kdl::clear_trace(&env.viewer);             // reset the overlay each frame
+    mj_kdl::clear_trace(&env);             // reset the overlay each frame
     static constexpr float kOrange[4] = {1.0f, 0.5f, 0.1f, 1.0f};
     for (size_t i = 1; i < trace.size(); ++i)
-        mj_kdl::add_trace_segment(&env.viewer, trace[i - 1], trace[i], kOrange);
+        mj_kdl::add_trace_segment(&env, trace[i - 1], trace[i], kOrange);
 }
 ```
 
 Key points:
 
-- Both helpers are **no-ops while the viewer is closed** (e.g. headless runs),
-  so the same loop compiles and runs unchanged
-  with no display -- guard the bookkeeping with `if (!headless)` to skip the
-  allocation entirely.
-- `add_trace_segment()` is thread-safe and silently drops segments once the
-  user-scene geom buffer is full (8192 geoms). Keep your ring buffer at or below
-  that to avoid a truncated trace.
+- The helpers are part of the core and take the `Env`: the same loop runs headless, and a
+  `VideoRecorder` draws the overlay into its frames too. With nothing drawing them, guard
+  the bookkeeping with `if (!headless)` to skip the work entirely.
+- `add_trace_segment()` and `add_overlay_arrow()` are thread-safe and silently drop geoms
+  once the overlay is full (8192 geoms). Keep your ring buffer at or below that to avoid a
+  truncated trace.
 - Pass `nullptr` for `rgba` to use the default warm orange.
 - Points are in **world frame**. Robot FK is in the chain-root frame, so compose
   with the base body's world pose (constant for a fixed base; read it once).
@@ -603,13 +616,12 @@ and every generated demo renders the trace with no hand-written loop code.
 
 ## 11. Record Video
 
-Interactive recording is available in the Simulate UI:
+Interactive recording is available in the viewer:
 
-1. Open the Simulation panel.
-2. Scroll to Recorder.
-3. Set `Path`, `Camera`, `Resolution`, and `FPS`.
-4. Press `Start rec`.
-5. Press `Stop rec`.
+1. Open the `Recording` section of the `Options` panel.
+2. Set `File`, `Camera`, `Resolution`, and `FPS`.
+3. Press `Start recording`.
+4. Press `Stop recording`.
 
 The terminal prints:
 
@@ -617,16 +629,19 @@ The terminal prints:
 [mj_kdl] recording saved to <path>
 ```
 
-Headless recording uses the same `VideoRecorder` API:
+Headless recording uses the same `VideoRecorder` API, from the `mj_kdl_wrapper::render`
+library (`MJ_KDL_WITH_RENDER`; Filament offscreen rendering, ffmpeg in `PATH`):
 
 ```cpp
+#include "mj_kdl_wrapper/render.hpp"
+
 mj_kdl::VideoRecorder recorder;
 mj_kdl::init_video_recorder(
     &recorder, env.model, "episode.mp4", mj_kdl::VideoResolution::R1080p, 60);
 
-for (int i = 0; i < 3000; ++i) {
+for (int i = 0; i < 6000; ++i) {
     mj_kdl::step(&env);
-    if (i % 4 == 0) {
+    if (i % 16 == 0) { // ~60 fps at a 1 ms timestep
         mj_kdl::record_frame(&recorder, &env);
     }
 }
@@ -694,15 +709,13 @@ mj_kdl::SceneObject cube{
 };
 ```
 
-Assemble the scene. Set `timestep`, `add_floor`, and `add_skybox`
-explicitly, then mount the arm on the table's `table_top` site instead of
+Assemble the scene. Set `timestep` and `use_stage` explicitly, then mount the arm on the table's `table_top` site instead of
 writing `surface_z` into the robot position by hand:
 
 ```cpp
 mj_kdl::SceneSpec scene;
-scene.timestep   = 0.002;
-scene.add_floor  = true;
-scene.add_skybox = true;
+scene.timestep  = 0.001;
+scene.use_stage = true;
 scene.objects.push_back(table);
 scene.objects.push_back(cube);
 
@@ -952,23 +965,24 @@ moved in the hook would also need its `jnt_pos_cmd` set there.
 
 ### 12.8 Run With Viewer And Recorder
 
-Start the Simulate UI:
+Start the viewer:
 
 ```cpp
-mj_kdl::open_viewer(&env, "table pick-place");
-mj_kdl::use_camera(&env.viewer, env.model, "task");
+mj_kdl::Viewer viewer;
+mj_kdl::open_viewer(&viewer, &env, "table pick-place");
+mj_kdl::use_camera(&viewer, env.model, "task");
 
 bool task_done = false;   // run_state_machine() sets it when HOLD ends
 while (!task_done && mj_kdl::step(&env)) {
     mj_kdl::update(&env);
-    mj_kdl::pace_realtime(&env);   // step() never sleeps; pace the loop yourself
+    mj_kdl::pace_realtime(&viewer);   // step() never sleeps; pace the loop yourself
     run_state_machine();
     apply_impedance_command();
 }
 ```
 
-Use `,` and `.` to slow down or speed up the wrapper real-time factor. In the
-Simulation panel, the Recorder subsection can write an MP4 using `Current`,
+Use `-` and `=` to slow down or speed up the simulation. In the
+`Options` panel, the `Recording` section can write an MP4 using `Current`,
 `Free`, `Tracking`, or any compiled fixed camera.
 
 ### 12.9 What To Validate
@@ -979,7 +993,7 @@ Before treating the example as working, check:
 - The cube is a free body and `set_body_pose()` can reset it.
 - The gripper command closes enough to hold the cube but does not destabilize the arm.
 - Joint torque limits are reasonable for the gains.
-- The state machine can recover after pressing Reset in the Simulate UI.
+- The state machine can recover after pressing Reset in the viewer.
 - Headless mode runs a fixed number of steps and reports cube final position.
 
 This is the architecture used by `ex_table_pick_place`: a small scene spec, a
@@ -988,13 +1002,15 @@ law used consistently across states.
 
 ## 13. Build A Multi-Robot Scene
 
-Use prefixes to disambiguate the second robot:
+With more than one robot, give each its own prefix, so every robot's names are built the same
+way:
 
 ```cpp
 scene.robots = {
     mj_kdl::RobotSpec{
-        .path = mj_kdl_examples::asset("kinova_gen3/gen3.xml"),
-        .pos  = { -0.7, 0.0, 0.0 },
+        .path   = mj_kdl_examples::asset("kinova_gen3/gen3.xml"),
+        .prefix = "r1_",
+        .pos    = { -0.7, 0.0, 0.0 },
         .attachments = { gripper },
     },
     mj_kdl::RobotSpec{
@@ -1009,18 +1025,19 @@ scene.robots = {
 Then initialize two robot handles:
 
 ```cpp
-const mj_kdl::ToolFrameSpec right_tool{ .tool_body = "r2_g_base_mount", .tcp_site = "r2_g_pinch" };
-
 mj_kdl::Robot left;
 mj_kdl::Robot right;
-mj_kdl::init_robot_from_mjcf(&left, &env, "base_link", "bracelet_link", "", &tool);
-mj_kdl::init_robot_from_mjcf(&right, &env, "r2_base_link", "r2_bracelet_link", "", &right_tool);
+mj_kdl::init_robot_from_mjcf(&left, &env, "base_link", "bracelet_link", "r1_", &tool);
+mj_kdl::init_robot_from_mjcf(&right, &env, "base_link", "bracelet_link", "r2_", &tool);
+left.name  = "left";
+right.name = "right";
 ```
 
 The `prefix` argument is prepended to every name the call resolves (bodies, tool body, TCP
-site, F/T sensors), as `ex_rnea_pick_place` does with `"r2_"`; passing already-prefixed names
-with no prefix, as above, is the same. Each robot gets its own KDL chain and
-command ports, while both share the same `Env`; one `update(&env)` reads and commands both.
+site, F/T sensors), so one `ToolFrameSpec` serves both arms, as in `ex_rnea_pick_place`;
+passing already-prefixed names (`"r2_base_link"`) with no prefix is the same. `name` labels
+each robot in the viewer. Each robot gets its own KDL chain and command ports, while both share
+the same `Env`; one `update(&env)` reads and commands both.
 
 ## 14. Grow Into Task Examples
 
@@ -1028,8 +1045,6 @@ The included examples show how these pieces combine:
 
 - `ex_table_pick_place`: IK waypoints, phase table, torque impedance, table asset sites, a
   scene wrench pushing the arm mid-carry.
-- `ex_table_pour`: gripper-held bottle asset, free particles, receiver asset; `--record`
-  writes an MP4.
 - `ex_rnea_pick_place`: two prefixed arms at one table, each with its own RNEA computed
   torque, plus free objects and scene cameras.
 - `ex_achd_pick_place`, `ex_achd_table_slide`: ACHD; the slide also presses on the table
@@ -1051,7 +1066,7 @@ mj_kdl::SceneObject obstacle{
     .pos   = { 0.3, -0.2, 0.82 },
     .rgba     = { 0.6f, 0.6f, 0.6f, 1.0f },
     .fixed    = true,                             // a fixed primitive may leave mass unset
-    .friction = { 0.8, 0.02, 0.001 },             // required for primitives
+    .friction = { 0.8, 0.02, 0.001 },             // required unless fixed
 };
 
 if (mj_kdl::Status s = mj_kdl::scene_add_object(&env, obstacle); !s) std::cerr << s.error;
@@ -1076,7 +1091,7 @@ Use this checklist when a scene behaves incorrectly:
 | Torque commands saturate | `jnt_saturated`; compare against `joint_force_limits(&robot)` |
 | TCP frame is wrong | `ToolFrameSpec::tcp_site` names an authored MuJoCo site |
 | Object asset site not found | Use the asset's own site name, with `SceneObject::prefix` in front if one is set |
-| Recorder fails | `BUILD_RECORDER=ON`, EGL available, ffmpeg installed, output path writable |
+| Recorder fails | the render library is built (`MJ_KDL_WITH_RENDER`, configure prints `render : ON`), ffmpeg installed, output path writable |
 | Camera missing in recorder list | Camera must exist in the compiled `mjModel` (`mj_name2id(model, mjOBJ_CAMERA, name) >= 0`) |
 
 ## 17. Development Checks
@@ -1098,7 +1113,3 @@ Run tests:
 ```bash
 ctest --test-dir build --output-on-failure
 ```
-
-The vendored `src/simulate_ui/simulate.cc` is MuJoCo sample UI code with
-small wrapper UI additions. It is intentionally excluded from clang-tidy style
-cleanup so local changes stay reviewable against upstream.

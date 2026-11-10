@@ -6,19 +6,22 @@ Who decides how fast a simulation runs, and how to keep your control loop on its
 
 ## step() advances physics; it does not sleep
 
-`mj_kdl::step(&env)` advances MuJoCo by one timestep and services the viewer. It does **not** wait
+`mj_kdl::step(&env)` advances MuJoCo by one timestep and services an open viewer. It does **not** wait
 for wall time to catch up. Pacing belongs to the loop that owns the timing, not to a physics call:
 a `step()` that sleeps spends a time budget it does not own, and does so invisibly at the call
 site, which makes it impossible to compose with an application that already paces itself.
 
-A call and a field make the choice explicit:
+A call and a field of the viewer (`viewer.hpp`, `mj_kdl_wrapper::viewer`) make the choice
+explicit:
 
 ```cpp
-void   pace_realtime(Env *env);        // sleep out this step's share of wall time
+void   pace_realtime(Viewer *v);       // sleep out this step's share of wall time
 double Viewer::realtime_factor;        // the user's speed setting; 0.0 == uncapped
 ```
 
-In Python, the `Env` has the same pacing call (see the Python API guide).
+Python binds the same viewer: `env.step()` never sleeps, `viewer.pace()` is
+`pace_realtime()`, and `viewer.realtime_factor` is `Viewer::realtime_factor` (see the Python
+API guide).
 
 ## What step() leaves current
 
@@ -43,14 +46,15 @@ Call `pace_realtime` once per iteration. This is what the bundled examples do, a
 the behaviour `step()` used to have implicitly:
 
 ```cpp
+mj_kdl::Viewer viewer;   // opened with open_viewer(&viewer, &env), or left closed headless
 while (mj_kdl::step(&env)) {
     mj_kdl::update(&env);
     // ... control ...
-    mj_kdl::pace_realtime(&env);
+    mj_kdl::pace_realtime(&viewer);
 }
 ```
 
-It is a no-op while the viewer is closed, so a headless path needs no branch — headless runs as
+It is a no-op while the viewer is closed, so a headless path needs no branch - headless runs as
 fast as the machine allows, which is usually what you want for a batch or a test.
 
 ## If your loop already paces itself
@@ -60,22 +64,22 @@ sees every deadline already missed, and your loop's timing statistics become mea
 the user's speed setting and scale your own period instead:
 
 ```cpp
-const double rtf = env.viewer.realtime_factor;   // 0.0 means uncapped
+const double rtf = viewer.realtime_factor;   // 0.0 means uncapped
 const long period_ns = (rtf > 0.0) ? static_cast<long>(nominal_ns / rtf) : 0;
 ```
 
-That keeps the viewer's speed keys working — the user can still slow a demo down or speed it up —
+That keeps the viewer's speed keys working - the user can still slow a demo down or speed it up -
 while exactly one component owns the loop's timing.
 
 ## The real-time factor
 
-`Viewer::realtime_factor` is the user's speed setting: `1.0` is wall-clock speed, `0.5` runs at
-half speed, `0.0` means uncapped (shown as `RTF: MAX` in the Simulate UI). The `,` and `.` keys
-step it along 0.05x, 0.1x, 0.25x, 0.5x, 0.75x, 1x, 1.25x, 1.5x, 2x, 3x, 4x, 6x, 8x, 10x, then
-MAX.
+`Viewer::realtime_factor` is the speed setting: `1.0` is wall-clock speed, `0.5` runs at half
+speed, `0.0` means uncapped. The viewer's Speed slider and the `-` / `=` keys set it along
+Studio's speeds, from 100% down to 0.1% of real time. A value set from code, faster than real
+time or uncapped included, stays until the slider moves.
 
-It is written on the control thread — the render thread only pushes key presses into an atomic,
-which `step()` drains — so it is read without a lock. Read it from the same thread that calls
+It is written on the control thread - the window thread only queues the change, which
+`step()` applies - so it is read without a lock. Read it from the same thread that calls
 `step()`.
 
 ## Migrating from 0.3.1 and earlier
