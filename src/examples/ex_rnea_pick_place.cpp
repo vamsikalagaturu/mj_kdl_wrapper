@@ -28,6 +28,7 @@
 #include <deque>
 #include <iomanip>
 #include <iostream>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -81,11 +82,10 @@ static mj_kdl::SceneObject scene_object(const FreeObject &f)
     o.pos[0] = f.x;
     o.pos[1] = f.y;
     o.pos[2] = ex::kTableZ + f.half;
-    std::copy(f.rgb, f.rgb + 3, o.rgba);
-    o.rgba[3]                = 1.0f;
-    o.mass                   = 0.1;
-    const double friction[3] = { 1.0, 0.005, 0.0001 }; // MuJoCo's geom default
-    std::copy(friction, friction + 3, o.friction);
+    std::ranges::copy(f.rgb, o.rgba);
+    o.rgba[3] = 1.0f;
+    o.mass    = 0.1;
+    std::ranges::copy(std::array{ 1.0, 0.005, 0.0001 }, o.friction); // MuJoCo's geom default
     return o;
 }
 
@@ -94,8 +94,8 @@ static mj_kdl::CameraSpec
 {
     mj_kdl::CameraSpec cam;
     cam.name = name;
-    std::copy(pos, pos + 3, cam.pos);
-    std::copy(quat, quat + 4, cam.quat);
+    std::ranges::copy(std::span(pos, 3), cam.pos);
+    std::ranges::copy(std::span(quat, 4), cam.quat);
     cam.fovy = fovy;
     return cam;
 }

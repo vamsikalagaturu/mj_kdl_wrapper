@@ -51,7 +51,7 @@ TEST(MjcfVelCtrlTest, ConvergesInVelocityMode)
         for (int i = 0; i < 7; ++i) {
             const double err     = kTargetPose[i] - robot.jnt_pos_msr[i];
             max_err              = std::max(max_err, std::abs(err));
-            robot.jnt_vel_cmd[i] = ex::clamp_abs(kKv * err, kMaxVel);
+            robot.jnt_vel_cmd[i] = std::clamp(kKv * err, -kMaxVel, kMaxVel);
         }
         if (max_err < kTol) break;
         mj_kdl::step(&env);

@@ -151,8 +151,8 @@ mj_kdl::AttachmentSpec to_cpp(const PyAttachmentSpec &src)
     out.mjcf_path = src.mjcf_path;
     out.attach_to = to_cpp(src.attach_to);
     out.prefix    = src.prefix;
-    std::copy(src.pos.begin(), src.pos.end(), out.pos);
-    std::copy(src.quat.begin(), src.quat.end(), out.quat);
+    std::ranges::copy(src.pos, out.pos);
+    std::ranges::copy(src.quat, out.quat);
     out.modes              = src.modes;
     out.contact_exclusions = src.contact_exclusions;
     return out;
@@ -164,8 +164,8 @@ RobotSpec to_cpp(const PyRobotSpec &src)
     out.path      = src.path;
     out.prefix    = src.prefix;
     out.attach_to = to_cpp(src.attach_to);
-    std::copy(src.pos.begin(), src.pos.end(), out.pos);
-    std::copy(src.quat.begin(), src.quat.end(), out.quat);
+    std::ranges::copy(src.pos, out.pos);
+    std::ranges::copy(src.quat, out.quat);
     out.attachments.reserve(src.attachments.size());
     for (const auto &item : src.attachments) out.attachments.push_back(to_cpp(item));
     out.modes = src.modes;
@@ -181,14 +181,14 @@ SceneObject to_cpp(const PySceneObject &src)
     out.attach_to = to_cpp(src.attach_to);
     out.shape     = src.shape;
     out.mesh_path = src.mesh_path;
-    std::copy(src.pos.begin(), src.pos.end(), out.pos);
-    std::copy(src.quat.begin(), src.quat.end(), out.quat);
+    std::ranges::copy(src.pos, out.pos);
+    std::ranges::copy(src.quat, out.quat);
     out.fixed       = src.fixed;
     out.condim      = src.condim;
     out.contype     = src.contype;
     out.conaffinity = src.conaffinity;
     if (src.rgba) {
-        std::copy(src.rgba->begin(), src.rgba->end(), out.rgba);
+        std::ranges::copy(*src.rgba, out.rgba);
         out.has_rgba = true;
     }
     if (src.mjcf_path.empty()) {
@@ -198,9 +198,9 @@ SceneObject to_cpp(const PySceneObject &src)
             throw std::runtime_error("SceneObject.mass must be set for non-fixed primitives");
         if (!src.friction && !src.fixed)
             throw std::runtime_error("SceneObject.friction must be set for non-fixed primitives");
-        std::copy(src.size->begin(), src.size->end(), out.size);
+        std::ranges::copy(*src.size, out.size);
         if (src.mass) out.mass = *src.mass;
-        if (src.friction) std::copy(src.friction->begin(), src.friction->end(), out.friction);
+        if (src.friction) std::ranges::copy(*src.friction, out.friction);
     }
     return out;
 }
@@ -212,8 +212,8 @@ CameraSpec to_cpp(const PyCameraSpec &src)
     out.body = src.body;
     if (!src.pos) throw std::runtime_error("CameraSpec.pos must be set");
     if (!src.fovy) throw std::runtime_error("CameraSpec.fovy must be set");
-    std::copy(src.pos->begin(), src.pos->end(), out.pos);
-    std::copy(src.quat.begin(), src.quat.end(), out.quat);
+    std::ranges::copy(*src.pos, out.pos);
+    std::ranges::copy(src.quat, out.quat);
     out.fovy = *src.fovy;
     return out;
 }
@@ -240,8 +240,8 @@ SceneSpec to_cpp(const PySceneSpec &src)
         mj_kdl::SiteSpec site;
         site.body = item.body;
         site.name = item.name;
-        std::copy(item.pos.begin(), item.pos.end(), site.pos);
-        std::copy(item.quat.begin(), item.quat.end(), site.quat);
+        std::ranges::copy(item.pos, site.pos);
+        std::ranges::copy(item.quat, site.quat);
         site.size  = item.size;
         site.group = item.group;
         out.sites.push_back(site);
@@ -283,7 +283,7 @@ KDL::JntArray to_jnt_array(const py::object &values, int expected)
 template<typename T, typename Values> py::array_t<T> read_only_array(const Values &values)
 {
     py::array_t<T> out(static_cast<py::ssize_t>(values.size()));
-    std::copy(values.begin(), values.end(), out.mutable_data());
+    std::ranges::copy(values, out.mutable_data());
     py::detail::array_proxy(out.ptr())->flags &= ~py::detail::npy_api::NPY_ARRAY_WRITEABLE_;
     return out;
 }
@@ -579,9 +579,7 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         if (mj_kdl::Status s = mj_kdl::scene_remove_object(&env, name); !s)
             throw std::runtime_error(s.error);
         take_next();
-        auto it = std::find_if(spec.objects.begin(), spec.objects.end(), [&](const auto &obj) {
-            return obj.name == name;
-        });
+        const auto it = std::ranges::find(spec.objects, name, &PySceneObject::name);
         if (it != spec.objects.end()) spec.objects.erase(it);
     }
 
@@ -886,7 +884,7 @@ struct PyVideoRecorder
         cam.distance   = distance;
         cam.azimuth    = azimuth;
         cam.elevation  = elevation;
-        std::copy(lookat.begin(), lookat.end(), cam.lookat);
+        std::ranges::copy(lookat, cam.lookat);
     }
 
     void close()

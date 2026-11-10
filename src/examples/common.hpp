@@ -8,6 +8,7 @@
 #include <kdl/chainiksolvervel_wdls.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <functional>
 #include <iostream>
@@ -62,20 +63,12 @@ inline int verdict(bool ok, const std::string &goal)
     return ok ? 0 : 1;
 }
 
-inline double clamp01(double v) { return std::clamp(v, 0.0, 1.0); }
-
-inline double clamp_abs(double v, double limit) { return std::clamp(v, -limit, limit); }
 
 inline KDL::JntArray home_q(unsigned n)
 {
     KDL::JntArray q(n);
     for (unsigned i = 0; i < n; ++i) q(i) = kHomePose[i];
     return q;
-}
-
-inline void lerp_q(const KDL::JntArray &a, const KDL::JntArray &b, double t, KDL::JntArray &out)
-{
-    for (unsigned i = 0; i < a.rows(); ++i) out(i) = a(i) + t * (b(i) - a(i));
 }
 
 inline void read_q(const mj_kdl::Robot &robot, KDL::JntArray &q)
@@ -89,14 +82,6 @@ inline void read_q(const mj_kdl::Robot &robot, KDL::JntArray &q, KDL::JntArray &
         q(i)  = robot.jnt_pos_msr[i];
         qd(i) = robot.jnt_vel_msr[i];
     }
-}
-
-inline double max_abs_joint_err(const mj_kdl::Robot &robot, const KDL::JntArray &q)
-{
-    double max_err = 0.0;
-    for (unsigned i = 0; i < q.rows(); ++i)
-        max_err = std::max(max_err, std::abs(q(i) - robot.jnt_pos_msr[i]));
-    return max_err;
 }
 
 // TCP of the chain at the measured joint positions, in the robot base frame.
@@ -184,8 +169,7 @@ inline mj_kdl::SceneObject cube_object(double x, double y, double surface_z)
     cube.pos[1] = y;
     cube.pos[2] = surface_z + kCubeHS;
     for (int k = 0; k < 3; ++k) cube.size[k] = kCubeHS;
-    const float rgba[4] = { 0.1f, 0.35f, 1.0f, 1.0f };
-    std::copy(rgba, rgba + 4, cube.rgba);
+    std::ranges::copy(std::array{ 0.1f, 0.35f, 1.0f, 1.0f }, cube.rgba);
     cube.mass        = 0.1;
     cube.condim      = mj_kdl::Condim::Torsional;
     cube.friction[0] = 0.8;
@@ -370,13 +354,17 @@ inline bool run_phases(
             while (true) {
                 mj_kdl::update(&env);
                 const double t_rel = env.data->time - t_enter;
-                const double alpha = phase.duration > 0.0 ? clamp01(t_rel / phase.duration) : 1.0;
-                double       err   = 0.0;
+                const double alpha =
+                  phase.duration > 0.0 ? std::clamp(t_rel / phase.duration, 0.0, 1.0) : 1.0;
+                double err = 0.0;
                 for (std::size_t i = 0; i < arms.size(); ++i) {
-                    lerp_q(q_enter[i], *phase.target, alpha, q_des);
+                    const KDL::JntArray &target = *phase.target;
+                    for (unsigned j = 0; j < target.rows(); ++j) {
+                        q_des(j) = q_enter[i](j) + alpha * (target(j) - q_enter[i](j));
+                        err = std::max(err, std::abs(target(j) - arms[i].robot->jnt_pos_msr[j]));
+                    }
                     control(i, q_des);
                     arms[i].gripper->command = phase.gripper_cmd;
-                    err = std::max(err, max_abs_joint_err(*arms[i].robot, *phase.target));
                 }
 
                 const bool done_pose    = phase.settle_tol < 0.0 || err <= phase.settle_tol;

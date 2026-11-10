@@ -55,7 +55,8 @@ struct Metrics
 static double push_scale(double t_rel)
 {
     return std::min(
-      ex::clamp01((t_rel - kPushOn) / kPushRamp), ex::clamp01((kPushOff - t_rel) / kPushRamp)
+      std::clamp((t_rel - kPushOn) / kPushRamp, 0.0, 1.0),
+      std::clamp((kPushOff - t_rel) / kPushRamp, 0.0, 1.0)
     );
 }
 

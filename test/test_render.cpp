@@ -129,7 +129,7 @@ TEST_F(RenderTest, RecordersFollowARebuildAndOutliveEachOther)
     ASSERT_TRUE(mj_kdl::render_rgb(&a, &env_, rgb.data()));
     const std::vector<std::uint8_t> before = rgb;
     mj_kdl::cleanup(&b);
-    std::fill(rgb.begin(), rgb.end(), 0xAB);
+    std::ranges::fill(rgb, 0xAB);
     EXPECT_TRUE(mj_kdl::render_rgb(&a, &env_, rgb.data()));
     EXPECT_LT(changed_bytes(rgb, before), kSameSceneFrac * rgb.size())
       << "b's cleanup ended a's renderer";

@@ -29,7 +29,9 @@
 #include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <span>
 #include <string>
+#include <string_view>
 
 namespace ex = mj_kdl_examples;
 
@@ -119,13 +121,12 @@ static void admittance_update(Admittance &a, const KDL::Vector &force, double dt
 // The sensor's force rotated into the world frame.
 static KDL::Vector ft_force_world(const mj_kdl::Robot &robot)
 {
-    const auto ft =
-      std::find_if(robot.ft_sensors.begin(), robot.ft_sensors.end(), [](const auto &s) {
-          return s.name == kFtSensor;
-      });
+    const auto ft = std::ranges::find(
+      robot.ft_sensors, std::string_view(kFtSensor), &mj_kdl::ForceTorqueSensor::name
+    );
     if (ft == robot.ft_sensors.end() || ft->frame_site_id < 0) return KDL::Vector::Zero();
-    const double       *m = robot.data->site_xmat + 9 * ft->frame_site_id;
-    const KDL::Rotation R(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
+    KDL::Rotation R;
+    std::ranges::copy(std::span(robot.data->site_xmat + 9 * ft->frame_site_id, 9), R.data);
     return R * ft->wrench.force;
 }
 

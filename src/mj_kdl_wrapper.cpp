@@ -21,6 +21,7 @@
 #include <memory>
 #include <mutex>
 #include <sstream>
+#include <span>
 #include <string_view>
 #include <unordered_map>
 
@@ -136,14 +137,6 @@ static void begin_step(Env *env)
     record_kinematics(env);
 }
 
-// mj_step2: integrate the commands set since begin_step().
-static void end_step(Env *env)
-{
-    begin_step(env);
-    mj_step2(env->model, env->data);
-    env->_impl->computed = false;
-}
-
 static int cached_name2id(Env *env, mjtObj type, const char *name)
 {
     auto      &names = env->_impl->names[type];
@@ -189,7 +182,9 @@ static void kdl_rot_to_mj_quat(const KDL::Rotation &R, double q[4])
 
 static KDL::Rotation mj_xmat_to_kdl_rot(const double *m)
 {
-    return KDL::Rotation(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
+    KDL::Rotation r;
+    std::ranges::copy(std::span(m, 9), r.data);
+    return r;
 }
 
 // RAII guard for transient mjSpec pointers built/parsed inside scene-building
@@ -349,21 +344,12 @@ static Status make_stage(const SceneSpec *sc, MjSpecPtr *out)
     return {};
 }
 
-template<std::size_t N, class T> static bool all_set(const T (&values)[N])
-{
-    return std::none_of(values, values + N, [](T v) { return std::isnan(v); });
-}
-
-template<std::size_t N, class T> static bool none_set(const T (&values)[N])
-{
-    return std::all_of(values, values + N, [](T v) { return std::isnan(v); });
-}
-
 static Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &objects)
 {
     for (const auto &obj : objects) {
         if (!obj.mjcf_path.empty()) {
-            if (obj.has_rgba && !all_set(obj.rgba))
+            if (obj.has_rgba
+                && std::ranges::any_of(obj.rgba, [](float v) { return std::isnan(v); }))
                 MJ_FAIL("SceneObject '" << obj.name << "' sets has_rgba but not .rgba");
             char      err[kMjErrBuf] = {};
             MjSpecPtr asset =
@@ -447,7 +433,9 @@ static Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &
         // Validate fields the user must set on a primitive (unset is NaN, which fails every > 0).
         // Free-jointed bodies also need mass > 0; a fixed body may leave it unset.
         const int n_size = obj.shape == Shape::SPHERE ? 1 : obj.shape == Shape::CYLINDER ? 2 : 3;
-        if (!std::all_of(obj.size, obj.size + n_size, [](double s) { return s > 0.0; })) {
+        if (!std::ranges::all_of(std::span(obj.size).first(n_size), [](double s) {
+                return s > 0.0;
+            })) {
             MJ_FAIL(
               "primitive SceneObject '"
               << obj.name
@@ -461,11 +449,16 @@ static Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &
             );
         }
         // Unset leaves MuJoCo's default; a partly set vector is a mistake, not a choice.
-        if (!all_set(obj.rgba) && !none_set(obj.rgba))
+        const bool rgba_set = std::ranges::none_of(obj.rgba, [](float v) { return std::isnan(v); });
+        const bool friction_set =
+          std::ranges::none_of(obj.friction, [](double v) { return std::isnan(v); });
+        if (!rgba_set && !std::ranges::all_of(obj.rgba, [](float v) { return std::isnan(v); }))
             MJ_FAIL("primitive SceneObject '" << obj.name << "' sets only part of .rgba");
-        if (obj.has_rgba && !all_set(obj.rgba))
+        if (obj.has_rgba && !rgba_set)
             MJ_FAIL("SceneObject '" << obj.name << "' sets has_rgba but not .rgba");
-        if (!all_set(obj.friction) && (!obj.fixed || !none_set(obj.friction))) {
+        if (!friction_set && (!obj.fixed || !std::ranges::all_of(obj.friction, [](double v) {
+                return std::isnan(v);
+            }))) {
             MJ_FAIL(
               "primitive SceneObject '"
               << obj.name
@@ -521,10 +514,8 @@ static Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &
         if (obj.shape != Shape::MESH)
             for (int k = 0; k < 3; ++k) g->size[k] = k < n_size ? obj.size[k] : 0.0;
         if (!std::isnan(obj.mass)) g->mass = obj.mass;
-        if (all_set(obj.rgba))
-            for (int k = 0; k < 4; ++k) g->rgba[k] = obj.rgba[k];
-        if (all_set(obj.friction))
-            for (int k = 0; k < 3; ++k) g->friction[k] = obj.friction[k];
+        if (rgba_set) std::ranges::copy(obj.rgba, g->rgba);
+        if (friction_set) std::ranges::copy(obj.friction, g->friction);
         g->contype     = obj.contype;
         g->conaffinity = obj.conaffinity;
         g->condim      = static_cast<int>(obj.condim);
@@ -538,7 +529,8 @@ static Status add_cameras_to_spec(mjSpec *spec, const std::vector<CameraSpec> &c
 {
     mjsBody *wb = world_body(spec);
     for (const auto &cs : cameras) {
-        if (!all_set(cs.pos) || std::isnan(cs.fovy))
+        if (std::ranges::any_of(cs.pos, [](double v) { return std::isnan(v); })
+            || std::isnan(cs.fovy))
             MJ_FAIL("camera '" << cs.name << "' leaves .pos or .fovy unset");
         // The asset's own camera wins: it is the one its author placed, and re-adding the
         // name would fail the compile on a duplicate.
@@ -853,8 +845,7 @@ static Status resolve_joints(
             if (group >= 1 && group <= 30) {
                 mode            = (group - 1) % 3;
                 const int owner = (group - 1) / 3;
-                if (std::find(in.mode_owners.begin(), in.mode_owners.end(), owner)
-                    == in.mode_owners.end())
+                if (std::ranges::find(in.mode_owners, owner) == in.mode_owners.end())
                     in.mode_owners.push_back(owner);
             } else {
                 mode = native_mode(
@@ -871,14 +862,10 @@ static Status resolve_joints(
 
     // The mode the model is in now: every joint has its actuator and its group is enabled.
     for (int mode = 0; mode < 3 && !joint_names.empty(); ++mode) {
-        const bool driven =
-          std::all_of(in.mode_ctrl[mode].begin(), in.mode_ctrl[mode].end(), [](int a) {
-              return a >= 0;
-          });
-        const bool enabled =
-          std::none_of(in.mode_owners.begin(), in.mode_owners.end(), [&](int owner) {
-              return m->opt.disableactuator & (1 << mode_group(owner, mode));
-          });
+        const bool driven  = std::ranges::all_of(in.mode_ctrl[mode], [](int a) { return a >= 0; });
+        const bool enabled = std::ranges::none_of(in.mode_owners, [&](int owner) {
+            return m->opt.disableactuator & (1 << mode_group(owner, mode));
+        });
         if (driven && enabled) {
             in.applied_mode = static_cast<CtrlMode>(mode);
             in.mode_applied = true;
@@ -1180,11 +1167,6 @@ static Status attach_to_spec(
     return {};
 }
 
-static bool range_limited(mjtLimited flag, const double *range)
-{
-    return flag == mjLIMITED_TRUE || (flag == mjLIMITED_AUTO && range[0] < range[1]);
-}
-
 /* Give each listed joint one actuator per requested mode, each mode in its own group of this
  * owner; the joint's own actuator joins the group of the mode it gives natively. Collects the
  * groups to start disabled. */
@@ -1250,7 +1232,9 @@ static Status apply_ctrl_modes(
             // Both limits below are in actuator-force units: a servo's forcerange, a motor's ctrl.
             const bool    servo = native == static_cast<int>(CtrlMode::POSITION);
             const double *range = servo ? own->forcerange : own->ctrlrange;
-            const bool limited = range_limited(servo ? own->forcelimited : own->ctrllimited, range);
+            const int     flag  = servo ? own->forcelimited : own->ctrllimited;
+            const bool    limited =
+              flag == mjLIMITED_TRUE || (flag == mjLIMITED_AUTO && range[0] < range[1]);
 
             mjsActuator *added = mjs_addActuator(arm, nullptr);
             added->trntype     = mjTRN_JOINT;
@@ -1437,7 +1421,7 @@ static Status resolve_robots(const Env *env, const mjModel *m, std::vector<Robot
         rb.in.env = was.env;
         if (Status s = resolve_joints(m, r->joint_names, was.mj_prefix, &rb.in); !s) return s;
         const auto &ctrl = rb.in.mode_ctrl[static_cast<int>(was.applied_mode)];
-        if (was.mode_applied && std::any_of(ctrl.begin(), ctrl.end(), [](int a) { return a < 0; }))
+        if (was.mode_applied && std::ranges::any_of(ctrl, [](int a) { return a < 0; }))
             MJ_FAIL("a robot's control mode lost its actuators in the rebuilt model");
         rb.ft_sensors = r->ft_sensors;
         for (ForceTorqueSensor &sensor : rb.ft_sensors)
@@ -1464,9 +1448,6 @@ static void rebind_robots(Env *env, std::vector<RobotRebind> *rebinds)
     }
 }
 
-static int joint_nq(int type) { return type == mjJNT_FREE ? 7 : type == mjJNT_BALL ? 4 : 1; }
-static int joint_nv(int type) { return type == mjJNT_FREE ? 6 : type == mjJNT_BALL ? 3 : 1; }
-
 // Time, and qpos/qvel/act of every joint and actuator the old model names too.
 static void carry_state(const mjModel *om, const mjData *od, const mjModel *nm, mjData *nd)
 {
@@ -1476,8 +1457,10 @@ static void carry_state(const mjModel *om, const mjData *od, const mjModel *nm, 
         const int   oj   = name ? mj_name2id(om, mjOBJ_JOINT, name) : -1;
         if (oj < 0 || om->jnt_type[oj] != nm->jnt_type[j]) continue;
         const int type = nm->jnt_type[j];
-        mju_copy(nd->qpos + nm->jnt_qposadr[j], od->qpos + om->jnt_qposadr[oj], joint_nq(type));
-        mju_copy(nd->qvel + nm->jnt_dofadr[j], od->qvel + om->jnt_dofadr[oj], joint_nv(type));
+        const int nq   = type == mjJNT_FREE ? 7 : type == mjJNT_BALL ? 4 : 1;
+        const int nv   = type == mjJNT_FREE ? 6 : type == mjJNT_BALL ? 3 : 1;
+        mju_copy(nd->qpos + nm->jnt_qposadr[j], od->qpos + om->jnt_qposadr[oj], nq);
+        mju_copy(nd->qvel + nm->jnt_dofadr[j], od->qvel + om->jnt_dofadr[oj], nv);
     }
     for (int a = 0; a < nm->nu; ++a) {
         const char *name = mj_id2name(nm, mjOBJ_ACTUATOR, a);
@@ -1485,16 +1468,6 @@ static void carry_state(const mjModel *om, const mjData *od, const mjModel *nm, 
         const int   n    = nm->actuator_actnum[a];
         if (oa < 0 || n == 0 || om->actuator_actnum[oa] != n) continue;
         mju_copy(nd->act + nm->actuator_actadr[a], od->act + om->actuator_actadr[oa], n);
-    }
-}
-
-// After the mode switches, which seed ctrl from the joints: the commands as they were.
-static void carry_ctrl(const mjModel *om, const mjData *od, const mjModel *nm, mjData *nd)
-{
-    for (int a = 0; a < nm->nu; ++a) {
-        const char *name = mj_id2name(nm, mjOBJ_ACTUATOR, a);
-        const int   oa   = name ? mj_name2id(om, mjOBJ_ACTUATOR, name) : -1;
-        if (oa >= 0) nd->ctrl[a] = od->ctrl[oa];
     }
 }
 
@@ -1520,7 +1493,12 @@ static Status swap_scene(Env *env, mjModel *m, mjData *d)
     env->_impl->adopted    = adopted;
     forget_model(env);
     rebind_robots(env, &rebinds);
-    carry_ctrl(old_m, old_d, m, d);
+    // After the mode switches, which seed ctrl from the joints: the commands as they were.
+    for (int a = 0; a < m->nu; ++a) {
+        const char *name = mj_id2name(m, mjOBJ_ACTUATOR, a);
+        const int   oa   = name ? mj_name2id(old_m, mjOBJ_ACTUATOR, name) : -1;
+        if (oa >= 0) d->ctrl[a] = old_d->ctrl[oa];
+    }
     rebind_scene(env);
     release_pair(old_m, old_d, old_adopted);
     for_each_hook(env, [env](EnvHooks &h) {
@@ -1558,9 +1536,7 @@ Status scene_remove_object(Env *env, const std::string &name)
     if (!env) MJ_FAIL("scene_remove_object: null env");
     if (env->_impl->in_reset_hook) MJ_FAIL("scene_remove_object: not allowed inside on_reset");
     auto &objects = env->spec.objects;
-    auto  it      = std::find_if(objects.begin(), objects.end(), [&](const SceneObject &o) {
-        return o.name == name;
-    });
+    auto  it      = std::ranges::find(objects, std::string_view(name), &SceneObject::name);
     if (it == objects.end()) MJ_FAIL("scene_remove_object: no object named '" << name << "'");
     const auto  index   = it - objects.begin();
     SceneObject removed = std::move(*it);
@@ -1714,8 +1690,7 @@ static void take_robot(Robot *r, Robot *built, Env *env)
     r->ctrl_mode      = built->ctrl_mode;
     built->_impl->env = nullptr;
     std::swap(r->_impl, built->_impl);
-    if (std::find(env->robots.begin(), env->robots.end(), r) == env->robots.end())
-        env->robots.push_back(r);
+    if (std::ranges::find(env->robots, r) == env->robots.end()) env->robots.push_back(r);
     r->_impl->env = env;
     size_ports(*r, r->n_joints);
     seed_ports(*r);
@@ -1970,14 +1945,6 @@ void set_body_pose(Env *env, const char *body_name, const double pos[3], const d
 
 // Simulation API
 
-static bool all_paused(const Env *env)
-{
-    return !env->robots.empty()
-           && std::all_of(env->robots.begin(), env->robots.end(), [](const Robot *r) {
-                  return r->paused;
-              });
-}
-
 bool step(Env *env)
 {
     if (!env || !env->model) return true;
@@ -1987,8 +1954,12 @@ bool step(Env *env)
         if (h.on_step && !h.on_step(env, &integrate)) running = false;
     });
     if (!running) return false;
-    if (integrate && !all_paused(env)) {
-        end_step(env);
+    const bool all_paused =
+      !env->robots.empty() && std::ranges::all_of(env->robots, &Robot::paused);
+    if (integrate && !all_paused) {
+        begin_step(env);
+        mj_step2(env->model, env->data);
+        env->_impl->computed = false;
         begin_step(env);
     } else {
         ensure_kinematics(env);

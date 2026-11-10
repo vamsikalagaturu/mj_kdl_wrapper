@@ -12,6 +12,8 @@
 #include <kdl/chaindynparam.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
 
+#include <algorithm>
+#include <array>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -74,10 +76,11 @@ TEST(SceneObjectTransform, PathBackedObjectAppliesQuat)
     mj_kdl::SceneSpec   spec   = empty_scene();
     mj_kdl::SceneObject turned = table(table_mjcf, "turned", "");
     // extrinsic XYZ euler (30, 40, 50) deg
-    const double q[4] = {
-        0.08080468869083995, 0.40219849353410964, 0.30337177447125957, 0.860042173697679
-    };
-    std::copy(q, q + 4, turned.quat);
+    std::ranges::copy(
+      std::array{
+        0.08080468869083995, 0.40219849353410964, 0.30337177447125957, 0.860042173697679 },
+      turned.quat
+    );
     spec.objects.push_back(turned);
 
     mj_kdl::Env env;

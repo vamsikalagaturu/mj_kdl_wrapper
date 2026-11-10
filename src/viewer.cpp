@@ -77,13 +77,6 @@ static constexpr const char *kRecordResolutionNames[] = { "360p",  "480p", "720p
 // Recording cameras before the model's own: 0 the window's, 1 free, 2 tracking the selection.
 enum RecordCamera { kRecordCurrent = 0, kRecordFree = 1, kRecordTracking = 2, kRecordFixed = 3 };
 
-static int resolution_index(VideoResolution resolution)
-{
-    const auto *it =
-      std::find(std::begin(kRecordResolutions), std::end(kRecordResolutions), resolution);
-    return it == std::end(kRecordResolutions) ? 0 : static_cast<int>(it - kRecordResolutions);
-}
-
 struct DataDeleter
 {
     void operator()(mjData *d) const { mj_deleteData(d); }
@@ -665,15 +658,6 @@ struct WindowState
     bool paused() const { return step_control.GetPauseState() != PauseState::kUnpaused; }
 };
 
-// Wayland takes no direct OpenGL window: Studio renders offscreen there and blits the frame.
-static studio::GraphicsMode graphics_mode()
-{
-    const char *session = std::getenv("XDG_SESSION_TYPE");
-    if ((session && std::string_view(session) == "wayland") || std::getenv("WAYLAND_DISPLAY"))
-        return studio::GraphicsMode::FilamentOpenGlHeadless;
-    return studio::GraphicsMode::FilamentOpenGl;
-}
-
 /* MuJoCo's default free camera, aimed at what the scene shows now rather than at mjModel's
  * statistics, which are taken at qpos0 and count the infinite floor: the bounding sphere of
  * every geom but the planes, at the model's azimuth and elevation. The scene is drawn across
@@ -1070,17 +1054,9 @@ static std::vector<SystemFont> list_system_fonts()
     FcObjectSetDestroy(objects);
     FcPatternDestroy(pattern);
     FcConfigDestroy(config);
-    std::sort(fonts.begin(), fonts.end(), [](const SystemFont &a, const SystemFont &b) {
-        return a.label < b.label;
-    });
-    fonts.erase(
-      std::unique(
-        fonts.begin(),
-        fonts.end(),
-        [](const SystemFont &a, const SystemFont &b) { return a.label == b.label; }
-      ),
-      fonts.end()
-    );
+    std::ranges::sort(fonts, {}, &SystemFont::label);
+    const auto dupes = std::ranges::unique(fonts, {}, &SystemFont::label);
+    fonts.erase(dupes.begin(), dupes.end());
     return fonts;
 }
 
@@ -1185,10 +1161,9 @@ static void style_editor_gui(WindowState *ws)
     }
     ImGui::SetItemTooltip("%s", "Starts afresh from this theme; edits below are dropped");
 
-    const auto current =
-      std::find_if(st->system_fonts.begin(), st->system_fonts.end(), [st](const SystemFont &f) {
-          return f.file == st->font_file && f.index == st->font_index;
-      });
+    const auto        current = std::ranges::find_if(st->system_fonts, [st](const SystemFont &f) {
+        return f.file == st->font_file && f.index == st->font_index;
+    });
     const std::string preview = st->font_file.empty()               ? "Studio"
                                 : current != st->system_fonts.end() ? current->label
                                                                     : st->font_file;
@@ -1989,16 +1964,6 @@ static bool element_world_frame(
     }
 }
 
-// Roll, pitch, yaw [rad] about the fixed x, y, z axes (ROS REP 103; KDL::Rotation::GetRPY).
-static std::array<double, 3> mat_rpy(const mjtNum *mat)
-{
-    const KDL::Rotation rot(mat[0], mat[1], mat[2], mat[3], mat[4], mat[5], mat[6], mat[7], mat[8]);
-    std::array<double, 3> rpy{};
-    rot.GetRPY(rpy[0], rpy[1], rpy[2]);
-    return rpy;
-}
-
-// The Data tab's orientation as roll, pitch, yaw [rad], below Studio's xquat and xmat.
 // A body's or site's name, or Studio's "(body <id>)" when it has none.
 static std::string frame_label(const mjModel *m, mjtObj type, int id)
 {
@@ -2050,15 +2015,6 @@ static void fixed_frame_gui(WindowState *ws)
     ImGui::SetItemTooltip("%s", "The frame the rows below Studio's state the element's pose in");
 }
 
-// Whether the element has a pose the Data tab shows: a joint's frame borrows its body's
-// orientation, so the tab shows its axis instead.
-static bool element_has_pose(const WindowState *ws, mjsElement *element)
-{
-    const mjtNum *pos = nullptr, *mat = nullptr;
-    return element->elemtype != mjOBJ_JOINT
-           && element_world_frame(ws->model.get(), ws->data.get(), element, &pos, &mat);
-}
-
 /* The element's pose in the Fixed Frame (world when none): position [m], quaternion in the
  * wrapper's [x y z w] (docs/conventions.md) and roll, pitch, yaw [rad] about the frame's fixed
  * axes (ROS REP 103; KDL::Rotation::GetRPY). */
@@ -2076,20 +2032,22 @@ static void element_pose_gui(const WindowState *ws, mjsElement *element)
     const mjtNum *fmat = frame < 0 ? identity
                          : site    ? d->site_xmat + 9 * frame
                                    : d->xmat + 9 * frame;
-    mjtNum        diff[3], rel_pos[3], rel_mat[9], wxyz[4];
+    mjtNum        diff[3], rel_pos[3], wxyz[4];
+    KDL::Rotation rel_rot; // row-major data[9], as MuJoCo's matrices
     mju_sub3(diff, pos, fpos);
     mju_mulMatTVec3(rel_pos, fmat, diff);
-    mju_mulMatTMat(rel_mat, fmat, mat, 3, 3, 3);
-    mju_mat2Quat(wxyz, rel_mat);
-    const mjtNum                xyzw[4] = { wxyz[1], wxyz[2], wxyz[3], wxyz[0] };
-    const std::array<double, 3> rpy     = mat_rpy(rel_mat);
+    mju_mulMatTMat(rel_rot.data, fmat, mat, 3, 3, 3);
+    mju_mat2Quat(wxyz, rel_rot.data);
+    const mjtNum xyzw[4] = { wxyz[1], wxyz[2], wxyz[3], wxyz[0] };
+    double       rpy[3];
+    rel_rot.GetRPY(rpy[0], rpy[1], rpy[2]);
     ImGui::SeparatorText("Pose");
     ImGui::PushID("rpy");
     {
         studio::ImGui_DataPtrTable table;
         table.DataPtr("pos", rel_pos, 0, 3);
         table.DataPtr("quat_xyzw", xyzw, 0, 4);
-        table.DataPtr("rpy", rpy.data(), 0, 3);
+        table.DataPtr("rpy", rpy, 0, 3);
     }
     ImGui::PopID();
 }
@@ -2145,9 +2103,13 @@ static void element_tab_gui(WindowState *ws, mjsElement *element)
     const bool                   copy   = ws->copy_pending;
     std::string                  studio_log, pose_log;
     // Data: the Frame and the pose in it first; Studio's every-mjData-field list folded below.
-    int        row        = -1;
-    const bool pose       = data && element_has_pose(ws, element);
-    bool       studio_now = true; // Studio's list is drawn this frame
+    int row = -1;
+    // A joint's frame borrows its body's orientation; the Data tab shows its axis instead.
+    const mjtNum *pose_pos = nullptr, *pose_mat = nullptr;
+    const bool    pose =
+      data && element->elemtype != mjOBJ_JOINT
+      && element_world_frame(ws->model.get(), ws->data.get(), element, &pose_pos, &pose_mat);
+    bool studio_now = true; // Studio's list is drawn this frame
     if (pose) {
         fixed_frame_gui(ws);
         if (copy) ImGui::LogToBuffer();
@@ -2726,20 +2688,11 @@ static void frames_gui(WindowState *ws)
     }
 }
 
-// Each registered robot's active control mode; read-only, since the caller's controller writes
-// the commands of the mode it chose.
-static bool joint_limited(const JointStatus &j)
-{
-    return std::isfinite(j.lo) && std::isfinite(j.hi) && j.hi > j.lo;
-}
-
-// Where the joint sits in its range: 0 at the lower limit, 1 at the upper.
-static double joint_fraction(const JointStatus &j) { return (j.q - j.lo) / (j.hi - j.lo); }
-
+// Within margin of either limit, as a part of the range; a joint without limits (+-inf) never is.
 static bool joint_near_limit(const JointStatus &j, double margin)
 {
-    if (!joint_limited(j)) return false;
-    const double f = joint_fraction(j);
+    if (!(std::isfinite(j.lo) && std::isfinite(j.hi) && j.hi > j.lo)) return false;
+    const double f = (j.q - j.lo) / (j.hi - j.lo);
     return f < margin || f > 1.0 - margin;
 }
 
@@ -2794,7 +2747,9 @@ static void joint_bar(const JointStatus &j, double margin, const char *unit)
     if (near) ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.85f, 0.2f, 0.2f, 1.0f));
     const float height = ImGui::GetTextLineHeight();
     ImGui::ProgressBar(
-      static_cast<float>(std::clamp(joint_fraction(j), 0.0, 1.0)), ImVec2(-FLT_MIN, height), ""
+      static_cast<float>(std::clamp((j.q - j.lo) / (j.hi - j.lo), 0.0, 1.0)),
+      ImVec2(-FLT_MIN, height),
+      ""
     );
     if (near) ImGui::PopStyleColor();
     char value[32];
@@ -2861,7 +2816,7 @@ static void robots_gui(WindowState *ws)
                     const bool slide =
                       j.id >= 0 && j.id < m->njnt && m->jnt_type[j.id] == mjJNT_SLIDE;
                     const char *unit = slide ? "m" : "rad";
-                    if (joint_limited(j)) {
+                    if (std::isfinite(j.lo) && std::isfinite(j.hi) && j.hi > j.lo) {
                         joint_bar(j, ws->joint_limit_margin, unit);
                     } else {
                         ImGui::TextDisabled("%.3f %s", j.q, unit);
@@ -3439,7 +3394,12 @@ static std::string window_error(studio::GraphicsMode mode)
 
 static void window_main(ViewerImpl *impl)
 {
-    const studio::GraphicsMode mode = graphics_mode();
+    // Wayland takes no direct OpenGL window: Studio renders offscreen there and blits the frame.
+    const char                *session = std::getenv("XDG_SESSION_TYPE");
+    const studio::GraphicsMode mode =
+      (session && std::string_view(session) == "wayland") || std::getenv("WAYLAND_DISPLAY")
+        ? studio::GraphicsMode::FilamentOpenGlHeadless
+        : studio::GraphicsMode::FilamentOpenGl;
     if (std::string error = window_error(mode); !error.empty()) {
         {
             const std::lock_guard<std::mutex> lock(impl->mtx);
@@ -3492,7 +3452,10 @@ static void window_main(ViewerImpl *impl)
     const std::size_t path_len  = std::min(settings.record_path.size(), sizeof(ws.record_path) - 1);
     settings.record_path.copy(ws.record_path, path_len);
     ws.record_path[path_len] = '\0';
-    ws.record_resolution     = resolution_index(settings.record_resolution);
+    const auto *resolution   = std::ranges::find(kRecordResolutions, settings.record_resolution);
+    ws.record_resolution     = resolution == std::end(kRecordResolutions)
+                                 ? 0
+                                 : static_cast<int>(resolution - kRecordResolutions);
     ws.record_fps            = settings.record_fps;
     mjv_defaultOption(&ws.opt);
     mjv_defaultPerturb(&ws.pert);

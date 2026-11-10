@@ -61,7 +61,7 @@ TEST_F(MjcfPosCtrlTest, TrajectoryTracking)
     const double t_start = env_.data->time;
     while (env_.data->time < t_start + kMotionDuration + kSettleTime) {
         mj_kdl::update(&env_);
-        const double alpha = ex::clamp01((env_.data->time - t_start) / kMotionDuration);
+        const double alpha = std::clamp((env_.data->time - t_start) / kMotionDuration, 0.0, 1.0);
         for (int i = 0; i < 7; ++i)
             s_.jnt_pos_cmd[i] = ex::kHomePose[i] + alpha * (kTargetPose[i] - ex::kHomePose[i]);
         mj_kdl::step(&env_);

@@ -24,6 +24,7 @@
 #include <kdl/chainidsolver_recursive_newton_euler.hpp>
 #include <kdl/kinfam_io.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <iomanip>
@@ -34,7 +35,7 @@
 namespace ex = mj_kdl_examples;
 
 static constexpr int    kApproachSteps  = 15000; // no contact within 15 s fails the run
-static constexpr int    kPressSteps     = 500; // the press ramps up over 0.5 s
+static constexpr int    kPressSteps     = 500;   // the press ramps up over 0.5 s
 static constexpr int    kSlideSteps     = 4000;
 static constexpr double kTableZ         = 0.447;
 static constexpr double kMoveX          = 0.20;
@@ -146,12 +147,12 @@ static void print_nc_comparison(
         const double e[6] = { err.vel.x(), err.vel.y(), err.vel.z(),
                               err.rot.x(), err.rot.y(), err.rot.z() };
         for (unsigned i = 0; i < 6; ++i)
-            beta(i) = ex::clamp_abs((i < 3 ? kKpLin : kKpRot) * e[i], kBetaMax);
+            beta(i) = std::clamp((i < 3 ? kKpLin : kKpRot) * e[i], -kBetaMax, kBetaMax);
     } else {
         set_alpha_no_linear_z(alpha);
         const double e[5] = { err.vel.x(), err.vel.y(), err.rot.x(), err.rot.y(), err.rot.z() };
         for (unsigned i = 0; i < 5; ++i)
-            beta(i) = ex::clamp_abs((i < 2 ? kKpLin : kKpRot) * e[i], kBetaMax);
+            beta(i) = std::clamp((i < 2 ? kKpLin : kKpRot) * e[i], -kBetaMax, kBetaMax);
     }
     achd.CartToJnt(q, qd, qdd, alpha, beta, f_ext, ff, ctau);
     rnea.CartToJnt(q, qd, qdd, f_ext, tau);
@@ -285,12 +286,12 @@ int main(int argc, char **argv)
         const KDL::Twist err  = KDL::diff(current, tracked);
         const double     e[6] = { err.vel.x(), err.vel.y(), err.vel.z(),
                                   err.rot.x(), err.rot.y(), err.rot.z() };
-        if (first) std::copy(e, e + 6, err_prev.begin());
+        if (first) std::ranges::copy(e, err_prev.begin());
         first = false;
         double b[6];
         for (unsigned i = 0; i < 6; ++i) {
             const double kp = i < 3 ? kKpLin : kKpRot, kd = i < 3 ? kKdLin : kKdRot;
-            b[i]        = ex::clamp_abs(kp * e[i] + kd * (e[i] - err_prev[i]) / dt, kBetaMax);
+            b[i] = std::clamp(kp * e[i] + kd * (e[i] - err_prev[i]) / dt, -kBetaMax, kBetaMax);
             err_prev[i] = e[i];
         }
         // Gravity as feed-forward, so only the commanded press pushes the free linear Z down.

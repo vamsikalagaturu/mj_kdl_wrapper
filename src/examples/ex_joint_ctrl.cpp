@@ -85,7 +85,7 @@ int main(int argc, char *argv[])
         const double t       = env.data->time - t_start;
         double       max_err = 0.0;
         if (motion == Motion::Position) {
-            const double alpha = ex::clamp01(t / kMotionDuration);
+            const double alpha = std::clamp(t / kMotionDuration, 0.0, 1.0);
             for (unsigned i = 0; i < n; ++i) {
                 robot.jnt_pos_cmd[i] = q_home(i) + alpha * (kTargetPose[i] - q_home(i));
                 max_err = std::max(max_err, std::abs(kTargetPose[i] - robot.jnt_pos_msr[i]));
@@ -101,7 +101,7 @@ int main(int argc, char *argv[])
             for (unsigned i = 0; i < n; ++i) {
                 const double err     = q_home(i) - robot.jnt_pos_msr[i];
                 max_err              = std::max(max_err, std::abs(err));
-                robot.jnt_vel_cmd[i] = ex::clamp_abs(kKv * err, kMaxVel);
+                robot.jnt_vel_cmd[i] = std::clamp(kKv * err, -kMaxVel, kMaxVel);
             }
             if (max_err < kTol || t >= kTimeout) {
                 vel_err  = max_err;
