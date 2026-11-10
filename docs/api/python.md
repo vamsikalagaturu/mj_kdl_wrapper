@@ -5,12 +5,8 @@ README. For complete function signatures, see the generated stubs in
 `python/mj_kdl_wrapper/*.pyi`.
 
 Coming from 0.5? The viewer is `mjk.Viewer()` opened with `viewer.open(env, title)` and
-paced with `viewer.pace()`; see [Migrating to 0.6](@ref sec_migrate_mujoco4).
-Coming from 0.4? The models are in `mjk.ASSETS_DIR`; see
-[Migrating to 0.5](@ref sec_migrate_mj_kdl_wrapper).
-Coming from 0.2.x? Placement orientation moved from `.euler` to `.quat`
-`[x, y, z, w]`; see [Migrating from 0.2.x](@ref sec_migrate_quat). Units, frames and what
-persists between calls: [Conventions](@ref page_conventions).
+paced with `viewer.pace()`; see [Migrating to 0.6](@ref page_migration). Units, frames and
+what persists between calls: [Conventions](@ref page_conventions).
 
 A call that fails on its input raises `RuntimeError` whose message says why (the C++
 `Status::error` text); a wrong-sized joint vector raises `ValueError`, and a spec field of

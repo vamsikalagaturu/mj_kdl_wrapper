@@ -5,12 +5,8 @@ README. For complete function signatures, see the generated Doxygen API pages
 for `include/mj_kdl_wrapper/mj_kdl_wrapper.hpp` (the core), `render.hpp` (the recorder,
 `mj_kdl_wrapper::render`) and `viewer.hpp` (the window, `mj_kdl_wrapper::viewer`).
 
-Coming from 0.5? See [Migrating to 0.6](@ref sec_migrate_mujoco4).
-From 0.4, see [Migrating to 0.5](@ref sec_migrate_mj_kdl_wrapper).
-From 0.3.x, the `Env` also took over the loop; see [Migrating to 0.4](@ref sec_migrate_env).
-From 0.2.x, placement orientation also moved from `euler` to `quat` `[x, y, z, w]`; see
-[Migrating from 0.2.x](@ref sec_migrate_quat). Units, frames and what persists between
-calls: [Conventions](@ref page_conventions).
+Coming from 0.5? See [Migrating to 0.6](@ref page_migration). Units, frames and what persists
+between calls: [Conventions](@ref page_conventions).
 
 ## Errors
 
