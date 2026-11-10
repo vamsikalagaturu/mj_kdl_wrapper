@@ -600,24 +600,35 @@ closes the window.
 
 ## Viewer Controls
 
+The window is MuJoCo Studio's: its menus (File, Simulation, View, Plugins, Help), panels,
+toolbar, Explorer, profiler, console and key bindings, with every action carried out by the
+`Env` inside `step()`. `Help -> Help` (`F1`) lists all keys. The most used:
+
 | Input | Action |
 |-------|--------|
 | Left drag | Orbit camera |
 | Right drag | Pan camera (`Shift`: in the horizontal plane) |
-| Scroll, middle drag | Zoom |
-| Double-click body | Select body |
+| Scroll | Zoom |
+| Double-click body | Select body (`PgUp`: its parent) |
 | Right double-click | Look at the point; with `Ctrl`, track the body |
-| `[` / `]` | Previous / next camera |
-| `Esc` | Back to the free camera |
+| `[` / `]`, `Esc` | Previous / next camera, back to the free camera |
 | `Space` | Pause or resume |
-| Right arrow | Single step while paused |
-| `Backspace` | Reset |
-| `,` | Decrease wrapper real-time factor |
-| `.` | Increase wrapper real-time factor |
+| Left / Right arrow | Step back / forward through the history while paused |
+| `Backspace` | Reset (to the keyframe chosen in the Simulation panel, if any) |
+| `-` / `=` | Slower / faster, along Studio's speeds from 100% down to 0.1% |
+| `Tab` / `Shift+Tab` | Hide or show the Options / Explorer and Inspector panels |
+| `F2`, `F3`, `F11` | Info overlay, profiler, full screen |
+| `Ctrl+S`, `Ctrl+P`, `Ctrl+L`, `Ctrl+Q` | Save XML, save a screenshot (WebP), reload, quit |
 
 `capture_key()` withholds a key from these bindings. To push the selected body: `Ctrl` +
 right-drag applies force (`Shift`: in the horizontal plane), `Ctrl` + left-drag applies
 torque.
 
-All other controls, including physics options, rendering flags, groups, joints, controls,
-equality constraints, sensors and recording, are in the `Options` and `Inspector` panels.
+The history behind Step Back/Fwd and the timeline scrubber is recorded on the thread that
+steps the `Env`; scrubbing pauses and loads that frame into `env.data`. Reload builds the
+scene again from its MJCF files and keeps the state. The Explorer shows a read-only copy of
+the scene's `mjSpec`. Open Model, Unload, the spec Editor and the graphics-mode switch are
+disabled, because the `Env` owns the model. The wrapper adds an `Equality` section to the
+Inspector and a `Recording` section to the Options panel. Layout and theme are kept in
+Studio's own `~/.mujoco.ini`. On open, the free camera frames the whole scene in the part of
+the window the panels leave free.

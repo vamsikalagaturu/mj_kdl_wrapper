@@ -519,19 +519,20 @@ Useful wrapper-specific controls:
 
 | Control | Behavior |
 |---------|----------|
-| `,` | slow the wrapper real-time factor |
-| `.` | speed the wrapper real-time factor |
+| `-` / `=` | slower / faster (Studio's speeds, 100% down to 0.1%) |
 | `Space` / `Backspace` | pause / reset |
-| Options -> Simulation | run/pause, step, reset, real-time factor `-`/`+`, camera, `Save XML` |
+| Left / Right arrow | step back / forward through the history while paused |
+| Options -> Simulation | Studio's panel: reset, reload, align, pause/run, speed, history, keyframes, threads |
 | Options -> Recording | file, camera, resolution, FPS, start/stop, status |
+| File -> Save XML | write the compiled scene to MJCF |
 
 Recorder camera options include `Current`, `Free`, `Tracking`, and every fixed
 camera compiled into the model.
 
-The `Options` panel also has `Physics`, `Rendering`, `Visualization` and `Groups`; the
-`Inspector` panel has `Info`, `Joints`, `Controls`, `Equality` and `Sensors`. Double-click a
-body to select it, then `Ctrl` + right-drag pushes it with a force and `Ctrl` + left-drag
-with a torque.
+The `Options` panel also has `Physics`, `Rendering`, `Visibility Groups` and `Visualization`;
+the `Inspector` panel has `Joints`, `Controls`, `Sensor`, `Watch`, `State` and `Equality`, and
+the `Explorer` beside it shows the scene's spec. Double-click a body to select it, then `Ctrl`
++ right-drag pushes it with a force and `Ctrl` + left-drag with a torque. `F1` lists every key.
 
 ### Viewer Recorder Controls
 
@@ -976,7 +977,7 @@ while (!task_done && mj_kdl::step(&env)) {
 }
 ```
 
-Use `,` and `.` to slow down or speed up the wrapper real-time factor. In the
+Use `-` and `=` to slow down or speed up the simulation. In the
 `Options` panel, the `Recording` section can write an MP4 using `Current`,
 `Free`, `Tracking`, or any compiled fixed camera.
 

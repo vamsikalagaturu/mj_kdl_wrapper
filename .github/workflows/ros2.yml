@@ -23,12 +23,14 @@ jobs:
     steps:
       # System build dependencies (KDL and MuJoCo are built from source, not installed from apt).
       # The camera publisher needs only the core, so render and viewer are left out here.
+      # image_transport is not in the ros-base image; rclcpp, sensor_msgs and rosgraph_msgs are.
       - name: Install dependencies
         run: |
           apt-get update -q
           apt-get install -y \
             git cmake g++ python3-vcstool libeigen3-dev ffmpeg \
-            python3-colcon-common-extensions
+            python3-colcon-common-extensions \
+            ros-${{ matrix.ros_distro }}-image-transport
 
       # The wrapper goes under the colcon workspace src/.
       - name: Checkout the wrapper into the workspace

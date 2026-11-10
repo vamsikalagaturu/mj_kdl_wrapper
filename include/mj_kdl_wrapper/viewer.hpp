@@ -80,9 +80,10 @@ bool key_pressed(const Viewer *v, int imgui_key);
 
 /**
  * @ingroup grp_viewer
- * Claim a key for the caller, so the viewer's own bindings never act on it (space pauses,
- * backspace resets, escape restores the free camera, ',' and '.' change the speed). A captured
- * key is still reported by key_pressed().
+ * Claim a key for the caller, so the viewer's own bindings (Studio's) never act on it: space
+ * pauses, backspace resets, escape restores the free camera, '-' and '=' change the speed, and
+ * the letter and digit keys toggle visualization flags and groups. A captured key is still
+ * reported by key_pressed().
  * @param[in,out] v          Viewer, or nullptr.
  * @param[in]     imgui_key  An ImGuiKey code from <imgui.h>, e.g. ImGuiKey_Space.
  * @param[in]     capture    true to claim the key, false to give it back.

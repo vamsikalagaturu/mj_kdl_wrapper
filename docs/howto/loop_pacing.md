@@ -72,12 +72,12 @@ while exactly one component owns the loop's timing.
 
 ## The real-time factor
 
-`Viewer::realtime_factor` is the user's speed setting: `1.0` is wall-clock speed, `0.5` runs at
-half speed, `0.0` means uncapped (shown as `RTF: MAX` in the viewer). The `,` and `.` keys
-(and the `-` / `+` buttons) step it along 0.05x, 0.1x, 0.25x, 0.5x, 0.75x, 1x, 1.25x, 1.5x, 2x,
-3x, 4x, 6x, 8x, 10x, then MAX.
+`Viewer::realtime_factor` is the speed setting: `1.0` is wall-clock speed, `0.5` runs at half
+speed, `0.0` means uncapped. The viewer's Speed slider and the `-` / `=` keys set it along
+Studio's speeds, from 100% down to 0.1% of real time. A value set from code, faster than real
+time or uncapped included, stays until the slider moves.
 
-It is written on the control thread - the window thread only queues the key presses, which
+It is written on the control thread - the window thread only queues the change, which
 `step()` applies - so it is read without a lock. Read it from the same thread that calls
 `step()`.
 
