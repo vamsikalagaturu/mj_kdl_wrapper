@@ -383,8 +383,7 @@ TEST(SceneFloor, PlacedAtFloorZ)
     mjData  *data  = nullptr;
     ASSERT_TRUE(mj_kdl::build_scene(&model, &data, &sc));
 
-    // By type, not by name: the ground plane is deliberately unnamed so it cannot collide
-    // with an asset that has a geom called "floor".
+    // By type: the ground plane is unnamed so it cannot clash with an asset's geom "floor".
     int floor_id = -1;
     for (int i = 0; i < model->ngeom; ++i) {
         if (model->geom_type[i] == mjGEOM_PLANE) floor_id = i;
@@ -514,7 +513,6 @@ TEST(SceneObjectShapes, EllipsoidAndMeshTakeMuJoCoDefaultsAndAddNoMass)
     for (int k = 0; k < 3; ++k)
         EXPECT_DOUBLE_EQ(m->geom_friction[3 * mesh_geom + k], dflt->friction[k]);
     mj_deleteSpec(ref);
-    // Shapes collide, with SceneObject's default bitmasks.
     EXPECT_EQ(m->geom_contype[mesh_geom], mj_kdl::SceneObject{}.contype);
     EXPECT_EQ(m->geom_conaffinity[mesh_geom], mj_kdl::SceneObject{}.conaffinity);
 

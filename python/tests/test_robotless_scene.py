@@ -1,11 +1,5 @@
-"""Robot-less scenes: options are honored and mesh SceneObjects load.
-
-Regression tests for two fixes in build_scene:
-  * a scene with no robots builds (was hard-rejected), and its timestep/gravity
-    from SceneSpec are applied;
-  * a mesh-backed SceneObject compiles (the asset spec's meshes are loaded before
-    it is freed, so the scene compile can resolve them).
-"""
+"""Robot-less scenes: a scene with no robots builds with SceneSpec's timestep and gravity, and a
+mesh-backed SceneObject compiles."""
 
 import pytest
 
@@ -123,8 +117,7 @@ def test_mesh_scene_object_builds_and_moves():
     spec.objects = [obj]
     env = mjk.Env.build(spec)
     try:
-        # Meshes compiled -> the drawer's grasp site exists; force pulls the
-        # drawer through the cabinet rails, then out and onto the floor.
+        # The force pulls the drawer through the cabinet rails, then out onto the floor.
         closed = env.site_frame("grasp1").p
         env.data.body("drawer1").xfrc_applied[:3] = [40.0, 0.0, 0.0]
         for _ in range(120):

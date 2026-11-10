@@ -13,8 +13,7 @@ namespace mj_kdl {
 
 /**
  * @ingroup grp_recorder
- * Standard output resolution presets for init_video_recorder().
- * Each maps to a 16:9 frame size at the named quality level.
+ * 16:9 output resolution presets for init_video_recorder().
  */
 enum class VideoResolution {
     R360p  = 360,  // 640  x 360
@@ -82,8 +81,7 @@ Status init_video_recorder(
 
 /**
  * @ingroup grp_recorder
- * Convenience overload: initialise a VideoRecorder using a named resolution preset.
- * Frame width is derived from the preset at 16:9 aspect ratio.
+ * Initialise a VideoRecorder from a resolution preset, at 16:9.
  *
  * @param vr         VideoRecorder to initialise.
  * @param model      MuJoCo model.

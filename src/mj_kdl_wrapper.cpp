@@ -43,11 +43,8 @@ static void ensure_plugins_loaded()
 {
     static std::once_flag flag;
     std::call_once(flag, []() {
-        /* MuJoCo's plugin registry is global to the loaded libmujoco. When this
-         * library shares that libmujoco with the official mujoco Python package,
-         * importing mujoco already registers the bundled plugins; loading them
-         * again is a fatal "plugin already registered" error. Only load when the
-         * registry is still empty (e.g. standalone C++ use). */
+        /* The plugin registry is global to libmujoco: when the mujoco Python package shares it,
+         * its plugins are already registered and loading them again is a fatal error. */
         if (mjp_pluginCount() > 0) return;
         const char       *env      = std::getenv("MUJOCO_PLUGIN_DIR");
         const std::string fallback = default_mujoco_plugin_dir();
@@ -83,7 +80,7 @@ struct EnvInternals
     std::vector<mjtNum>  computed_from;
     std::vector<mjtNum>  state_now; // kinematics_current's buffer
     bool                 computed = false;
-    NameMap              names[mjNOBJECT];      // mj_name2id per object type
+    NameMap              names[mjNOBJECT];
     bool                 adopted       = false; // model/data came from Env::adopt
     std::uint64_t        model_gen     = 0; // unique per compiled model, so recorders see a rebuild
     bool                 in_reset_hook = false; // a rebuild would swap the model under the hook
@@ -148,23 +145,16 @@ static int cached_name2id(Env *env, mjtObj type, const char *name)
 }
 
 
-// Spec-API helpers
-
-// Buffer size for MuJoCo error strings returned by mj_parseXML / mj_saveLastXML.
 static constexpr size_t kMjErrBuf = 2048;
 
 // assets/stage/default.xml, compiled in by CMake so a scene needs no file at run time.
 extern const char *const kDefaultStageXml;
 
-// Sole owner of the MuJoCo worldbody name. Every other site that needs the
-// worldbody (skybox light, floor geom, resolve_parent with kind == World,
-// cameras) calls this so the literal "world" exists in one place.
 // The name is MuJoCo's, not ours to choose: its compiler decides what is top level by this
 // name, so renaming the root body makes every free joint under it fail to compile.
 static mjsBody *world_body(mjSpec *spec) { return mjs_findBody(spec, "world"); }
 
-// MuJoCo quaternion [w,x,y,z] <-> KDL::Rotation [x,y,z,w]. Single source so
-// the w/x/y/z swap is never re-derived inline.
+// MuJoCo quaternion [w,x,y,z] <-> KDL::Rotation [x,y,z,w].
 static KDL::Rotation mj_quat_to_kdl_rot(const double *q)
 {
     return KDL::Rotation::Quaternion(q[1], q[2], q[3], q[0]);
@@ -187,8 +177,6 @@ static KDL::Rotation mj_xmat_to_kdl_rot(const double *m)
     return r;
 }
 
-// RAII guard for transient mjSpec pointers built/parsed inside scene-building
-// functions. unique_ptr handles every early-return error path automatically.
 using MjSpecPtr = std::unique_ptr<mjSpec, decltype(&mj_deleteSpec)>;
 static MjSpecPtr make_spec_ptr(mjSpec *s) { return { s, &mj_deleteSpec }; }
 
@@ -212,7 +200,6 @@ static void absolutize_asset_files(mjSpec *spec)
         resolve(mjs_asTexture(e)->file, spec->compiler.texturedir);
 }
 
-// Resolve an AttachTarget to its element in the accumulated spec.
 static Status resolve_parent(mjSpec *spec, const AttachTarget &t, mjsElement **out)
 {
     *out = nullptr;
@@ -249,12 +236,7 @@ static void quat_xyzw_to_mj_quat(const double q[4], double out_quat[4])
     out_quat[3] = q[2];
 }
 
-// Attach a child body element under the resolved parent at the given offset.
-// For body parents, an intermediate mjsFrame carries the offset so the child's
-// authored pos/quat is preserved. For site/frame parents (which do not accept
-// mjs_addFrame), the offset is written into the child root's pos/quat.
-// On success *attached is the attached body in the scene spec (so callers can rename or inspect
-// it).
+// The offset composes onto the child's authored pos/quat, which is kept for every parent kind.
 static Status attach_child(
   mjSpec             *spec,
   const AttachTarget &target,
@@ -274,7 +256,6 @@ static Status attach_child(
 
     mjsElement *attach_parent = parent;
     if (mjsBody *body_parent = mjs_asBody(parent)) {
-        // Intermediate frame carries the user offset; child keeps its authored pose.
         mjsFrame *frame = mjs_addFrame(body_parent, nullptr);
         frame->pos[0]   = pos[0];
         frame->pos[1]   = pos[1];
@@ -282,9 +263,7 @@ static Status attach_child(
         for (int i = 0; i < 4; ++i) frame->quat[i] = mj_quat[i];
         attach_parent = frame->element;
     } else {
-        // Site/frame parents do not accept mjs_addFrame, so the offset has to
-        // ride on the child root. Compose user_offset * child_authored so the
-        // child's MJCF-authored pos/quat is not silently dropped.
+        // Site/frame parents do not accept mjs_addFrame: the offset rides on the child root.
         KDL::Frame user(mj_quat_to_kdl_rot(mj_quat), KDL::Vector(pos[0], pos[1], pos[2]));
         KDL::Frame child(
           mj_quat_to_kdl_rot(child_root->quat),
@@ -310,8 +289,6 @@ static Status attach_child(
     return {};
 }
 
-// Extract the first root body from a freshly parsed or built mjSpec
-// (i.e. the first body child of its worldbody).
 static mjsBody *first_root_body(mjSpec *spec)
 {
     mjsBody    *wb    = world_body(spec);
@@ -395,8 +372,7 @@ static Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &
                 };
                 recolour(attached);
             }
-            // A non-fixed MJCF object stands free, exactly like a non-fixed primitive: honor
-            // the flag with a free joint unless the asset already roots one of its own.
+            // Free like a non-fixed primitive, unless the asset roots a joint of its own.
             if (attached && !obj.fixed) {
                 bool has_joint = false;
                 for (mjsElement *el = mjs_firstChild(attached, mjOBJ_JOINT, 0); el;
@@ -430,8 +406,7 @@ static Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &
                                        << "' is not a file"
                 );
         }
-        // Validate fields the user must set on a primitive (unset is NaN, which fails every > 0).
-        // Free-jointed bodies also need mass > 0; a fixed body may leave it unset.
+        // Unset is NaN, which fails every > 0; only a fixed body may leave its mass unset.
         const int n_size = obj.shape == Shape::SPHERE ? 1 : obj.shape == Shape::CYLINDER ? 2 : 3;
         if (!std::ranges::all_of(std::span(obj.size).first(n_size), [](double s) {
                 return s > 0.0;
@@ -466,8 +441,7 @@ static Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &
             );
         }
 
-        // Build the primitive body inside a throwaway spec so it can be attached
-        // under any parent kind (body, site, frame, world) via the same helper.
+        // A throwaway spec, so attach_child handles every parent kind for primitives too.
         MjSpecPtr tmp    = make_spec_ptr(mj_makeSpec());
         mjsBody  *tmp_wb = world_body(tmp.get());
         mjsBody  *ob     = mjs_addBody(tmp_wb, nullptr);
@@ -532,8 +506,7 @@ static Status add_cameras_to_spec(mjSpec *spec, const std::vector<CameraSpec> &c
         if (std::ranges::any_of(cs.pos, [](double v) { return std::isnan(v); })
             || std::isnan(cs.fovy))
             MJ_FAIL("camera '" << cs.name << "' leaves .pos or .fovy unset");
-        // The asset's own camera wins: it is the one its author placed, and re-adding the
-        // name would fail the compile on a duplicate.
+        // The asset's own camera wins; re-adding its name would fail the compile.
         if (mjs_findElement(spec, mjOBJ_CAMERA, cs.name.c_str())) continue;
         mjsBody *anchor = cs.body.empty() ? wb : mjs_findBody(spec, cs.body.c_str());
         if (!anchor) {
@@ -553,8 +526,7 @@ static Status add_cameras_to_spec(mjSpec *spec, const std::vector<CameraSpec> &c
 
 static void add_site_to_spec(mjSpec *spec, mjsBody *body, const SiteSpec &ss)
 {
-    // The asset's own site wins: it is the one its author placed, and re-adding the
-    // name would fail the compile on a duplicate.
+    // The asset's own site wins; re-adding its name would fail the compile.
     if (mjs_findElement(spec, mjOBJ_SITE, ss.name.c_str())) return;
 
     mjsSite *site = mjs_addSite(body, nullptr);
@@ -570,12 +542,8 @@ static void add_site_to_spec(mjSpec *spec, mjsBody *body, const SiteSpec &ss)
     quat_xyzw_to_mj_quat(ss.quat, site->quat);
 }
 
-// Every pending site whose body has arrived, added now and struck off the list.
-//
-// Sites cannot all wait until the end: a site marks a frame the scene states, and a robot may
-// have to bolt to one -- an arm to the `left_arm_attachment` frame on the platform's base_link.
-// An attach target has to exist before the attach, which is the same reason objects go in ahead
-// of robots. What no body carries yet stays pending for the next round.
+/* Sites cannot all wait until the end: a robot may attach to one, and an attach target has to
+ * exist before the attach. What no body carries yet stays pending for the next round. */
 static void add_ready_sites(mjSpec *spec, std::vector<SiteSpec> &pending)
 {
     for (auto it = pending.begin(); it != pending.end();) {
@@ -601,8 +569,7 @@ static void add_sites_to_spec(mjSpec *spec, const std::vector<SiteSpec> &sites)
     }
 }
 
-// Compile spec into a model and data; spec is always deleted.
-// A compiled model cannot be written back to XML on its own; mj_saveXML needs its spec.
+// spec is always deleted. A compiled model cannot be saved to XML without its spec.
 static std::unordered_map<const mjModel *, MjSpecPtr> g_model_specs;
 static std::mutex                                     g_model_specs_mtx; // Envs on many threads
 
@@ -636,8 +603,6 @@ static Status compile_and_make_data(mjSpec *spec, mjModel **out_model, mjData **
     return {};
 }
 
-// KDL helpers
-
 static bool
   get_site_frame_in_body(Env *env, const char *body_name, const char *site_name, KDL::Frame *out)
 {
@@ -666,9 +631,7 @@ static bool
     return true;
 }
 
-// Collect all body IDs in the subtree rooted at root_bid (inclusive).
-// MuJoCo stores bodies in topological order (parent always precedes children),
-// so a single forward pass is sufficient.
+// MuJoCo orders bodies parent before child, so one forward pass finds the subtree.
 static std::vector<int> collect_subtree(const mjModel *model, int root_bid)
 {
     std::vector<bool> mark(model->nbody, false);
@@ -681,16 +644,8 @@ static std::vector<int> collect_subtree(const mjModel *model, int root_bid)
     return result;
 }
 
-/*
- * Compute the lumped KDL::RigidBodyInertia for a set of bodies, expressed
- * in tip_body's local frame.
- *
- * Requires data->xpos and data->xmat to be valid (mj_forward must have been
- * called beforehand).  xmat[9*b] is the body-to-world rotation matrix stored
- * row-major, so:
- *   v_world  = R * v_body   where R[r][c] = xmat[9*b + 3*r + c]
- *   v_body   = R^T * v_world
- */
+/* The bodies' lumped inertia in tip_body's frame; needs xpos/xmat current (mj_forward).
+ * xmat[9*b] is body-to-world, row-major: R[r][c] = xmat[9*b + 3*r + c]. */
 static KDL::RigidBodyInertia compute_tool_inertia(
   const mjModel          *model,
   const mjData           *data,
@@ -698,7 +653,6 @@ static KDL::RigidBodyInertia compute_tool_inertia(
   const std::vector<int> &tool_bodies
 )
 {
-    // Step 1: total mass and world-frame COM.
     double total_mass = 0.0;
     double com_w[3]   = {};
     for (int b : tool_bodies) {
@@ -714,7 +668,7 @@ static KDL::RigidBodyInertia compute_tool_inertia(
     if (total_mass <= 0.0) return KDL::RigidBodyInertia::Zero();
     for (double &v : com_w) v /= total_mass;
 
-    // Step 2: combined inertia about com_w, in world frame.
+    // About com_w, in the world frame.
     double I_w[3][3] = {};
     for (int b : tool_bodies) {
         double        m  = model->body_mass[b];
@@ -722,15 +676,11 @@ static KDL::RigidBodyInertia compute_tool_inertia(
         const double *xm = &data->xmat[9 * b];
         const double *ip = &model->body_ipos[3 * b];
 
-        // Body COM in world frame.
         double r[3];
         for (int a = 0; a < 3; ++a)
             r[a] = xp[a] + xm[3 * a] * ip[0] + xm[3 * a + 1] * ip[1] + xm[3 * a + 2] * ip[2];
 
-        /*
-         * Body inertia in world frame: Rf * diag(id) * Rf^T
-         * where Rf = xmat * iquat_R maps from principal (inertia) axes to world.
-         */
+        // Rf * diag(id) * Rf^T, with Rf = xmat * iquat_R from principal axes to world.
         KDL::Rotation iR = mj_quat_to_kdl_rot(&model->body_iquat[4 * b]);
         const double *id = &model->body_inertia[3 * b];
         double        Rf[3][3];
@@ -744,7 +694,7 @@ static KDL::RigidBodyInertia compute_tool_inertia(
             for (int col = 0; col < 3; ++col)
                 for (int k = 0; k < 3; ++k) I_b[row][col] += Rf[row][k] * id[k] * Rf[col][k];
 
-        // Parallel-axis theorem: d = body_com - total_com.
+        // Parallel-axis theorem.
         double d[3] = { r[0] - com_w[0], r[1] - com_w[1], r[2] - com_w[2] };
         double d2   = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
         for (int a = 0; a < 3; ++a)
@@ -754,7 +704,6 @@ static KDL::RigidBodyInertia compute_tool_inertia(
             }
     }
 
-    // Step 3: transform COM and inertia into tip_body's local frame.
     const double *txm = &data->xmat[9 * tip_bid];
     const double *txp = &data->xpos[3 * tip_bid];
 
@@ -781,7 +730,6 @@ static KDL::RigidBodyInertia compute_tool_inertia(
     );
 }
 
-// Extract the full rigid-body inertia for body bid from a compiled mjModel.
 static KDL::RigidBodyInertia mj_body_inertia(const mjModel *model, int bid)
 {
     double        mass    = model->body_mass[bid];
@@ -888,8 +836,6 @@ static std::pair<double, double> joint_range(const mjModel *model, int jid)
     return { -inf, inf };
 }
 
-// Build KDL chain from compiled mjModel (no URDF needed)
-
 static Status
   build_kdl_from_model(Robot *s, mjModel *model, const char *base_body, const char *tip_body)
 {
@@ -967,8 +913,6 @@ static Status
     return {};
 }
 
-// Scene API
-
 Status save_model_xml(const mjModel *model, const char *path)
 {
     char                              err[kMjErrBuf] = {};
@@ -986,8 +930,7 @@ Status save_model_xml(const mjModel *model, const char *path)
     return {};
 }
 
-// The body the robot's first joint moves against, -1 if unknown; the viewer's label for an
-// unnamed robot. Declared there, not in a header: no part of the public API.
+// The body the robot's first joint moves against, -1 if unknown. Declared in viewer.cpp.
 int robot_base_body(const Robot *r)
 {
     if (!r || !r->model || r->_impl->kdl_to_mj_qpos.empty()) return -1;
@@ -998,7 +941,7 @@ int robot_base_body(const Robot *r)
     return -1;
 }
 
-// The viewer's Explorer reads it; declared there, not in a header: no part of the public API.
+// Declared in viewer.cpp, not in a header: not public API.
 mjSpec *copy_model_spec(const mjModel *model)
 {
     const std::lock_guard<std::mutex> lock(g_model_specs_mtx);
@@ -1157,7 +1100,6 @@ static Status attach_to_spec(
         return s;
     // att (deep-copied into robot_spec) is freed by MjSpecPtr at scope exit.
 
-    // Register contact exclusions.
     for (const auto &ex : a->contact_exclusions) {
         mjsExclude *exc = mjs_addExclude(robot_spec);
         mjs_setString(exc->bodyname1, ex.first.c_str());
@@ -1291,12 +1233,10 @@ Status build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     MjSpecPtr scene = make_spec_ptr(nullptr);
     if (Status s = make_stage(sc, &scene); !s) return s;
 
-    scene->compiler.balanceinertia = true; // mjsCompiler stores as int 0/1
+    scene->compiler.balanceinertia = true;
     scene->compiler.discardvisual  = false;
 
-    // Objects come before robots so a robot can attach to a SceneObject (e.g.
-    // {AttachKind::Site, "table_mount"}). A child object that references
-    // another object must appear after its parent in SceneSpec::objects.
+    // Objects before robots so a robot can attach to one; a child object follows its parent.
     if (Status s = add_objects_to_spec(scene.get(), sc->objects); !s) return s;
 
     // Sites land as their bodies arrive, so a later attach can name one -- see add_ready_sites.
@@ -1319,8 +1259,7 @@ Status build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
         // Before the attachments are merged in, so only the robot's own joints take modes.
         if (Status s = apply_ctrl_modes(arm.get(), rs.modes, ai, who, &disable_bits); !s) return s;
 
-        // Inherit physics options (integrator, solver, etc.) from the first
-        // arm, then apply the SceneSpec's user-controlled fields on top.
+        // The first arm's options, with the SceneSpec's fields on top.
         if (first_arm) {
             scene->option            = arm->option;
             scene->option.timestep   = sc->timestep;
@@ -1328,7 +1267,6 @@ Status build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
             first_arm                = false;
         }
 
-        // Apply attachment chain in order (mount, sensor, gripper, etc.).
         for (size_t k = 0; k < rs.attachments.size(); ++k) {
             const AttachmentSpec &att     = rs.attachments[k];
             const int             owner   = att.modes.empty() ? -1 : next_owner++;
@@ -1348,7 +1286,6 @@ Status build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
         // arm (deep-copied into scene) is freed by MjSpecPtr at scope exit.
     }
 
-    // Robot-less scenes skip the first_arm branch; apply timestep/gravity here.
     if (first_arm) {
         scene->option.timestep   = sc->timestep;
         scene->option.gravity[2] = sc->gravity_z;
@@ -1517,7 +1454,7 @@ Status scene_add_object(Env *env, const SceneObject &obj)
     return s;
 }
 
-// The viewer's Reload: the MJCF files read again, the state carried over. Declared there.
+// The MJCF files read again, the state carried over. Declared in viewer.cpp.
 Status reload_scene(Env *env)
 {
     if (!env) MJ_FAIL("reload_scene: null env");
@@ -1575,9 +1512,6 @@ bool get_body_frame(Env *env, const char *body_name, KDL::Frame *out)
     return true;
 }
 
-// Robot API
-
-// The sensor's addresses in m, from its MuJoCo names.
 static Status resolve_ft(const mjModel *m, ForceTorqueSensor *sensor)
 {
     const std::string &name     = sensor->name;
@@ -1940,8 +1874,6 @@ void set_body_pose(Env *env, const char *body_name, const double pos[3], const d
     for (int k = 0; k < 6; ++k) data->qvel[dadr + k] = 0.0;
 }
 
-// Simulation API
-
 bool step(Env *env)
 {
     if (!env || !env->model) return true;
@@ -2251,7 +2183,6 @@ void update(Env *env)
     apply_scene(env);
 }
 
-// The free joint a body owns, or -1 when it owns none.
 static int free_joint_of_body(const mjModel *model, int bid)
 {
     const int start = model->body_jntadr[bid];
@@ -2404,8 +2335,6 @@ static bool rebind_scene(Env *env)
         MJ_LOG_ERROR("scene slots gone from the rebuilt model, unbound:" << unbound);
     return unbound.empty();
 }
-
-// Overlay
 
 void clear_trace(Env *env)
 {

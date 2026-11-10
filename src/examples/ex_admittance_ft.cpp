@@ -43,13 +43,11 @@ static constexpr double kForceDeadband = 2.5;  // [N]
 static constexpr double kMaxOffset     = 0.20; // [m]
 static constexpr double kMaxVel        = 0.25; // [m/s]
 
-// Helix intro.
 static constexpr double kTeachTime   = 16.0; // [s]
 static constexpr double kTeachRadius = 0.04; // [m]
 static constexpr double kTeachRise   = 0.10; // [m]
 static constexpr double kTeachTurns  = 5.0;
 
-// Sequence and self-check.
 static constexpr int    kSettleSteps      = 600;
 static constexpr double kHandoffTareTime  = 1.0; // [s]
 static constexpr int    kHandoffSteps     = 100;

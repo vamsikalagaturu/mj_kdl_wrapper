@@ -70,9 +70,8 @@ void CameraRosPublisher::publish(const std::uint8_t *rgb, double sim_t)
 {
     if (!rgb) return;
 
-    // Hold the cadence on its own grid. A caller that is itself rate-gated hands each frame over
-    // a tick late, and re-basing on arrival would then drop every other one. Re-base only when
-    // the clock jumped: a simulation reset, or a stall longer than a period.
+    /* Re-basing on arrival would drop every other frame of a rate-gated caller, which hands each
+       over a tick late; re-base only when the clock jumped (a reset, or a stall over a period). */
     next_due_s_ += period_s_;
     if (next_due_s_ < sim_t || next_due_s_ > sim_t + 2.0 * period_s_)
         next_due_s_ = sim_t + period_s_;

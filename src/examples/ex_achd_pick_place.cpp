@@ -13,10 +13,9 @@
  * Usage:
  *   ex_achd_pick_place [--headless] [--record output.mp4]
  *
- * Runs the sequence once and prints the cube's final position; --headless skips the viewer and
- * exits 1 unless the cube rests on the table within kMaxPlaceErr of the place spot and the
- * elbow stayed within kMaxElbowDrop of its reference; --record
- * writes an MP4 offscreen (EGL + ffmpeg) and implies --headless. */
+ * Prints the cube's final position; --headless exits 1 unless the cube rests within kMaxPlaceErr
+ * of the place spot and the elbow stayed within kMaxElbowDrop of its reference; --record writes
+ * an MP4 offscreen (EGL + ffmpeg) and implies --headless. */
 
 #include "mj_kdl_wrapper/render.hpp"
 #include "mj_kdl_wrapper/viewer.hpp"

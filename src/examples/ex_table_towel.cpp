@@ -2,16 +2,14 @@
  * Kinova GEN3 + Robotiq 2F-85 drags a towel on the table: a 0.30 m cloth (MuJoCo 2D flex,
  * assets/towel.xml) hangs from the gripper by the middle of one edge. From the home pose the
  * gripper closes, goes down until the towel's lower part lies on the table, drags it left and
- * right, and goes up, the gripper pointing down throughout. RNEA computed torque (KDL
- * ChainIdSolver_RNE) in TORQUE mode tracks joint waypoints, as in ex_rnea_pick_place; the
- * waypoints are the home TCP pose moved down, sideways and up, solved by IK once at start.
- * The scene runs MuJoCo's discrete integrator with Newton at tolerance 1e-6, as MuJoCo's modeling
- * guide advises for cloth.
+ * right, and goes up, the gripper pointing down throughout. RNEA computed torque in TORQUE mode
+ * tracks joint waypoints (the home TCP pose moved down, sideways and up, solved by IK once). The
+ * scene runs the discrete integrator with Newton at tolerance 1e-6, as MuJoCo's modeling guide
+ * advises for cloth.
  *
- * Timestep 2 ms, not the 1 ms of the other examples: every step solves the cloth implicitly, and
- * the compliant torque-controlled arm and the lightly damped towel keep each other swinging, so
- * the solver iterates each step. At 1 ms that runs at about 0.8x real time on a laptop CPU, at
- * 2 ms about 1.8x; MuJoCo's modeling guide gives 1-4 ms as typical for cloth under discrete.
+ * Timestep 2 ms, not 1 ms: the compliant arm and the lightly damped towel keep each other
+ * swinging, so the implicit cloth solve iterates every step. 1 ms runs at about 0.8x real time on
+ * a laptop CPU, 2 ms about 1.8x; MuJoCo's modeling guide gives 1-4 ms as typical for cloth.
  *
  * Usage:
  *   ex_table_towel [--headless]
@@ -74,7 +72,6 @@ int main(int argc, char *argv[])
       mj_kdl::bind_scene_actuator(&env.scene, "g_fingers_actuator");
     if (!fingers || env.model->nflex != 1) return 1;
 
-    // Waypoints: the home TCP pose moved down, left, right and up, the orientation kept.
     const unsigned                  n = robot.chain.getNrOfJoints();
     KDL::ChainFkSolverPos_recursive fk(robot.chain);
     KDL::ChainIkSolverVel_wdls      ik_vel(robot.chain, 1e-5, 150);

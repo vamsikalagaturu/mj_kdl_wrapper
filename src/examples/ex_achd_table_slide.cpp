@@ -1,20 +1,18 @@
 /* ex_achd_table_slide.cpp
  * Kinova GEN3, no gripper, slides its wrist flange (the TCP, the bracelet's pinch_site) 0.2 m
- * along +X on a table while pressing down
- * with kPressForce, under ACHD (KDL ChainHdSolver_Vereshchagin, linear Z left free) + RNEA.
- * The press goes through ACHD's external-force input with driver weights 1, the pinned KDL
- * fork's setDriverWeights(); the table's contact normal force is measured against it. Before
- * the press, a guarded approach (all six directions tracked, nc=6) lowers the TCP at a speed
- * that falls with its height, and the press ramps up once the table is touched.
+ * along +X on a table while pressing down with kPressForce, under ACHD (KDL
+ * ChainHdSolver_Vereshchagin, linear Z left free) + RNEA. The press goes through ACHD's
+ * external-force input with driver weights 1 (the KDL fork's setDriverWeights()); the table's
+ * contact normal force is measured against it. A guarded approach (nc=6) first lowers the TCP at
+ * a speed that falls with its height; the press ramps up once the table is touched.
  *
  * Usage:
  *   ex_achd_table_slide [--headless]
  *
- * Runs the slide once and prints the mean table reaction over its second half, the commanded
- * press and their ratio (not judged), plus a one-shot nc=6 vs nc=5 comparison; --headless
- * skips the viewer and exits 1 if the table contact was held for less than kContactHeld of
- * that window, the touchdown was faster than kMaxTouchdown or the elbow went below
- * kMinElbowHeight. */
+ * Prints the mean table reaction over the slide's second half, the commanded press and their
+ * ratio (not judged), plus a one-shot nc=6 vs nc=5 comparison; --headless exits 1 if contact
+ * was held for less than kContactHeld of that window, the touchdown was faster than
+ * kMaxTouchdown or the elbow went below kMinElbowHeight. */
 
 #include "mj_kdl_wrapper/viewer.hpp"
 #include "common.hpp"

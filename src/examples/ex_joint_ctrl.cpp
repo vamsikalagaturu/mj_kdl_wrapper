@@ -9,9 +9,8 @@
  * Usage:
  *   ex_joint_ctrl [--headless]
  *
- * Prints each motion's final max joint error; --headless skips the viewer and exits 1 if the
- * POSITION motion ends further than kMaxErr from the target or the VELOCITY motion does not
- * converge within kTol before kTimeout. */
+ * Prints each motion's final max joint error; --headless exits 1 if POSITION ends beyond kMaxErr
+ * or VELOCITY does not converge within kTol before kTimeout. */
 
 #include "mj_kdl_wrapper/viewer.hpp"
 #include "common.hpp"

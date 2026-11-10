@@ -3,10 +3,9 @@
 ex_table_towel.cpp. Headless it exits 1 unless the towel lay on the table while dragged, came clear
 of it at the end, and stayed finite.
 
-Timestep 2 ms, not the 1 ms of the other examples: every step solves the cloth implicitly, and the
-compliant torque-controlled arm and the lightly damped towel keep each other swinging, so the
-solver iterates each step. At 1 ms that runs at about 0.8x real time on a laptop CPU, at 2 ms about
-1.8x; MuJoCo's modeling guide gives 1-4 ms as typical for cloth under discrete."""
+Timestep 2 ms, not 1 ms: the compliant arm and the lightly damped towel keep each other swinging,
+so the implicit cloth solve iterates every step. 1 ms runs at about 0.8x real time on a laptop CPU,
+2 ms about 1.8x; MuJoCo's modeling guide gives 1-4 ms as typical for cloth."""
 
 from __future__ import annotations
 

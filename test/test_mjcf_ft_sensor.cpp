@@ -73,7 +73,6 @@ TEST_F(MjcfFtSensorTest, ReadsNamedWrench)
     EXPECT_EQ(sensor.torque_sensor, "wrist_ft_torque");
     EXPECT_EQ(sensor.frame_site_id, mj_name2id(env_.model, mjOBJ_SITE, "wrist_ft_site"));
 
-    // Let the arm settle under its position servos, then read.
     for (int i = 0; i < 500; ++i) {
         mj_kdl::update(&env_);
         mj_kdl::step(&env_);

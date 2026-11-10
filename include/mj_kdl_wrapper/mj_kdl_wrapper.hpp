@@ -32,7 +32,7 @@ namespace mj_kdl {
 enum class LogLevel { INFO = 0, WARN = 1, ERROR = 2, NONE = 3 };
 
 /** @ingroup grp_logging
- *  Library-wide log threshold (inline so one shared instance across all TUs). */
+ *  Library-wide log threshold. */
 inline LogLevel g_log_level = LogLevel::INFO;
 
 /** @ingroup grp_logging
@@ -100,17 +100,14 @@ const char *version();
 
 /**
  * @ingroup grp_types
- * Kind of element an AttachTarget references in the accumulated scene spec.
- * World selects the worldbody (the default); Body, Site, and Frame each look
- * up a named element of the corresponding type.
+ * Kind of element an AttachTarget names: World is the worldbody (the default); Body, Site and
+ * Frame look up a named element of that type.
  */
 enum class AttachKind { World, Body, Site, Frame };
 
 /**
  * @ingroup grp_types
  * Where to attach a robot, object, or attachment in the accumulated scene spec.
- * Tagged so exactly one alternative is encoded; defaulting to World keeps
- * callers that omit attach_to anchored to the worldbody.
  * For Site, the site's own pos/quat becomes the placement frame and the
  * accompanying pos/quat are an additional offset on top of it (matches MJCF).
  */
@@ -144,25 +141,23 @@ struct CtrlModeSpec
 
 /**
  * @ingroup grp_types
- * One link in an ordered attachment chain for a robot.
- * An attachment is any MJCF body (end effector, mount, FT sensor, tool, additional arm
- * on a mobile base, etc.) attached under a named element in the accumulated robot spec.
- * Attachments are applied in declaration order; attach_to may reference any body, site,
- * or frame present after all prior attachments have been applied.
+ * One link in a robot's ordered attachment chain: any MJCF body (gripper, mount, F/T sensor,
+ * tool, ...). Applied in declaration order; attach_to may reference any body, site or frame of
+ * the root or a prior attachment.
  * modes: control modes for its own joints, in groups of their own so it switches apart from its
  * robot; empty by default, unlike RobotSpec::modes.
  */
 struct AttachmentSpec
 {
-    std::string               mjcf_path; // MJCF file for this attachment
-    AttachTarget              attach_to; // body, site or frame of root or prior attachment
-    std::string               prefix;    // element name prefix (avoids name conflicts)
-    double                    pos[3]  = { 0, 0, 0 };    // position offset [m]
+    std::string               mjcf_path;
+    AttachTarget              attach_to;
+    std::string               prefix;                // prepended to the attachment's element names
+    double                    pos[3]  = { 0, 0, 0 }; // position offset [m]
     double                    quat[4] = { 0, 0, 0, 1 }; // orientation offset [x, y, z, w]
     std::vector<CtrlModeSpec> modes;                    // {} = native mode only
 
-    /* Contact exclusion pairs registered by build_scene(). */
-    std::vector<std::pair<std::string, std::string>> contact_exclusions; // (body1, body2) pairs
+    // (body1, body2) pairs build_scene() excludes from contact
+    std::vector<std::pair<std::string, std::string>> contact_exclusions;
 };
 
 /**
@@ -170,18 +165,9 @@ struct AttachmentSpec
  * One robot in a scene: a root MJCF (arm, mobile base, ...) with an ordered attachment
  * chain and a placement target.
  *
- * attachments is applied in order by build_scene(): each entry's
- * attach_to may reference any body, site, or frame in the accumulated spec (root + all
- * prior attachments). This naturally supports: fixed arm, arm+gripper, arm+mount+FT+
- * gripper, mobile base, mobile manipulator (base root, arm as first attachment), etc.
- *
- * attach_to selects where the robot root is placed in the scene; the default is the
- * worldbody. Set it to e.g. { AttachKind::Site, "table_mount" } to place the robot on
- * a tabletop site exported by a prior scene object. pos/quat are offsets in the
- * resolved parent frame.
- *
- * path is the root MJCF passed to build_scene(). prefix must be unique per robot
- * in multi-robot scenes.
+ * attach_to places the robot root (default: the worldbody), e.g.
+ * { AttachKind::Site, "table_mount" } on a site of a prior scene object; pos/quat are offsets
+ * in that parent frame. prefix must be unique per robot in multi-robot scenes.
  *
  * modes lists the control modes the robot offers beyond the one its own actuators give
  * (a `<position>` servo gives POSITION, a `<motor>` gives TORQUE); by default every robot also gets
@@ -194,18 +180,17 @@ struct AttachmentSpec
  */
 struct RobotSpec
 {
-    std::string                 path;                     // root MJCF path
-    std::string                 prefix;                   // element name prefix
-    AttachTarget                attach_to;                // placement parent (default: world)
+    std::string                 path; // root MJCF
+    std::string                 prefix;
+    AttachTarget                attach_to;
     double                      pos[3]  = { 0, 0, 0 };    // offset in parent frame [m]
     double                      quat[4] = { 0, 0, 0, 1 }; // orientation offset [x, y, z, w]
-    std::vector<AttachmentSpec> attachments;              // ordered attachment chain; empty = none
+    std::vector<AttachmentSpec> attachments;
     std::vector<CtrlModeSpec>   modes = { CtrlModeSpec{} }; // TORQUE; {} = native mode only
 };
 
 /** @ingroup grp_types
- *  Shape type for scene objects. Unspecified is the sentinel value;
- *  build_scene rejects a primitive SceneObject whose shape is Unspecified. */
+ *  Shape of a primitive SceneObject; build_scene() rejects one left Unspecified. */
 enum class Shape { Unspecified, BOX, SPHERE, CYLINDER, ELLIPSOID, MESH };
 
 /**
@@ -249,33 +234,26 @@ enum class Solver { Robot, PGS, CG, Newton };
  *   Ignored when mjcf_path is set.
  *
  * mesh_path:
- *   The mesh file (STL, OBJ or MSH) of a MESH primitive; required for MESH and ignored by
- *   every other shape. It is added to the scene through mjSpec as a mesh asset named
- *   `<name>_mesh`, with the path made absolute (a relative one resolves against the working
- *   directory), so the meshdir of an MJCF loaded earlier cannot move it.
+ *   The mesh file (STL, OBJ or MSH) of a MESH primitive; required for MESH, ignored otherwise.
+ *   Added as the mesh asset `<name>_mesh`; a relative path resolves against the working
+ *   directory, never against an earlier MJCF's meshdir.
  *
  * attach_to:
- *   Parent in the accumulated scene spec. Default is the worldbody. A child
- *   object must appear after its parent in SceneSpec::objects.
- *   MuJoCo constraint: a body that carries a freejoint must be a direct child
- *   of the worldbody. So a non-fixed primitive (fixed == false) and any
- *   mjcf_path asset whose root body owns a freejoint must use AttachKind::World.
- *   Fixed primitives and articulated subtrees (no freejoint on the root) may
- *   use any kind. mj_compile reports the violation if this rule is broken.
+ *   Parent in the accumulated scene spec (default: the worldbody). A child object must appear
+ *   after its parent in SceneSpec::objects. A body with a freejoint must be a direct child of
+ *   the worldbody (MuJoCo), so a non-fixed primitive, and an mjcf_path asset whose root owns a
+ *   freejoint, must use AttachKind::World; the build fails otherwise.
  *
  * pos:
- *   Offset in the resolved parent frame. For MJCF assets, this is the placement
- *   frame for the asset's first root body.
+ *   Offset in the resolved parent frame; for an MJCF asset, of its first root body.
  *
  * fixed:
- *   If true the body is welded to its parent (no freejoint); useful for
- *   static obstacles or fixtures. If false, an MJCF asset whose root has no joint
- *   gets a freejoint named `<name>_free`.
+ *   If true the body is welded to its parent (no freejoint). If false, an MJCF asset whose root
+ *   has no joint gets a freejoint named `<name>_free`.
  *
- * size, rgba, mass and friction start unset (NaN). The API invents no values of its own:
- * build_scene() fails on a primitive that leaves size unset, and on a non-fixed primitive
- * that leaves mass or friction unset. What a primitive may leave unset gets MuJoCo's own
- * default, not one chosen here:
+ * size, rgba, mass and friction start unset (NaN). build_scene() fails on a primitive that
+ * leaves size unset, and on a non-fixed primitive that leaves mass or friction unset. What a
+ * primitive may leave unset gets MuJoCo's own default:
  *   rgba     - MuJoCo's default geom colour, on any primitive.
  *   mass     - fixed primitives only: the geom's mass follows MuJoCo's default density.
  *              Set 0 for a geom that adds no mass, e.g. one drawn on a body whose inertia
@@ -290,40 +268,35 @@ enum class Solver { Robot, PGS, CG, Newton };
  */
 struct SceneObject
 {
-    std::string  name;      // the object's root body takes this name
+    std::string  name;
     std::string  mjcf_path; // optional MJCF asset; when set, shape/size/mass/friction are ignored
     std::string  prefix;    // prepended to the asset's element names; empty = as authored
-    AttachTarget attach_to; // placement parent (default: world)
-    Shape shape = Shape::Unspecified; // required for primitives; rejected at build time if not set
-    std::string mesh_path;            // mesh file of a MESH primitive; required for MESH
-    // half-extents (BOX) / {radius, 0, 0} (SPHERE) / {radius, half-len, 0} (CYL) /
-    // radii (ELLIPSOID) / scale (MESH)
-    double size[3]     = { NAN, NAN, NAN };
-    double pos[3]      = { 0.0, 0.0, 0.0 };      // offset in resolved parent frame [m]
-    double quat[4]     = { 0.0, 0.0, 0.0, 1.0 }; // orientation offset [x, y, z, w]
-    float  rgba[4]     = { NAN, NAN, NAN, NAN }; // [r, g, b, a]; unset = MuJoCo's default
-    bool   has_rgba    = false;                  // rgba is set; recolours an asset's geoms
-    bool   fixed       = false;
-    double mass        = NAN; // [kg]; required for non-fixed primitives
-    Condim condim      = Condim::Tangential;
-    double friction[3] = { NAN, NAN, NAN }; // [slide, spin, roll]; required unless fixed
-    int    contype     = 1;                 // primitive's collision bitmask; MuJoCo's default
-    int    conaffinity = 1;                 // primitive's collision bitmask; MuJoCo's default
+    AttachTarget attach_to;
+    Shape        shape = Shape::Unspecified; // required for primitives
+    std::string  mesh_path;
+    double       size[3]     = { NAN, NAN, NAN };
+    double       pos[3]      = { 0.0, 0.0, 0.0 };      // offset in resolved parent frame [m]
+    double       quat[4]     = { 0.0, 0.0, 0.0, 1.0 }; // orientation offset [x, y, z, w]
+    float        rgba[4]     = { NAN, NAN, NAN, NAN }; // [r, g, b, a]; unset = MuJoCo's default
+    bool         has_rgba    = false;                  // rgba is set; recolours an asset's geoms
+    bool         fixed       = false;
+    double       mass        = NAN; // [kg]; required for non-fixed primitives
+    Condim       condim      = Condim::Tangential;
+    double       friction[3] = { NAN, NAN, NAN }; // [slide, spin, roll]; required unless fixed
+    int          contype     = 1;                 // primitive's collision bitmask; MuJoCo's default
+    int          conaffinity = 1;                 // primitive's collision bitmask; MuJoCo's default
 };
 
 /**
  * @ingroup grp_types
  * A frame to mark on a body of the assembled scene, as a MuJoCo site.
- *
- * Sites are what a model's own frames become: the scene states where they sit, and the
- * runtime can then address and draw them. Added after every robot and object, so `body`
- * may name anything the assembled scene holds. A site the asset already declares under
- * this name is left alone -- the asset's own is authoritative.
+ * Added after every robot and object, so `body` may name anything the assembled scene holds.
+ * A site the asset already declares under this name is left alone.
  */
 struct SiteSpec
 {
-    std::string body;                             // body to add the site to, by name
-    std::string name;                             // site name, unique within the scene
+    std::string body;
+    std::string name;                             // unique within the scene
     double      pos[3]  = { 0.0, 0.0, 0.0 };      // offset in the body frame [m]
     double      quat[4] = { 0.0, 0.0, 0.0, 1.0 }; // orientation in the body frame [x, y, z, w]
     double      size    = 0.005;                  // marker sphere radius [m]
@@ -336,8 +309,7 @@ struct SiteSpec
  * After build_scene() the camera is accessible by name (mj_name2id(model, mjOBJ_CAMERA, name))
  * and can be activated on a Viewer with use_camera(), or on a VideoRecorder through vr.cam.
  *
- * pos and fovy start unset (NaN): there is no neutral camera position or field of view, so
- * the caller must specify both, and build_scene() fails otherwise. quat defaults to identity.
+ * pos and fovy start unset (NaN) and are required: build_scene() fails without them.
  */
 struct CameraSpec
 {
@@ -350,9 +322,7 @@ struct CameraSpec
 
 /** @ingroup grp_types
  *  Full scene description passed to build_scene().
- *  timestep (unset: NaN) and use_stage have no defaults: the caller must choose a physics
- *  step and an explicit yes/no for the stage, so the resulting scene is never silently
- *  misconfigured. gravity_z defaults to Earth gravity.
+ *  timestep (unset: NaN) and use_stage have no defaults; the caller must set both.
  *
  *  The stage is an MJCF file whose floor, sky, haze, lights and visual settings every scene
  *  is built on; the bundled assets/stage/default.xml is used when `stage` is empty. */
@@ -360,7 +330,7 @@ struct SceneSpec
 {
     std::vector<RobotSpec> robots;
     double                 timestep  = NAN;   // required; suggested 0.001 [s]
-    double                 gravity_z = -9.81; // Earth gravity [m/s^2]
+    double                 gravity_z = -9.81; // [m/s^2]
     bool                   use_stage;         // required; false builds on an empty world
     std::string            stage;             // stage MJCF path; empty = the bundled default
     double                 floor_z  = 0.0;    // added to the height of the stage's planes [m]
@@ -368,8 +338,8 @@ struct SceneSpec
     Integrator integrator           = Integrator::Robot; // the first robot's unless set
     Solver     solver               = Solver::Robot;     // the first robot's unless set
     std::vector<SceneObject> objects;
-    std::vector<SiteSpec>    sites;   // frames marked on the assembled scene's bodies
-    std::vector<CameraSpec>  cameras; // static world cameras added to worldbody
+    std::vector<SiteSpec>    sites;
+    std::vector<CameraSpec>  cameras;
 };
 
 /**
@@ -388,7 +358,7 @@ struct ForceTorqueSensorSpec
 
 /**
  * @ingroup grp_types
- * What a force-torque sensor measures. reset() assigns a fresh one, so every field here is reset.
+ * What a force-torque sensor measures; reset() assigns a fresh one, so every field here is reset.
  *
  * The wrench is the load on the sensor, as a physical F/T sensor reports it: a tool hanging below
  * reads its weight pointing down. MuJoCo's `<force>`/`<torque>` sensors give the opposite (the
@@ -417,13 +387,11 @@ struct ForceTorqueSensor : ForceTorqueReading
  * @ingroup grp_types
  * Optional tool/end-effector description used while building the KDL chain.
  *
- * tool_body names the root of the attached tool subtree whose mass/inertia is
- * lumped into the arm dynamics, once, at the tool's pose at init (a 2F-85's
- * finger opening then is what the chain keeps).  tcp_site names an authored MuJoCo site that
- * becomes the KDL terminal frame for FK/IK (takes priority when set).  When
- * the model has no suitable site, tcp_frame provides an equivalent manual
- * transform expressed in the tip body's local frame.
- * For the prefixed Robotiq 2F-85 this is {"g_base_mount", "g_pinch"}: the mount carries mass too.
+ * tool_body is the root of the tool subtree whose mass/inertia is lumped into the arm dynamics
+ * once, at its pose at init (a 2F-85's finger opening then is what the chain keeps). tcp_site
+ * becomes the KDL terminal frame for FK/IK; without one, tcp_frame gives it in the tip body's
+ * frame. For the prefixed Robotiq 2F-85 this is {"g_base_mount", "g_pinch"}: the mount carries
+ * mass too.
  */
 struct ToolFrameSpec
 {
@@ -465,7 +433,7 @@ struct Robot : RobotPorts
 {
     std::string name; // set by the caller, before or after init; the viewer shows it
 
-    /* Configuration - set by init_robot_from_mjcf() / init_robot_from_chain(). */
+    // Set by init_robot_from_mjcf() / init_robot_from_chain().
     mjModel                               *model = nullptr; // the Env's; updated on a rebuild
     mjData                                *data  = nullptr;
     KDL::Chain                             chain;
@@ -515,8 +483,6 @@ struct ResetContext
 };
 
 using ResetHook = std::function<void(ResetContext *)>;
-
-/* Scene slots: each derives from what it reads or commands, which reset() assigns afresh. */
 
 /** @ingroup grp_scene
  *  What a scene joint slot reads. */
@@ -653,8 +619,7 @@ struct Env
  * @ingroup grp_scene
  * Save a model to an MJCF XML file, including runtime changes to its real-valued fields.
  * Works for any live model from build_scene() or init_env() (adopted ones too), and for the
- * last model loaded with mj_loadXML. Typical use: build a combined scene once, save it, reload
- * it later.
+ * last model loaded with mj_loadXML.
  * @param model  Model to save.
  * @param path   Output path for the MJCF XML file.
  * @return an empty Status on success, else the error.
@@ -687,15 +652,11 @@ Status init_robot_from_mjcf(
  * @ingroup grp_robot
  * Adopt an externally built KDL chain and wire it to a compiled MuJoCo model.
  *
- * Same as init_robot_from_mjcf(), except the chain is supplied rather than derived
- * from the model: use this when the chain comes from the scene description that also
- * produced the MJCF, so the solvers compute with the authored dynamics.  The chain is
- * taken as given - no tool inertia is lumped onto it, since such a chain already
- * carries its tool as explicit segments.
+ * Same as init_robot_from_mjcf(), except the chain is supplied rather than derived from the
+ * model, and taken as given: no tool inertia is lumped onto it.
  *
- * joint_names lists the MuJoCo joint names in KDL chain order, one per chain joint;
- * they drive the same qpos/dof/ctrl index maps init_robot_from_mjcf() builds.  prefix is
- * prepended to each joint name and F/T sensor name.  tool is used only to resolve FT sensors;
+ * joint_names lists the MuJoCo joint names in KDL chain order, one per chain joint. prefix is
+ * prepended to each joint name and F/T sensor name. tool is used only to resolve FT sensors;
  * tool->tool_body and tool->tcp_site are ignored. Registers r with env, as init_robot_from_mjcf().
  */
 Status init_robot_from_chain(
@@ -723,13 +684,8 @@ std::vector<double> joint_force_limits(const Robot *r, double fallback = 1e6);
 
 /**
  * @ingroup grp_scene
- * Build a MuJoCo scene from one or more robots using the MuJoCo spec API.
- * This is the primary scene-building function.
- *
- * For each RobotSpec: mj_parseXML loads the root MJCF, then mjs_attach applies
- * each entry in RobotSpec::attachments in order (mount, sensor, gripper, etc.),
- * and mjs_attach places the complete robot spec at the given position.  A single
- * mj_compile produces the final model -- no intermediate XML files are written.
+ * Build a MuJoCo scene from one or more robots using the MuJoCo spec API; no intermediate XML
+ * files are written.
  *
  * @param[out] out_model  Newly allocated MuJoCo model; caller frees via destroy_scene().
  * @param[out] out_data   Newly allocated MuJoCo data; caller frees via destroy_scene().
@@ -793,7 +749,7 @@ void add_trace_segment(
  * dir need not be normalised; a zero-length dir draws nothing.
  * @param[in,out] env     Env the overlay belongs to.
  * @param[in]     from    Arrow tail (world frame) [m].
- * @param[in]     dir     Direction the arrow points; normalised internally.
+ * @param[in]     dir     Direction the arrow points.
  * @param[in]     length  Arrow length [m].
  * @param[in]     rgba    Optional [r, g, b, a] colour; nullptr -> warm orange.
  */

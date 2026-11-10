@@ -66,7 +66,6 @@ int     robot_base_body(const Robot *r);       // defined in mj_kdl_wrapper.cpp
 namespace studio = mujoco::studio;
 using PauseState = studio::StepControl::PauseState;
 
-// The Recording panel's choices: every VideoResolution, by name.
 static constexpr VideoResolution kRecordResolutions[] = {
     VideoResolution::R360p,  VideoResolution::R480p, VideoResolution::R720p,
     VideoResolution::R1080p, VideoResolution::R2K,   VideoResolution::R4K
@@ -112,7 +111,6 @@ struct Commands
     std::optional<std::string>                         save_xml;
 };
 
-// A registered robot as the Robots section shows it.
 struct JointStatus
 {
     std::string name;
@@ -205,8 +203,6 @@ static int key_index(int imgui_key)
     if (imgui_key < ImGuiKey_NamedKey_BEGIN || imgui_key >= ImGuiKey_NamedKey_END) return -1;
     return imgui_key - ImGuiKey_NamedKey_BEGIN;
 }
-
-// The Env's side
 
 static void stop_recording(ViewerImpl *impl, const char *status)
 {
@@ -335,7 +331,6 @@ static void publish(ViewerImpl *impl, Env *env)
         const Robot *r = env->robots[i];
         RobotStatus &s = snap.robots[i];
         if (refresh || s.joints.size() != r->joint_names.size()) {
-            // Unnamed, a robot goes by its base body, e.g. "base_link" or "r2_base_link".
             const int        base = robot_base_body(r);
             const char      *body = base > 0 ? mj_id2name(env->model, mjOBJ_BODY, base) : nullptr;
             std::string_view base_name = body ? body : "";
@@ -489,8 +484,6 @@ static void close_window(ViewerImpl *impl)
     if (impl->thread.joinable()) impl->thread.join();
 }
 
-// The window's side
-
 /* Picture-in-picture views and screenshots, drawn by a renderer of their own. Studio's App draws
  * them with a second Render() of the window's renderer, and each mjrf_render frees the material
  * instances it did not use (MaterialManager::RemoveUnusedMaterials): the UI's, which the UI still
@@ -512,7 +505,6 @@ struct CameraView
     studio::PipState pip;
 };
 
-// The window's Filament objects.
 struct Gfx
 {
     studio::Window      *window   = nullptr;
@@ -582,20 +574,19 @@ struct WindowState
     std::array<mjTimerStat, mjNTIMER> timer_prev{};
 
     int              frame_pending         = 0; // frames left to fit the start camera to the layout
-    int              framing_frames        = 0; // Viewer::framing_frames
-    float            min_panel_width       = 0.0f;     // Viewer::min_panel_width [font heights]
-    double           joint_limit_margin    = 0.05;     // Viewer::joint_limit_margin
-    bool             joint_limit_highlight = true;     // Viewer::joint_limit_highlight
-    bool             manipulability_ellipsoid = false; // Viewer::manipulability_ellipsoid
-    float            manipulability_scale     = 0.3f;  // Viewer::manipulability_scale [m]
+    int              framing_frames        = 0;
+    float            min_panel_width       = 0.0f; // [font heights]
+    double           joint_limit_margin    = 0.05;
+    bool             joint_limit_highlight = true;
+    bool             manipulability_ellipsoid = false;
+    float            manipulability_scale     = 0.3f; // [m]
     std::string      ini_path;
-    studio::GuiTheme default_theme = studio::GuiTheme::kDark; // Viewer::theme
+    studio::GuiTheme default_theme = studio::GuiTheme::kDark;
     studio::GuiTheme theme         = studio::GuiTheme::kDark;
     StyleState       style;
     float            font_scale = 1.0f;
     bool             quit       = false;
 
-    // App::UiTempState's windows.
     bool help               = false;
     bool info               = false;
     bool profiler_open      = false;
@@ -614,9 +605,9 @@ struct WindowState
 
     std::vector<CameraView>                    camera_views;
     int                                        next_camera_view = 1; // its window's id
-    std::map<ImTextureID, std::pair<int, int>> pip_sizes;            // each PiP texture's size
-    std::vector<ImTextureID>                   retired_textures;     // freed after render()
-    OffscreenRenderer                          offscreen;            // PiP views, screenshots
+    std::map<ImTextureID, std::pair<int, int>> pip_sizes;
+    std::vector<ImTextureID>                   retired_textures; // freed after render()
+    OffscreenRenderer                          offscreen;        // PiP views, screenshots
     char                                       watch_field[1000] = "qpos";
     int                                        watch_index       = 0;
     std::vector<mjtNum>                        state;
@@ -1152,7 +1143,6 @@ static void prepare_style(WindowState *ws)
     if (st->dirty) apply_style(st, ws->theme);
 }
 
-// The Style Editor: Studio's themes and the system fonts, then ImGui's editor.
 static void style_editor_gui(WindowState *ws)
 {
     StyleState *st = &ws->style;
@@ -1203,8 +1193,6 @@ static void style_editor_gui(WindowState *ws)
     capture_style_edits(st);
 }
 
-/* Selects the model element type/id in the Explorer, with the Explorer tab in front and its
- * branch opened and scrolled to; the selection is cleared when the spec has no such element. */
 static void select_element(WindowState *ws, mjtObj type, int id)
 {
     ws->element = nullptr;
@@ -1278,7 +1266,6 @@ static void handle_mouse(WindowState *ws, const studio::Window &window)
     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
         const studio::PickResult picked =
           studio::Pick(m, d, &ws->cam, mouse_x, mouse_y, window.GetAspectRatio(), &ws->opt);
-        // As in Studio, the picked body is also the Explorer's element, its properties shown.
         select_element(ws, mjOBJ_BODY, picked.body);
         if (picked.body >= 0) {
             ws->pert.select     = picked.body;
@@ -1335,7 +1322,7 @@ static void align_camera(WindowState *ws)
         mjv_defaultFreeCamera(m, &ws->cam);
 }
 
-// Studio's App::LoadHistory: the scrubber moves, and the simulation pauses on that frame.
+// Studio's App::LoadHistory.
 static void load_history(WindowState *ws, int index)
 {
     ws->timeline.SetHistoryIndex(index);
@@ -1531,7 +1518,6 @@ static void handle_keys(ViewerImpl *impl, WindowState *ws, Commands *cmd)
     }
 }
 
-// The scene of `model_scene`, a scene named "scene" of `renderer`, through `camera`.
 static mujoco::Renderer::View scene_view(
   const WindowState  *ws,
   mujoco::Renderer   *renderer,
@@ -1631,7 +1617,6 @@ static mjrDrawMode pip_draw_mode(const WindowState *ws, studio::PipState::Mode m
     return mjDRAW_MODE_DEFAULT;
 }
 
-// The view's image, drawn now at width x height into its texture.
 static void
   upload_camera_view(WindowState *ws, const Gfx &gfx, studio::PipState *pip, int width, int height)
 {
@@ -1785,7 +1770,6 @@ static void          push_selected_colors()
     ImGui::PushStyleColor(ImGuiCol_HeaderActive, accent);
 }
 
-// An element as an indented leaf of its group, highlighted when selected.
 static void tree_element(SpecTree &tree, mjsElement *element)
 {
     ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen
@@ -1855,7 +1839,6 @@ static void tree_body(SpecTree &tree, mjsBody *body)
         ImGui::SetScrollHereY(0.5f);
         tree.scroll = false;
     }
-    // The body's own elements come first, right under it, then its child bodies.
     if (open) {
         tree_body_children(tree, "Joints", mjOBJ_JOINT, body);
         tree_body_children(tree, "Geoms", mjOBJ_GEOM, body);
@@ -2107,14 +2090,13 @@ static void element_tab_gui(WindowState *ws, mjsElement *element)
     const bool                   data   = ws->element_mode == 2;
     const bool                   copy   = ws->copy_pending;
     std::string                  studio_log, pose_log;
-    // Data: the Frame and the pose in it first; Studio's every-mjData-field list folded below.
-    int row = -1;
+    int                          row = -1;
     // A joint's frame borrows its body's orientation; the Data tab shows its axis instead.
     const mjtNum *pose_pos = nullptr, *pose_mat = nullptr;
     const bool    pose =
       data && element->elemtype != mjOBJ_JOINT
       && element_world_frame(ws->model.get(), ws->data.get(), element, &pose_pos, &pose_mat);
-    bool studio_now = true; // Studio's list is drawn this frame
+    bool studio_now = true;
     if (pose) {
         fixed_frame_gui(ws);
         if (copy) ImGui::LogToBuffer();
@@ -2377,7 +2359,7 @@ static void main_menu_gui(WindowState *ws, Commands *cmd, const Gfx &gfx)
     ImGui::PopStyleVar();
 }
 
-// Studio's App::FileDialogGui for the File menu's items.
+// Studio's App::FileDialogGui.
 static void file_dialog_gui(WindowState *ws, Commands *cmd, const Gfx &gfx)
 {
     if (ws->file_dialog == WindowState::kNoDialog) return;
@@ -2680,7 +2662,6 @@ static void frames_gui(WindowState *ws)
                 else
                     ws->shown_frames.erase(key);
             }
-            // The name selects the element in the Explorer.
             ImGui::SameLine();
             const bool selected =
               ws->element && ws->element->elemtype == type && mjs_getId(ws->element) == i;
@@ -2745,7 +2726,6 @@ static bool
     return true;
 }
 
-// A thin bar of the joint between its limits, its value centred on it.
 static void joint_bar(const JointStatus &j, double margin, const char *unit)
 {
     const bool near = joint_near_limit(j, margin);
@@ -2769,9 +2749,6 @@ static void joint_bar(const JointStatus &j, double margin, const char *unit)
     ImGui::SetItemTooltip("%.3f %s in [%.3f, %.3f]", j.q, unit, j.lo, j.hi);
 }
 
-/* Each robot a collapsible row (name, active control mode, manipulability w), its joints under
- * it without the robot's prefix: a bar between the limits, red within joint_limit_margin of
- * one, or the plain value for a joint without limits. */
 static void robots_gui(WindowState *ws)
 {
     if (ws->robots.empty()) {
@@ -2850,7 +2827,6 @@ static void robots_gui(WindowState *ws)
     }
 }
 
-// The pre-4.0 viewer's Perturb section: what a plain left drag on the selected body applies.
 static void perturb_gui(WindowState *ws)
 {
     ImGui::TextUnformatted("Left drag");
@@ -3229,7 +3205,6 @@ static void build_gui(WindowState *ws, Commands *cmd, const Gfx &gfx)
     }
 }
 
-// The ImGui layer: an orthographic camera over the window in pixels.
 static mujoco::Renderer::View ux_view(mujoco::Renderer *renderer, int width, int height)
 {
     mujoco::Renderer::View view;
@@ -3248,10 +3223,7 @@ static mujoco::Renderer::View ux_view(mujoco::Renderer *renderer, int width, int
     return view;
 }
 
-/* A frame drawn as MuJoCo draws frames (addFrame in engine_vis_visualize.c): a cylinder per
- * axis, x red, y green, z blue, as long and wide as the model's vis.scale.framelength and
- * framewidth times its mean size. A selected joint's frame sits at its anchor, in its body's
- * orientation; an element without a pose in the model adds nothing. */
+// As MuJoCo draws frames: addFrame in engine_vis_visualize.c.
 static void
   add_frame(const mjModel *m, const mjtNum *pos, const mjtNum *rot, std::vector<mjvGeom> *geoms)
 {
@@ -3270,7 +3242,6 @@ static void
     }
 }
 
-// The frames checked in Frames, and that of what the Explorer has selected.
 static void add_frames(const WindowState *ws, std::vector<mjvGeom> *geoms)
 {
     const mjModel *m = ws->model.get();
@@ -3306,7 +3277,6 @@ static void add_limit_spheres(const WindowState *ws, std::vector<mjvGeom> *geoms
             }
 }
 
-// Each robot's manipulability ellipsoid at its TCP, radii scaled by manipulability_scale.
 static void add_manipulability(const WindowState *ws, std::vector<mjvGeom> *geoms)
 {
     if (!ws->manipulability_ellipsoid) return;
@@ -3330,7 +3300,6 @@ static void render(WindowState *ws, const Gfx &gfx)
                                static_cast<int>(gfx.window->GetWidth() * scale),
                                static_cast<int>(gfx.window->GetHeight() * scale) };
     if (ws->scene) {
-        // Studio's ScenePlugins add their geoms on top of the Env's overlays.
         ws->plugin_scene.ngeom = 0;
         studio::ForEachPlugin<studio::ScenePlugin>([&](studio::ScenePlugin *plugin) {
             if (plugin->enhance_scene)
@@ -3562,8 +3531,6 @@ static void window_main(ViewerImpl *impl)
     impl->closed = true;
 }
 
-// Public API
-
 Viewer::~Viewer() { cleanup(this); }
 
 Status open_viewer(Viewer *v, Env *env, const char *title)
@@ -3654,10 +3621,8 @@ void pace_realtime(Viewer *v)
         const auto next   = v->_tick_t + period;
         if (now < next) {
             std::this_thread::sleep_until(next);
-            /* Carry the deadline rather than restarting from the wake time: sleep_until
-             * overshoots by tens of microseconds, and measuring the next period from the
-             * moment we woke would fold that into every step -- roughly 1% at 2 ms and 2% at
-             * 1 ms. */
+            /* Carry the deadline, not the wake time: sleep_until overshoots by tens of
+             * microseconds, about 2% drift per step at 1 ms. */
             v->_tick_t = next;
             return;
         }

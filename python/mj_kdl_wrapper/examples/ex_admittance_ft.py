@@ -24,21 +24,20 @@ KP_NULL, KD_NULL = 100.0, 20.0  # posture gains in the task's null space
 
 # Admittance: virtual mass, damping, stiffness (isotropic); K = 0 holds the pose on release.
 M_ADM, D_ADM, K_ADM = 8.0, 80.0, 0.0
-FORCE_DEADBAND = 2.5  # N; rejects sensor noise and settling transients
-MAX_OFFSET = 0.20     # m; reachable workspace half-extent around home
-MAX_VEL = 0.25        # m/s
+FORCE_DEADBAND = 2.5  # [N] rejects sensor noise and settling transients
+MAX_OFFSET = 0.20     # [m] reachable workspace half-extent around home
+MAX_VEL = 0.25        # [m/s]
 TOOL_BODY = "g_base"  # rigid gripper base; where the headless self-check pushes
 GRIPPER_ACTUATOR = "g_fingers_actuator"
-FT_SITE = "wrist_ft_site"  # the F/T sensor's frame
-GRIPPER_CLOSED = 0.82  # rad; driver joint, the bundled 2F-85's ctrlrange is 0..0.82
+FT_SITE = "wrist_ft_site"
+GRIPPER_CLOSED = 0.82  # [rad] driver joint, the bundled 2F-85's ctrlrange is 0..0.82
 SETTLE_STEPS = 600  # ~0.6 s at dt=0.001 to close the gripper before taring
-HANDOFF_TARE_TIME = 1.0  # s; let scripted-motion transients settle before FT hand-guiding
-GUIDE_TIME = 4.7  # s; hand-guiding window, as long as the self-check's push phases
+HANDOFF_TARE_TIME = 1.0  # [s] lets scripted-motion transients settle before hand-guiding
+GUIDE_TIME = 4.7  # [s] as long as the self-check's push phases
 SELFCHECK_PUSH = (8.0, 12.0, 6.0)
 ELBOW_BODY = "forearm_link"  # its origin is the elbow joint
-MIN_ELBOW_HEIGHT = 0.64  # m above the table
+MIN_ELBOW_HEIGHT = 0.64  # [m] above the table
 
-# Intro helical force: amplitude/shape and how long it is applied.
 TEACH_TIME = 16.0
 TEACH_RADIUS = 0.04
 TEACH_RISE = 0.10

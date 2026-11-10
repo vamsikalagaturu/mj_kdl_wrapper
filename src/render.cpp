@@ -34,8 +34,6 @@ extern char **environ;
 
 namespace mj_kdl {
 
-// Asset providers
-
 static std::filesystem::path asset_dir()
 {
     Dl_info info{};
@@ -104,8 +102,6 @@ void register_asset_providers()
         }
     });
 }
-
-// ffmpeg
 
 // An ffmpeg process taking raw top-down RGB24 on stdin and writing H.264 MP4.
 struct FfmpegSink
@@ -207,8 +203,6 @@ static void sink_close(FfmpegSink *sink)
         MJ_LOG_ERROR("ffmpeg failed while saving recording to '" << sink->path << "'");
     }
 }
-
-// Recorder
 
 using RgbDone = std::function<void(const std::uint8_t *rgb)>;
 

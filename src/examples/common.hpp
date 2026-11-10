@@ -291,8 +291,7 @@ inline std::vector<Phase> pick_place_phases(const PickPlaceWaypoints &w)
     // clang-format on
 }
 
-// RNEA computed-torque acceleration gains: the closed loop is qddot = Kp e - Kd qdot [1/s^2],
-// [1/s].
+// RNEA computed-torque gains [1/s^2], [1/s]: the closed loop is qddot = Kp e - Kd qdot.
 constexpr double kRneaKp[7] = { 100, 200, 100, 200, 100, 200, 100 };
 constexpr double kRneaKd[7] = { 20, 28, 20, 28, 20, 28, 20 };
 

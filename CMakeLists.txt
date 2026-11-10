@@ -29,31 +29,20 @@ set(
   "MuJoCo source checkout"
 )
 
-# Orocos KDL is always the secorolab fork built from source - it is the only KDL this
-# project uses; no system liborocos-kdl is ever consulted. `vcs import <
-# mj_kdl_wrapper.repos` checks it out at the default location.
+# Only the secorolab fork is used; a system liborocos-kdl never is.
 set(
   MJ_KDL_OROCOS_KDL_DIR "${CMAKE_SOURCE_DIR}/third_party/orocos_kinematics_dynamics"
   CACHE PATH
   "Orocos KDL fork source checkout"
 )
-# Consume an already-installed Orocos KDL prefix instead of building the fork.
-# Intended for ROS 2 / colcon, where the secorolab fork is a workspace package
-# and a single shared liborocos-kdl (and PyKDL) must be used everywhere to avoid
-# loading two copies with the same SONAME in one process. When set, no
-# ExternalProject build runs and nothing is bundled; the prefix must contain the
-# secorolab fork. Takes precedence over MJ_KDL_OROCOS_KDL_DIR.
+# For colcon: one shared liborocos-kdl and PyKDL per process, never two copies with the same
+# SONAME. The prefix must hold the secorolab fork; overrides MJ_KDL_OROCOS_KDL_DIR.
 set(
   MJ_KDL_OROCOS_KDL_INSTALL_DIR ""
   CACHE PATH
   "Pre-installed Orocos KDL prefix to consume (skips building/bundling the fork)"
 )
-# Consume an Orocos KDL provided as a CMake package on CMAKE_PREFIX_PATH via
-# find_package(orocos_kdl). This is the natural way to share one KDL across a
-# workspace - a colcon overlay (the fork built as the orocos_kdl package) or any
-# prefix on CMAKE_PREFIX_PATH where the secorolab fork is installed. When ON, no
-# ExternalProject build runs and nothing is bundled. The found package MUST be the
-# secorolab fork, not a stock distro KDL. Takes precedence over
+# The found package must be the secorolab fork, not a stock distro KDL. Overrides
 # MJ_KDL_OROCOS_KDL_INSTALL_DIR and the in-tree build.
 option(
   MJ_KDL_OROCOS_KDL_FROM_PACKAGE
@@ -61,9 +50,7 @@ option(
   OFF
 )
 
-# Optional components on top of the core library, which renders nothing and opens no window.
-# render: offscreen Filament rendering (VideoRecorder); viewer: the Studio window, which records
-# through render. AUTO builds one when the system libraries it needs are found.
+# AUTO builds a component when the system libraries it needs are found; the viewer needs render.
 set(MJ_KDL_WITH_RENDER "AUTO" CACHE STRING "Build the render target: AUTO, ON, or OFF")
 set_property(CACHE MJ_KDL_WITH_RENDER PROPERTY STRINGS AUTO ON OFF)
 set(MJ_KDL_WITH_VIEWER "AUTO" CACHE STRING "Build the viewer target: AUTO, ON, or OFF")
@@ -282,29 +269,17 @@ endif()
 message(STATUS "MuJoCo : ${MJ_KDL_MUJOCO_DIR} -> ${_MJ_KDL_MUJOCO_BIN}")
 endif()
 
-# Build the pinned secorolab Orocos KDL fork at build time via ExternalProject
-# (download + configure + build + install). This is the ONLY KDL the project uses;
-# no system liborocos-kdl is ever consulted. The wrapper consumes it through an
-# IMPORTED target and PyKDL (built later) consumes its install prefix.
 include(ExternalProject)
 # KDL's public headers include <Eigen/Core>, whichever KDL is used.
 find_package(Eigen3 REQUIRED NO_MODULE)
-# TRUE only when this build compiles and installs its own copy of the fork. The
-# consume-from-elsewhere branches leave it FALSE, which switches off PyKDL
-# building, KDL bundling, and the self-contained install of KDL.
+# TRUE only when the fork is built here; it gates building PyKDL and bundling and installing KDL.
 set(_MJ_KDL_BUILD_OROCOS_KDL FALSE)
 if(MJ_KDL_OROCOS_KDL_FROM_PACKAGE)
-  # Consume an Orocos KDL provided as a CMake package on CMAKE_PREFIX_PATH (a
-  # colcon overlay, or any prefix where the fork is installed). find_package
-  # creates the orocos-kdl imported target and sets orocos_kdl_INCLUDE_DIRS.
   find_package(orocos_kdl REQUIRED)
   set(orocos_kdl_LIBRARIES orocos-kdl)
   set(orocos_kdl_DIR "found: orocos_kdl package")
   message(STATUS "Orocos KDL: using found orocos_kdl package")
 elseif(MJ_KDL_OROCOS_KDL_INSTALL_DIR)
-  # Consume a pre-installed Orocos KDL (e.g. a colcon workspace overlay). No
-  # ExternalProject build, no bundling: a single shared liborocos-kdl is used by
-  # the wrapper and by any other package in the same workspace/process.
   find_path(MJ_KDL_OROCOS_KDL_INCLUDE_DIR kdl/chain.hpp
             PATHS "${MJ_KDL_OROCOS_KDL_INSTALL_DIR}/include"
             NO_DEFAULT_PATH REQUIRED)
@@ -352,9 +327,7 @@ ExternalProject_Add(orocos_kdl_ep
     "-DCMAKE_SHARED_LINKER_FLAGS=${CMAKE_SHARED_LINKER_FLAGS}"
   BUILD_BYPRODUCTS "${_MJ_KDL_OROCOS_PREFIX}/lib/liborocos-kdl.so"
 )
-# IMPORTED target the wrapper links against. The install tree is produced by the
-# ExternalProject build step; create the include dir up front so the path
-# recorded on the target is valid at configure time.
+# The install tree appears only at build time; the target's include dir must exist at configure.
 file(MAKE_DIRECTORY "${_MJ_KDL_OROCOS_PREFIX}/include")
 add_library(orocos-kdl SHARED IMPORTED GLOBAL)
 set_target_properties(orocos-kdl PROPERTIES
@@ -394,7 +367,6 @@ add_custom_target(mj_kdl_build_version
   VERBATIM
 )
 
-# Core library: MuJoCo and KDL only.
 add_library(mj_kdl_wrapper SHARED
   src/mj_kdl_wrapper.cpp
   "${CMAKE_CURRENT_BINARY_DIR}/generated/default_stage.cpp"
@@ -420,8 +392,7 @@ target_link_libraries(mj_kdl_wrapper PUBLIC
 target_link_options(mj_kdl_wrapper PUBLIC "LINKER:--disable-new-dtags")
 set_property(TARGET mj_kdl_wrapper APPEND PROPERTY BUILD_RPATH "${MUJOCO_LIB_DIR}")
 
-# When KDL is built via ExternalProject, its headers and library only exist
-# after that build step. Order it before the wrapper compiles/links.
+# The ExternalProjects' headers and libraries exist only after their build steps.
 if(TARGET orocos_kdl_ep)
     add_dependencies(mj_kdl_wrapper orocos_kdl_ep)
 endif()
@@ -477,9 +448,6 @@ if(MJ_KDL_VIEWER_ENABLED)
     add_dependencies(mj_kdl_viewer mj_kdl_viewer_assets)
 endif()
 
-# Optional ROS component: publishes an already-rendered camera frame as sensor_msgs/Image.
-# AUTO builds it when rclcpp and sensor_msgs are both findable; a ROS-less configure simply
-# leaves the target out, and the core library is unchanged either way.
 set(MJ_KDL_WITH_ROS "AUTO" CACHE STRING "Build the camera_ros target: AUTO, ON, or OFF")
 set_property(CACHE MJ_KDL_WITH_ROS PROPERTY STRINGS AUTO ON OFF)
 set(MJ_KDL_ROS_ENABLED OFF)
@@ -522,9 +490,7 @@ endif()
 
 option(BUILD_PYTHON_BINDINGS "Build Python bindings" OFF)
 if(BUILD_PYTHON_BINDINGS)
-    # The wheel does not bundle libmujoco; it reuses the shared library shipped
-    # by the pinned `mujoco` pip package, which installs as a sibling top-level
-    # package (site-packages/mujoco). $ORIGIN/../mujoco resolves to it.
+    # The wheel bundles no libmujoco: it loads the sibling mujoco pip package's, at ../mujoco.
     set_target_properties(mj_kdl_wrapper PROPERTIES
       BUILD_RPATH "${MUJOCO_LIB_DIR}"
       INSTALL_RPATH "$ORIGIN;$ORIGIN/../mujoco"
@@ -545,15 +511,9 @@ if(BUILD_PYTHON_BINDINGS)
         find_package(pybind11 CONFIG REQUIRED)
     endif()
 
-    # PyKDL and liborocos-kdl are built and bundled only when this build owns the
-    # KDL (ExternalProject). When KDL is consumed from elsewhere (a shared prefix
-    # or a found package), its PyKDL comes from there too, so we neither build nor
-    # bundle them - the goal is exactly one copy across the workspace/process.
+    # An external KDL brings its own PyKDL: exactly one copy per process.
     if(_MJ_KDL_BUILD_OROCOS_KDL)
-        # Build PyKDL from the same checkout, at build time, against the
-        # ExternalProject-installed Orocos KDL. python_orocos_kdl is a separate CMake
-        # project that find_package()s an installed orocos_kdl, so it must run after
-        # orocos_kdl_ep has installed (enforced via DEPENDS).
+        # python_orocos_kdl find_package()s an installed orocos_kdl, hence DEPENDS orocos_kdl_ep.
         set(_MJ_KDL_PYKDL_INSTALL "${CMAKE_BINARY_DIR}/python_orocos_kdl_install")
         ExternalProject_Add(pykdl_ep
           DEPENDS          orocos_kdl_ep
@@ -577,9 +537,7 @@ if(BUILD_PYTHON_BINDINGS)
             -DCMAKE_SHARED_LINKER_FLAGS=-Wl,--disable-new-dtags
           UPDATE_DISCONNECTED TRUE
         )
-        # Bundle PyKDL (top-level module) and the Orocos KDL shared library from the
-        # ExternalProject install trees. FILES_MATCHING globs at install time, after
-        # both ExternalProject builds have run.
+        # FILES_MATCHING globs at install time, after both ExternalProject builds have run.
         install(DIRECTORY "${_MJ_KDL_PYKDL_INSTALL}/"
           DESTINATION .
           FILES_MATCHING PATTERN "PyKDL*.so"
@@ -624,9 +582,7 @@ if(BUILD_PYTHON_BINDINGS)
     endif()
     target_compile_features(_mj_kdl_wrapper PRIVATE cxx_std_20)
     target_compile_options(_mj_kdl_wrapper PRIVATE -Wall -Wextra -Wpedantic)
-    # The extension calls MuJoCo directly, so libmujoco is a direct dependency
-    # of this module too. DT_RUNPATH is not transitive, so it needs its own
-    # entry for the sibling mujoco pip package alongside $ORIGIN.
+    # The module calls MuJoCo directly and DT_RUNPATH is not transitive: it needs ../mujoco too.
     set_target_properties(_mj_kdl_wrapper PROPERTIES
       BUILD_RPATH "$<TARGET_FILE_DIR:mj_kdl_wrapper>"
       INSTALL_RPATH "$ORIGIN;$ORIGIN/../mujoco"
@@ -651,12 +607,9 @@ if(BUILD_PYTHON_BINDINGS)
     install(DIRECTORY assets/
       DESTINATION mj_kdl_wrapper/assets
     )
-    # libmujoco and its plugins are not bundled: the wheel depends on the matching mujoco pip
-    # package, which loads them, and links its library at runtime via $ORIGIN/../mujoco. The
-    # render and viewer libraries carry Filament and Studio statically, with their assets beside.
+    # libmujoco and its plugins are not bundled: the mujoco pip package loads them.
 endif()
 
-# Examples (GUI by default; pass --headless to skip the window)
 option(BUILD_EXAMPLES "Build examples" ON)
 if(BUILD_EXAMPLES AND MJ_KDL_VIEWER_ENABLED)
     add_subdirectory(src/examples)
@@ -664,16 +617,12 @@ elseif(BUILD_EXAMPLES)
     message(STATUS "examples: not built, they open the viewer (MJ_KDL_WITH_VIEWER)")
 endif()
 
-# Tests
 option(BUILD_TESTS "Build and register tests with CTest" ON)
 if(BUILD_TESTS)
     enable_testing()
     add_subdirectory(test)
 endif()
 
-# Documentation (Doxygen + local CSS)
-# Build separately:  cmake --build build --target docs
-# Requires:  sudo apt install doxygen
 option(BUILD_DOCS "Generate HTML documentation with Doxygen" OFF)
 if(BUILD_DOCS)
     find_package(Doxygen REQUIRED)
@@ -740,7 +689,6 @@ if(BUILD_DOCS)
     message(STATUS "Doxygen: docs target enabled (run: cmake --build build --target docs)")
 endif()
 
-# Install
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
@@ -753,12 +701,7 @@ option(
   "Install the C++ library, headers, and CMake package config"
   ${_MJ_KDL_INSTALL_CPP_PACKAGE_DEFAULT}
 )
-# Make the install self-contained: also install the Orocos KDL fork we built (its
-# library, headers, and CMake package config) into the same prefix, so the
-# installed wrapper loads KDL via $ORIGIN and sibling packages in the prefix can
-# find_package(orocos_kdl). Disable to keep KDL out of a shared prefix (e.g.
-# /usr/local) where it could shadow a distro KDL. Has no effect when consuming an
-# external KDL via MJ_KDL_OROCOS_KDL_INSTALL_DIR (that prefix is already shared).
+# OFF keeps KDL out of a shared prefix (e.g. /usr/local), where it could shadow a distro KDL.
 option(
   MJ_KDL_INSTALL_BUNDLED_KDL
   "Install the built Orocos KDL fork into the prefix so the install is self-contained"
@@ -782,8 +725,7 @@ if(MJ_KDL_INSTALL_CPP_PACKAGE)
             )
         endif()
     endforeach()
-    # MuJoCo is built here, so the prefix carries it: its library, headers and plugins, and
-    # the Filament and Studio assets the render and viewer libraries read beside them.
+    # MuJoCo is built here, so the prefix carries its library, headers, plugins and assets.
     install(FILES "${_MJ_KDL_MUJOCO_LIB}" DESTINATION ${CMAKE_INSTALL_LIBDIR})
     install(CODE "file(CREATE_LINK libmujoco.so.${MJ_KDL_MUJOCO_VERSION}
       \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/libmujoco.so\" SYMBOLIC)")
@@ -858,10 +800,6 @@ if(MJ_KDL_INSTALL_CPP_PACKAGE)
               INSTALL_RPATH "${_mj_kdl_kdl_dir}")
         endif()
     endif()
-    # Self-contained install: bundle the fork we built (lib + headers + its CMake
-    # package config) into this prefix and rpath the wrapper to $ORIGIN so it loads
-    # the co-installed liborocos-kdl. Skipped when consuming an external KDL, which
-    # is already shared from its own prefix.
     set(_MJ_KDL_KDL_IN_PREFIX OFF)
     if(MJ_KDL_INSTALL_BUNDLED_KDL AND _MJ_KDL_BUILD_OROCOS_KDL)
         set(_MJ_KDL_KDL_IN_PREFIX ON)

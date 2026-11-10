@@ -14,7 +14,7 @@ namespace mj_kdl {
 /**
  * @ingroup grp_recorder
  * Publishes the simulation time on /clock (rosgraph_msgs/Clock), the topic nodes running with
- * use_sim_time follow, as a ROS simulator does. Part of mj_kdl_wrapper::camera_ros.
+ * use_sim_time follow. Part of mj_kdl_wrapper::camera_ros.
  *
  * Like CameraRosPublisher it borrows the caller's node and creates no executor or thread. Call
  * publish() from the thread that steps the Env, once per step or at whatever rate the clock's
