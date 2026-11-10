@@ -45,6 +45,10 @@ cmake.args = [
   "-DBUILD_PYTHON_BINDINGS=ON",
   "-DBUILD_TESTS=OFF",
   "-DBUILD_EXAMPLES=OFF",
+  # Python gets the same viewer and recorder as C++; MuJoCo's source (mj_kdl_wrapper.repos)
+  # supplies their Filament and Studio archives.
+  "-DMJ_KDL_WITH_RENDER=ON",
+  "-DMJ_KDL_WITH_VIEWER=ON",
 ]
 build-dir = "build/{wheel_tag}"
 sdist.include = [

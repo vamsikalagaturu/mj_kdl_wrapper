@@ -47,7 +47,8 @@ sudo apt install \
 `doxygen` is only needed for the docs target; `python3-dev`/`python3-venv` only
 for the Python package; `ffmpeg` only for recording. `libegl-dev` is for the render library,
 and the X11, Wayland and GL headers are what MuJoCo's Filament and SDL2 builds use for the
-viewer; without them `AUTO` leaves those libraries out. `vcstool` is also on PyPI (`pip install vcstool`); ROS apt sources
+viewer; without them `AUTO` leaves those libraries out, and the Python package, which always
+builds both, fails. `vcstool` is also on PyPI (`pip install vcstool`); ROS apt sources
 name it `python3-vcstool`.
 
 ## C++ (CMake)
@@ -226,12 +227,15 @@ the [ROS 2 workflow](ros2.md) shares one KDL across a colcon overlay.
 
 ## Python
 
-`pip install` builds the core library's extension and bundles the secorolab Orocos KDL fork
-and PyKDL. It compiles against the headers and `libmujoco` of the pip `mujoco-core==4.0.0`
-build requirement, with no MuJoCo source build, and the wheel depends on `mujoco==4.0.0`,
-whose shared library and plugins it loads at runtime. Viewing and rendering use that package
-too: `mj_kdl_wrapper.viewer.Viewer` (`mujoco.studio`) and `mujoco.rendering.filament`. The
-build is isolated - it does not reuse any C++ build tree. Python >= 3.11.
+`pip install` builds the extension with the core, render and viewer libraries and bundles the
+secorolab Orocos KDL fork and PyKDL, so Python gets the same viewer (`mjk.Viewer`) and
+recorder (`mjk.VideoRecorder`) as C++. It builds MuJoCo's Filament and Studio archives from
+the `third_party/mujoco` source (`vcs import < mj_kdl_wrapper.repos` first, and the same apt
+headers as the C++ viewer build) and links them against the headers and `libmujoco` of the
+pip `mujoco-core==4.0.0` build requirement, so a process loads one `libmujoco`. The wheel
+depends on `mujoco==4.0.0`, whose shared library and plugins it loads at runtime; MP4
+recording needs ffmpeg on `PATH`. The build is isolated - it does not reuse any C++ build
+tree. Python >= 3.11.
 
 PyKDL is bundled inside the wheel as a top-level extension module. It imports as
 `PyKDL` but does not appear as a separate package in `pip list` / `uv pip list`.

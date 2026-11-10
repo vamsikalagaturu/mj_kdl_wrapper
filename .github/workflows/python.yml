@@ -23,11 +23,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The wheel builds the core only, against the pip mujoco-core package.
+      # The wheel links the pip mujoco-core library and builds the same viewer and recorder as
+      # C++, so it needs the same headers (EGL, X11, Wayland) and ffmpeg for the recorder test.
       - name: Install dependencies
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y ccache vcstool libeigen3-dev
+          sudo apt-get install -y \
+            ccache ninja-build ffmpeg vcstool \
+            libeigen3-dev libegl-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -42,7 +46,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Import the Orocos KDL fork
+      - name: Import the Orocos KDL fork and MuJoCo
         run: vcs import < mj_kdl_wrapper.repos
 
       - name: Build and test the Python bindings

@@ -69,13 +69,6 @@ set_property(CACHE MJ_KDL_WITH_RENDER PROPERTY STRINGS AUTO ON OFF)
 set(MJ_KDL_WITH_VIEWER "AUTO" CACHE STRING "Build the viewer target: AUTO, ON, or OFF")
 set_property(CACHE MJ_KDL_WITH_VIEWER PROPERTY STRINGS AUTO ON OFF)
 
-# A wheel renders and views through the mujoco Python package it installs beside (mujoco.Renderer,
-# mujoco.studio), so it is built from the core alone.
-if(DEFINED SKBUILD)
-    set(MJ_KDL_WITH_RENDER "OFF" CACHE STRING "Build the render target: AUTO, ON, or OFF" FORCE)
-    set(MJ_KDL_WITH_VIEWER "OFF" CACHE STRING "Build the viewer target: AUTO, ON, or OFF" FORCE)
-endif()
-
 set(MJ_KDL_RENDER_ENABLED OFF)
 if(NOT MJ_KDL_WITH_RENDER STREQUAL "OFF")
     # Filament renders headless through EGL.
@@ -131,7 +124,12 @@ set_target_properties(mujoco::mujoco PROPERTIES
 # Importing mujoco registers its plugins, so the wrapper never loads any itself.
 set(MJ_KDL_MUJOCO_PLUGIN_DIR "")
 message(STATUS "MuJoCo : pip package ${MUJOCO_LIB_DIR}")
-else()
+endif()
+
+# The source build supplies libmujoco to a C++ build, and the Filament and Studio archives to
+# both; a wheel takes only the archives and links them against the pip package's libmujoco,
+# the same 4.0.0 library, so a process never loads two.
+if(NOT DEFINED SKBUILD OR MJ_KDL_RENDER_ENABLED)
 if(NOT EXISTS "${MJ_KDL_MUJOCO_DIR}/CMakeLists.txt")
     message(FATAL_ERROR
       "No MuJoCo source at ${MJ_KDL_MUJOCO_DIR}. Run 'vcs import < mj_kdl_wrapper.repos' "
@@ -154,15 +152,20 @@ endif()
 # links them with.
 include(ExternalProject)
 set(_MJ_KDL_MUJOCO_BIN "${CMAKE_BINARY_DIR}/mujoco")
-set(MUJOCO_LIB_DIR "${_MJ_KDL_MUJOCO_BIN}/lib")
-set(MJ_KDL_MUJOCO_PLUGIN_DIR "${MUJOCO_LIB_DIR}/mujoco_plugin")
-set(_MJ_KDL_MUJOCO_LIB "${MUJOCO_LIB_DIR}/libmujoco.so.${MJ_KDL_MUJOCO_VERSION}")
+set(_MJ_KDL_MUJOCO_ARCHIVE_DIR "${_MJ_KDL_MUJOCO_BIN}/lib")
 
-set(_mj_kdl_mujoco_targets mujoco actuator sensor sdf_plugin)
-set(_mj_kdl_mujoco_byproducts "${_MJ_KDL_MUJOCO_LIB}")
-foreach(_plugin actuator sensor sdf_plugin)
-    list(APPEND _mj_kdl_mujoco_byproducts "${MJ_KDL_MUJOCO_PLUGIN_DIR}/lib${_plugin}.so")
-endforeach()
+set(_mj_kdl_mujoco_targets)
+set(_mj_kdl_mujoco_byproducts)
+if(NOT DEFINED SKBUILD)
+    set(MUJOCO_LIB_DIR "${_MJ_KDL_MUJOCO_ARCHIVE_DIR}")
+    set(MJ_KDL_MUJOCO_PLUGIN_DIR "${MUJOCO_LIB_DIR}/mujoco_plugin")
+    set(_MJ_KDL_MUJOCO_LIB "${MUJOCO_LIB_DIR}/libmujoco.so.${MJ_KDL_MUJOCO_VERSION}")
+    list(APPEND _mj_kdl_mujoco_targets mujoco actuator sensor sdf_plugin)
+    list(APPEND _mj_kdl_mujoco_byproducts "${_MJ_KDL_MUJOCO_LIB}")
+    foreach(_plugin actuator sensor sdf_plugin)
+        list(APPEND _mj_kdl_mujoco_byproducts "${MJ_KDL_MUJOCO_PLUGIN_DIR}/lib${_plugin}.so")
+    endforeach()
+endif()
 # In link order: each archive comes before the ones it needs.
 set(_mj_kdl_filament_archives
   mujoco_filament dear_imgui filament backend image ktxreader utils math bluegl bluevk filabridge
@@ -176,14 +179,14 @@ set(_mj_kdl_platform_archives
 if(MJ_KDL_RENDER_ENABLED)
     list(APPEND _mj_kdl_mujoco_targets mujoco_filament mujoco_filament_assets)
     foreach(_archive IN LISTS _mj_kdl_filament_archives)
-        list(APPEND _mj_kdl_mujoco_byproducts "${MUJOCO_LIB_DIR}/lib${_archive}.a")
+        list(APPEND _mj_kdl_mujoco_byproducts "${_MJ_KDL_MUJOCO_ARCHIVE_DIR}/lib${_archive}.a")
     endforeach()
 endif()
 if(MJ_KDL_VIEWER_ENABLED)
     # webp writes Save Screenshot's file, as in Studio's own app.
     list(APPEND _mj_kdl_mujoco_targets mujoco_studio_platform mujoco_studio_assets webp)
     foreach(_archive IN LISTS _mj_kdl_platform_archives)
-        list(APPEND _mj_kdl_mujoco_byproducts "${MUJOCO_LIB_DIR}/lib${_archive}.a")
+        list(APPEND _mj_kdl_mujoco_byproducts "${_MJ_KDL_MUJOCO_ARCHIVE_DIR}/lib${_archive}.a")
     endforeach()
 endif()
 set(_mj_kdl_mujoco_build_command ${CMAKE_COMMAND} --build <BINARY_DIR> --config Release)
@@ -216,13 +219,15 @@ ExternalProject_Add(mujoco_ep
 )
 
 set(_MJ_KDL_MUJOCO_DEPS "${_MJ_KDL_MUJOCO_BIN}/_deps")
-add_library(mujoco::mujoco SHARED IMPORTED GLOBAL)
-set_target_properties(mujoco::mujoco PROPERTIES
-  IMPORTED_LOCATION "${_MJ_KDL_MUJOCO_LIB}"
-  IMPORTED_SONAME "libmujoco.so.${MJ_KDL_MUJOCO_VERSION}"
-  INTERFACE_INCLUDE_DIRECTORIES "${MJ_KDL_MUJOCO_DIR}/include"
-)
-add_dependencies(mujoco::mujoco mujoco_ep)
+if(NOT DEFINED SKBUILD)
+    add_library(mujoco::mujoco SHARED IMPORTED GLOBAL)
+    set_target_properties(mujoco::mujoco PROPERTIES
+      IMPORTED_LOCATION "${_MJ_KDL_MUJOCO_LIB}"
+      IMPORTED_SONAME "libmujoco.so.${MJ_KDL_MUJOCO_VERSION}"
+      INTERFACE_INCLUDE_DIRECTORIES "${MJ_KDL_MUJOCO_DIR}/include"
+    )
+    add_dependencies(mujoco::mujoco mujoco_ep)
+endif()
 
 if(MJ_KDL_RENDER_ENABLED)
     set(_mj_kdl_filament_includes
@@ -236,7 +241,7 @@ if(MJ_KDL_RENDER_ENABLED)
     foreach(_archive IN LISTS _mj_kdl_filament_archives)
         add_library(mujoco::dep::${_archive} STATIC IMPORTED GLOBAL)
         set_target_properties(mujoco::dep::${_archive} PROPERTIES
-          IMPORTED_LOCATION "${MUJOCO_LIB_DIR}/lib${_archive}.a")
+          IMPORTED_LOCATION "${_MJ_KDL_MUJOCO_ARCHIVE_DIR}/lib${_archive}.a")
         add_dependencies(mujoco::dep::${_archive} mujoco_ep)
         list(APPEND _mj_kdl_filament_links mujoco::dep::${_archive})
     endforeach()
@@ -261,7 +266,7 @@ if(MJ_KDL_VIEWER_ENABLED)
     foreach(_archive IN LISTS _mj_kdl_platform_archives)
         add_library(mujoco::dep::${_archive} STATIC IMPORTED GLOBAL)
         set_target_properties(mujoco::dep::${_archive} PROPERTIES
-          IMPORTED_LOCATION "${MUJOCO_LIB_DIR}/lib${_archive}.a")
+          IMPORTED_LOCATION "${_MJ_KDL_MUJOCO_ARCHIVE_DIR}/lib${_archive}.a")
         add_dependencies(mujoco::dep::${_archive} mujoco_ep)
         list(APPEND _mj_kdl_platform_links mujoco::dep::${_archive})
     endforeach()
@@ -579,6 +584,24 @@ if(BUILD_PYTHON_BINDINGS)
       python/src/bindings.cpp
     )
     target_link_libraries(_mj_kdl_wrapper PRIVATE mj_kdl_wrapper)
+    # Python views and records through the same C++ viewer and recorder, not a second UI.
+    foreach(_component render viewer)
+        if(TARGET mj_kdl_${_component})
+            string(TOUPPER "${_component}" _component_upper)
+            target_link_libraries(_mj_kdl_wrapper PRIVATE mj_kdl_${_component})
+            target_compile_definitions(_mj_kdl_wrapper PRIVATE
+              MJ_KDL_PYTHON_${_component_upper})
+            set_target_properties(mj_kdl_${_component} PROPERTIES
+              INSTALL_RPATH "$ORIGIN;$ORIGIN/../mujoco")
+            install(TARGETS mj_kdl_${_component}
+              LIBRARY DESTINATION mj_kdl_wrapper
+              RUNTIME DESTINATION mj_kdl_wrapper
+            )
+        endif()
+    endforeach()
+    if(TARGET mj_kdl_render)
+        install(DIRECTORY "${MJ_KDL_RENDER_ASSETS_DIR}" DESTINATION mj_kdl_wrapper)
+    endif()
     if(TARGET orocos_kdl_ep)
         # bindings.cpp includes KDL headers produced by the ExternalProject.
         add_dependencies(_mj_kdl_wrapper orocos_kdl_ep)
@@ -616,7 +639,8 @@ if(BUILD_PYTHON_BINDINGS)
       DESTINATION mj_kdl_wrapper/assets
     )
     # libmujoco and its plugins are not bundled: the wheel depends on the matching mujoco pip
-    # package, which loads them, and links its library at runtime via $ORIGIN/../mujoco.
+    # package, which loads them, and links its library at runtime via $ORIGIN/../mujoco. The
+    # render and viewer libraries carry Filament and Studio statically, with their assets beside.
 endif()
 
 # Examples (GUI by default; pass --headless to skip the window)

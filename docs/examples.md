@@ -289,8 +289,7 @@ python -m mj_kdl_wrapper.examples.ex_admittance_ft --gui
 `--record [out.mp4]` runs a C++ example headless and writes an H.264 MP4 through
 `VideoRecorder` (`mj_kdl_wrapper::render`: Filament offscreen rendering + ffmpeg pipe); no
 window is needed. A recorder that cannot start or write fails the run. The Python
-`ex_table_pour.py --record` renders with `mujoco.rendering.filament` and encodes with
-`imageio[ffmpeg]` (`pip install "imageio[ffmpeg]"`).
+`ex_table_pour.py --record` uses the same recorder, `mjk.VideoRecorder`.
 
 ```bash
 ./build/src/examples/ex_table_pour --record pour.mp4        # 1080p, default table_pour.mp4

@@ -30,7 +30,7 @@ in C++ and Python.
   window, and `mj_kdl_wrapper::render`, headless MP4 capture with MuJoCo's Filament renderer
   and ffmpeg.
 - **Python bindings** -- the same `Env` and `Robot`, returning PyKDL types and numpy arrays;
-  `mj_kdl_wrapper.viewer.Viewer` shows an `Env` through `mujoco.studio`.
+  `mjk.Viewer` and `mjk.VideoRecorder` are the same C++ Studio window and Filament recorder.
 
 ## Install
 
@@ -49,7 +49,7 @@ vcs import < mj_kdl_wrapper.repos            # the KDL fork and MuJoCo, into thi
 
 The second line of packages is for the render and viewer libraries (`libegl-dev` for render,
 the X11, Wayland and GL headers for MuJoCo's Filament and SDL2 builds); without them CMake
-builds the core only.
+builds the core only, and `pip install .` fails.
 
 `main` only advances at releases, so a plain clone is the latest release; `--branch vX.Y.Z`
 pins an older one. `vcstool` is also on PyPI; ROS apt sources name it `python3-vcstool`.
@@ -73,8 +73,10 @@ uv pip install .
 python python/mj_kdl_wrapper/examples/ex_table_pick_place.py --gui
 ```
 
-The wheel builds the core only and bundles the KDL fork, PyKDL and the `assets/` models;
-MuJoCo, its plugins, viewer and renderers come from the pinned `mujoco` pip package.
+The wheel builds the core, the viewer and the recorder (from the `third_party/mujoco` source,
+so `vcs import` and the apt headers above are needed first) and bundles the KDL fork, PyKDL
+and the `assets/` models; `libmujoco` and its plugins come from the pinned `mujoco` pip
+package.
 
 **ROS 2 (colcon)**, Jazzy or Lyrical, with KDL as its own package so the overlay shares one
 `liborocos-kdl`:

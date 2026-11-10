@@ -18,7 +18,7 @@ The Python API has the same layers as the C++ wrapper:
 | Scene description | `SceneSpec`, `RobotSpec`, `AttachmentSpec`, `SceneObject`, `CameraSpec` | Describe what should be compiled into MuJoCo |
 | Runtime owner | `Env` | Own the compiled MuJoCo model/data, the robots and the overlay geoms |
 | Robot control handle | `Robot` | KDL chain, measured ports, command ports |
-| Visualization/recording | `mj_kdl_wrapper.viewer.Viewer`, mujoco's renderers | MuJoCo Studio window (`mujoco.studio`) and offscreen rendering (`mujoco.rendering.filament`) |
+| Visualization/recording | `Viewer`, `VideoRecorder` | The C++ MuJoCo Studio window and Filament offscreen recorder (MP4 or RGB frames) |
 | KDL interop | `PyKDL` | FK, IK, dynamics solvers over the wrapper-built chain |
 
 Most applications follow this flow:
@@ -27,9 +27,9 @@ Most applications follow this flow:
 2. Call `Env.build(spec)`.
 3. Create one or more `Robot` handles with `env.create_robot()`.
 4. Install `env.on_reset` if task state must be restored.
-5. Optionally open a `Viewer(env, title)`.
+5. Optionally create a `Viewer()` and `open(env, title)` it.
 6. In the loop: `env.update()`, compute commands, write command ports, then `env.step()`
-   (or `viewer.step()`, which also syncs with the window and paces).
+   (`False` once the window is closed) and `viewer.pace()` (a no-op without a window).
 7. Close the viewer, the recorder and the environment when done.
 
 ## Complete Runnable Script
@@ -52,7 +52,6 @@ import argparse
 import PyKDL as kdl
 
 import mj_kdl_wrapper as mjk
-from mj_kdl_wrapper.viewer import Viewer
 
 
 HOME_POSE = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
@@ -143,7 +142,7 @@ def main() -> int:
     args = parser.parse_args()
 
     env, robot = build_env()
-    viewer = None
+    viewer = mjk.Viewer()
     try:
         robot.ctrl_mode = mjk.CtrlMode.TORQUE
 
@@ -166,14 +165,14 @@ def main() -> int:
         start_xyz = tcp_xyz()
 
         if not args.headless:
-            viewer = Viewer(env, "python tutorial")
-        step = viewer.step if viewer else env.step
+            viewer.open(env, "python tutorial")
         end_time = env.data.time + args.duration
         # Ends after the duration either way; closing the window ends it early.
         while env.data.time < end_time:
             run_controller(env, robot, dyn)
-            if not step():
+            if not env.step():
                 break
+            viewer.pace()
 
         env.update()
         end_xyz = tcp_xyz()
@@ -184,8 +183,7 @@ def main() -> int:
         print(f"cameras: {' '.join(cameras)}")
         print(f"EE drift: {drift:.6f} m")
     finally:
-        if viewer:
-            viewer.close()
+        viewer.close()
         env.close()
     return 0
 
@@ -403,7 +401,8 @@ top-level bodies.
 
 ```python
 env = mjk.Env.build(spec)
-viewer = Viewer(env, "object scene")   # from mj_kdl_wrapper.viewer import Viewer
+viewer = mjk.Viewer()
+viewer.open(env, "object scene")
 ```
 
 ## 7. Add Cameras
@@ -421,11 +420,12 @@ camera.fovy = 45.0
 spec.cameras = [camera]
 ```
 
-List compiled cameras after build. A renderer switches to one through its
-`mujoco.MjvCamera` (`type = mujoco.mjtCamera.mjCAMERA_FIXED`, `fixedcamid` = the camera's id):
+List compiled cameras after build. `use_camera(name)` switches a viewer or a recorder to one;
+`use_camera("")` returns to the free camera:
 
 ```python
 print([env.model.camera(i).name for i in range(env.model.ncam)])
+viewer.use_camera("task")
 ```
 
 ## 8. Write Reset Hooks
@@ -435,7 +435,7 @@ stale commands do not hit the first post-reset step), runs your hook, then reads
 measurements back. A command the hook primes is kept; a POSITION robot the hook moves needs
 its `jnt_pos_cmd` set there too. The viewer's reset button does the same. The hook gets a
 `ResetContext` copy it may keep; an exception it raises comes out of `reset()` (or the
-`viewer.step()` that ran a UI reset) once the measurements are read back.
+`env.step()` that ran a UI reset) once the measurements are read back.
 
 ```python
 home = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
@@ -460,27 +460,29 @@ and task state. Avoid hiding reset logic in the control loop.
 
 ## 9. Use The Viewer
 
-`mj_kdl_wrapper.viewer.Viewer(env, title)` opens a MuJoCo Studio window (`mujoco.studio`)
-on the `Env`, with or without robots. The window runs on a thread of its own; your loop
-still owns controller logic and its end condition. `viewer.step()` syncs with the window,
-steps the `Env` unless the window is paused, and paces to the window's speed; it returns
-`False` once the window is closed.
+`mjk.Viewer` is the C++ viewer: the same MuJoCo Studio window, menus, panels and keys as a
+C++ program gets. `viewer.open(env, title)` opens it on the `Env`, with or without robots,
+and raises `RuntimeError` without a display. The window runs on a thread of its own; your
+loop still owns controller logic and its end condition. The window's pause, reset,
+perturbation and edits reach the `Env` inside `env.step()`, which returns `False` once the
+window is closed; `viewer.pace()` then sleeps out one timestep at the window's speed.
 
 ```python
-from mj_kdl_wrapper.viewer import Viewer
-
-viewer = Viewer(env, "task")
+viewer = mjk.Viewer()
+viewer.open(env, "task")
 while env.data.time < 10.0:
     env.update()
     robot.jnt_trq_cmd = gravity()
-    if not viewer.step():
+    if not env.step():
         break
+    viewer.pace()
 viewer.close()
 ```
 
-The window's pause, speed, reset, perturbation and physics panels are mujoco's own.
-`viewer.speed` is in percent of real time; `viewer.paused` reads the pause. `Viewer` is also
-a context manager.
+`viewer.realtime_factor` is `pace()`'s speed (1.0 real time, 0.0 uncapped).
+`key_pressed(key)` and `capture_key(key)` take `ImGuiKey` integer codes as in `imgui.h`;
+`set_free_camera(distance, azimuth, elevation, lookat)` places the free camera. `Viewer` is
+also a context manager.
 
 ### Draw A Live Trajectory Trace Overlay
 
@@ -503,8 +505,9 @@ while env.data.time < 10.0:
         env.add_trace_segment(a, b, orange)
 
     robot.jnt_trq_cmd = gravity()
-    if not viewer.step():
+    if not env.step():
         break
+    viewer.pace()
 ```
 
 `add_trace_segment()` and `add_overlay_arrow()` silently drop geoms once the overlay is
@@ -513,39 +516,24 @@ full (8192 geoms), so keep the trace bounded. `env.overlay_geoms()` returns them
 
 ## 10. Record Video
 
-The wheel has no recorder of its own; render with mujoco's renderers. This is the
-`Recorder` of `ex_table_pour.py`: `mujoco.rendering.filament` into a numpy array, encoded by
-`imageio[ffmpeg]` (`pip install "imageio[ffmpeg]"`). Render after stepping the state you want
-captured.
+`mjk.VideoRecorder` is the C++ recorder: Filament offscreen rendering, encoded to MP4 by
+ffmpeg (on `PATH`), with no window needed; `ex_table_pour.py --record` uses it. Record after
+stepping the state you want captured.
 
 ```python
-import imageio.v2 as imageio
-import mujoco
-import numpy as np
-from mujoco import mjrf
-from mujoco.rendering.filament import model_scene, renderer
-
-r = renderer.Renderer(mjrf.Context(mjrf.ContextConfig()))
-scene = model_scene.ModelScene(r.context, env.model, r.scene("scn"))
-pixels = np.empty((720, 1280, 3), dtype=np.uint8)
-r.target("out", pixels)
-cam = mujoco.MjvCamera()
-cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
-cam.fixedcamid = env.model.camera("task").id
-writer = imageio.get_writer("episode.mp4", fps=60, codec="libx264", macro_block_size=1)
-
-try:
-    for _ in range(3000):
+with mjk.VideoRecorder.open_preset(env, "episode.mp4", mjk.VideoResolution.R720p, 60) as vr:
+    vr.use_camera("task")
+    for i in range(3000):
         env.update()
         robot.jnt_trq_cmd = gravity()
         env.step()
-        scene.update(env.data)
-        gl_cam = mujoco.mjv_camera2GLCamera(env.model, env.data, cam)
-        r.render([renderer.View(scene="scn", target="out", camera=gl_cam)])
-        writer.append_data(pixels)
-finally:
-    writer.close()
+        if i % 8 == 0:                 # 60 fps at a 2 ms timestep
+            vr.record_frame()
 ```
+
+`VideoRecorder.open(env, out_path, width, height, fps)` takes an explicit size.
+`VideoRecorder.open_offscreen(env, width, height)` writes no file; its `render_rgb()` returns
+the current frame as a `(height, width, 3)` `uint8` numpy array.
 
 ## 11. Build A Tabletop Task Structure
 

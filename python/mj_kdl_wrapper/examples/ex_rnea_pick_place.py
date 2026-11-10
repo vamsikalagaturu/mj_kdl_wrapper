@@ -13,7 +13,6 @@ from dataclasses import dataclass
 import PyKDL as kdl
 
 import mj_kdl_wrapper as mjk
-from mj_kdl_wrapper.viewer import Viewer
 
 HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 SURFACE_Z = 0.70
@@ -265,8 +264,9 @@ def run_phase(env, robots, fingers, solvers, phase: Phase, state: dict) -> bool:
         done_pose = phase.settle_tol < 0.0 or err <= phase.settle_tol
         if (elapsed >= phase.duration and done_pose) or elapsed >= phase.timeout:
             return True
-        if not state["step"]():
+        if not env.step():
             return False
+        state["viewer"].pace()
         if state["reset"]:
             state["reset"] = False
             raise ResetRequested()
@@ -283,7 +283,7 @@ def main() -> int:
     args = parser.parse_args()
 
     env, robots = build_env()
-    viewer = None
+    viewer = mjk.Viewer()
     try:
         print(f"cameras: {' '.join(env.model.camera(i).name for i in range(env.model.ncam))}")
         fingers = [env.data.actuator(p + "g_fingers_actuator") for p in PREFIXES]
@@ -317,8 +317,8 @@ def main() -> int:
         env.reset()
         state["reset"] = False
         if args.gui:
-            viewer = Viewer(env, "ex_rnea_pick_place.py")
-        state["step"] = viewer.step if viewer else env.step
+            viewer.open(env, "ex_rnea_pick_place.py")
+        state["viewer"] = viewer
 
         completed = False
         while not completed:
@@ -352,8 +352,7 @@ def main() -> int:
         print(f"arm-to-arm contacts: {m['arm_contacts']} (limit 0)")
         ok = ok and m["disturb"] <= MAX_DISTURB and m["arm_contacts"] == 0
     finally:
-        if viewer:
-            viewer.close()
+        viewer.close()
         env.close()
     if args.gui:
         return 0

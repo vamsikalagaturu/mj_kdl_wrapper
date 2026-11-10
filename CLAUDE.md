@@ -35,8 +35,8 @@
 ## Python bindings
 
 - Package under `python/`, built by scikit-build-core (`pyproject.toml` sets `-DBUILD_PYTHON_BINDINGS=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF`).
-- A wheel build (`SKBUILD`) builds only the core and compiles against the pip `mujoco-core` package's headers and `libmujoco` (a build requirement); no MuJoCo source build.
-- Viewing and rendering in Python use the `mujoco` release itself: `mj_kdl_wrapper.viewer.Viewer` wraps `mujoco.studio` (custom sim loop), recordings use `mujoco.rendering.filament`.
+- A wheel build (`SKBUILD`) links the pip `mujoco-core` package's `libmujoco` (a build requirement) and builds render and viewer (`pyproject.toml` forces them ON) from MuJoCo's Filament and Studio archives, compiled from `third_party/mujoco`; the process loads one libmujoco.
+- Python views and records through the same C++ code: `mjk.Viewer` (`open(env, title)`, then `env.step()` and `viewer.pace()`) and `mjk.VideoRecorder` bind `mj_kdl::Viewer` and `mj_kdl::VideoRecorder`. Never add a second, Python-side UI: C++ and Python must not differ.
 - Install: `vcs import < mj_kdl_wrapper.repos` then `uv pip install .` into `.venv` (`uv venv .venv --python 3.12`); tests: `.venv/bin/pytest -q python/tests`. Python >= 3.11 (MuJoCo 4.0 dropped 3.10).
 - `python/mj_kdl_wrapper/examples/ex_*.py` mirror `src/examples/ex_*.cpp`, run headless by default, take `--gui`, and end by themselves.
 - The wheel maps only `mj_kdl_wrapper` -> `python/mj_kdl_wrapper`; CMake installs the repo-root `assets/` into it. Never map `assets/` in the wheel: the editable install would put the workspace `src/` on `sys.path`.

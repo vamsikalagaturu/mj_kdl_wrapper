@@ -1,4 +1,10 @@
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
+#ifdef MJ_KDL_PYTHON_RENDER
+#include "mj_kdl_wrapper/render.hpp"
+#endif
+#ifdef MJ_KDL_PYTHON_VIEWER
+#include "mj_kdl_wrapper/viewer.hpp"
+#endif
 
 #include <mujoco/mujoco.h>
 #include <pybind11/functional.h>
@@ -471,7 +477,8 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
         return info;
     }
 
-    // An EnvHooks::on_step may reset the Env, so on_reset can fail here too.
+    // An EnvHooks::on_step may reset the Env, so on_reset can fail here too; it may also rebuild
+    // it (the viewer's Reload), and then the new mujoco objects are taken here.
     bool step()
     {
         ensure_open();
@@ -480,6 +487,7 @@ struct PyEnv : std::enable_shared_from_this<PyEnv>
             py::gil_scoped_release nogil;
             running = mj_kdl::step(&env);
         }
+        if (next_model) take_next();
         raise_reset_error();
         return running;
     }
@@ -734,6 +742,158 @@ std::shared_ptr<PyRobot> PyEnv::create_robot_from_chain(
     if (!s) throw std::runtime_error(s.error);
     return out;
 }
+
+#ifdef MJ_KDL_PYTHON_VIEWER
+// The C++ viewer on an Env; while it is closed, pace() does nothing and the queries are False.
+// Calls drop the GIL: the window's thread never takes it, the Env's thread may wait on the window.
+struct PyViewer
+{
+    mj_kdl::Viewer viewer;
+    py::object     owner; // the Python Env, which keeps the Env alive while the window is open
+    PyEnv         *env = nullptr;
+
+    void open(const std::shared_ptr<PyEnv> &target, const std::string &title)
+    {
+        target->ensure_open();
+        mj_kdl::Status s;
+        {
+            py::gil_scoped_release nogil;
+            s = mj_kdl::open_viewer(&viewer, &target->env, title.c_str());
+        }
+        if (!s) throw std::runtime_error(s.error);
+        owner = py::cast(target);
+        env   = target.get();
+    }
+
+    void close()
+    {
+        {
+            py::gil_scoped_release nogil;
+            mj_kdl::cleanup(&viewer);
+        }
+        owner = py::object();
+        env   = nullptr;
+    }
+
+    bool use_camera(const std::string &name)
+    {
+        if (!env) throw std::runtime_error("viewer is not open");
+        env->ensure_open();
+        py::gil_scoped_release nogil;
+        return mj_kdl::use_camera(&viewer, env->env.model, name.empty() ? nullptr : name.c_str());
+    }
+};
+#endif
+
+#ifdef MJ_KDL_PYTHON_RENDER
+// The C++ recorder on an Env: an MP4 through ffmpeg, or offscreen frames for render_rgb().
+struct PyVideoRecorder
+{
+    mj_kdl::VideoRecorder recorder;
+    py::object            owner; // the Python Env, which keeps the Env alive
+    PyEnv                *env    = nullptr;
+    bool                  active = false;
+    int                   width  = 0;
+    int                   height = 0;
+
+    ~PyVideoRecorder() { close(); }
+
+    // out_path empty: offscreen only, no video file.
+    static std::shared_ptr<PyVideoRecorder> make(
+      const std::shared_ptr<PyEnv> &target,
+      const std::string            &out_path,
+      int                           width,
+      int                           height,
+      int                           fps
+    )
+    {
+        if (!target) throw std::runtime_error("env is null");
+        target->ensure_open();
+        mjModel *m   = target->env.model;
+        auto     out = std::shared_ptr<PyVideoRecorder>(new PyVideoRecorder());
+        out->owner   = py::cast(target);
+        out->env     = target.get();
+        const mj_kdl::Status s =
+          out_path.empty()
+            ? mj_kdl::init_offscreen(&out->recorder, m, width, height)
+            : mj_kdl::init_video_recorder(&out->recorder, m, out_path.c_str(), width, height, fps);
+        if (!s) throw std::runtime_error(s.error);
+        out->active = true;
+        out->width  = width;
+        out->height = height;
+        return out;
+    }
+
+    void ensure_open() const
+    {
+        if (!active || !env->env.model) throw std::runtime_error("recorder is closed");
+    }
+
+    py::array_t<std::uint8_t> render_rgb()
+    {
+        ensure_open();
+        py::array_t<std::uint8_t> out({ height, width, 3 });
+        std::uint8_t             *pixels = out.mutable_data();
+        bool                      ok     = false;
+        {
+            py::gil_scoped_release nogil;
+            ok = mj_kdl::render_rgb(&recorder, &env->env, pixels);
+        }
+        if (!ok) throw std::runtime_error("render_rgb failed");
+        return out;
+    }
+
+    bool record_frame()
+    {
+        ensure_open();
+        py::gil_scoped_release nogil;
+        return mj_kdl::record_frame(&recorder, &env->env);
+    }
+
+    bool use_camera(const std::string &name)
+    {
+        ensure_open();
+        if (name.empty()) {
+            mjv_defaultFreeCamera(env->env.model, &recorder.cam);
+            return true;
+        }
+        const int id = mj_name2id(env->env.model, mjOBJ_CAMERA, name.c_str());
+        if (id < 0) return false;
+        recorder.cam.type       = mjCAMERA_FIXED;
+        recorder.cam.fixedcamid = id;
+        return true;
+    }
+
+    void set_free_camera(
+      double                       distance,
+      double                       azimuth,
+      double                       elevation,
+      const std::array<double, 3> &lookat
+    )
+    {
+        if (!active) throw std::runtime_error("recorder is closed");
+        mjvCamera &cam = recorder.cam;
+        cam.type       = mjCAMERA_FREE;
+        cam.fixedcamid = -1;
+        cam.distance   = distance;
+        cam.azimuth    = azimuth;
+        cam.elevation  = elevation;
+        std::copy(lookat.begin(), lookat.end(), cam.lookat);
+    }
+
+    void close()
+    {
+        if (!active) return;
+        {
+            py::gil_scoped_release nogil;
+            mj_kdl::cleanup(&recorder);
+        }
+        active = false;
+        owner  = py::object();
+        env    = nullptr;
+    }
+};
+#endif
 
 } // namespace
 
@@ -1164,8 +1324,8 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
     py::class_<PyEnv, std::shared_ptr<PyEnv>>(
       m,
       "Env",
-      "The simulation: compiled scene and its robots. View it with mj_kdl_wrapper.viewer, render "
-      "it with mujoco.Renderer on env.model and env.data.",
+      "The simulation: compiled scene and its robots. View it with Viewer, record or render it "
+      "with VideoRecorder.",
       gc_keeps<PyEnv, &PyEnv::reset_callback>(true)
     )
       .def_static("build", &PyEnv::build, py::arg("spec"), "Build an environment from a SceneSpec.")
@@ -1285,7 +1445,7 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .def(
         "overlay_geoms",
         &PyEnv::overlay_geoms,
-        "The overlay geoms as mujoco.MjvGeom, for a viewer's extra_geoms or a renderer's scene."
+        "The overlay geoms as mujoco.MjvGeom; Viewer and VideoRecorder draw them themselves."
       )
       .def(
         "reset",
@@ -1372,6 +1532,173 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         [](const PyEnv &self) { return self.spec; },
         "A copy of the SceneSpec the Env runs, with objects added or removed since build()."
       );
+
+#ifdef MJ_KDL_PYTHON_VIEWER
+    py::class_<PyViewer>(
+      m,
+      "Viewer",
+      "The C++ MuJoCo Studio viewer on an Env: open() it, then env.step() and pace() as in C++. "
+      "Its pause, reset, perturbation and edits reach the Env inside env.step(), which returns "
+      "False once the window is closed.",
+      gc_keeps<PyViewer, &PyViewer::owner>(false)
+    )
+      .def(py::init<>())
+      .def(
+        "open",
+        &PyViewer::open,
+        py::arg("env"),
+        py::arg("title") = "MuJoCo",
+        "Open the window on env; raises when there is no display."
+      )
+      .def("close", &PyViewer::close, "Close the window.")
+      .def("__enter__", [](PyViewer &self) -> PyViewer & { return self; })
+      .def("__exit__", [](PyViewer &self, const py::args &) { self.close(); })
+      .def(
+        "is_running",
+        [](const PyViewer &self) { return mj_kdl::is_running(&self.viewer); },
+        "True while the window is open."
+      )
+      .def(
+        "pace",
+        [](PyViewer &self) {
+            py::gil_scoped_release nogil;
+            mj_kdl::pace_realtime(&self.viewer);
+        },
+        "Sleep out one timestep at the viewer's real-time factor; nothing while it is closed."
+      )
+      .def(
+        "key_pressed",
+        [](const PyViewer &self, int key) { return mj_kdl::key_pressed(&self.viewer, key); },
+        py::arg("key"),
+        "True while the key (an ImGuiKey code, as in imgui.h) is held in the window."
+      )
+      .def(
+        "capture_key",
+        [](PyViewer &self, int key, bool capture) {
+            mj_kdl::capture_key(&self.viewer, key, capture);
+        },
+        py::arg("key"),
+        py::arg("capture") = true,
+        "Claim an ImGuiKey code so the viewer's own bindings leave it alone; False gives it back."
+      )
+      .def(
+        "use_camera",
+        &PyViewer::use_camera,
+        py::arg("name") = "",
+        "Switch to a named model camera; an empty name returns to the free camera."
+      )
+      .def(
+        "set_free_camera",
+        [](
+          PyViewer                    &self,
+          double                       distance,
+          double                       azimuth,
+          double                       elevation,
+          const std::array<double, 3> &lookat
+        ) { mj_kdl::set_free_camera(&self.viewer, distance, azimuth, elevation, lookat); },
+        py::arg("distance"),
+        py::arg("azimuth"),
+        py::arg("elevation"),
+        py::arg("lookat") = std::array<double, 3>{ 0.0, 0.0, 0.0 },
+        "Configure the free camera: distance [m], azimuth and elevation [deg], lookat [m]."
+      )
+      .def_property(
+        "realtime_factor",
+        [](const PyViewer &self) { return self.viewer.realtime_factor; },
+        [](PyViewer &self, double value) {
+            if (value < 0.0) throw std::invalid_argument("realtime_factor must be >= 0");
+            self.viewer.realtime_factor = value;
+        },
+        "pace()'s speed: 1.0 real time, 0.5 half speed, 0.0 uncapped; the window's slider sets it."
+      )
+      .def_property_readonly(
+        "fps", [](const PyViewer &self) { return self.viewer.fps; }, "The window's frame rate."
+      );
+#endif
+
+#ifdef MJ_KDL_PYTHON_RENDER
+    py::enum_<mj_kdl::VideoResolution>(m, "VideoResolution")
+      .value("R360p", mj_kdl::VideoResolution::R360p)
+      .value("R480p", mj_kdl::VideoResolution::R480p)
+      .value("R720p", mj_kdl::VideoResolution::R720p)
+      .value("R1080p", mj_kdl::VideoResolution::R1080p)
+      .value("R2K", mj_kdl::VideoResolution::R2K)
+      .value("R4K", mj_kdl::VideoResolution::R4K);
+
+    py::class_<PyVideoRecorder, std::shared_ptr<PyVideoRecorder>>(
+      m,
+      "VideoRecorder",
+      "The C++ offscreen recorder (Filament) on an Env: an MP4 through ffmpeg, or RGB frames.",
+      gc_keeps<PyVideoRecorder, &PyVideoRecorder::owner>(false)
+    )
+      .def_static(
+        "open",
+        [](const std::shared_ptr<PyEnv> &env, const std::string &out, int w, int h, int fps) {
+            if (out.empty()) throw std::invalid_argument("out_path must be set");
+            return PyVideoRecorder::make(env, out, w, h, fps);
+        },
+        py::arg("env"),
+        py::arg("out_path"),
+        py::arg("width")  = 1280,
+        py::arg("height") = 720,
+        py::arg("fps")    = 60,
+        "Open a recorder writing an MP4 of the given size."
+      )
+      .def_static(
+        "open_preset",
+        [](
+          const std::shared_ptr<PyEnv> &env,
+          const std::string            &out,
+          mj_kdl::VideoResolution       res,
+          int                           fps
+        ) {
+            if (out.empty()) throw std::invalid_argument("out_path must be set");
+            // The size init_video_recorder gives a preset, kept so render_rgb knows the frame.
+            const int h = static_cast<int>(res);
+            const int w = ((h * 16 / 9) + 1) / 2 * 2;
+            return PyVideoRecorder::make(env, out, w, h, fps);
+        },
+        py::arg("env"),
+        py::arg("out_path"),
+        py::arg("resolution") = mj_kdl::VideoResolution::R720p,
+        py::arg("fps")        = 60,
+        "Open a recorder writing an MP4 at a 16:9 resolution preset."
+      )
+      .def_static(
+        "open_offscreen",
+        [](const std::shared_ptr<PyEnv> &env, int w, int h) {
+            return PyVideoRecorder::make(env, "", w, h, 0);
+        },
+        py::arg("env"),
+        py::arg("width"),
+        py::arg("height"),
+        "Open an offscreen renderer (no video file) for render_rgb()."
+      )
+      .def(
+        "render_rgb",
+        &PyVideoRecorder::render_rgb,
+        "Render the Env's current state as a (height, width, 3) uint8 array, top row first."
+      )
+      .def("record_frame", &PyVideoRecorder::record_frame, "Render and append one frame.")
+      .def(
+        "use_camera",
+        &PyVideoRecorder::use_camera,
+        py::arg("name") = "",
+        "Switch to a named model camera; an empty name returns to the free camera."
+      )
+      .def(
+        "set_free_camera",
+        &PyVideoRecorder::set_free_camera,
+        py::arg("distance"),
+        py::arg("azimuth"),
+        py::arg("elevation"),
+        py::arg("lookat") = std::array<double, 3>{ 0.0, 0.0, 0.0 },
+        "Configure the free camera: distance [m], azimuth and elevation [deg], lookat [m]."
+      )
+      .def("__enter__", [](const std::shared_ptr<PyVideoRecorder> &self) { return self; })
+      .def("__exit__", [](PyVideoRecorder &self, const py::args &) { self.close(); })
+      .def("close", &PyVideoRecorder::close, "Finish the video and free the renderer.");
+#endif
 
     m.def(
       "set_log_level",

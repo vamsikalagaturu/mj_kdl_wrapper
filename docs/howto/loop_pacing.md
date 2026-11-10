@@ -19,8 +19,9 @@ void   pace_realtime(Viewer *v);       // sleep out this step's share of wall ti
 double Viewer::realtime_factor;        // the user's speed setting; 0.0 == uncapped
 ```
 
-In Python, `viewer.step()` of `mj_kdl_wrapper.viewer.Viewer` steps and paces to the window's
-speed, `viewer.pace()` paces alone, and `env.step()` never sleeps (see the Python API guide).
+Python binds the same viewer: `env.step()` never sleeps, `viewer.pace()` is
+`pace_realtime()`, and `viewer.realtime_factor` is `Viewer::realtime_factor` (see the Python
+API guide).
 
 ## What step() leaves current
 

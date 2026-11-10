@@ -17,7 +17,7 @@ The wrapper has four layers. Keep them separate and the API stays simple:
 | Runtime environment | `Env` | Own `mjModel`/`mjData`, registered robots, scene slots, overlay geoms, and reset hooks |
 | Robot control handle | `Robot` | KDL chain, measured ports, command ports |
 | Visualization/recording | `Viewer` (`viewer.hpp`), `VideoRecorder` (`render.hpp`) | MuJoCo Studio window and offscreen MP4 recording, optional libraries `mj_kdl_wrapper::viewer` and `mj_kdl_wrapper::render` |
-| Python package | `mj_kdl_wrapper` | Python wrappers for the same scene, robot, reset and overlay concepts; `mj_kdl_wrapper.viewer.Viewer` |
+| Python package | `mj_kdl_wrapper` | Python wrappers for the same scene, robot, reset and overlay concepts; `Viewer` and `VideoRecorder` bind this same viewer and recorder |
 
 The important ownership rule:
 

@@ -251,8 +251,7 @@ class Robot:
 
 class Env:
     """The simulation: compiled scene and its robots. The loop is update() (read every robot,
-    apply its commands), then step(); mj_kdl_wrapper.viewer shows it, mujoco.Renderer and
-    mujoco.rendering.filament render it from model and data."""
+    apply its commands), then step(); Viewer shows it, VideoRecorder records or renders it."""
     on_reset: Optional[Callable[[ResetContext], None]]
     """Called by reset() after every robot is re-seeded; its exception comes out of reset() or
     step()."""
@@ -308,7 +307,7 @@ class Env:
     ) -> None:
         """Add an overlay arrow from a point along dir, length [m] long."""
     def overlay_geoms(self) -> list[mujoco.MjvGeom]:
-        """The overlay geoms, for a viewer's extra_geoms or a renderer's scene."""
+        """The overlay geoms as mujoco.MjvGeom; Viewer and VideoRecorder draw them themselves."""
     def reset(self, options: Optional[ResetOptions] = None) -> ResetInfo:
         """Reset MuJoCo state, re-seed every robot, then call on_reset; what it moves is read
         back."""
@@ -329,6 +328,76 @@ class Env:
     ) -> None:
         """Set a free body pose. quat is xyzw when provided."""
     def save_model_xml(self, path: str) -> None: ...
+
+
+class Viewer:
+    """The C++ MuJoCo Studio viewer on an Env: open() it, then env.step() and pace() as in C++.
+    Its pause, reset, perturbation and edits reach the Env inside env.step(), which returns
+    False once the window is closed."""
+    def __init__(self) -> None: ...
+    def open(self, env: Env, title: str = "MuJoCo") -> None:
+        """Open the window on env; raises when there is no display."""
+    def close(self) -> None: ...
+    def __enter__(self) -> Viewer: ...
+    def __exit__(self, *args: Any) -> None: ...
+    def is_running(self) -> bool: ...
+    def pace(self) -> None:
+        """Sleep out one timestep at the real-time factor; nothing while closed."""
+    def key_pressed(self, key: int) -> bool:
+        """True while the key (an ImGuiKey code, as in imgui.h) is held in the window."""
+    def capture_key(self, key: int, capture: bool = True) -> None: ...
+    def use_camera(self, name: str = "") -> bool: ...
+    def set_free_camera(
+        self,
+        distance: float,
+        azimuth: float,
+        elevation: float,
+        lookat: Sequence[float] = (0.0, 0.0, 0.0),
+    ) -> None: ...
+    realtime_factor: float
+    """pace()'s speed: 1.0 real time, 0.5 half speed, 0.0 uncapped."""
+    @property
+    def fps(self) -> float: ...
+
+
+class VideoResolution(_Enum):
+    R360p: ClassVar[VideoResolution]
+    R480p: ClassVar[VideoResolution]
+    R720p: ClassVar[VideoResolution]
+    R1080p: ClassVar[VideoResolution]
+    R2K: ClassVar[VideoResolution]
+    R4K: ClassVar[VideoResolution]
+
+
+class VideoRecorder:
+    """The C++ offscreen recorder (Filament) on an Env: an MP4 through ffmpeg, or RGB frames."""
+    @staticmethod
+    def open(
+        env: Env, out_path: str, width: int = 1280, height: int = 720, fps: int = 60
+    ) -> VideoRecorder: ...
+    @staticmethod
+    def open_preset(
+        env: Env,
+        out_path: str,
+        resolution: VideoResolution = ...,
+        fps: int = 60,
+    ) -> VideoRecorder: ...
+    @staticmethod
+    def open_offscreen(env: Env, width: int, height: int) -> VideoRecorder: ...
+    def render_rgb(self) -> npt.NDArray[np.uint8]:
+        """The Env's current state as a (height, width, 3) array, top row first."""
+    def record_frame(self) -> bool: ...
+    def use_camera(self, name: str = "") -> bool: ...
+    def set_free_camera(
+        self,
+        distance: float,
+        azimuth: float,
+        elevation: float,
+        lookat: Sequence[float] = (0.0, 0.0, 0.0),
+    ) -> None: ...
+    def close(self) -> None: ...
+    def __enter__(self) -> VideoRecorder: ...
+    def __exit__(self, *args: Any) -> None: ...
 
 
 __version__: str

@@ -9,7 +9,6 @@ import math
 import PyKDL as kdl
 
 import mj_kdl_wrapper as mjk
-from mj_kdl_wrapper.viewer import Viewer
 
 HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 SURFACE_Z = 0.70
@@ -197,8 +196,9 @@ def run_phase(env, ctrl: Achd, fingers, phase: dict, state: dict) -> bool:
         )
         if (elapsed >= phase["duration"] and settled) or elapsed >= phase["timeout"]:
             return True
-        if not state["step"]():
+        if not env.step():
             return False
+        state["viewer"].pace()
         if state["reset"]:
             state["reset"] = False
             raise ResetRequested()
@@ -245,7 +245,7 @@ def main() -> int:
     args = parser.parse_args()
 
     env, robot = build_env()
-    viewer = None
+    viewer = mjk.Viewer()
     try:
         robot.set_control_mode(mjk.CtrlMode.TORQUE)
         fingers = env.data.actuator("g_fingers_actuator")
@@ -269,8 +269,8 @@ def main() -> int:
         env.on_reset = on_reset
         env.reset()
         if args.gui:
-            viewer = Viewer(env, "ex_achd_pick_place.py")
-        state["step"] = viewer.step if viewer else env.step
+            viewer.open(env, "ex_achd_pick_place.py")
+        state["viewer"] = viewer
 
         completed = False
         while not completed:
@@ -295,8 +295,7 @@ def main() -> int:
         drop = state["support"]["drop"]
         print(f"elbow drop: {drop * 1000:.4f} mm (limit {MAX_ELBOW_DROP * 1000} mm)")
     finally:
-        if viewer:
-            viewer.close()
+        viewer.close()
         env.close()
     if args.gui:
         return 0

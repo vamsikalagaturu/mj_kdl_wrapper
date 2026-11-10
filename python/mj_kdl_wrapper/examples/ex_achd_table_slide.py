@@ -17,7 +17,6 @@ import mujoco
 import numpy as np
 import PyKDL as kdl
 import mj_kdl_wrapper as mjk
-from mj_kdl_wrapper.viewer import Viewer
 
 HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 # [m] TCP start in the base frame, flange down; the base stands on the table, so z is its height.
@@ -270,7 +269,7 @@ def main() -> int:
     args = parser.parse_args()
 
     env, robot = build_env()
-    viewer = None
+    viewer = mjk.Viewer()
     try:
         restarted = [False]
         start = kdl.Frame(kdl.Rotation.RotX(math.pi), kdl.Vector(*START_TCP))
@@ -288,13 +287,13 @@ def main() -> int:
 
         if args.gui:
             # The UI's reset button runs env's reset, on_reset included.
-            viewer = Viewer(env, "ex_achd_table_slide.py")
-        step = viewer.step if viewer else env.step
+            viewer.open(env, "ex_achd_table_slide.py")
         restarted[0] = False
         while not slide.done():
             slide.control()
-            if not step():
+            if not env.step():
                 break
+            viewer.pace()
             slide.measure()
             if restarted[0]:
                 restarted[0] = False
@@ -319,8 +318,7 @@ def main() -> int:
             f"elbow_min_z_above_table={slide.elbow_min:.4f} (limit {MIN_ELBOW_HEIGHT:.4f})"
         )
     finally:
-        if viewer:
-            viewer.close()
+        viewer.close()
         env.close()
     if args.gui:
         return 0

@@ -4,8 +4,8 @@ This page collects the Python wrapper usage notes that are too detailed for the
 README. For complete function signatures, see the generated stubs in
 `python/mj_kdl_wrapper/*.pyi`.
 
-Coming from 0.5? The viewer is `mj_kdl_wrapper.viewer.Viewer` and recording uses mujoco's
-own renderers; see [Migrating to 0.6](@ref sec_migrate_mujoco4).
+Coming from 0.5? The viewer is `mjk.Viewer()` opened with `viewer.open(env, title)` and
+paced with `viewer.pace()`; see [Migrating to 0.6](@ref sec_migrate_mujoco4).
 Coming from 0.4? The models are in `mjk.ASSETS_DIR`; see
 [Migrating to 0.5](@ref sec_migrate_mj_kdl_wrapper).
 Coming from 0.2.x? Placement orientation moved from `.euler` to `.quat`
@@ -18,9 +18,10 @@ the wrong length (a 5-value `quat`, say) raises `TypeError`.
 
 The Python package exposes the same scene, robot, reset and overlay concepts as the C++
 core library. As in C++, one `Env` owns the MuJoCo `mjModel`/`mjData` and its robots; KDL
-values come back through the upstream `PyKDL` module. The wheel builds the core only:
-`mj_kdl_wrapper.viewer.Viewer` shows an `Env` through `mujoco.studio`, and recording uses
-mujoco's own renderers. Python >= 3.11, `mujoco==4.0.0`.
+values come back through the upstream `PyKDL` module. The wheel also binds the C++ viewer
+and recorder: `mjk.Viewer` is the same MuJoCo Studio window as `mj_kdl::Viewer`, and
+`mjk.VideoRecorder` the same Filament recorder as `mj_kdl::VideoRecorder`. Python >= 3.11,
+`mujoco==4.0.0`.
 
 The wheel bundles `PyKDL` as a top-level extension module built from the same
 Orocos KDL fork as the wrapper. `import PyKDL` works after installation, but
@@ -379,8 +380,9 @@ mode's command goes to that mode's actuator controls (`jnt_pos_cmd`,
 `jnt_vel_cmd` or `jnt_trq_cmd`), clamped to `ctrlrange` and flagged in
 `jnt_saturated`. `robot.joint_force_limits()` returns each joint's torque limit in the active
 mode. `env.step()` advances one timestep, after which joint state and frames describe the same
-instant; it never sleeps, so a loop needs its own end condition. With a viewer, call
-`viewer.step()` instead (see Viewer Controls below).
+instant; it never sleeps, so a loop needs its own end condition. With a viewer open, it
+returns `False` once the window is closed, and `viewer.pace()` after it paces the loop (see
+Viewer Controls below).
 
 Use `set_joint_pos(q)` to seed joint state directly in KDL order:
 
@@ -412,7 +414,7 @@ info = env.reset(opts)
 readings from the reset state (so the first command holds the pose), then calls the optional
 reset hook, then reads the measurements back. A command the hook primes is kept; a POSITION
 robot the hook moves needs its `jnt_pos_cmd` set there too. The viewer's reset button
-does the same. An exception the hook raises comes out of `reset()` (or of the `viewer.step()`
+does the same. An exception the hook raises comes out of `reset()` (or of the `env.step()`
 that ran a UI reset) after the measurements have been read back; `env.on_reset` reads `None` until
 set, and `close()` drops it.
 `ResetContext.options` and `ResetContext.info` are a copy of the reset request and its result,
@@ -444,8 +446,9 @@ env.remove_object("cube")
 ```
 
 `Env.add_object()` and `Env.remove_object()` rebuild the native MuJoCo
-model/data and rebind existing Python `Robot` handles and scene slots; a renderer built on
-the old `env.model` must be rebuilt.
+model/data and rebind existing Python `Robot` handles and scene slots; an open `Viewer` and
+every `VideoRecorder` follow the new model, but a mujoco renderer built on the old `env.model`
+must be rebuilt.
 `remove_object()` of a name the scene does not hold raises `RuntimeError` naming it. Calling
 `Env.close()` invalidates dependent robot handles; using one raises
 `RuntimeError("robot is closed")`.
@@ -455,7 +458,8 @@ the old `env.model` must be rebuilt.
 `env.model` and `env.data` are the live `mujoco.MjModel` and `mujoco.MjData` the `Env` runs
 on, so the `mujoco` package reads and writes them in place. `add_object()` and
 `remove_object()` replace both: re-read them after either call rather than holding the old
-objects. The viewer draws what each `viewer.sync()` publishes, never `env.data` itself.
+objects. The viewer draws a copy of the state each `env.step()` publishes, never `env.data`
+itself.
 
 ```python
 import mujoco
@@ -472,42 +476,33 @@ for i in range(env.data.ncon):
 
 ## Headless Video Recording
 
-The wheel has no recorder of its own; render `env.model` / `env.data` with mujoco's
-renderers. `ex_table_pour.py --record` renders with `mujoco.rendering.filament` into a numpy
-array and encodes it with `imageio[ffmpeg]` (`pip install "imageio[ffmpeg]"`):
+`mjk.VideoRecorder` is the C++ recorder: Filament offscreen rendering on a thread of its own,
+encoded to an H.264 MP4 by ffmpeg (on `PATH`), or kept in memory. No window is needed.
+`ex_table_pour.py --record` records this way:
 
 ```python
-import imageio.v2 as imageio
-import mujoco
-import numpy as np
-from mujoco import mjrf
-from mujoco.rendering.filament import model_scene, renderer
-
-r = renderer.Renderer(mjrf.Context(mjrf.ContextConfig()))
-scene = model_scene.ModelScene(r.context, env.model, r.scene("scn"))
-pixels = np.empty((720, 1280, 3), dtype=np.uint8)   # (height, width, 3), the frame in memory
-r.target("out", pixels)
-cam = mujoco.MjvCamera()
-mujoco.mjv_defaultFreeCamera(env.model, cam)         # the view a fresh window opens with
-writer = imageio.get_writer("sim.mp4", fps=60, codec="libx264", macro_block_size=1)
-
-for _ in range(3000):
-    env.update()
-    env.step()
-    scene.update(env.data)
-    gl_cam = mujoco.mjv_camera2GLCamera(env.model, env.data, cam)
-    r.render([renderer.View(scene="scn", target="out", camera=gl_cam)])
-    writer.append_data(pixels)
-
-writer.close()
+with mjk.VideoRecorder.open_preset(env, "sim.mp4", mjk.VideoResolution.R720p, 60) as vr:
+    vr.set_free_camera(1.35, 145.0, -22.0, (0.05, 0.02, 0.88))   # distance, azimuth, elevation, lookat
+    for i in range(3000):
+        env.update()
+        env.step()
+        if i % 8 == 0:                 # 60 fps at a 2 ms timestep
+            vr.record_frame()
 ```
+
+`VideoRecorder.open(env, out_path, width=1280, height=720, fps=60)` takes an explicit size;
+`VideoResolution` has `R360p`, `R480p`, `R720p`, `R1080p`, `R2K` and `R4K`.
+`VideoRecorder.open_offscreen(env, width, height)` writes no file: `render_rgb()` returns the
+`Env`'s current state as a `(height, width, 3)` `uint8` array, top row first.
+`use_camera(name)` renders from a named model camera (`""` for the free camera). `close()`
+or the context manager finishes the file.
 
 ## Overlays
 
 `env.add_trace_segment(a, b, rgba=None)` and `env.add_overlay_arrow(from_, dir, length,
 rgba=None)` append world-space geoms [m]; `env.clear_trace()` removes them all. The viewer
-draws them; `env.overlay_geoms()` returns them as `mujoco.MjvGeom`s for a renderer's scene or
-a viewer's `extra_geoms`.
+and every `VideoRecorder` draw them; `env.overlay_geoms()` returns them as `mujoco.MjvGeom`s
+for a mujoco renderer of your own.
 
 ```python
 env.clear_trace()
@@ -516,28 +511,31 @@ env.add_trace_segment(prev_tcp, tcp, [1.0, 0.9, 0.1, 1.0])
 
 ## Viewer Controls
 
-`mj_kdl_wrapper.viewer.Viewer(env, title)` opens a MuJoCo Studio window (`mujoco.studio`) on
-the `Env`, with or without robots. The `Env` keeps stepping on the caller's thread; the window
-runs on a thread of its own and draws what each `sync()` publishes. `viewer.step()` syncs
-with the window (its perturbation, state edits, physics options and reset reach `env.data`),
-calls `env.step()` unless the window is paused, then paces to the window's speed; it returns
-`False` once the window is closed. A loop written for `env.step()` runs unchanged on it:
+`mjk.Viewer` is the C++ viewer (`mj_kdl::Viewer`), the same MuJoCo Studio window with the same
+menus, panels, Step Back/Fwd history, Explorer, `Recording` section and key bindings; see
+Viewer Controls in the [C++ API guide](@ref page_api_cpp). `viewer.open(env, title="MuJoCo")`
+opens it on the `Env`, with or without robots, and raises `RuntimeError` when there is no
+display. The `Env` keeps stepping on the caller's thread; the window runs on a thread of its
+own and draws a copy of the state each `env.step()` publishes. Its pause, reset,
+perturbation, edited controls, physics options and recording reach the `Env` inside
+`env.step()`, which returns `False` once the window is closed. `viewer.pace()` sleeps out one
+timestep at `viewer.realtime_factor` and does nothing while the window is closed, so the same
+loop runs with and without a window:
 
 ```python
-from mj_kdl_wrapper.viewer import Viewer
-
-viewer = Viewer(env, "MuJoCo") if gui else None
-step = viewer.step if viewer else env.step
+viewer = mjk.Viewer()
+if gui:
+    viewer.open(env, "MuJoCo")
 while env.data.time < 10.0:
     env.update()
-    if not step():   # False once the window closes
+    if not env.step():   # False once the window closes
         break
-if viewer:
-    viewer.close()
+    viewer.pace()
+viewer.close()
 env.close()
 ```
 
-`Viewer` is also a context manager. `viewer.sync()`, `viewer.pace()`, `viewer.paused`,
-`viewer.speed` (percent of real time) and `viewer.is_running()` are there for a loop that
-steps by itself. Unlike the C++ viewer it has no key or camera calls; the window's own panels
-and mouse controls are mujoco's.
+`Viewer` is also a context manager. `viewer.is_running()`, `viewer.realtime_factor` (1.0 real
+time, 0.0 uncapped), `viewer.fps`, `use_camera(name)` and `set_free_camera(distance, azimuth,
+elevation, lookat)` mirror the C++ calls. `key_pressed(key)` and `capture_key(key,
+capture=True)` take `ImGuiKey` integer codes as in `imgui.h`, as in C++.

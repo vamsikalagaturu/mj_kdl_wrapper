@@ -2,8 +2,7 @@
 """Pour balls into a tabletop receiver; Python counterpart of src/examples/ex_table_pour.cpp.
 
 Headless, it exits 1 if fewer than MIN_IN_RECEIVER balls land in the receiver; --record [out.mp4]
-also writes a 1080p MP4, rendered with mujoco's Filament renderer and encoded by imageio's ffmpeg
-plugin (pip install "imageio[ffmpeg]").
+also writes a 1080p MP4 through VideoRecorder, the C++ example's recorder (ffmpeg on PATH).
 """
 
 from __future__ import annotations
@@ -12,15 +11,9 @@ import argparse
 import math
 from dataclasses import dataclass
 
-import mujoco
-import numpy as np
 import PyKDL as kdl
-from mujoco import mjrf
-from mujoco.rendering.filament import model_scene
-from mujoco.rendering.filament import renderer
 
 import mj_kdl_wrapper as mjk
-from mj_kdl_wrapper.viewer import Viewer
 
 HOME = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
 TABLE_Z = 0.70
@@ -279,35 +272,6 @@ def balls_in_receiver(env: mjk.Env) -> tuple[int, list[float]]:
     return count, [value / NUM_BALLS for value in centroid]
 
 
-class Recorder:
-    """Frames of env from the model's default free camera, rendered with Filament into an MP4."""
-
-    def __init__(self, env: mjk.Env, path: str, width: int, height: int, fps: int) -> None:
-        import imageio.v2 as imageio  # only --record needs it
-
-        self._env = env
-        self._renderer = renderer.Renderer(mjrf.Context(mjrf.ContextConfig()))
-        self._scene = model_scene.ModelScene(
-            self._renderer.context, env.model, self._renderer.scene("scn")
-        )
-        self._pixels = np.empty((height, width, 3), dtype=np.uint8)
-        self._renderer.target("out", self._pixels)
-        self._camera = mujoco.MjvCamera()
-        mujoco.mjv_defaultFreeCamera(env.model, self._camera)
-        self._writer = imageio.get_writer(
-            path, fps=fps, codec="libx264", quality=8, macro_block_size=1
-        )
-
-    def record_frame(self) -> None:
-        self._scene.update(self._env.data)
-        camera = mujoco.mjv_camera2GLCamera(self._env.model, self._env.data, self._camera)
-        self._renderer.render([renderer.View(scene="scn", target="out", camera=camera)])
-        self._writer.append_data(self._pixels)
-
-    def close(self) -> None:
-        self._writer.close()
-
-
 def run_phase(env, robot, fingers, dyn, phase: Phase, state: dict) -> bool:
     """One update() per step: it reads the state and applies the previous cycle's command."""
     print(f"State: {phase.name}")
@@ -324,8 +288,9 @@ def run_phase(env, robot, fingers, dyn, phase: Phase, state: dict) -> bool:
         done_pose = phase.settle_tol < 0.0 or err <= phase.settle_tol
         if (elapsed >= phase.duration and done_pose) or elapsed >= phase.timeout:
             return True
-        if not state["step"]():
+        if not env.step():
             return False
+        state["viewer"].pace()
         if state["reset"]:
             state["reset"] = False
             raise ResetRequested()
@@ -343,7 +308,7 @@ def main() -> int:
 
     env, robot = build_env()
     recorder = None
-    viewer = None
+    viewer = mjk.Viewer()
     try:
         robot.set_control_mode(mjk.CtrlMode.TORQUE)
         fingers = env.data.actuator("g_fingers_actuator")
@@ -376,11 +341,14 @@ def main() -> int:
         ]
 
         if args.record:
-            recorder = Recorder(env, args.record, 1920, 1080, fps)
+            recorder = mjk.VideoRecorder.open_preset(
+                env, args.record, mjk.VideoResolution.R1080p, fps
+            )
+            recorder.set_free_camera(1.35, 145.0, -22.0, (0.05, 0.02, 0.88))
             state["recorder"] = recorder
         if args.gui:
-            viewer = Viewer(env, "ex_table_pour.py")
-        state["step"] = viewer.step if viewer else env.step
+            viewer.open(env, "ex_table_pour.py")
+        state["viewer"] = viewer
         completed = False
         while not completed:
             try:
@@ -398,8 +366,7 @@ def main() -> int:
     finally:
         if recorder is not None:
             recorder.close()
-        if viewer:
-            viewer.close()
+        viewer.close()
         env.close()
     if args.gui:
         return 0
