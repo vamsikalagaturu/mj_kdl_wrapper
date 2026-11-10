@@ -16,8 +16,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # MuJoCo 4.0 supports Python 3.11 and newer.
-        python-version: ["3.11", "3.12"]
+        # The default python3 of Ubuntu 24.04 and 26.04.
+        python-version: ["3.12", "3.14"]
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:

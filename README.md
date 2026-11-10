@@ -34,7 +34,7 @@ in C++ and Python.
 
 ## Install
 
-Ubuntu/Debian, CMake >= 3.16, a C++20 compiler and, for Python, Python >= 3.11. MuJoCo 4.0.0
+Ubuntu/Debian, CMake >= 3.16, a C++20 compiler and, for Python, Python >= 3.12. MuJoCo 4.0.0
 and the secorolab Orocos KDL fork are built from source (`mj_kdl_wrapper.repos`); the system
 KDL is never used.
 

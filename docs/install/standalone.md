@@ -29,7 +29,7 @@ Instructions target Ubuntu/Debian. CMake checks `mjVERSION_HEADER` and stops if
 | vcstool | any | Checks out the KDL fork and MuJoCo (`vcs import < mj_kdl_wrapper.repos`) |
 | CMake | `>=3.16` | Required to configure the C++ build |
 | C++ compiler | C++20-capable | `CMAKE_CXX_STANDARD` is set to 20 |
-| Python | `>=3.11` | Required for the Python package (MuJoCo 4.0 dropped 3.10) |
+| Python | `>=3.12` | Required for the Python package (the default python3 of Ubuntu 24.04) |
 | scikit-build-core | `>=0.11.2` | Python build backend |
 | pybind11 | `>=2.13` | Python binding build dependency |
 
@@ -235,7 +235,7 @@ headers as the C++ viewer build) and links them against the headers and `libmujo
 pip `mujoco-core==4.0.0` build requirement, so a process loads one `libmujoco`. The wheel
 depends on `mujoco==4.0.0`, whose shared library and plugins it loads at runtime; MP4
 recording needs ffmpeg on `PATH`. The build is isolated - it does not reuse any C++ build
-tree. Python >= 3.11.
+tree. Python >= 3.12.
 
 PyKDL is bundled inside the wheel as a top-level extension module. It imports as
 `PyKDL` but does not appear as a separate package in `pip list` / `uv pip list`.

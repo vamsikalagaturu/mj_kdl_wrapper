@@ -139,7 +139,7 @@ is still needed. A consuming ROS package declares the dependencies in its own `p
 `rclpy` is only importable from the interpreter ROS 2 was built against (the
 system Python). Create the venv with `--system-site-packages` so it can import the
 system `rclpy` while keeping the wheel and its pinned `mujoco==4.0.0` inside the
-venv (the wheel needs Python >= 3.11):
+venv (the wheel needs Python >= 3.12):
 
 ```bash
 # Use your distro: jazzy or lyrical

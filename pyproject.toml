@@ -12,7 +12,7 @@ name = "mj-kdl-wrapper"
 dynamic = ["version"]
 description = "Python bindings for mj_kdl_wrapper: MuJoCo physics with Orocos KDL kinematics and dynamics"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [
   { name = "Vamsi Kalagaturu" },
@@ -25,8 +25,8 @@ classifiers = [
   "Operating System :: POSIX :: Linux",
   "Programming Language :: C++",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering",
   "Topic :: Scientific/Engineering :: Physics",
 ]

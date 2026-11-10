@@ -16,7 +16,7 @@ The Python package exposes the same scene, robot, reset and overlay concepts as 
 core library. As in C++, one `Env` owns the MuJoCo `mjModel`/`mjData` and its robots; KDL
 values come back through the upstream `PyKDL` module. The wheel also binds the C++ viewer
 and recorder: `mjk.Viewer` is the same MuJoCo Studio window as `mj_kdl::Viewer`, and
-`mjk.VideoRecorder` the same Filament recorder as `mj_kdl::VideoRecorder`. Python >= 3.11,
+`mjk.VideoRecorder` the same Filament recorder as `mj_kdl::VideoRecorder`. Python >= 3.12,
 `mujoco==4.0.0`.
 
 The wheel bundles `PyKDL` as a top-level extension module built from the same

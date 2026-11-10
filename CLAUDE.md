@@ -37,7 +37,7 @@
 - Package under `python/`, built by scikit-build-core (`pyproject.toml` sets `-DBUILD_PYTHON_BINDINGS=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF`).
 - A wheel build (`SKBUILD`) links the pip `mujoco-core` package's `libmujoco` (a build requirement) and builds render and viewer (`pyproject.toml` forces them ON) from MuJoCo's Filament and Studio archives, compiled from `third_party/mujoco`; the process loads one libmujoco.
 - Python views and records through the same C++ code: `mjk.Viewer` (`open(env, title)`, then `env.step()` and `viewer.pace()`) and `mjk.VideoRecorder` bind `mj_kdl::Viewer` and `mj_kdl::VideoRecorder`. Never add a second, Python-side UI: C++ and Python must not differ.
-- Install: `vcs import < mj_kdl_wrapper.repos` then `uv pip install .` into `.venv` (`uv venv .venv --python 3.12`); tests: `.venv/bin/pytest -q python/tests`. Python >= 3.11 (MuJoCo 4.0 dropped 3.10).
+- Install: `vcs import < mj_kdl_wrapper.repos` then `uv pip install .` into `.venv` (`uv venv .venv --python 3.12`); tests: `.venv/bin/pytest -q python/tests`. Python >= 3.12 (CI tests 3.12 and 3.14, the default python3 of Ubuntu 24.04 and 26.04).
 - `python/mj_kdl_wrapper/examples/ex_*.py` mirror `src/examples/ex_*.cpp`, run headless by default, take `--gui`, and end by themselves.
 - The wheel maps only `mj_kdl_wrapper` -> `python/mj_kdl_wrapper`; CMake installs the repo-root `assets/` into it. Never map `assets/` in the wheel: the editable install would put the workspace `src/` on `sys.path`.
 - Python examples and tests load models as `str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")`; `ASSETS_DIR` is the packaged `assets/`.
@@ -78,7 +78,7 @@
 ## Branching
 
 - Work on `dev` or a feature branch off it; PRs into `dev` may squash.
-- `main` is protected (admins included): no direct push, no force-push or deletion; merging needs a PR with `build`, `test`, `docs`, `bindings (3.11/3.12)` and `colcon (jazzy/lyrical)` passing (the 3.10 bindings check goes with MuJoCo 4.0; the protection rule must follow). `deploy-docs` only runs on releases and is not required.
+- `main` is protected (admins included): no direct push, no force-push or deletion; merging needs a PR with `build`, `test`, `docs`, `bindings (3.12/3.14)` and `colcon (jazzy/lyrical)` passing (the bindings checks follow the default Python of Ubuntu 24.04 and 26.04; the protection rule must follow). `deploy-docs` only runs on releases and is not required.
 
 ## Versioning and releases
 
