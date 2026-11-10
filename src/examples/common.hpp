@@ -4,6 +4,7 @@
 
 #include <kdl/chaindynparam.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
+#include <kdl/chainidsolver_recursive_newton_euler.hpp>
 #include <kdl/chainiksolvervel_wdls.hpp>
 
 #include <algorithm>
@@ -138,7 +139,7 @@ inline void prime_gravity(mj_kdl::Robot &robot, KDL::ChainDynParam &dyn, const K
 inline mj_kdl::SceneSpec scene_spec()
 {
     mj_kdl::SceneSpec spec;
-    spec.timestep  = 0.002;
+    spec.timestep  = 0.001;
     spec.use_stage = true;
     return spec;
 }
@@ -305,6 +306,38 @@ inline std::vector<Phase> pick_place_phases(const PickPlaceWaypoints &w)
     };
     // clang-format on
 }
+
+// RNEA computed-torque acceleration gains: the closed loop is qddot = Kp e - Kd qdot [1/s^2],
+// [1/s].
+constexpr double kRneaKp[7] = { 100, 200, 100, 200, 100, 200, 100 };
+constexpr double kRneaKd[7] = { 20, 28, 20, 28, 20, 28, 20 };
+
+// RNEA computed torque for one arm; the solvers keep a reference to robot.chain.
+struct RneaArm
+{
+    RneaArm(mj_kdl::Robot &r, double gravity_z)
+      : robot(r), n(r.chain.getNrOfJoints()), rnea(r.chain, KDL::Vector(0.0, 0.0, gravity_z)),
+        dyn(r.chain, KDL::Vector(0.0, 0.0, gravity_z)), q(n), qdot(n), qddot(n), tau(n),
+        f_ext(r.chain.getNrOfSegments(), KDL::Wrench::Zero())
+    {}
+
+    bool control(const KDL::JntArray &q_des)
+    {
+        read_q(robot, q, qdot);
+        for (unsigned i = 0; i < n; ++i)
+            qddot(i) = kRneaKp[i] * (q_des(i) - q(i)) - kRneaKd[i] * qdot(i);
+        if (rnea.CartToJnt(q, qdot, qddot, f_ext, tau) < 0) return false;
+        for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = tau(i);
+        return true;
+    }
+
+    mj_kdl::Robot         &robot;
+    unsigned               n;
+    KDL::ChainIdSolver_RNE rnea;
+    KDL::ChainDynParam     dyn;
+    KDL::JntArray          q, qdot, qddot, tau;
+    KDL::Wrenches          f_ext;
+};
 
 // An arm the phases drive; each follows the same joint waypoints in its own base frame.
 struct PhaseArm

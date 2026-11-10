@@ -26,7 +26,7 @@ def main() -> int:
     args = parser.parse_args()
 
     spec = mjk.SceneSpec()
-    spec.timestep = 0.002
+    spec.timestep = 0.001
     spec.use_stage = True
     robot_spec = mjk.RobotSpec()
     robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")

@@ -55,7 +55,7 @@ bundled `assets/stage/default.xml` unless `SceneSpec::stage` names another;
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 
 mj_kdl::SceneSpec scene;
-scene.timestep  = 0.002;   // [s]
+scene.timestep  = 0.001;   // [s]
 scene.use_stage = true;
 scene.robots.push_back(mj_kdl::RobotSpec{
     .path = mj_kdl_examples::asset("kinova_gen3/gen3.xml"),
@@ -85,7 +85,7 @@ Important fields:
 
 ```cpp
 mj_kdl::SceneSpec scene;
-scene.timestep  = 0.002;
+scene.timestep  = 0.001;
 scene.gravity_z = -9.81;
 scene.use_stage = true;
 scene.stage     = "";   // empty: the bundled assets/stage/default.xml
@@ -282,8 +282,7 @@ scene.robots.push_back(mj_kdl::RobotSpec{
 });
 ```
 
-Both assets ship with the package; `ex_table_pour` runs this chain (with prefix `pour_`)
-to hold the mug in the gripper.
+Both assets ship with the package.
 
 For contact stability, add contact exclusions only when two attached bodies are
 known to overlap structurally:
@@ -635,9 +634,9 @@ mj_kdl::VideoRecorder recorder;
 mj_kdl::init_video_recorder(
     &recorder, env.model, "episode.mp4", mj_kdl::VideoResolution::R1080p, 60);
 
-for (int i = 0; i < 3000; ++i) {
+for (int i = 0; i < 6000; ++i) {
     mj_kdl::step(&env);
-    if (i % 4 == 0) {
+    if (i % 16 == 0) { // ~60 fps at a 1 ms timestep
         mj_kdl::record_frame(&recorder, &env);
     }
 }
@@ -710,7 +709,7 @@ writing `surface_z` into the robot position by hand:
 
 ```cpp
 mj_kdl::SceneSpec scene;
-scene.timestep  = 0.002;
+scene.timestep  = 0.001;
 scene.use_stage = true;
 scene.objects.push_back(table);
 scene.objects.push_back(cube);
@@ -1041,8 +1040,6 @@ The included examples show how these pieces combine:
 
 - `ex_table_pick_place`: IK waypoints, phase table, torque impedance, table asset sites, a
   scene wrench pushing the arm mid-carry.
-- `ex_table_pour`: gripper-held bottle asset, free particles, receiver asset; `--record`
-  writes an MP4.
 - `ex_rnea_pick_place`: two prefixed arms at one table, each with its own RNEA computed
   torque, plus free objects and scene cameras.
 - `ex_achd_pick_place`, `ex_achd_table_slide`: ACHD; the slide also presses on the table

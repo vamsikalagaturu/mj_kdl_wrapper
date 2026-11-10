@@ -383,11 +383,24 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/default_stage.cpp.tmp"
 configure_file("${CMAKE_CURRENT_BINARY_DIR}/generated/default_stage.cpp.tmp"
   "${CMAKE_CURRENT_BINARY_DIR}/generated/default_stage.cpp" COPYONLY)
 
+# mj_kdl::version(), regenerated at every build so a commit since configuring shows in it.
+set(MJ_KDL_VERSION_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/generated/version.cpp")
+add_custom_target(mj_kdl_build_version
+  COMMAND "${CMAKE_COMMAND}" -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+          -DVERSION=${PROJECT_VERSION} -DOUTPUT=${MJ_KDL_VERSION_SOURCE}
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildVersion.cmake"
+  BYPRODUCTS "${MJ_KDL_VERSION_SOURCE}"
+  COMMENT "mj_kdl_wrapper version"
+  VERBATIM
+)
+
 # Core library: MuJoCo and KDL only.
 add_library(mj_kdl_wrapper SHARED
   src/mj_kdl_wrapper.cpp
   "${CMAKE_CURRENT_BINARY_DIR}/generated/default_stage.cpp"
+  "${MJ_KDL_VERSION_SOURCE}"
 )
+add_dependencies(mj_kdl_wrapper mj_kdl_build_version)
 
 target_include_directories(mj_kdl_wrapper PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -611,9 +624,6 @@ if(BUILD_PYTHON_BINDINGS)
     endif()
     target_compile_features(_mj_kdl_wrapper PRIVATE cxx_std_20)
     target_compile_options(_mj_kdl_wrapper PRIVATE -Wall -Wextra -Wpedantic)
-    target_compile_definitions(_mj_kdl_wrapper PRIVATE
-      MJ_KDL_WRAPPER_VERSION="${PROJECT_VERSION}"
-    )
     # The extension calls MuJoCo directly, so libmujoco is a direct dependency
     # of this module too. DT_RUNPATH is not transitive, so it needs its own
     # entry for the sibling mujoco pip package alongside $ORIGIN.

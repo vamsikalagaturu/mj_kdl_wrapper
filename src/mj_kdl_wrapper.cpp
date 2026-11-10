@@ -1251,7 +1251,7 @@ Status build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     if (!(sc->timestep > 0.0)) {
         MJ_FAIL(
           "SceneSpec::timestep must be > 0 (got "
-          << sc->timestep << "); the field has no default, set it explicitly (suggested 0.002 s)"
+          << sc->timestep << "); the field has no default, set it explicitly (suggested 0.001 s)"
         );
     }
     ensure_plugins_loaded();
@@ -1326,6 +1326,40 @@ Status build_scene(mjModel **out_model, mjData **out_data, const SceneSpec *sc)
     }
     // Every robot starts in its native mode: its other mode groups are off.
     scene->option.disableactuator |= disable_bits;
+    // Set only: a scene MJCF that enables it keeps it (doc/computation/speculative.rst).
+    if (sc->speculative_contacts) scene->option.enableflags |= mjENBL_SPECULATIVE;
+    switch (sc->integrator) {
+    case Integrator::Robot:
+        break;
+    case Integrator::Euler:
+        scene->option.integrator = mjINT_EULER;
+        break;
+    case Integrator::RK4:
+        scene->option.integrator = mjINT_RK4;
+        break;
+    case Integrator::Implicit:
+        scene->option.integrator = mjINT_IMPLICIT;
+        break;
+    case Integrator::ImplicitFast:
+        scene->option.integrator = mjINT_IMPLICITFAST;
+        break;
+    case Integrator::Discrete:
+        scene->option.integrator = mjINT_DISCRETE;
+        break;
+    }
+    switch (sc->solver) {
+    case Solver::Robot:
+        break;
+    case Solver::PGS:
+        scene->option.solver = mjSOL_PGS;
+        break;
+    case Solver::CG:
+        scene->option.solver = mjSOL_CG;
+        break;
+    case Solver::Newton:
+        scene->option.solver = mjSOL_NEWTON;
+        break;
+    }
 
     if (Status s = add_cameras_to_spec(scene.get(), sc->cameras); !s) return s;
     // Whatever is still pending: a site whose body no robot or object ever brought in, reported

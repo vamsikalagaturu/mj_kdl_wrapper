@@ -33,7 +33,7 @@ TEST(MjcfVelCtrlTest, ConvergesInVelocityMode)
     rs.path  = arm;
     rs.modes = { { .mode = mj_kdl::CtrlMode::VELOCITY, .joints = {}, .kv = kVelGain } };
     mj_kdl::SceneSpec sc;
-    sc.timestep  = 0.002;
+    sc.timestep  = 0.001;
     sc.use_stage = true;
     sc.robots.push_back(rs);
 

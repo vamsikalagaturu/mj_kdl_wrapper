@@ -13,7 +13,7 @@
 TEST(Viewer, AViewerThatCannotOpenReturnsAnError)
 {
     mj_kdl::SceneSpec sc;
-    sc.timestep  = 0.002;
+    sc.timestep  = 0.001;
     sc.use_stage = true;
     mj_kdl::Env env;
     ASSERT_TRUE(mj_kdl::init_env(&env, &sc));

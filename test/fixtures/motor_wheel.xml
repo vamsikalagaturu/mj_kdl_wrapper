@@ -1,7 +1,7 @@
 <!-- One motor-driven wheel on a motor-driven pivot, as on a KELO drive: the wheel takes velocity
      and torque modes, the pivot is left out of them. -->
 <mujoco model="motor_wheel">
-  <option timestep="0.002" gravity="0 0 0"/>
+  <option timestep="0.001" gravity="0 0 0"/>
   <worldbody>
     <body name="drive">
       <joint name="pivot" type="hinge" axis="0 0 1" damping="0.1"/>

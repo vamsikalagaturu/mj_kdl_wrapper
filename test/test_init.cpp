@@ -22,7 +22,7 @@ static std::string gen3_path() { return ex::find_asset("kinova_gen3/gen3.xml"); 
 static mj_kdl::SceneSpec arm_scene(const std::string &mjcf, const std::string &prefix = "")
 {
     mj_kdl::SceneSpec sc;
-    sc.timestep  = 0.002;
+    sc.timestep  = 0.001;
     sc.use_stage = true;
     mj_kdl::RobotSpec r;
     r.path   = mjcf;
@@ -375,7 +375,7 @@ TEST(EnvAdopt, RunsOnTheCallersPairAndNeverFreesIt)
 TEST(SceneFloor, PlacedAtFloorZ)
 {
     mj_kdl::SceneSpec sc;
-    sc.timestep  = 0.002;
+    sc.timestep  = 0.001;
     sc.use_stage = true;
     sc.floor_z   = -0.72;
 
@@ -423,7 +423,7 @@ TEST(SceneSpecRequired, AnUnsetFieldFailsTheBuild)
         return ok;
     };
     mj_kdl::SceneSpec base;
-    base.timestep  = 0.002;
+    base.timestep  = 0.001;
     base.use_stage = false;
 
     mj_kdl::SceneObject cube = small_cube();

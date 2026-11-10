@@ -78,7 +78,7 @@ class ArmModesTest : public testing::TestWithParam<ArmCase>
         const ArmCase &c = GetParam();
         mjcf_            = mj_kdl_examples::find_asset(c.mjcf);
         if (!fs::exists(mjcf_)) GTEST_SKIP() << c.mjcf << " not found";
-        spec_.timestep  = 0.002;
+        spec_.timestep  = 0.001;
         spec_.use_stage = true;
         mj_kdl::RobotSpec rs;
         rs.path = mjcf_;
@@ -320,7 +320,7 @@ TEST(GripperModesTest, GripperStaysInPositionWhileTheArmSwitches)
     rs.path = arm_mjcf;
     rs.attachments.push_back(mj_kdl_examples::gripper_attachment(grp_mjcf));
     mj_kdl::SceneSpec spec;
-    spec.timestep  = 0.002;
+    spec.timestep  = 0.001;
     spec.use_stage = true;
     spec.robots.push_back(rs);
 
@@ -376,7 +376,7 @@ class MotorWheelModesTest : public testing::Test
 
     void SetUp() override
     {
-        spec_.timestep  = 0.002;
+        spec_.timestep  = 0.001;
         spec_.use_stage = false;
         mj_kdl::RobotSpec rs;
         rs.path  = fixture_;
@@ -482,7 +482,7 @@ class AttachedArmModesTest : public testing::Test
     {
         const std::string mjcf = mj_kdl_examples::find_asset("kinova_gen3/gen3.xml");
         if (!fs::exists(mjcf)) GTEST_SKIP() << "kinova_gen3/gen3.xml not found";
-        spec_.timestep  = 0.002;
+        spec_.timestep  = 0.001;
         spec_.use_stage = false;
         mj_kdl::RobotSpec rs;
         rs.path = std::string(MJ_KDL_TEST_FIXTURES) + "/arm_mount.xml";

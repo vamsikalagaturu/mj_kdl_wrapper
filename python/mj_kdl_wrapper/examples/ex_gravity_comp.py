@@ -10,7 +10,7 @@ import PyKDL as kdl
 import mj_kdl_wrapper as mjk
 
 HOME_POSE = [0.0, 0.2618, 3.1416, -2.2689, 0.0, 0.9599, 1.5708]
-STEPS = 7500  # 15 s
+STEPS = 15000  # 15 s
 MAX_DRIFT = 0.0001  # [m]
 
 
@@ -33,7 +33,7 @@ def main() -> int:
     args = parser.parse_args()
 
     spec = mjk.SceneSpec()
-    spec.timestep = 0.002
+    spec.timestep = 0.001
     spec.use_stage = True
     robot_spec = mjk.RobotSpec()
     robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")

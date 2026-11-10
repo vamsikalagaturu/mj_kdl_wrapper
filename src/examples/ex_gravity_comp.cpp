@@ -5,7 +5,7 @@
  * Usage:
  *   ex_gravity_comp [--headless]
  *
- * Runs 15 s (7500 steps) and prints the EE drift; --headless skips the viewer and exits 1 if
+ * Runs 15 s (15000 steps) and prints the EE drift; --headless skips the viewer and exits 1 if
  * the drift exceeds kMaxDrift. */
 
 #include "mj_kdl_wrapper/viewer.hpp"
@@ -18,7 +18,7 @@
 
 namespace ex = mj_kdl_examples;
 
-static constexpr int    kSteps    = 7500;   // 15 s
+static constexpr int    kSteps    = 15000;   // 15 s
 static constexpr double kMaxDrift = 0.0001; // [m]
 
 int main(int argc, char *argv[])

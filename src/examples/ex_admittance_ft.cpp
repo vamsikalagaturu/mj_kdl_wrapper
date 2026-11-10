@@ -48,7 +48,7 @@ static constexpr double kTeachRise   = 0.10; // [m]
 static constexpr double kTeachTurns  = 5.0;
 
 // Sequence and self-check.
-static constexpr int    kSettleSteps      = 300;
+static constexpr int    kSettleSteps      = 600;
 static constexpr double kHandoffTareTime  = 1.0; // [s]
 static constexpr int    kHandoffSteps     = 100;
 static constexpr double kSettleTime       = 0.5;                // [s]

@@ -33,9 +33,9 @@
 
 namespace ex = mj_kdl_examples;
 
-static constexpr int    kApproachSteps  = 7500; // no contact within 15 s fails the run
-static constexpr int    kPressSteps     = 250;  // the press ramps up over 0.5 s
-static constexpr int    kSlideSteps     = 2000;
+static constexpr int    kApproachSteps  = 15000; // no contact within 15 s fails the run
+static constexpr int    kPressSteps     = 500; // the press ramps up over 0.5 s
+static constexpr int    kSlideSteps     = 4000;
 static constexpr double kTableZ         = 0.447;
 static constexpr double kMoveX          = 0.20;
 static constexpr double kVMaxLin        = 0.08; // [m/s]

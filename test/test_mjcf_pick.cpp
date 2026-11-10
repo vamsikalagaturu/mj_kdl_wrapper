@@ -39,7 +39,7 @@ class MjcfPickTest : public testing::Test
         rs.path = arm_mjcf;
         rs.attachments.push_back(ex::gripper_attachment(grp_mjcf));
         mj_kdl::SceneSpec sc;
-        sc.timestep  = 0.002;
+        sc.timestep  = 0.001;
         sc.use_stage = true;
         sc.robots.push_back(rs);
         sc.objects.push_back(ex::cube_object(ex::kPickXY[0], ex::kPickXY[1], 0.0));

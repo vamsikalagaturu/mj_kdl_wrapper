@@ -8,7 +8,7 @@ import mj_kdl_wrapper as mjk
 
 def _scene_spec() -> mjk.SceneSpec:
     spec = mjk.SceneSpec()
-    spec.timestep = 0.002
+    spec.timestep = 0.001
     spec.use_stage = True
     robot_spec = mjk.RobotSpec()
     robot_spec.path = str(mjk.ASSETS_DIR / "kinova_gen3/gen3.xml")
@@ -347,7 +347,7 @@ def test_on_reset_error_comes_out_after_the_read_back():
 def test_env_spec_is_a_read_only_copy():
     with mjk.Env.build(_scene_spec()) as env:
         env.spec.timestep = 1.0
-        assert env.spec.timestep == 0.002
+        assert env.spec.timestep == 0.001
         with pytest.raises(AttributeError):
             env.spec = mjk.SceneSpec()
         env.add_object(_cube())
@@ -377,7 +377,7 @@ def test_velocity_mode_tracks_the_commanded_velocity():
         robot.set_control_mode(mjk.CtrlMode.VELOCITY)
         start = robot.jnt_pos_msr[0]
         robot.jnt_vel_cmd = [0.3] + [0.0] * (robot.n_joints - 1)
-        for _ in range(250):
+        for _ in range(500):  # 0.5 s
             env.update()
             env.step()
         env.update()

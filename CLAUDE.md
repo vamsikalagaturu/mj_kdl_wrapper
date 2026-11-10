@@ -71,7 +71,7 @@
 - New runtime state belongs in one of those structs.
 - `build_scene()` starts from the stage MJCF (`SceneSpec::stage`; the bundled `assets/stage/default.xml`, compiled into the core, when empty; an empty world when `use_stage` is false), merges MJCF through `mjSpec`, then injects objects, sites and cameras.
 - `scene_add_object` / `scene_remove_object` rebuild the model and re-resolve robots and scene slots; the viewer and recorders follow through `EnvHooks::on_rebuild`.
-- Bundled `assets/` (the only models used): Gen3 with armature, 2F-85 (ctrl is the driver angle 0..0.82 rad; tool frame starts at `g_base_mount`), table, cabinet, mug, cube, door latch, F/T sensor.
+- Bundled `assets/` (the only models used): Gen3 with armature, 2F-85 (ctrl is the driver angle 0..0.82 rad; tool frame starts at `g_base_mount`), table, cabinet, mug, cube, towel (cloth flex, needs the discrete integrator), door latch, F/T sensor.
 - C++ examples and tests resolve them with `mj_kdl_examples::asset()` / `find_asset()` (`src/examples/example_paths.hpp`) from the source `assets/`; nothing is fetched.
 - `cmake --install` copies `assets/` and the two model licenses into `~/.cache/mj_kdl_wrapper/assets` (skipped for wheels); motion-spec's generated controllers read them there.
 
@@ -83,7 +83,7 @@
 ## Versioning and releases
 
 - `MJ_KDL_VERSION` in `cmake/Versions.cmake` is the only version: `project(VERSION)`, the CMake package config, `mj_kdl_wrapper.pc` and `pyproject.toml` (scikit-build-core regex provider) read it.
-- Only the Python extension gets it as a define (`MJ_KDL_WRAPPER_VERSION`, exposed as `mj_kdl_wrapper.__version__`); the C++ library has no version define or call.
+- `mj_kdl::version()` (Python `mjk.version()`, the viewer's Help menu) is generated at each build by `cmake/BuildVersion.cmake`: `X.Y.Z` from the `vX.Y.Z` tag or a source package, else `X.Y.Z-dev+<commit>[.dirty]`; `mj_kdl_wrapper.__version__` is always the package's `X.Y.Z`.
 - The CMake package matches within a minor version (`SameMinorVersion`): 0.x minors are breaking.
 - `dev` always carries the next version, never the last released one.
 - Cutting `vX.Y.Z`:

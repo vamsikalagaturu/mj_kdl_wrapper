@@ -98,7 +98,7 @@ def make_cube() -> mjk.SceneObject:
 
 def build_env() -> tuple[mjk.Env, mjk.Robot]:
     spec = mjk.SceneSpec()
-    spec.timestep = 0.002
+    spec.timestep = 0.001
     spec.use_stage = True
 
     table = make_table()
@@ -205,7 +205,7 @@ worldbody, for a scene whose world frame sits above ground level.
 import mj_kdl_wrapper as mjk
 
 spec = mjk.SceneSpec()
-spec.timestep = 0.002
+spec.timestep = 0.001
 spec.use_stage = True
 
 robot_spec = mjk.RobotSpec()
@@ -517,17 +517,17 @@ full (8192 geoms), so keep the trace bounded. `env.overlay_geoms()` returns them
 ## 10. Record Video
 
 `mjk.VideoRecorder` is the C++ recorder: Filament offscreen rendering, encoded to MP4 by
-ffmpeg (on `PATH`), with no window needed; `ex_table_pour.py --record` uses it. Record after
+ffmpeg (on `PATH`), with no window needed. Record after
 stepping the state you want captured.
 
 ```python
 with mjk.VideoRecorder.open_preset(env, "episode.mp4", mjk.VideoResolution.R720p, 60) as vr:
     vr.use_camera("task")
-    for i in range(3000):
+    for i in range(6000):
         env.update()
         robot.jnt_trq_cmd = gravity()
         env.step()
-        if i % 8 == 0:                 # 60 fps at a 2 ms timestep
+        if i % 16 == 0:                # ~60 fps at a 1 ms timestep
             vr.record_frame()
 ```
 
@@ -549,7 +549,7 @@ A pick-place task is the same pieces assembled with a small state machine:
 
 ```python
 spec = mjk.SceneSpec()
-spec.timestep = 0.002
+spec.timestep = 0.001
 spec.use_stage = True
 
 table = mjk.SceneObject()
@@ -732,7 +732,6 @@ The Python examples mirror the C++ ones:
 - `ex_joint_ctrl`: a POSITION mode motion, then a VELOCITY mode motion back.
 - `ex_table_pick_place`: IK waypoints, gripper command, phase table, table asset sites, a push
   on the arm mid-carry through `xfrc_applied`.
-- `ex_table_pour`: gripper-held bottle asset and receiver; `--record` writes an MP4.
 - `ex_rnea_pick_place`: two prefixed arms at one table with RNEA computed torque, free objects,
   scene cameras.
 - `ex_achd_pick_place`, `ex_achd_table_slide`: ACHD torque control.

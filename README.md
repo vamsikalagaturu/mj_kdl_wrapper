@@ -109,9 +109,10 @@ for programs that know neither.
 | `assets/robotiq_2f85/2f85.xml` | Robotiq 2F-85; ctrl is the driver joint angle, 0 (open) to 0.82 rad (closed). Use `tool_body = "g_base_mount"` (with prefix `g_`): the mount carries mass too |
 | `assets/ft_sensor.xml` | 6-axis force-torque sensor |
 | `assets/table.xml` | Table with an authored `table_top` site |
-| `assets/mug.xml`, `assets/mug_table.xml` | Pouring example |
+| `assets/mug.xml`, `assets/mug_table.xml` | Mug (a gripper-held tool in the C++ tutorial) and a table-mounted mug |
 | `assets/cabinet/cabinet.xml` | Three-drawer cabinet |
 | `assets/cube.xml` | Free cube |
+| `assets/towel.xml` | 0.30 m cloth towel (2D flex) held by a gripper; needs `Integrator::Discrete` |
 | `assets/door_latch/door_latch.xml` | Latched cupboard door (not used by the examples or tests) |
 
 Any other MJCF, e.g. from [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie),

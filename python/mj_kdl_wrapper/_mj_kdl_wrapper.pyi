@@ -50,6 +50,22 @@ class Condim(_Enum):
     Rolling: ClassVar[Condim]
 
 
+class Integrator(_Enum):
+    Robot: ClassVar[Integrator]
+    Euler: ClassVar[Integrator]
+    RK4: ClassVar[Integrator]
+    Implicit: ClassVar[Integrator]
+    ImplicitFast: ClassVar[Integrator]
+    Discrete: ClassVar[Integrator]
+
+
+class Solver(_Enum):
+    Robot: ClassVar[Solver]
+    PGS: ClassVar[Solver]
+    CG: ClassVar[Solver]
+    Newton: ClassVar[Solver]
+
+
 class CtrlMode(_Enum):
     POSITION: ClassVar[CtrlMode]
     TORQUE: ClassVar[CtrlMode]
@@ -154,6 +170,9 @@ class SceneSpec:
     use_stage: Optional[bool]
     stage: str
     floor_z: float
+    speculative_contacts: bool
+    integrator: Integrator
+    solver: Solver
     objects: list[SceneObject]
     sites: list[SiteSpec]
     cameras: list[CameraSpec]
@@ -451,6 +470,9 @@ class VideoRecorder:
 
 __version__: str
 __mujoco_version__: str
+
+def version() -> str:
+    """The build's version: __version__, plus -dev+<commit>[.dirty] when not built from its tag."""
 
 def set_log_level(level: LogLevel) -> None:
     """Print wrapper messages at level and above; NONE prints nothing."""

@@ -53,13 +53,20 @@ sky, haze and lights: by default the bundled `assets/stage/default.xml` (an infi
 plane, a gradient skybox and two spot lights), or the file named by `SceneSpec::stage`;
 `use_stage = false` builds on an empty world. `floor_z` (default `0.0`) is added to the height of
 every plane on the stage's worldbody, for scenes whose world frame is not at ground level.
+`speculative_contacts` (default `false`) turns on MuJoCo 4's speculative contacts, which add a
+contact before an impact so a fast convex geom does not pass through a thin one within a step
+(MuJoCo's `doc/computation/speculative.rst`); a scene MJCF that enables the flag keeps it.
+`integrator` and `solver` (`Integrator::Robot`, `Solver::Robot` by default) keep the first
+robot's MuJoCo options (Gen3: implicitfast, Newton) unless set; cloth and other flex elasticity
+needs `Integrator::Discrete` (or `Euler`, `RK4`), as MuJoCo 4.0 no longer supports it under the
+implicit integrators.
 
 ```cpp
 #include "example_paths.hpp"
 #include "mj_kdl_wrapper/mj_kdl_wrapper.hpp"
 
 mj_kdl::SceneSpec sc;
-sc.timestep  = 0.002;   // [s]; required, must be > 0
+sc.timestep  = 0.001;   // [s]; required, must be > 0
 sc.use_stage = true;
 sc.robots.push_back(mj_kdl::RobotSpec{
     .path = mj_kdl_examples::asset("kinova_gen3/gen3.xml")
@@ -223,7 +230,7 @@ robot_spec.path = mj_kdl_examples::asset("kinova_gen3/gen3.xml");
 robot_spec.attachments.push_back(gripper);
 
 mj_kdl::SceneSpec sc;
-sc.timestep  = 0.002;
+sc.timestep  = 0.001;
 sc.use_stage = true;
 sc.robots.push_back(robot_spec);
 mj_kdl::init_env(&env, &sc);
@@ -260,7 +267,7 @@ any body, site, or frame added by prior entries.
 
 ```cpp
 mj_kdl::SceneSpec sc;
-sc.timestep  = 0.002;
+sc.timestep  = 0.001;
 sc.use_stage = true;
 sc.robots = {
     mj_kdl::RobotSpec{ .path = "gen3.xml", .prefix = "r1_", .pos = { -0.5, 0.0, 0.0 } },
@@ -306,7 +313,7 @@ they are ignored (`rgba` with `has_rgba` recolours the asset). For primitives,
 
 ```cpp
 mj_kdl::SceneSpec sc;
-sc.timestep  = 0.002;
+sc.timestep  = 0.001;
 sc.use_stage = true;
 
 mj_kdl::SceneObject table{
@@ -505,7 +512,7 @@ vr.cam.azimuth   = 135.0;
 vr.cam.elevation = -20.0;
 vr.cam.distance  = 2.5;
 
-for (int i = 0; i < 3000; ++i) {
+for (int i = 0; i < 6000; ++i) {
     mj_kdl::update(&env);
     mj_kdl::step(&env);
     mj_kdl::record_frame(&vr, &env);
@@ -638,7 +645,10 @@ the scene's `mjSpec`. Open Model, Unload, the spec Editor and the graphics-mode 
 disabled, because the `Env` owns the model. The wrapper adds an `Equality` section to the
 Inspector and, to the Options panel, `Robots` (each robot's name and active control mode,
 read-only, and each joint's position between its limits), `Frames` (checkboxes that draw body and site frames, under a name filter),
-`Perturb` and `Recording`. `View -> Add Camera View` opens a fixed camera's image (colour,
+`Perturb` and `Recording`. The Explorer's Data tab starts with a `Frame` choice (world, or any
+body or site, as RViz's Fixed Frame) and the element's `Pose` in it: `pos` [m], `quat_xyzw`
+and `rpy` [rad] about the frame's fixed axes; Studio's list of every `mjData` field follows,
+folded under `All fields (mjData)`. Right-click a row to copy its values. `View -> Add Camera View` opens a fixed camera's image (colour,
 depth or segmentation) in a window of its own. `View -> Style Editor` is ImGui's style editor
 under a Theme choice (Studio's Light / Dark / Classic, as `View -> Theme`) and a Font choice
 (the system fonts fontconfig lists, Studio's icons merged in). Its edits stay over the theme

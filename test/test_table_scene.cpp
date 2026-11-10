@@ -25,7 +25,7 @@ static constexpr double kSurfaceZ = 0.7;
 static mj_kdl::SceneSpec empty_scene()
 {
     mj_kdl::SceneSpec sc;
-    sc.timestep  = 0.002;
+    sc.timestep  = 0.001;
     sc.use_stage = false;
     return sc;
 }

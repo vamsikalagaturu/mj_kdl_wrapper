@@ -60,7 +60,7 @@ class RenderTest : public testing::Test
     {
         const std::string gen3 = mj_kdl_examples::find_asset("kinova_gen3/gen3.xml");
         if (gen3.empty()) GTEST_SKIP() << "kinova_gen3/gen3.xml not found";
-        spec_.timestep  = 0.002;
+        spec_.timestep  = 0.001;
         spec_.use_stage = true;
         spec_.robots.emplace_back();
         spec_.robots.back().path = gen3;
@@ -72,7 +72,7 @@ class RenderTest : public testing::Test
 TEST(Recorder, OutputPathReachesFfmpegVerbatim)
 {
     mj_kdl::SceneSpec sc;
-    sc.timestep  = 0.002;
+    sc.timestep  = 0.001;
     sc.use_stage = true;
     mj_kdl::Env env;
     ASSERT_TRUE(mj_kdl::init_env(&env, &sc));
@@ -99,7 +99,7 @@ TEST(Recorder, OutputPathReachesFfmpegVerbatim)
 TEST(Offscreen, RendersTheSceneIntoABuffer)
 {
     mj_kdl::SceneSpec sc;
-    sc.timestep  = 0.002;
+    sc.timestep  = 0.001;
     sc.use_stage = true;
     mj_kdl::Env env;
     ASSERT_TRUE(mj_kdl::init_env(&env, &sc));

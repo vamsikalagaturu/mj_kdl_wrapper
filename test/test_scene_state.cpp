@@ -53,7 +53,7 @@ class SceneStateTest : public testing::Test
             return;
         }
 
-        spec_.timestep  = 0.002;
+        spec_.timestep  = 0.001;
         spec_.use_stage = true;
         mj_kdl::RobotSpec rs;
         rs.path = mjcf;

@@ -20,7 +20,7 @@ def test_ft_sensor_returns_pykdl_wrench():
     robot_spec.attachments = [ft, gripper]
 
     spec = mjk.SceneSpec()
-    spec.timestep = 0.002
+    spec.timestep = 0.001
     spec.use_stage = True
     spec.robots = [robot_spec]
 

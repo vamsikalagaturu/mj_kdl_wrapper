@@ -22,8 +22,8 @@ unless given `--headless`; a Python one (`python/mj_kdl_wrapper/examples/`) runs
 closing the window ends it early. Headless, each example checks its own goal (the limit is
 printed next to the measured value), prints `PASS` or `FAIL`, and exits 1 on a failure. The C++
 headless runs are registered with CTest (`ex_*_headless`); the Python ones run under pytest
-(`python/tests/test_examples.py`). Recording: `ex_table_pour --record [out.mp4]` (C++ and
-Python) and `ex_achd_pick_place --record` (C++) also write an MP4.
+(`python/tests/test_examples.py`). Recording: `ex_achd_pick_place --record [out.mp4]` (C++)
+also writes an MP4.
 
 Every example exists in both languages, with the same scene, gains, durations and limits.
 
@@ -48,8 +48,8 @@ pose), so the first step after a reset already holds the arm.
 | `ex_gravity_comp` | arm only | hold home pose with KDL gravity compensation | EE drift |
 | `ex_joint_ctrl` | arm only | POSITION motion to a target, then VELOCITY motion back home | joint error at the target, VELOCITY converges before the timeout |
 | `ex_table_pick_place` | table + blue cube | joint-impedance pick-place, pushed while carrying the cube | cube placed, push deflection vs stiffness, spring-back, elbow height |
-| `ex_table_pour` | table + transparent receiver | scripted pour from a gripper-held bottle into a tabletop vessel | balls in the receiver |
 | `ex_rnea_pick_place` | two arms + grippers, table, two cubes, free objects, cameras | dual-arm pick-place with RNEA computed torque | both cubes placed, elbow heights, objects undisturbed, no arm contact |
+| `ex_table_towel` | arm + gripper holding a cloth towel (2D flex), table | towel lowered onto the table, dragged left and right, lifted, with RNEA computed torque | towel on the table while dragged, clear of it at the end |
 | `ex_achd_table_slide` | arm without gripper, table | guarded ACHD approach of the wrist flange onto the table, then a slide along +X while pressing 10 N down through ACHD's external-force input | touchdown speed, table contact held, elbow height |
 | `ex_achd_pick_place` | table + blue cube | ACHD Cartesian pick/place with 6D TCP regulation and half-arm support wrench | cube placed, elbow drop |
 | `ex_admittance_ft` | table + wrist FT + gripper | admittance driven by a named force-torque sensor, RNEA task-space inner loop with a null-space posture | helix and push metrics, elbow height |
@@ -61,7 +61,7 @@ pose), so the first step after a reset already holds the arm.
 **Scene:** Kinova GEN3 arm (arm only, no gripper).
 
 **What it does:**
-- Holds the arm at the home pose using KDL gravity compensation for 15 s (7500 steps).
+- Holds the arm at the home pose using KDL gravity compensation for 15 s (15000 steps).
 - `env.on_reset` re-homes the arm, so the UI's reset button puts it back.
 
 **Control law:** `CtrlMode::TORQUE` - KDL gravity compensation.
@@ -70,7 +70,7 @@ pose), so the first step after a reset already holds the arm.
 tau[i] = JntToGravity(q)[i]
 ```
 
-**Headless check:** `EE drift after 7500 steps: X.XXXX mm (limit 0.1000 mm)`; measured 0.0000 mm.
+**Headless check:** `EE drift after 15000 steps: X.XXXX mm (limit 0.1000 mm)`; measured 0.0000 mm.
 
 ---
 
@@ -169,30 +169,30 @@ between the two arms (0); RNEA never failed.
 
 ---
 
-## ex_table_pour
+## ex_table_towel
 
-**Scene:** Kinova GEN3 + 2F-85 gripper mounted on a table, with a transparent
-receiver vessel and 36 small free spheres representing rice or pellets.
+**Scene:** Kinova GEN3 + 2F-85 on the table, holding a 0.30 m x 0.30 m towel
+(`assets/towel.xml`, a 7 x 7 MuJoCo 2D flex) by the middle of one edge: three vertices pinned at
+the pinch point, the towel hanging below the gripper. Cloth settings follow MuJoCo's modeling
+guide (Deformables): continuum elasticity, `SceneSpec::integrator = Integrator::Discrete`,
+`solver = Solver::Newton`, tolerance 1e-6, no self-collision, contact with friction.
 
 **What it does:**
-- Attaches a small gripper-sized bottle to the gripper as a real MJCF tool
-  attachment, so its mass is included through `ToolFrameSpec::tool_body`.
-- Initializes the free spheres inside the attached bottle using the `pour_center` site frame.
-- Solves IK waypoints for a pre-pour pose, a pour pose shifted until the tilted outlet sits over
-  the receiver, the tilted pour pose and a retreat, then runs
-  `HOME -> PRE_POUR -> POUR -> TILT -> POUR_HOLD -> RETREAT -> HOLD`.
-- Uses transparent fixed collision walls for the receiving vessel, so particles
-  can visibly collect inside it.
+- Solves four joint waypoints once by IK: the home TCP pose moved down until the towel's lower
+  6 cm lie on the table, 0.25 m left, 0.25 m right of the start, and back up.
+- Runs `CLOSE -> DOWN -> DRAG_LEFT -> DRAG_RIGHT -> UP -> HOLD` with the gripper pointing down.
 
-**Control law:** `CtrlMode::TORQUE` - joint impedance (PD + KDL gravity), matching
-the pick examples.
+**Control law:** `CtrlMode::TORQUE` - RNEA computed torque, as `ex_rnea_pick_place`
+(`ex::RneaArm` in `common.hpp`).
 
-```
-tau[i] = g[i] + Kp[i] * (q_des[i] - q[i]) - Kd[i] * dq[i]
-```
+**Timestep:** 2 ms, the only example not at 1 ms. Every step solves the cloth implicitly, and the
+compliant torque-controlled arm and the lightly damped towel keep each other swinging, so
+MuJoCo's solver iterates every step: about 0.8x real time at 1 ms on a laptop CPU, about 1.8x at
+2 ms, within the 1-4 ms MuJoCo's modeling guide gives as typical for cloth.
 
-**Headless check:** `balls in transparent receiver: N/36`, at least 8; measured 10 (C++) and
-12 (Python).
+**Headless check (limit, measured C++):** at least 9 of the 49 towel vertices on the table while
+dragged (16); the lowest vertex at least 20 mm above the table at the end (44 mm); the cloth
+stayed finite.
 
 ---
 
@@ -289,13 +289,11 @@ python -m mj_kdl_wrapper.examples.ex_admittance_ft --gui
 
 `--record [out.mp4]` runs a C++ example headless and writes an H.264 MP4 through
 `VideoRecorder` (`mj_kdl_wrapper::render`: Filament offscreen rendering + ffmpeg pipe); no
-window is needed. A recorder that cannot start or write fails the run. The Python
-`ex_table_pour.py --record` uses the same recorder, `mjk.VideoRecorder`.
+window is needed. A recorder that cannot start or write fails the run. Python records through
+the same recorder, `mjk.VideoRecorder` (see the Python API guide).
 
 ```bash
-./build/src/examples/ex_table_pour --record pour.mp4        # 1080p, default table_pour.mp4
 ./build/src/examples/ex_achd_pick_place --record pick.mp4   # 720p, default achd_pick_place.mp4
-python -m mj_kdl_wrapper.examples.ex_table_pour --record pour.mp4
 ```
 
 **Requires:** the render library (`MJ_KDL_WITH_RENDER`, `AUTO` by default; needs `libegl-dev`)

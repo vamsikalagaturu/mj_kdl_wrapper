@@ -22,8 +22,6 @@
 #include "common.hpp"
 #include "example_paths.hpp"
 
-#include <kdl/chainidsolver_recursive_newton_euler.hpp>
-
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -38,10 +36,6 @@ namespace ex = mj_kdl_examples;
 static constexpr double kMaxPlaceErr    = 0.005; // [m] in the table plane
 static constexpr double kMinElbowHeight = 0.45;  // [m] forearm_link origin above the table
 static constexpr double kMaxDisturb     = 0.001; // [m] free-object displacement
-
-// Acceleration gains: the closed loop is qddot = Kp e - Kd qdot [1/s^2], [1/s].
-static constexpr double kKp[7] = { 100, 200, 100, 200, 100, 200, 100 };
-static constexpr double kKd[7] = { 20, 28, 20, 28, 20, 28, 20 };
 
 // Base x, y [m] and yaw [rad] on the tabletop: facing each other, each arm in its own half.
 static constexpr double      kBase[2][3] = { { -0.70, -0.12, 0.0 }, { 0.70, 0.12, M_PI } };
@@ -106,32 +100,6 @@ static mj_kdl::CameraSpec
     return cam;
 }
 
-// RNEA computed torque for one arm; the solvers keep a reference to robot.chain.
-struct RneaArm
-{
-    RneaArm(mj_kdl::Robot &r, double gravity_z)
-      : robot(r), n(r.chain.getNrOfJoints()), rnea(r.chain, KDL::Vector(0.0, 0.0, gravity_z)),
-        dyn(r.chain, KDL::Vector(0.0, 0.0, gravity_z)), q(n), qdot(n), qddot(n), tau(n),
-        f_ext(r.chain.getNrOfSegments(), KDL::Wrench::Zero())
-    {}
-
-    bool control(const KDL::JntArray &q_des)
-    {
-        ex::read_q(robot, q, qdot);
-        for (unsigned i = 0; i < n; ++i) qddot(i) = kKp[i] * (q_des(i) - q(i)) - kKd[i] * qdot(i);
-        if (rnea.CartToJnt(q, qdot, qddot, f_ext, tau) < 0) return false;
-        for (unsigned i = 0; i < n; ++i) robot.jnt_trq_cmd[i] = tau(i);
-        return true;
-    }
-
-    mj_kdl::Robot         &robot;
-    unsigned               n;
-    KDL::ChainIdSolver_RNE rnea;
-    KDL::ChainDynParam     dyn;
-    KDL::JntArray          q, qdot, qddot, tau;
-    KDL::Wrenches          f_ext;
-};
-
 int main(int argc, char *argv[])
 {
     const bool headless = ex::parse_args(argc, argv).headless;
@@ -176,7 +144,7 @@ int main(int argc, char *argv[])
     std::array<mj_kdl::Robot, 2>             robots;
     std::vector<ex::PhaseArm>                arms;
     std::vector<mj_kdl::SceneFreeBodySlot *> cubes, free_bodies;
-    std::deque<RneaArm>                      ctl;
+    std::deque<ex::RneaArm>                  ctl;
     std::array<int, 2>                       roots{};
     for (int a = 0; a < 2; ++a) {
         const std::string pre = kPrefix[a];

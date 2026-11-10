@@ -31,7 +31,7 @@ TOOL_BODY = "g_base"  # rigid gripper base; where the headless self-check pushes
 GRIPPER_ACTUATOR = "g_fingers_actuator"
 FT_SITE = "wrist_ft_site"  # the F/T sensor's frame
 GRIPPER_CLOSED = 0.82  # rad; driver joint, the bundled 2F-85's ctrlrange is 0..0.82
-SETTLE_STEPS = 300  # ~0.6 s at dt=0.002 to close the gripper before taring
+SETTLE_STEPS = 600  # ~0.6 s at dt=0.001 to close the gripper before taring
 HANDOFF_TARE_TIME = 1.0  # s; let scripted-motion transients settle before FT hand-guiding
 GUIDE_TIME = 4.7  # s; hand-guiding window, as long as the self-check's push phases
 SELFCHECK_PUSH = (8.0, 12.0, 6.0)
@@ -107,7 +107,7 @@ def table_object() -> mjk.SceneObject:
 def build_env() -> tuple[mjk.Env, mjk.Robot]:
     table = table_object()
     spec = mjk.SceneSpec()
-    spec.timestep = 0.002
+    spec.timestep = 0.001
     spec.use_stage = True
     spec.objects = [table]
 

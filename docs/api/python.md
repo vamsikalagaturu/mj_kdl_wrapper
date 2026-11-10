@@ -41,7 +41,10 @@ or its `groundplane` texture collides with the stage's.
 
 `SceneSpec` has no defaults for `timestep` or `use_stage`.
 Those are explicit scene choices; `Env.build()` raises if one is unset or `timestep <= 0`.
-`spec.robots` may be empty; object-only scenes are valid.
+`spec.robots` may be empty; object-only scenes are valid. `spec.speculative_contacts` (default
+`False`) turns on MuJoCo's speculative contacts; `spec.integrator` (`mjk.Integrator`) and
+`spec.solver` (`mjk.Solver`) keep the first robot's options at `Robot`, and cloth needs
+`mjk.Integrator.Discrete` (see `ex_table_towel.py`).
 
 `use_stage = True` builds the scene on a stage MJCF that supplies the floor, sky, haze and
 lights: by default the bundled `assets/stage/default.xml` (an infinite checker floor plane, a
@@ -52,7 +55,7 @@ builds on an empty world.
 import mj_kdl_wrapper as mjk
 
 spec = mjk.SceneSpec()
-spec.timestep = 0.002
+spec.timestep = 0.001
 spec.use_stage = True
 
 robot_spec = mjk.RobotSpec()
@@ -105,7 +108,9 @@ assert mjk.get_log_level() == mjk.LogLevel.WARN
 print(mjk.__mujoco_version__)
 ```
 
-`mjk.__version__` is the Python package version. `mjk.__mujoco_version__` is the
+`mjk.__version__` is the package version (`0.6.0`). `mjk.version()`, the C++
+`mj_kdl::version()`, is the build's: the same for a build of the `v0.6.0` tag, else
+`0.6.0-dev+<commit>`, with `.dirty` when tracked files had uncommitted changes. `mjk.__mujoco_version__` is the
 MuJoCo version the extension was built against.
 
 ## Init A KDL Chain
@@ -481,15 +486,15 @@ for i in range(env.data.ncon):
 
 `mjk.VideoRecorder` is the C++ recorder: Filament offscreen rendering on a thread of its own,
 encoded to an H.264 MP4 by ffmpeg (on `PATH`), or kept in memory. No window is needed.
-`ex_table_pour.py --record` records this way:
+Recording a run looks like this:
 
 ```python
 with mjk.VideoRecorder.open_preset(env, "sim.mp4", mjk.VideoResolution.R720p, 60) as vr:
     vr.set_free_camera(1.35, 145.0, -22.0, (0.05, 0.02, 0.88))   # distance, azimuth, elevation, lookat
-    for i in range(3000):
+    for i in range(6000):
         env.update()
         env.step()
-        if i % 8 == 0:                 # 60 fps at a 2 ms timestep
+        if i % 16 == 0:                # ~60 fps at a 1 ms timestep
             vr.record_frame()
 ```
 

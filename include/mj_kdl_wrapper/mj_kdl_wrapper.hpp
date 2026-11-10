@@ -91,6 +91,14 @@ struct Status
 };
 
 /**
+ * @ingroup grp_env
+ * The library's version: "X.Y.Z" (MJ_KDL_VERSION in cmake/Versions.cmake) for a build of the
+ * vX.Y.Z tag or of a source package, else "X.Y.Z-dev+<short commit>", with ".dirty" when
+ * tracked files had uncommitted changes.
+ */
+const char *version();
+
+/**
  * @ingroup grp_types
  * Kind of element an AttachTarget references in the accumulated scene spec.
  * World selects the worldbody (the default); Body, Site, and Frame each look
@@ -213,6 +221,19 @@ enum class Condim : int { Tangential = 3, Torsional = 4, Rolling = 6 };
 
 /**
  * @ingroup grp_types
+ * MuJoCo's <option integrator> for SceneSpec::integrator; Robot keeps the first robot's (Gen3:
+ * ImplicitFast). Cloth and other flex elasticity needs Discrete (or Euler, RK4).
+ */
+enum class Integrator { Robot, Euler, RK4, Implicit, ImplicitFast, Discrete };
+
+/**
+ * @ingroup grp_types
+ * MuJoCo's <option solver> for SceneSpec::solver; Robot keeps the first robot's (Gen3: Newton).
+ */
+enum class Solver { Robot, PGS, CG, Newton };
+
+/**
+ * @ingroup grp_types
  * A free-floating or fixed rigid body to place in the scene.
  *
  * Names: an MJCF asset's elements keep their authored names, with prefix prepended when set;
@@ -322,12 +343,15 @@ struct CameraSpec
  *  is built on; the bundled assets/stage/default.xml is used when `stage` is empty. */
 struct SceneSpec
 {
-    std::vector<RobotSpec>   robots;
-    double                   timestep  = NAN;   // required; suggested 0.002 [s]
-    double                   gravity_z = -9.81; // Earth gravity [m/s^2]
-    bool                     use_stage;         // required; false builds on an empty world
-    std::string              stage;             // stage MJCF path; empty = the bundled default
-    double                   floor_z = 0.0;     // added to the height of the stage's planes [m]
+    std::vector<RobotSpec> robots;
+    double                 timestep  = NAN;   // required; suggested 0.001 [s]
+    double                 gravity_z = -9.81; // Earth gravity [m/s^2]
+    bool                   use_stage;         // required; false builds on an empty world
+    std::string            stage;             // stage MJCF path; empty = the bundled default
+    double                 floor_z  = 0.0;    // added to the height of the stage's planes [m]
+    bool       speculative_contacts = false; // MuJoCo's speculative flag: contacts before an impact
+    Integrator integrator           = Integrator::Robot; // the first robot's unless set
+    Solver     solver               = Solver::Robot;     // the first robot's unless set
     std::vector<SceneObject> objects;
     std::vector<SiteSpec>    sites;   // frames marked on the assembled scene's bodies
     std::vector<CameraSpec>  cameras; // static world cameras added to worldbody

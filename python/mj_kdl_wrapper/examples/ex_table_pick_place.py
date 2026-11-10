@@ -77,7 +77,7 @@ def build_env() -> tuple[mjk.Env, mjk.Robot]:
     robot_spec.attachments = [gripper]
 
     spec = mjk.SceneSpec()
-    spec.timestep = 0.002
+    spec.timestep = 0.001
     spec.use_stage = True
     spec.objects = [table, cube]
     spec.robots = [robot_spec]

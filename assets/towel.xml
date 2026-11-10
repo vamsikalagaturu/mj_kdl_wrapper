@@ -1,0 +1,19 @@
+<mujoco model="towel">
+  <!-- A 0.30 m x 0.30 m towel held by the middle of one edge: attached to the 2F-85's g_base, the
+       three pinned vertices sit at the pinch point (0.145 m along g_base z) and the towel hangs
+       along +z, in the plane the fingers close in. Settings after MuJoCo's modeling guide
+       (Deformables): continuum elasticity under integrator="discrete" with solver="Newton",
+       no self-collision, and contact with friction (passive="false") so it drags on a table. -->
+  <worldbody>
+    <body name="towel_holder">
+      <flexcomp name="towel" type="grid" count="7 7 1" spacing=".05 .05 .05"
+                pos="0 0 .295" axisangle="1 1 1 -120" radius=".003" mass=".08" dim="2"
+                rgba=".2 .55 .85 1">
+        <pin id="2 3 4"/>
+        <contact selfcollide="none" condim="3" friction="0.6"/>
+        <elasticity young="4347.90996" poisson="0.4" thickness="1.34164079e-3" elastic2d="both"
+                    damping="1e-2"/>
+      </flexcomp>
+    </body>
+  </worldbody>
+</mujoco>

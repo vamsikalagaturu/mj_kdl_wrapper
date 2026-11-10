@@ -35,7 +35,7 @@ class MjcfPosCtrlTest : public testing::Test
         mj_kdl::RobotSpec rs;
         rs.path = arm;
         mj_kdl::SceneSpec sc;
-        sc.timestep  = 0.002;
+        sc.timestep  = 0.001;
         sc.use_stage = true;
         sc.robots.push_back(rs);
         ASSERT_TRUE(mj_kdl::init_env(&env_, &sc));

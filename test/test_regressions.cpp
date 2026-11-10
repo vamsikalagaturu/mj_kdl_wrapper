@@ -40,7 +40,7 @@ class RebuildTest : public testing::Test
     {
         const std::string gen3 = mj_kdl_examples::find_asset("kinova_gen3/gen3.xml");
         if (gen3.empty()) GTEST_SKIP() << "kinova_gen3/gen3.xml not found";
-        spec_.timestep  = 0.002;
+        spec_.timestep  = 0.001;
         spec_.use_stage = true;
         spec_.robots.emplace_back();
         spec_.robots.back().path = gen3;

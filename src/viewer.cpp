@@ -631,8 +631,11 @@ struct WindowState
     // Bodies and sites whose frame is drawn (Frames), by name, so the choice survives a rebuild.
     std::set<std::pair<mjtObj, std::string>> shown_frames;
     ImGuiTextFilter                          frame_filter;
-    float                                    explorer_split = -1.0f;
-    int                                      element_mode   = 0; // 0 spec, 1 model, 2 data
+    // The Data tab's Frame (RViz's Fixed Frame): a body or site by name; mjOBJ_UNKNOWN is world.
+    std::pair<mjtObj, std::string> fixed_frame{ mjOBJ_UNKNOWN, "" };
+    ImGuiTextFilter                fixed_frame_filter;
+    float                          explorer_split = -1.0f;
+    int                            element_mode   = 0; // 0 spec, 1 model, 2 data
     // The element tab's right-click Copy: the row the menu opened on, and a copy asked for.
     int  copy_row     = -1;
     bool copy_pending = false;
@@ -1739,6 +1742,16 @@ static void simulation_gui(WindowState *ws, Commands *cmd)
     ctx.align             = [ws] { align_camera(ws); };
     ctx.save_keyframe     = [ws, cmd] { cmd->save_keyframe = ws->key_idx; };
     studio::SimulationGui(ctx);
+    // The real-time factor the Env's thread measures; Studio's section has no slot for it.
+    if (ws->speed_measured >= 0.0)
+        ImGui::Text(
+          "RTF %.2fx (target %.2fx)",
+          ws->speed_measured / 100.0,
+          ws->step_control.GetSpeed() / 100.0
+        );
+    else
+        ImGui::TextDisabled("RTF -");
+    ImGui::SetItemTooltip("%s", "Real-time factor: simulated time over wall time");
 }
 
 /* The Explorer's tree: Studio's SpecTreeGui (ux/gui_spec.cc), whose framed body rows never
@@ -1986,15 +1999,96 @@ static std::array<double, 3> mat_rpy(const mjtNum *mat)
 }
 
 // The Data tab's orientation as roll, pitch, yaw [rad], below Studio's xquat and xmat.
-static void element_rpy_gui(const mjModel *m, const mjData *d, mjsElement *element)
+// A body's or site's name, or Studio's "(body <id>)" when it has none.
+static std::string frame_label(const mjModel *m, mjtObj type, int id)
 {
-    // A joint's frame borrows its body's orientation; the Data tab shows its axis instead.
+    const char *name = mj_id2name(m, type, id);
+    if (name && *name) return name;
+    return std::string("(") + (type == mjOBJ_SITE ? "site " : "body ") + std::to_string(id) + ")";
+}
+
+// The Fixed Frame's id in this model, by name; -1 for world or a frame the model no longer has.
+static int fixed_frame_id(const WindowState *ws)
+{
+    const auto &[type, name] = ws->fixed_frame;
+    if (type != mjOBJ_BODY && type != mjOBJ_SITE) return -1;
+    const mjModel *m     = ws->model.get();
+    const int      count = type == mjOBJ_BODY ? m->nbody : m->nsite;
+    for (int i = 0; i < count; ++i)
+        if (frame_label(m, type, i) == name) return i;
+    return -1;
+}
+
+// RViz's Fixed Frame: world or any body or site, under a name search.
+static void fixed_frame_gui(WindowState *ws)
+{
+    const mjModel    *m       = ws->model.get();
+    const bool        world   = fixed_frame_id(ws) < 0;
+    const std::string preview = world ? "world" : ws->fixed_frame.second;
+    ImGui::SetNextItemWidth(-ImGui::CalcTextSize("Frame").x - ImGui::GetStyle().ItemInnerSpacing.x);
+    if (ImGui::BeginCombo("Frame", preview.c_str(), ImGuiComboFlags_HeightLarge)) {
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        ws->fixed_frame_filter.Draw("##fixed_frame_filter", -FLT_MIN);
+        if (ImGui::Selectable("world", world)) ws->fixed_frame = { mjOBJ_UNKNOWN, "" };
+        for (const auto &[type, count, heading] : { std::tuple{ mjOBJ_BODY, m->nbody, "Bodies" },
+                                                    std::tuple{ mjOBJ_SITE, m->nsite, "Sites" } }) {
+            if (count == 0) continue;
+            ImGui::SeparatorText(heading);
+            ImGui::PushID(heading);
+            for (int i = type == mjOBJ_BODY ? 1 : 0; i < count; ++i) {
+                std::string name = frame_label(m, type, i);
+                if (!ws->fixed_frame_filter.PassFilter(name.c_str())) continue;
+                const bool chosen = ws->fixed_frame.first == type && ws->fixed_frame.second == name;
+                ImGui::PushID(i);
+                if (ImGui::Selectable(name.c_str(), chosen)) ws->fixed_frame = { type, name };
+                ImGui::PopID();
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("%s", "The frame the rows below Studio's state the element's pose in");
+}
+
+// Whether the element has a pose the Data tab shows: a joint's frame borrows its body's
+// orientation, so the tab shows its axis instead.
+static bool element_has_pose(const WindowState *ws, mjsElement *element)
+{
     const mjtNum *pos = nullptr, *mat = nullptr;
+    return element->elemtype != mjOBJ_JOINT
+           && element_world_frame(ws->model.get(), ws->data.get(), element, &pos, &mat);
+}
+
+/* The element's pose in the Fixed Frame (world when none): position [m], quaternion in the
+ * wrapper's [x y z w] (docs/conventions.md) and roll, pitch, yaw [rad] about the frame's fixed
+ * axes (ROS REP 103; KDL::Rotation::GetRPY). */
+static void element_pose_gui(const WindowState *ws, mjsElement *element)
+{
+    const mjModel *m   = ws->model.get();
+    const mjData  *d   = ws->data.get();
+    const mjtNum  *pos = nullptr, *mat = nullptr;
     if (element->elemtype == mjOBJ_JOINT || !element_world_frame(m, d, element, &pos, &mat)) return;
-    const std::array<double, 3> rpy = mat_rpy(mat);
+    const int     frame       = fixed_frame_id(ws);
+    const mjtNum  origin[3]   = { 0, 0, 0 };
+    const mjtNum  identity[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+    const bool    site        = ws->fixed_frame.first == mjOBJ_SITE;
+    const mjtNum *fpos = frame < 0 ? origin : site ? d->site_xpos + 3 * frame : d->xpos + 3 * frame;
+    const mjtNum *fmat = frame < 0 ? identity
+                         : site    ? d->site_xmat + 9 * frame
+                                   : d->xmat + 9 * frame;
+    mjtNum        diff[3], rel_pos[3], rel_mat[9], wxyz[4];
+    mju_sub3(diff, pos, fpos);
+    mju_mulMatTVec3(rel_pos, fmat, diff);
+    mju_mulMatTMat(rel_mat, fmat, mat, 3, 3, 3);
+    mju_mat2Quat(wxyz, rel_mat);
+    const mjtNum                xyzw[4] = { wxyz[1], wxyz[2], wxyz[3], wxyz[0] };
+    const std::array<double, 3> rpy     = mat_rpy(rel_mat);
+    ImGui::SeparatorText("Pose");
     ImGui::PushID("rpy");
     {
         studio::ImGui_DataPtrTable table;
+        table.DataPtr("pos", rel_pos, 0, 3);
+        table.DataPtr("quat_xyzw", xyzw, 0, 4);
         table.DataPtr("rpy", rpy.data(), 0, 3);
     }
     ImGui::PopID();
@@ -2039,7 +2133,7 @@ static int hovered_table_row(const char *str_id)
     return table ? ImGui::TableGetInstanceData(table, 0)->HoveredRowNext : -1;
 }
 
-static constexpr int kRpyRow = 1 << 20; // copy_row of the rpy table's rows, after Studio's
+static constexpr int kPoseRow = 1 << 20; // copy_row of the Pose table's rows, apart from Studio's
 
 /* The S/M/D tab's tables, which Studio draws as plain text that cannot be selected: right-click
  * a field's row and Copy puts its values on the clipboard as shown, every line of a multi-line
@@ -2049,36 +2143,45 @@ static void element_tab_gui(WindowState *ws, mjsElement *element)
     static constexpr const char *kTable = "##PropertiesTable"; // Studio's ImGui_DataPtrTable
     const bool                   data   = ws->element_mode == 2;
     const bool                   copy   = ws->copy_pending;
-    std::string                  studio_log, rpy_log;
-    if (copy) ImGui::LogToBuffer();
-    if (ws->element_mode == 0)
-        studio::ElementSpecGui(element);
-    else if (ws->element_mode == 1)
-        studio::ElementModelGui(ws->model.get(), ws->element);
-    else
-        studio::ElementDataGui(ws->data.get(), ws->element);
-    if (copy) {
-        studio_log = ImGui::GetCurrentContext()->LogBuffer.c_str();
-        ImGui::LogFinish();
-    }
-    int row = hovered_table_row(kTable);
-    if (data) {
+    std::string                  studio_log, pose_log;
+    // Data: the Frame and the pose in it first; Studio's every-mjData-field list folded below.
+    int        row        = -1;
+    const bool pose       = data && element_has_pose(ws, element);
+    bool       studio_now = true; // Studio's list is drawn this frame
+    if (pose) {
+        fixed_frame_gui(ws);
         if (copy) ImGui::LogToBuffer();
-        element_rpy_gui(ws->model.get(), ws->data.get(), ws->element);
+        element_pose_gui(ws, ws->element);
         if (copy) {
-            rpy_log = ImGui::GetCurrentContext()->LogBuffer.c_str();
+            pose_log = ImGui::GetCurrentContext()->LogBuffer.c_str();
             ImGui::LogFinish();
         }
         ImGui::PushID("rpy");
-        if (const int rpy_row = hovered_table_row(kTable); rpy_row >= 0) row = kRpyRow + rpy_row;
+        if (const int pose_row = hovered_table_row(kTable); pose_row >= 0)
+            row = kPoseRow + pose_row;
         ImGui::PopID();
+        studio_now = ImGui::CollapsingHeader("All fields (mjData)");
+    }
+    if (studio_now) {
+        if (copy) ImGui::LogToBuffer();
+        if (ws->element_mode == 0)
+            studio::ElementSpecGui(element);
+        else if (ws->element_mode == 1)
+            studio::ElementModelGui(ws->model.get(), ws->element);
+        else
+            studio::ElementDataGui(ws->data.get(), ws->element);
+        if (copy) {
+            studio_log = ImGui::GetCurrentContext()->LogBuffer.c_str();
+            ImGui::LogFinish();
+        }
+        if (const int studio_row = hovered_table_row(kTable); studio_row >= 0) row = studio_row;
     }
 
     if (copy) {
         std::vector<LoggedRow> rows        = logged_rows(studio_log);
         const int              studio_rows = static_cast<int>(rows.size());
-        for (LoggedRow &r : logged_rows(rpy_log)) rows.push_back(std::move(r));
-        int index = ws->copy_row >= kRpyRow ? studio_rows + ws->copy_row - kRpyRow : ws->copy_row;
+        for (LoggedRow &r : logged_rows(pose_log)) rows.push_back(std::move(r));
+        int index = ws->copy_row >= kPoseRow ? studio_rows + ws->copy_row - kPoseRow : ws->copy_row;
         if (index >= 0 && index < static_cast<int>(rows.size())) {
             while (index > 0 && rows[index].label.empty()) --index; // the field's first row
             std::string text = rows[index].value;
@@ -2296,8 +2399,10 @@ static void main_menu_gui(WindowState *ws, Commands *cmd, const Gfx &gfx)
             if (ImGui::MenuItem("Style Editor", "", ws->style_editor))
                 ws->style_editor = !ws->style_editor;
             ImGui::Separator();
-            const std::string version = "Version " + std::string(mj_versionString());
-            ImGui::MenuItem(version.c_str());
+            const std::string wrapper = std::string("mj_kdl_wrapper ") + version();
+            const std::string mujoco  = std::string("MuJoCo ") + mj_versionString();
+            ImGui::MenuItem(wrapper.c_str(), nullptr, false, false);
+            ImGui::MenuItem(mujoco.c_str(), nullptr, false, false);
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
@@ -2577,14 +2682,6 @@ static void rendering_gui(WindowState *ws, float min_width)
     ImGui::Spacing();
     ImGui::PopID();
     studio::RenderingGui(m, &ws->opt, ws->render_flags, min_width);
-}
-
-// A body's or site's name, or Studio's "(body <id>)" when it has none.
-static std::string frame_label(const mjModel *m, mjtObj type, int id)
-{
-    const char *name = mj_id2name(m, type, id);
-    if (name && *name) return name;
-    return std::string("(") + (type == mjOBJ_SITE ? "site " : "body ") + std::to_string(id) + ")";
 }
 
 /* Every body and site with a checkbox that draws its frame, as RViz's TF display, under a name

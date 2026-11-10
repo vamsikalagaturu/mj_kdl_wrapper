@@ -33,7 +33,7 @@ def _cube() -> mjk.SceneObject:
 
 def _spec(objects) -> mjk.SceneSpec:
     spec = mjk.SceneSpec()
-    spec.timestep = 0.002
+    spec.timestep = 0.001
     spec.use_stage = True
     spec.objects = objects
     return spec
@@ -88,7 +88,7 @@ def test_mesh_scene_object_builds_and_moves():
     obj.pos = [0.0, 0.0, 0.0]
     obj.fixed = True
     spec = mjk.SceneSpec()
-    spec.timestep = 0.002
+    spec.timestep = 0.001
     spec.use_stage = True
     spec.objects = [obj]
     env = mjk.Env.build(spec)
@@ -124,7 +124,7 @@ def test_mesh_scene_object_applies_quat():
     obj.quat = [0.08080468869083995, 0.40219849353410964, 0.30337177447125957, 0.860042173697679]
     obj.fixed = True
     spec = mjk.SceneSpec()
-    spec.timestep = 0.002
+    spec.timestep = 0.001
     spec.use_stage = False
     spec.objects = [obj]
     env = mjk.Env.build(spec)

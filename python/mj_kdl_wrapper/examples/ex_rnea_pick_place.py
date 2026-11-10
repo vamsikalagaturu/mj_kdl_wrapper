@@ -124,7 +124,7 @@ def build_env() -> tuple[mjk.Env, list[mjk.Robot]]:
         robot_specs.append(robot_spec)
 
     spec = mjk.SceneSpec()
-    spec.timestep = 0.002
+    spec.timestep = 0.001
     spec.use_stage = True
     spec.robots = robot_specs
     spec.objects = [

@@ -24,11 +24,6 @@
 
 namespace py = pybind11;
 
-// Version is injected by CMake from the single source of truth (pyproject.toml).
-#ifndef MJ_KDL_WRAPPER_VERSION
-#define MJ_KDL_WRAPPER_VERSION "0.0.0+unknown"
-#endif
-
 namespace {
 
 using mj_kdl::AttachKind;
@@ -114,7 +109,10 @@ struct PySceneSpec
     double                     gravity_z = -9.81;
     std::optional<bool>        use_stage;
     std::string                stage;
-    double                     floor_z = 0.0;
+    double                     floor_z              = 0.0;
+    bool                       speculative_contacts = false;
+    mj_kdl::Integrator         integrator           = mj_kdl::Integrator::Robot;
+    mj_kdl::Solver             solver               = mj_kdl::Solver::Robot;
     std::vector<PySceneObject> objects;
     std::vector<PySiteSpec>    sites;
     std::vector<PyCameraSpec>  cameras;
@@ -226,11 +224,14 @@ SceneSpec to_cpp(const PySceneSpec &src)
     SceneSpec out;
     if (!src.timestep) throw std::runtime_error("SceneSpec.timestep must be set");
     if (!src.use_stage) throw std::runtime_error("SceneSpec.use_stage must be set");
-    out.timestep  = *src.timestep;
-    out.gravity_z = src.gravity_z;
-    out.use_stage = *src.use_stage;
-    out.stage     = src.stage;
-    out.floor_z   = src.floor_z;
+    out.timestep             = *src.timestep;
+    out.gravity_z            = src.gravity_z;
+    out.use_stage            = *src.use_stage;
+    out.stage                = src.stage;
+    out.floor_z              = src.floor_z;
+    out.speculative_contacts = src.speculative_contacts;
+    out.integrator           = src.integrator;
+    out.solver               = src.solver;
     out.robots.reserve(src.robots.size());
     for (const auto &item : src.robots) out.robots.push_back(to_cpp(item));
     out.objects.reserve(src.objects.size());
@@ -907,8 +908,15 @@ struct PyVideoRecorder
 
 PYBIND11_MODULE(_mj_kdl_wrapper, m)
 {
-    m.doc()                      = "Python bindings for mj_kdl_wrapper";
-    m.attr("__version__")        = MJ_KDL_WRAPPER_VERSION;
+    m.doc() = "Python bindings for mj_kdl_wrapper";
+    // The package version pip knows, X.Y.Z; version() adds a development build's -dev+<commit>.
+    const std::string_view build = mj_kdl::version();
+    m.attr("__version__")        = std::string(build.substr(0, build.find('-')));
+    m.def(
+      "version",
+      &mj_kdl::version,
+      "The build's version: __version__, plus -dev+<commit>[.dirty] when not built from its tag."
+    );
     m.attr("__mujoco_version__") = mj_versionString();
 
     py::enum_<mj_kdl::LogLevel>(
@@ -935,6 +943,20 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       .value("Tangential", Condim::Tangential)
       .value("Torsional", Condim::Torsional)
       .value("Rolling", Condim::Rolling);
+
+    py::enum_<mj_kdl::Integrator>(m, "Integrator")
+      .value("Robot", mj_kdl::Integrator::Robot)
+      .value("Euler", mj_kdl::Integrator::Euler)
+      .value("RK4", mj_kdl::Integrator::RK4)
+      .value("Implicit", mj_kdl::Integrator::Implicit)
+      .value("ImplicitFast", mj_kdl::Integrator::ImplicitFast)
+      .value("Discrete", mj_kdl::Integrator::Discrete);
+
+    py::enum_<mj_kdl::Solver>(m, "Solver")
+      .value("Robot", mj_kdl::Solver::Robot)
+      .value("PGS", mj_kdl::Solver::PGS)
+      .value("CG", mj_kdl::Solver::CG)
+      .value("Newton", mj_kdl::Solver::Newton);
 
     py::enum_<CtrlMode>(m, "CtrlMode")
       .value("POSITION", CtrlMode::POSITION)
@@ -1097,6 +1119,19 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
       )
       .def_readwrite(
         "floor_z", &PySceneSpec::floor_z, "Added to the height of the stage's planes [m]."
+      )
+      .def_readwrite(
+        "speculative_contacts",
+        &PySceneSpec::speculative_contacts,
+        "MuJoCo's speculative flag: contacts before an impact, so fast geoms do not tunnel."
+      )
+      .def_readwrite(
+        "integrator",
+        &PySceneSpec::integrator,
+        "MuJoCo integrator; Integrator.Robot keeps the first robot's. Cloth needs Discrete."
+      )
+      .def_readwrite(
+        "solver", &PySceneSpec::solver, "MuJoCo solver; Solver.Robot keeps the first robot's."
       )
       .def_readwrite("objects", &PySceneSpec::objects, "Scene objects and fixtures.")
       .def_readwrite("sites", &PySceneSpec::sites, "Frames to mark on the scene's bodies.")
