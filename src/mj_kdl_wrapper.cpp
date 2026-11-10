@@ -1052,15 +1052,16 @@ static void release_pair(mjModel *m, mjData *d, bool adopted)
 
 /* A hook may add or erase entries while it runs (a viewer starting or stopping its recorder), so
  * each one is looked up again, and called on a copy the map cannot free under it. */
-template<class Call> static void for_each_hook(Env *env, Call call)
+template<class Fn, class Call> static void for_each_hook(Env *env, Fn EnvHooks::*hook, Call call)
 {
     std::vector<const void *> owners;
+    owners.reserve(env->hooks.size());
     for (const auto &entry : env->hooks) owners.push_back(entry.first);
     for (const void *owner : owners) {
         const auto it = env->hooks.find(owner);
-        if (it == env->hooks.end()) continue;
-        EnvHooks hooks = it->second;
-        call(hooks);
+        if (it == env->hooks.end() || !(it->second.*hook)) continue;
+        const Fn fn = it->second.*hook;
+        call(fn);
     }
 }
 
@@ -1097,9 +1098,7 @@ Status init_env(Env *env, const SceneSpec *spec)
 void cleanup(Env *env)
 {
     if (!env) return;
-    for_each_hook(env, [env](EnvHooks &h) {
-        if (h.on_close) h.on_close(env);
-    });
+    for_each_hook(env, &EnvHooks::on_close, [env](const auto &fn) { fn(env); });
     env->hooks.clear();
     for (Robot *r : env->robots) {
         r->_impl->env = nullptr;
@@ -1501,9 +1500,7 @@ static Status swap_scene(Env *env, mjModel *m, mjData *d)
     }
     rebind_scene(env);
     release_pair(old_m, old_d, old_adopted);
-    for_each_hook(env, [env](EnvHooks &h) {
-        if (h.on_rebuild) h.on_rebuild(env);
-    });
+    for_each_hook(env, &EnvHooks::on_rebuild, [env](const auto &fn) { fn(env); });
     return {};
 }
 
@@ -1950,8 +1947,8 @@ bool step(Env *env)
     if (!env || !env->model) return true;
     bool running   = true;
     bool integrate = true;
-    for_each_hook(env, [env, &running, &integrate](EnvHooks &h) {
-        if (h.on_step && !h.on_step(env, &integrate)) running = false;
+    for_each_hook(env, &EnvHooks::on_step, [env, &running, &integrate](const auto &fn) {
+        if (!fn(env, &integrate)) running = false;
     });
     if (!running) return false;
     const bool all_paused =
@@ -2077,9 +2074,7 @@ ResetInfo reset(Env *env, const ResetOptions *options)
     mj_forward(model, data);
     record_kinematics(env);
     reset_parts(env, env->robots, env->scene);
-    for_each_hook(env, [env](EnvHooks &h) {
-        if (h.on_reset) h.on_reset(env);
-    });
+    for_each_hook(env, &EnvHooks::on_reset, [env](const auto &fn) { fn(env); });
 
     // After the re-seed, so the hook can prime commands; what it moves is read back below.
     ResetContext ctx;

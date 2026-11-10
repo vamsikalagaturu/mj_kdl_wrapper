@@ -360,16 +360,19 @@ static void render_loop(VideoRecorderImpl *impl)
     target.depth_format = mjPIXEL_FORMAT_DEPTH32F;
     impl->target        = impl->renderer->CreateRenderTarget("frame", target);
 
+    RecorderJob job;
     for (;;) {
         std::unique_lock<std::mutex> lock(impl->mtx);
         impl->cv.wait(lock, [impl] { return impl->pending || impl->quit; });
         if (!impl->pending) break;
-        RecorderJob job = std::move(impl->job);
-        impl->pending   = false;
+        // A swap, so the next submit() refills this frame's buffers instead of allocating.
+        std::swap(job, impl->job);
+        impl->pending = false;
         lock.unlock();
         impl->cv.notify_all();
 
         const bool rendered = render_job(impl, job);
+        job.done            = nullptr; // what it captured goes now, not a frame later
         lock.lock();
         impl->failed   = impl->failed || !rendered;
         impl->last_ok  = rendered;
@@ -436,17 +439,21 @@ static bool submit(VideoRecorder *vr, Env *env, RecorderJob job)
         impl->model_stale = false;
         ++impl->model_gen;
     }
-    job.state.resize(mj_stateSize(env->model, mjSTATE_INTEGRATION));
-    mj_getState(env->model, env->data, job.state.data(), mjSTATE_INTEGRATION);
-    job.cam       = vr->cam;
-    job.opt       = vr->opt;
-    job.overlays  = overlay_geoms(env);
-    job.model     = impl->model;
-    job.model_gen = impl->model_gen;
+    // Not pending, the render thread leaves the slot alone until the flag below is set.
+    RecorderJob &slot = impl->job;
+    slot.kind         = job.kind;
+    slot.out          = job.out;
+    slot.done         = std::move(job.done);
+    slot.state.resize(mj_stateSize(env->model, mjSTATE_INTEGRATION));
+    mj_getState(env->model, env->data, slot.state.data(), mjSTATE_INTEGRATION);
+    slot.cam       = vr->cam;
+    slot.opt       = vr->opt;
+    slot.overlays  = overlay_geoms(env);
+    slot.model     = impl->model;
+    slot.model_gen = impl->model_gen;
 
     lock.lock();
-    job.seq       = ++impl->submitted;
-    impl->job     = std::move(job);
+    slot.seq      = ++impl->submitted;
     impl->pending = true;
     lock.unlock();
     impl->cv.notify_all();

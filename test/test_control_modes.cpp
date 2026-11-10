@@ -52,6 +52,9 @@ struct ArmCase
     double              limit;
 };
 
+// Without it gtest prints the parameter's raw bytes, its uninitialised padding included.
+static void PrintTo(const ArmCase &c, std::ostream *os) { *os << c.name; }
+
 static const ArmCase kArms[] = {
     { "Gen3",
       "kinova_gen3/gen3.xml",

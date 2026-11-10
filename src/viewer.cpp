@@ -328,42 +328,47 @@ static void publish(ViewerImpl *impl, Env *env)
     snap.opt            = env->model->opt;
     snap.timeline       = impl->timeline;
     snap.speed_measured = impl->speed_measured;
+    // Names, ids and limits change only with the model or the robots registered.
+    const bool refresh = model || snap.robots.size() != env->robots.size();
     snap.robots.resize(env->robots.size());
     for (std::size_t i = 0; i < env->robots.size(); ++i) {
         const Robot *r = env->robots[i];
         RobotStatus &s = snap.robots[i];
-        // Unnamed, a robot goes by its base body, e.g. "base_link" or "r2_base_link".
-        const int         base      = robot_base_body(r);
-        const char       *body      = base > 0 ? mj_id2name(env->model, mjOBJ_BODY, base) : nullptr;
-        const std::string base_name = body ? body : "";
-        s.label                     = !r->name.empty()     ? r->name
-                                      : !base_name.empty() ? base_name
-                                                           : "Robot " + std::to_string(i);
-        s.mode                      = r->ctrl_mode;
-        s.paused                    = r->paused;
+        if (refresh || s.joints.size() != r->joint_names.size()) {
+            // Unnamed, a robot goes by its base body, e.g. "base_link" or "r2_base_link".
+            const int        base = robot_base_body(r);
+            const char      *body = base > 0 ? mj_id2name(env->model, mjOBJ_BODY, base) : nullptr;
+            std::string_view base_name = body ? body : "";
+            s.label = !base_name.empty() ? std::string(base_name) : "Robot " + std::to_string(i);
+            s.joints.resize(r->joint_names.size());
+            for (std::size_t j = 0; j < s.joints.size(); ++j) {
+                JointStatus &js = s.joints[j];
+                js.name         = r->joint_names[j];
+                js.id           = mj_name2id(env->model, mjOBJ_JOINT, js.name.c_str());
+                if (j < r->joint_limits.size()) std::tie(js.lo, js.hi) = r->joint_limits[j];
+            }
+            s.tip_body = !s.joints.empty() && s.joints.back().id >= 0
+                           ? env->model->jnt_bodyid[s.joints.back().id]
+                           : -1;
+            // The prefix init_robot_from_mjcf() was given is not kept (it resolves full names);
+            // it is what the base body and joint names share, up to their last '_'.
+            for (const JointStatus &js : s.joints) {
+                std::size_t n = 0;
+                while (n < base_name.size() && n < js.name.size() && base_name[n] == js.name[n])
+                    ++n;
+                base_name = base_name.substr(0, n);
+            }
+            const std::size_t cut = base_name.rfind('_');
+            s.prefix =
+              cut == std::string_view::npos ? "" : std::string(base_name.substr(0, cut + 1));
+        }
+        if (!r->name.empty() && s.label != r->name) s.label = r->name;
+        s.mode   = r->ctrl_mode;
+        s.paused = r->paused;
         s.tcp_site =
           r->tcp_site.empty() ? -1 : mj_name2id(env->model, mjOBJ_SITE, r->tcp_site.c_str());
-        s.joints.resize(r->joint_names.size());
-        for (std::size_t j = 0; j < s.joints.size(); ++j) {
-            JointStatus &js = s.joints[j];
-            js.name         = r->joint_names[j];
-            js.id           = mj_name2id(env->model, mjOBJ_JOINT, js.name.c_str());
-            js.q            = j < r->jnt_pos_msr.size() ? r->jnt_pos_msr[j] : 0.0;
-            if (j < r->joint_limits.size()) std::tie(js.lo, js.hi) = r->joint_limits[j];
-        }
-        s.tip_body = !s.joints.empty() && s.joints.back().id >= 0
-                       ? env->model->jnt_bodyid[s.joints.back().id]
-                       : -1;
-        // The prefix init_robot_from_mjcf() was given is not kept (it resolves full names); it
-        // is what the base body and joint names share, up to their last '_'.
-        std::string_view prefix = base_name;
-        for (const JointStatus &js : s.joints) {
-            std::size_t n = 0;
-            while (n < prefix.size() && n < js.name.size() && prefix[n] == js.name[n]) ++n;
-            prefix = prefix.substr(0, n);
-        }
-        const std::size_t cut = prefix.rfind('_');
-        s.prefix = cut == std::string_view::npos ? "" : std::string(prefix.substr(0, cut + 1));
+        for (std::size_t j = 0; j < s.joints.size(); ++j)
+            s.joints[j].q = j < r->jnt_pos_msr.size() ? r->jnt_pos_msr[j] : 0.0;
     }
     if (impl->want_overlays) {
         snap.overlays       = overlay_geoms(env);
