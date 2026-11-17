@@ -265,6 +265,12 @@ enum class Solver { Robot, PGS, CG, Newton };
  *   On a primitive, rgba is the colour when its four channels are set. On an MJCF asset,
  *   has_rgba makes every geom under the asset's root body take rgba, so a scene can state
  *   the colour an object is drawn in without editing the asset.
+ *
+ * contype / conaffinity / group:
+ *   A primitive geom's collision bitmasks and geom group, MuJoCo's defaults (1, 1, 0) unless
+ *   set; an asset's geoms keep their own. A geom that is only drawn takes contype =
+ *   conaffinity = 0. The viewer and recorder draw groups 0-2 by default, so a geom that only
+ *   collides goes in a higher group, e.g. 3 as in the bundled gen3 and 2f85 assets.
  */
 struct SceneObject
 {
@@ -285,6 +291,7 @@ struct SceneObject
     double       friction[3] = { NAN, NAN, NAN }; // [slide, spin, roll]; required unless fixed
     int          contype     = 1;                 // primitive's collision bitmask; MuJoCo's default
     int          conaffinity = 1;                 // primitive's collision bitmask; MuJoCo's default
+    int          group       = 0;                 // primitive's geom group; MuJoCo's default
 };
 
 /**

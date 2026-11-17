@@ -82,6 +82,7 @@ struct PySceneObject
     std::optional<std::array<double, 3>> friction;
     int                                  contype     = SceneObject{}.contype;
     int                                  conaffinity = SceneObject{}.conaffinity;
+    int                                  group       = SceneObject{}.group;
 };
 
 struct PyCameraSpec
@@ -187,6 +188,7 @@ SceneObject to_cpp(const PySceneObject &src)
     out.condim      = src.condim;
     out.contype     = src.contype;
     out.conaffinity = src.conaffinity;
+    out.group       = src.group;
     if (src.rgba) {
         std::ranges::copy(*src.rgba, out.rgba);
         out.has_rgba = true;
@@ -1081,7 +1083,8 @@ PYBIND11_MODULE(_mj_kdl_wrapper, m)
         "conaffinity",
         &PySceneObject::conaffinity,
         "Primitive's collision bitmask; MuJoCo's default 1."
-      );
+      )
+      .def_readwrite("group", &PySceneObject::group, "Primitive's geom group; MuJoCo's default 0.");
 
     py::class_<PySiteSpec>(m, "SiteSpec", "A frame marked on a body of the assembled scene.")
       .def(py::init<>())

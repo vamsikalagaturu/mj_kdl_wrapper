@@ -492,6 +492,7 @@ static Status add_objects_to_spec(mjSpec *spec, const std::vector<SceneObject> &
         if (friction_set) std::ranges::copy(obj.friction, g->friction);
         g->contype     = obj.contype;
         g->conaffinity = obj.conaffinity;
+        g->group       = obj.group;
         g->condim      = static_cast<int>(obj.condim);
 
         if (Status s = attach_child(spec, obj.attach_to, obj.pos, obj.quat, ob, ""); !s) return s;

@@ -71,6 +71,22 @@ def test_ellipsoid_and_mesh_build_on_mujoco_defaults():
         assert env.model.geom("drawer_geom").type == 7  # mjGEOM_MESH
 
 
+def test_contact_bitmasks_and_group_reach_the_geom():
+    # Drawn only, colliding only in a group the viewer hides, and left at MuJoCo's defaults.
+    drawn = _drawn("drawn", mjk.Shape.BOX)
+    drawn.contype, drawn.conaffinity, drawn.group = 0, 0, 2
+    touched = _drawn("touched", mjk.Shape.SPHERE)
+    touched.group = 3
+    plain = _drawn("plain", mjk.Shape.CYLINDER)
+    assert (plain.contype, plain.conaffinity, plain.group) == (1, 1, 0)
+    with mjk.Env.build(_spec([drawn, touched, plain])) as env:
+        geoms = {name: env.model.geom(f"{name}_geom") for name in ("drawn", "touched", "plain")}
+        assert {
+            name: (int(g.contype[0]), int(g.conaffinity[0]), int(g.group[0]))
+            for name, g in geoms.items()
+        } == {"drawn": (0, 0, 2), "touched": (1, 1, 3), "plain": (1, 1, 0)}
+
+
 @pytest.mark.parametrize("mesh_path", ["", "no_such_mesh.stl"])
 def test_mesh_without_a_file_is_refused(mesh_path):
     drawer = _drawn("drawer", mjk.Shape.MESH)

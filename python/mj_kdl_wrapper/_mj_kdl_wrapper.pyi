@@ -140,6 +140,8 @@ class SceneObject:
     """Primitive's collision bitmask; MuJoCo's default 1."""
     conaffinity: int
     """Primitive's collision bitmask; MuJoCo's default 1."""
+    group: int
+    """Primitive's geom group; MuJoCo's default 0."""
     def __init__(self) -> None: ...
 
 

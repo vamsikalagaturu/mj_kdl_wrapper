@@ -304,6 +304,9 @@ they are ignored (`rgba` with `has_rgba` recolours the asset). A primitive is a 
 or MSH file and `size` is its scale), built through mjSpec. What a primitive may leave unset
 takes MuJoCo's own default: `rgba` on any primitive, `mass` (from the default density) and
 `friction` on a fixed one. A fixed primitive with `mass = 0` adds no mass to its parent.
+`contype`, `conaffinity` and `group` start at MuJoCo's defaults (1, 1, 0): a primitive that is
+only drawn sets `contype = conaffinity = 0`, and one that only collides goes in a group the
+viewer and recorder do not draw by default (3-5; keys 0-5 toggle groups in the viewer).
 `build_scene()` fails, naming the object, when:
 
 - `shape == Shape::Unspecified`, or a `MESH` has no `mesh_path` or it is not a file;

@@ -263,7 +263,9 @@ Build order is decorations, objects in declaration order, robots, then cameras.
 For primitive objects, `shape` and `size` are required, and `mass` and `friction` unless the
 object is `fixed`; an unset `rgba`, `mass` or `friction` takes MuJoCo's default. `Shape.MESH`
 also needs `mesh_path`, with `size` as the mesh's scale; `Shape.ELLIPSOID` takes three radii.
-For MJCF-backed objects, `mjcf_path` takes precedence and primitive geometry fields are
+`contype`, `conaffinity` and `group` start at MuJoCo's defaults (1, 1, 0): a primitive that is
+only drawn sets `contype = conaffinity = 0`, and one that only collides goes in a group the
+viewer and recorder do not draw by default (3-5). For MJCF-backed objects, `mjcf_path` takes precedence and primitive geometry fields are
 ignored at runtime.
 
 ```python

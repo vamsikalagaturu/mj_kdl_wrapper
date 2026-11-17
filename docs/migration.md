@@ -23,3 +23,4 @@ MuJoCo 4.0.0, built from source; the viewer and the recorder are optional librar
 | Python `env.viewer.clear_trace()`, `add_trace_segment()` | `env.clear_trace()`, `env.add_trace_segment(a, b, rgba)`, `env.add_overlay_arrow(from_, dir, length, rgba)`, `env.overlay_geoms()` |
 | Python `mjk.VideoRecorder`, `mjk.VideoResolution` | the C++ Filament recorder: `VideoRecorder.open(env, out_path, width, height, fps)`, `open_preset(env, out_path, resolution, fps)`, `open_offscreen(env, width, height)`; `record_frame()`, `render_rgb()` (an `(h, w, 3)` `uint8` array), `use_camera()`, `set_free_camera()`, `close()`; ffmpeg on `PATH` for MP4 |
 | Primitive `rgba` required; `friction` required when `fixed` | optional: unset takes MuJoCo's default |
+| Every primitive geom collides and sits in group 0 | `SceneObject::contype`, `conaffinity` and `group` set them; MuJoCo's defaults (1, 1, 0) keep the 0.5 behaviour. Python alike |

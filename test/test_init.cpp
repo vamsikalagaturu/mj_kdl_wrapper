@@ -512,6 +512,7 @@ TEST(SceneObjectShapes, EllipsoidAndMeshTakeMuJoCoDefaultsAndAddNoMass)
         EXPECT_FLOAT_EQ(m->geom_rgba[4 * ball_geom + k], static_cast<float>(dflt->rgba[k]));
     for (int k = 0; k < 3; ++k)
         EXPECT_DOUBLE_EQ(m->geom_friction[3 * mesh_geom + k], dflt->friction[k]);
+    EXPECT_EQ(m->geom_group[mesh_geom], dflt->group);
     mj_deleteSpec(ref);
     EXPECT_EQ(m->geom_contype[mesh_geom], mj_kdl::SceneObject{}.contype);
     EXPECT_EQ(m->geom_conaffinity[mesh_geom], mj_kdl::SceneObject{}.conaffinity);
@@ -520,6 +521,44 @@ TEST(SceneObjectShapes, EllipsoidAndMeshTakeMuJoCoDefaultsAndAddNoMass)
     const int cube_body = mj_name2id(m, mjOBJ_BODY, "cube");
     ASSERT_GE(cube_body, 0);
     EXPECT_NEAR(m->body_subtreemass[cube_body], 0.1, 1e-12);
+    mj_kdl::destroy_scene(m, d);
+}
+
+TEST(SceneObjectShapes, ContactBitmasksAndGroupReachTheGeom)
+{
+    mj_kdl::SceneSpec sc;
+    sc.timestep  = 0.001;
+    sc.use_stage = false;
+
+    // Drawn only, colliding only in a group the viewer hides, and left at MuJoCo's defaults.
+    mj_kdl::SceneObject drawn   = drawn_shape("drawn", mj_kdl::Shape::BOX);
+    drawn.contype               = 0;
+    drawn.conaffinity           = 0;
+    drawn.group                 = 2;
+    mj_kdl::SceneObject touched = drawn_shape("touched", mj_kdl::Shape::SPHERE);
+    touched.group               = 3;
+    mj_kdl::SceneObject plain   = drawn_shape("plain", mj_kdl::Shape::CYLINDER);
+    sc.objects                  = { drawn, touched, plain };
+
+    mjModel       *m = nullptr;
+    mjData        *d = nullptr;
+    mj_kdl::Status s = mj_kdl::build_scene(&m, &d, &sc);
+    ASSERT_TRUE(s) << s.error;
+
+    struct Expected
+    {
+        const char *geom;
+        int         contype, conaffinity, group;
+    };
+    for (const auto &[name, contype, conaffinity, group] : { Expected{ "drawn_geom", 0, 0, 2 },
+                                                             Expected{ "touched_geom", 1, 1, 3 },
+                                                             Expected{ "plain_geom", 1, 1, 0 } }) {
+        const int g = mj_name2id(m, mjOBJ_GEOM, name);
+        ASSERT_GE(g, 0) << name;
+        EXPECT_EQ(m->geom_contype[g], contype) << name;
+        EXPECT_EQ(m->geom_conaffinity[g], conaffinity) << name;
+        EXPECT_EQ(m->geom_group[g], group) << name;
+    }
     mj_kdl::destroy_scene(m, d);
 }
 
